@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "component": "task410_arena_card_reference",
+  "source": {
+    "repository": "https://github.com/surisuririsu/gakumas-tools",
+    "revision": "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6",
+    "license": "BSD-3-Clause",
+    "reference_file_count": 3388,
+    "reference_set_sha256": "22391DA047D1C223B47B9FD292391422F26D7C5AF76950A8D9E4327E4564EAB1"
+  },
+  "gallery": {
+    "path": "badge_reference_gallery.npz",
+    "sha256": "019778EB531E38E262F874FC3DDDC5714DA9AA80C756C71F0587944F136498B7",
+    "business_card_id_count": 856,
+    "visual_group_count": 439,
+    "normalization_size": [
+      96,
+      96
+    ]
+  },
+  "runtime": {
+    "maximum_coarse_error": 60.0,
+    "maximum_zero_coarse_error": 65.0,
+    "minimum_group_margin": 0.75,
+    "minimum_high_error_group_margin": 3.0,
+    "reference_rule_version": "task410-r10-card-identity-only-v1"
+  }
+}

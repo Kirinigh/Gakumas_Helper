@@ -1,0 +1,106 @@
+{
+  "ActivityFee": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "ActivityFeeHomeFlag",
+      "[JumpBack]ReturnHome",
+      "[JumpBack]BackHome",
+      "[JumpBack]CloseRoundButton"
+    ]
+  },
+  "ActivityFeeHomeFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "home.png",
+          "home_1.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "ActivityFeeClick"
+    ]
+  },
+  "ActivityFeeClick": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          0,
+          520,
+          160,
+          130
+        ],
+        "expected": [
+          "活動費"
+        ],
+        "replace": [
+          [
+            "费",
+            "費"
+          ],
+          [
+            "动",
+            "動"
+          ]
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "ActivityFeeClose",
+      "ActivityWithoutFee"
+    ]
+  },
+  "ActivityFeeClose": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "close.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "focus": {
+      "Node.Action.Succeeded": "[color:LimeGreen]活动费用已领取[/color]"
+    },
+    "next": [
+      "HomeFlag"
+    ]
+  },
+  "ActivityWithoutFee": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "activity_without_fee.png"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.Action.Succeeded": "[color:orange]无活动费用可领取[/color]"
+    },
+    "next": [
+      "HomeFlag"
+    ]
+  }
+}

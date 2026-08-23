@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kirinigh/Gakumas_Helper/schemas/release-manifest-v1.json",
+  "title": "Gakumas Helper full derived release manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "product",
+    "qualification",
+    "release",
+    "application",
+    "compatibility",
+    "components",
+    "redistribution",
+    "privacy_gate",
+    "known_gates"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "product": { "const": "MaaGakumasu-GakumasHelper" },
+    "qualification": { "enum": ["arena_preview", "stable"] },
+    "release": {
+      "type": "object",
+      "required": ["version", "channel", "repository", "asset", "asset_bytes", "asset_sha256", "platform"],
+      "properties": {
+        "version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-(?:alpha|beta)\\.[0-9]+|\\+gkh\\.[0-9]{6})?$" },
+        "channel": { "enum": ["alpha", "beta", "stable"] },
+        "repository": { "type": "string", "pattern": "^https://github\\.com/[^/]+/[^/]+$" },
+        "asset": { "type": "string", "pattern": "^MaaGakumasu-win-x86_64-v.+\\.zip$" },
+        "asset_bytes": { "type": "integer", "minimum": 1 },
+        "asset_sha256": { "type": "string", "pattern": "^[0-9A-F]{64}$" },
+        "platform": { "const": "win-x86_64" }
+      },
+      "additionalProperties": false
+    },
+    "application": {
+      "type": "object",
+      "required": ["interface_version", "source_repository", "source_revision", "upstream", "python_packages"],
+      "properties": {
+        "interface_version": { "type": "integer" },
+        "source_repository": { "type": "string", "pattern": "^https://github\\.com/[^/]+/[^/]+$" },
+        "source_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "upstream": { "type": "object" },
+        "python_packages": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "compatibility": { "type": "object" },
+    "components": { "type": "object" },
+    "redistribution": { "type": "object" },
+    "privacy_gate": {
+      "type": "object",
+      "required": ["schema_version", "policy", "files_scanned", "bytes_scanned"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "policy": { "const": "reject_local_runtime_state_private_captures_machine_paths_and_credentials" },
+        "files_scanned": { "type": "integer", "minimum": 1 },
+        "bytes_scanned": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "known_gates": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

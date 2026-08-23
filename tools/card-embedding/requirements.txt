@@ -1,0 +1,7 @@
+numpy>=2.0,<3
+Pillow>=10,<13
+onnx>=1.17,<2
+onnxruntime>=1.20,<2
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.10.0+cu130
+torchvision==0.25.0+cu130

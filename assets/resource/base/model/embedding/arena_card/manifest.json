@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "component": "task077_arena_custom_card_embedding",
+  "source": {
+    "base_task": "TASK-075",
+    "base_dataset": "705100:0036",
+    "business_card_id_min": 1,
+    "business_card_id_max": 856,
+    "visual_identity_count": 439
+  },
+  "model": {
+    "path": "arena_card_embedding_model.onnx",
+    "sha256": "2D19B2BB64980094BC41725C6B586755D47AFA41D005877649BF26656A0F8404",
+    "input": "float32[N,3,64,64] RGB range [0,1]",
+    "output": "embedding float32[N,128] L2-normalised"
+  },
+  "gallery": {
+    "path": "arena_card_embedding_gallery.npz",
+    "sha256": "17AAB53A5015E75B609DD3FBAE01229A8BA2B32873827AF6F93E3C46F8FAA9E5",
+    "class_table_path": "arena_card_embedding_classes.json",
+    "class_table_sha256": "D0EE8928C03C636AB37B4FE37FC6BCBEEF0083AAF02CEE679599A8530F2C46E0",
+    "embedding_dim": 128,
+    "distance": "cosine_similarity"
+  },
+  "validation": {
+    "arena_custom_positive_top1": "86/87",
+    "arena_custom_positive_similarity": 0.710575,
+    "arena_custom_positive_margin": 0.046167,
+    "synthetic_overlay_top1": 0.987487969201155,
+    "synthetic_overlay_top5": 0.9987969201154957,
+    "clean_augmentation_top1": 0.9995187680461982,
+    "clean_augmentation_top5": 1.0,
+    "task075_dmm_atlas": "13/13",
+    "task100_representative_dmm": "18/18"
+  },
+  "runtime": {
+    "acceptance_threshold": null,
+    "minimum_margin": null,
+    "upgrade_maximum_distance": 0.015,
+    "upgrade_minimum_margin": 0.015,
+    "state": "TASK390_ARENA_CALIBRATION_REQUIRED",
+    "note": "Only the customized-card visual family is trained here. Exact normal/+ ID and customizationId require clicked-detail confirmation; null thresholds forbid runtime acceptance before TASK-390 calibration."
+  }
+}

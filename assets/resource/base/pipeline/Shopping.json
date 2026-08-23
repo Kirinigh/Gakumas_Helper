@@ -1,0 +1,60 @@
+{
+  "ShoppingBack": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "back.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200
+  },
+  "ShoppingPlus": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          516,
+          856,
+          130,
+          104
+        ],
+        "template": "shopping_plus.png",
+        "threshold": 0.98
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500
+  },
+  "ShoppingNextPage": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "Swipe",
+      "param": {
+        "begin": [
+          100,
+          1000,
+          1,
+          1
+        ],
+        "end": [
+          100,
+          270,
+          1,
+          1
+        ],
+        "duration": 2000
+      }
+    },
+    "post_wait_freezes": 500
+  }
+}

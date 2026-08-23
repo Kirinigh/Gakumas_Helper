@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+node_modules/
+.pytest_cache/
+.ruff_cache/
+
+# Maa runtime and local developer state
+.local/
+config/
+debug/
+logs/
+runtime-data/
+captures/
+datasets/local/
+appsettings.json
+*.log
+*.dmp
+*.dump
+*.tmp
+*.bak

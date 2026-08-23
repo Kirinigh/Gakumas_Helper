@@ -1,0 +1,65 @@
+{
+  "recognizer": "p_item_rendered_reference_v1",
+  "reference_gallery": {
+    "business_id_count": 420,
+    "color_order": "BGR",
+    "image_shape": "original_png_dimensions",
+    "image_shape_count": 19,
+    "path": "p_item_rendered_reference_gallery.npz",
+    "sha256": "B126BC3953CD9E781BB1115CCF02132465BA8783855B90A3648327A19D577527"
+  },
+  "runtime": {
+    "ambiguous_action": "bounded_detail_or_fail_closed",
+    "coarse_fine_profiles": [
+      {
+        "acceptance_rank_limit": 12,
+        "candidate_limit": 24,
+        "canonical_slot_size": [
+          64,
+          64
+        ],
+        "coarse_delta": -6,
+        "minimum_capture_size": [
+          720,
+          1280
+        ]
+      }
+    ],
+    "complete_opposite_half_minimum": 0.05,
+    "content_generation_max_mean_abs_error": 0.75,
+    "embedding_role": "offline_diagnostic_only",
+    "empty_foreground_maximum": 0.05,
+    "identity_authority": "fixed_rendered_reference_coarse_fine_with_full_fallback",
+    "identity_minimum_margin": 0.01,
+    "identity_minimum_similarity": 0.65,
+    "maximum_detail_fallbacks_per_member": 2,
+    "nonempty_foreground_minimum": 0.15,
+    "source_color_order": "BGR",
+    "stable_frame_count": 3
+  },
+  "schema_version": 1,
+  "source": {
+    "business_id_count": 420,
+    "evidence_id": "task410-owner-pitem-r88",
+    "plan_ambiguous_business_ids": [
+      406,
+      407,
+      408
+    ],
+    "plan_to_business_id": {
+      "anomaly": 408,
+      "logic": 407,
+      "sense": 406
+    },
+    "revision": "gakumas-tools@3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6+official-pc-705100-0036",
+    "sanitized_icons_sha256": "BC099323B8E2D88DCBBFF399B4586668B1FEDB2BA83B1333258690BBD235D9A5",
+    "scope": "sourceType != produce",
+    "source_icons_sha256": "B3467DFF5A74151F17B6720F2A26E9530CC55D54F5E27BADF5B81D27BB31854E"
+  },
+  "validation": {
+    "coarse_fine_720_calibration": "TOP2_DECISION_EQUIVALENT_100_OF_100_CANDIDATE24_GUARD12",
+    "embedding_acceptance_calibration": "REJECTED_FOR_CURRENT_JJC_DOMAIN",
+    "jjc_reference_identity": "CURRENT_VISIBLE_SUBSET",
+    "upgraded_marker_calibration": "PENDING_REAL_UPGRADED_SAMPLE"
+  }
+}

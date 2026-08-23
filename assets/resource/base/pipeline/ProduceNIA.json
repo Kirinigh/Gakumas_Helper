@@ -1,0 +1,423 @@
+{
+  "ProduceEntryNIA": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "ProduceExit",
+      "ProduceNIAFailedFlag",
+      "ProduceGeneration",
+      "[JumpBack]ProduceChooseNIAEventFlag",
+      "[JumpBack]ProduceCardsFlag",
+      "[JumpBack]ProduceRecognitionWorkOptions",
+      "[JumpBack]ProduceChooseGetFlag",
+      "[JumpBack]ProduceChooseStrengthenFlag",
+      "[JumpBack]ProduceChooseDeleteFlag",
+      "[JumpBack]ProduceWorkFlag",
+      "[JumpBack]ProduceKeepDrinkFlag",
+      "[JumpBack]ProduceSkipChatFlag",
+      "[JumpBack]ProduceNIAButton",
+      "[JumpBack]ProduceMirrorFlag",
+      "[JumpBack]ProduceSkip",
+      "[JumpBack]Click_1"
+    ]
+  },
+  "ProduceChooseNIAEventFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          0,
+          800,
+          720,
+          300
+        ],
+        "template": [
+          "produce/NIA/activity.png",
+          "produce/NIA/chat.png",
+          "produce/NIA/Da.png",
+          "produce/NIA/go_out.png",
+          "produce/NIA/guide.png",
+          "produce/NIA/Vi.png",
+          "produce/NIA/Vo.png",
+          "produce/NIA/work.png"
+        ]
+      }
+    },
+    "pre_delay": 0,
+    "pre_wait_freezes": 200,
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "ProduceChooseNIAEventAuto",
+        "custom_action_param": {
+          "effect": "非凡·强气",
+          "first": "Vo",
+          "second": "Vi"
+        }
+      }
+    },
+    "post_delay": 0
+  },
+  "ProduceNIAButton": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          0,
+          780,
+          720,
+          500
+        ],
+        "template": [
+          "next.png",
+          "produce/round_close_button.png",
+          "produce/choose.png",
+          "produce/ok.png",
+          "produce/ok_1.png",
+          "produce/retry.png",
+          "produce/decide.png",
+          "produce/skip_confirm.png",
+          "produce/drink_no.png",
+          "produce/shop_exit.png",
+          "produce/close.png"
+        ],
+        "order_by": "Score"
+      }
+    },
+    "pre_delay": 0,
+    "action": {
+      "type": "Click",
+      "param": {
+        "target_offset": [
+          0,
+          0,
+          0,
+          -10
+        ]
+      }
+    },
+    "post_delay": 0
+  },
+  "ProduceWorkEntry": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ProduceWorkFlag",
+      "[JumpBack]Click_1"
+    ]
+  },
+  "ProduceWorkFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          150,
+          380,
+          420,
+          200
+        ],
+        "template": [
+          "produce/NIA/work_choose.png"
+        ],
+        "green_mask": true
+      }
+    },
+    "pre_wait_freezes": {
+      "time": 500,
+      "target": [
+        54,
+        563,
+        611,
+        514
+      ]
+    },
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "ProduceChooseWorkAuto"
+      }
+    },
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:LimeGreen]事件: 选择工作[/color]"
+    },
+    "post_wait_freezes": 500,
+    "next": [
+      "ProduceWorkConfirm",
+      "ProduceWorkFlag",
+      "[JumpBack]CloseButton",
+      "[JumpBack]Click_1"
+    ]
+  },
+  "ProduceWorkConfirm": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "produce/NIA/work_start.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    }
+  },
+  "ProduceShoppingEntry": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ProduceShoppingFlag",
+      "[JumpBack]Click_1"
+    ]
+  },
+  "ProduceGuideEntry": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ProduceGuideFlag",
+      "[JumpBack]ProduceGuideStart",
+      "[JumpBack]ProduceChooseGetFlag",
+      "[JumpBack]Click_1"
+    ]
+  },
+  "ProduceGuideStart": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          0,
+          780,
+          720,
+          500
+        ],
+        "template": "produce/start.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    }
+  },
+  "ProduceGuideFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          30,
+          180,
+          650,
+          400
+        ],
+        "template": "produce/NIA/guide_choose.png"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:LimeGreen]事件: 特别指导[/color]"
+    },
+    "next": [
+      "ProduceGuideExit"
+    ]
+  },
+  "ProduceGuideExit": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "produce/shop_exit.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    }
+  },
+  "ProduceMirrorFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          12,
+          630,
+          696,
+          530
+        ],
+        "template": [
+          "produce/NIA/mirror_1.png",
+          "produce/NIA/mirror_2.png",
+          "produce/NIA/mirror_3.png"
+        ],
+        "threshold": 0.9
+      }
+    },
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "ProduceChooseMirrorAuto",
+        "custom_action_param": {
+          "level": null
+        }
+      }
+    },
+    "attach": {
+      "focus_1": false,
+      "focus_2": false,
+      "focus_3": false
+    },
+    "pre_wait_freezes": 200,
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:LimeGreen]事件: 选择试镜难度[/color]"
+    }
+  },
+  "ProduceNIAFailedFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          0,
+          700,
+          720,
+          250
+        ],
+        "template": [
+          "produce/exam_failed.png"
+        ],
+        "threshold": 0.9
+      }
+    },
+    "pre_delay": 0,
+    "pre_wait_freezes": 200,
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "post_delay": 0,
+    "post_wait_freezes": 200,
+    "focus": {
+      "Node.Recognition.Succeeded": {
+        "content": "[color:OrangeRed]❌ 考试失败[/color]",
+        "display": [
+          "log",
+          "notification"
+        ]
+      }
+    },
+    "next": [
+      "ProduceNIAFailedRetry",
+      "ProduceNIAFailedRetryConfirm"
+    ]
+  },
+  "ProduceNIAFailedRetry": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          16,
+          1040,
+          688,
+          220
+        ],
+        "template": [
+          "produce/challenge.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ProduceNIAFailedRetryLastChallenge"
+    ]
+  },
+  "ProduceNIAFailedRetryLastChallenge": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          470,
+          340,
+          240,
+          560
+        ],
+        "template": [
+          "produce/last_challenge.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {
+        "target_offset": [
+          -236,
+          130,
+          0,
+          0
+        ]
+      }
+    },
+    "post_wait_freezes": 200,
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:DeepSkyBlue]尝试降低试镜难度[/color]"
+    },
+    "next": [
+      "ProduceNIAFailedRetryConfirm"
+    ]
+  },
+  "ProduceNIAFailedRetryConfirm": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          16,
+          1040,
+          688,
+          220
+        ],
+        "template": [
+          "produce/decide.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:DeepSkyBlue]已再次开始挑战[/color]"
+    },
+    "next": [
+      "ProduceEntryNIA"
+    ]
+  }
+}

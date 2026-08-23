@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.maagakumasu.invalid/schemas/arena-own-score-2.0.json",
+  "title": "MaaGakumasu reusable own three-stage arena snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "capture_id", "source", "season", "stageIds", "own_team"],
+  "properties": {
+    "schema_version": { "const": "2.0" },
+    "capture_id": { "type": "string", "minLength": 1 },
+    "source": { "enum": ["frozen_replay", "live_screen"] },
+    "season": { "type": "integer", "minimum": 1 },
+    "stageIds": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "own_team": { "$ref": "arena_winrate_schema.json#/$defs/team" }
+  }
+}

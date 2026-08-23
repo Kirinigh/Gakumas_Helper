@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.maagakumasu.invalid/schemas/arena-win-rate-2.0.json",
+  "title": "MaaGakumasu complete three-stage arena snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capture_id",
+    "source",
+    "season",
+    "stageIds",
+    "own_team",
+    "opponents"
+  ],
+  "properties": {
+    "schema_version": { "const": "2.0" },
+    "capture_id": { "type": "string", "minLength": 1 },
+    "source": { "enum": ["frozen_replay", "live_screen"] },
+    "season": { "type": "integer", "minimum": 1 },
+    "stageIds": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "own_team": { "$ref": "#/$defs/team" },
+    "opponents": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/team" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "integer", "minimum": 0 },
+    "customizations": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[0-9]+$" },
+      "additionalProperties": { "type": "integer", "minimum": 1 }
+    },
+    "loadout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "params",
+        "pItemIds",
+        "skillCardIdGroups",
+        "customizationGroups"
+      ],
+      "properties": {
+        "params": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "pItemIds": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "skillCardIdGroups": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "items": { "$ref": "#/$defs/id" }
+          }
+        },
+        "customizationGroups": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "items": { "$ref": "#/$defs/customizations" }
+          }
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot", "loadout"],
+      "properties": {
+        "slot": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "loadout": { "$ref": "#/$defs/loadout" }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage_number", "stageId", "members"],
+      "properties": {
+        "stage_number": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "stageId": { "type": "integer", "minimum": 1 },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/member" }
+        }
+      }
+    },
+    "team": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["team_id", "supportBonus", "stages"],
+      "properties": {
+        "team_id": { "type": "string", "minLength": 1 },
+        "supportBonus": { "type": "number", "minimum": 0, "maximum": 1 },
+        "stages": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/stage" }
+        }
+      }
+    }
+  }
+}
