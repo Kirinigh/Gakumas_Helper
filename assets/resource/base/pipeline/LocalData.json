@@ -1,0 +1,50 @@
+{
+    "LocalDataConfigureProduce": {
+        "recognition": {
+            "type": "DirectHit",
+            "param": {}
+        },
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "LocalDataConfigure",
+                "custom_action_param": {
+                    "capture_mode": "off",
+                    "root": ".local/runtime-data"
+                }
+            }
+        },
+        "next": [
+            "ProduceLoop"
+        ]
+    },
+    "LocalDataConfigureChallenge": {
+        "recognition": {
+            "type": "DirectHit",
+            "param": {}
+        },
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "LocalDataConfigure",
+                "custom_action_param": {
+                    "capture_mode": "off",
+                    "root": ".local/runtime-data"
+                }
+            }
+        },
+        "next": [
+            "ChallengeResetOwnScorePreparation"
+        ]
+    },
+    "LocalDataStatusNotification": {
+        "recognition": {
+            "type": "DirectHit",
+            "param": {}
+        },
+        "action": {
+            "type": "DoNothing",
+            "param": {}
+        }
+    }
+}

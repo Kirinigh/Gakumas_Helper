@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Gakumas Helper 指导中心
+    url: https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/README.md
+    about: 首次使用、竞技场、排障、更新回滚与隐私说明
+  - name: 上游 MaaGakumasu Issues
+    url: https://github.com/SuperWaterGod/MaaGakumasu/issues
+    about: 只在未修改的官方 MaaGakumasu 中也能复现的问题

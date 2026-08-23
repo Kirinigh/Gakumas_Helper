@@ -1,0 +1,261 @@
+{
+  "Award": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "AwardHomeFlag",
+      "[JumpBack]ReturnHome",
+      "[JumpBack]BackHome",
+      "[JumpBack]CloseRoundButton"
+    ]
+  },
+  "AwardHomeFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "home.png",
+          "home_1.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "AwardGift",
+      "AwardMission",
+      "BackHome",
+      "HomeFlag"
+    ]
+  },
+  "AwardGift": {
+    "enabled": true,
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "AwardGiftClick"
+    ]
+  },
+  "AwardGiftClick": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          580,
+          440,
+          135,
+          80
+        ],
+        "expected": [
+          "プレゼント"
+        ],
+        "replace": [
+          [
+            "ル",
+            "レ"
+          ]
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {
+        "target_offset": [
+          50,
+          -50,
+          -50,
+          0
+        ]
+      }
+    },
+    "next": [
+      "AwardGiftRunout",
+      "AwardGiftGet"
+    ]
+  },
+  "AwardGiftRunout": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "gift_runout.png"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "AwardBackHome"
+    ]
+  },
+  "AwardGiftGet": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "gift_get.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500,
+    "focus": {
+      "Node.Action.Succeeded": "[color:LimeGreen]礼物已领取[/color]"
+    },
+    "next": [
+      "AwardBackHome",
+      "[JumpBack]CloseButton"
+    ]
+  },
+  "AwardBackHome": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "homeflag_grey.png",
+          "homeflag_black.png"
+        ],
+        "threshold": 0.8
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500,
+    "next": [
+      "AwardMission",
+      "HomeFlag"
+    ]
+  },
+  "AwardMission": {
+    "enabled": true,
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "AwardMissionClick",
+      "[JumpBack]CloseButton"
+    ]
+  },
+  "AwardMissionClick": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          590,
+          570,
+          130,
+          75
+        ],
+        "expected": [
+          "ミッション"
+        ],
+        "replace": []
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {
+        "target_offset": [
+          50,
+          -50,
+          -50,
+          0
+        ]
+      }
+    },
+    "post_wait_freezes": 500,
+    "next": [
+      "AwardMissionChoose",
+      "BackHome"
+    ]
+  },
+  "AwardMissionChoose": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "mission_point.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "AwardMissionGet",
+      "[JumpBack]AwardMissionUp"
+    ]
+  },
+  "AwardMissionGet": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "gift_get.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 1000,
+    "next": [
+      "AwardMissionClose",
+      "AwardMissionChoose",
+      "BackHome"
+    ]
+  },
+  "AwardMissionClose": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "close.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500,
+    "focus": {
+      "Node.Action.Succeeded": "[color:LimeGreen]奖励已领取[/color]"
+    },
+    "next": [
+      "AwardMissionChoose",
+      "BackHome",
+      "[JumpBack]AwardMissionUp"
+    ]
+  },
+  "AwardMissionUp": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "close_icon.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    }
+  }
+}

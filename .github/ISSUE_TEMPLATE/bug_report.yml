@@ -1,0 +1,135 @@
+name: Gakumas Helper Bug 反馈
+description: 竞技场、识别、派生包或更新问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先阅读 [故障排查](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/TROUBLESHOOTING.md) 和 [隐私与安全](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/PRIVACY_AND_SAFETY.md)。GitHub Issue 和附件公开；不要上传完整配置、日志包、缓存或未打码截图。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索 Open/Closed Issues，未找到同一问题
+          required: true
+        - label: 我使用的是独立解压的 Gakumas Helper Release，不是手工覆盖后的混合目录
+          required: true
+        - label: 我没有提交账号、邮箱、Cookie、令牌、密钥、本机用户名路径或设备标识
+          required: true
+        - label: 我没有上传完整 config、appsettings.json、.local、日志包、缓存、原始截图/ROI 或私人训练样本
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: 派生版本与资产名
+      description: 例如 vX.Y.Z+gkh.YYMMDD / MaaGakumasu-win-x86_64-...zip
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 与游戏环境
+      description: Windows 版本；当前竞技场预览仅声明 DMM PC 已测范围
+      placeholder: Windows 11 24H2 / DMM PC
+    validations:
+      required: true
+  - type: input
+    id: resolution
+    attributes:
+      label: 实际游戏截图分辨率
+      placeholder: 720x1280
+    validations:
+      required: true
+  - type: dropdown
+    id: task
+    attributes:
+      label: 任务入口
+      options:
+        - 重算竞技场己方总分
+        - 竞技场胜率分析并挑战（单次）
+        - 每日挑战 → 胜率选敌
+        - 每日挑战 → 上游原有模式
+        - 安装 / 更新 / 回滚
+        - 其他派生功能
+    validations:
+      required: true
+  - type: textarea
+    id: parameters
+    attributes:
+      label: 关键配置
+      description: 只写竞技场期数、门槛、模拟次数、超时、自动重算和本地采集档位；不要上传配置文件
+      placeholder: 目录最新 / 70% / 2000 / 180 秒 / 自动重算关闭 / 采集关闭
+    validations:
+      required: true
+  - type: dropdown
+    id: elevated
+    attributes:
+      label: Maa 是否以管理员身份启动
+      options:
+        - 是
+        - 否
+        - 不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: challenge_state
+    attributes:
+      label: 失败发生阶段
+      options:
+        - 点击开始前，未消耗次数
+        - 点击开始后，已消耗或可能消耗次数
+        - 纯安装 / 更新阶段
+        - 不确定
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Maa 前台完整提示与错误码
+      description: 保留完整一句前台提示；不要粘贴含个人路径的整份日志
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤、期望结果与实际结果
+      description: 识别问题请写舞台、成员位置、卡槽或 P 道具槽，以及已知 ID（如有）
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: 复现频率
+      options:
+        - 每次
+        - 多数时候
+        - 偶发一次
+        - 尚未安全重试
+    validations:
+      required: true
+  - type: dropdown
+    id: upstream
+    attributes:
+      label: 未修改的上游 MaaGakumasu 是否能复现
+      options:
+        - 不能，仅派生版复现
+        - 能，上游也复现
+        - 这是派生版新增功能，上游不存在
+        - 尚未确认
+    validations:
+      required: true
+  - type: textarea
+    id: log_excerpt
+    attributes:
+      label: 可选的脱敏日志摘录
+      description: 只贴同一时段的最小摘录；删除账号、路径、设备信息和无关内容
+  - type: checkboxes
+    id: public_attachment
+    attributes:
+      label: 公开附件确认
+      options:
+        - label: 如附带任何图片或文件，我已逐项检查并同意其公开；没有附件可不勾选
+          required: false
