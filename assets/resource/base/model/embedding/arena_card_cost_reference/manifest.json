@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "component": "task410_arena_card_face_cost_reference",
+  "source": {
+    "repository": "https://github.com/surisuririsu/gakumas-tools",
+    "revision": "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6",
+    "license": "BSD-3-Clause",
+    "source_set_sha256": "620DFC2F503182F2138BBF7853CC60877EEF5388E1D78A7313F09F8817C74A1C"
+  },
+  "gallery": {
+    "path": "card_cost_reference.npz",
+    "sha256": "5DC6BB337A2379567FC49C85B1DBD0469F7499006F8AF8BE8004817152636DA5",
+    "generic_card_count": 53,
+    "template_count": 12,
+    "normalization_size": [
+      96,
+      96
+    ],
+    "roi": [
+      64,
+      62,
+      32,
+      34
+    ],
+    "carrier_shape": [
+      24,
+      24
+    ],
+    "symbol_shape": [
+      2,
+      24,
+      24
+    ]
+  },
+  "runtime": {
+    "maximum_mask_error": 0.11,
+    "minimum_class_margin": 0.01,
+    "maximum_medium_error": 0.15,
+    "minimum_medium_margin": 0.04,
+    "maximum_high_error": 0.2,
+    "maximum_cutout_error": 0.16,
+    "minimum_cutout_margin": 0.04,
+    "maximum_digit_error": 0.18,
+    "minimum_digit_margin": 0.05,
+    "maximum_zero_pixels": 3,
+    "rule_version": "task410-generic-cost-v6-robust-numeral-core"
+  }
+}

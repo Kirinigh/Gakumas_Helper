@@ -1,0 +1,22 @@
+{
+    "StartUpStartGame": {
+        "recognition": {
+            "type": "DirectHit",
+            "param": {}
+        },
+        "action": {
+            "type": "DoNothing"
+        },
+        "post_wait_freezes": 0
+    },
+    "Task100DmmResourceSentinel": {
+        "recognition": {
+            "type": "DirectHit",
+            "param": {}
+        },
+        "action": {
+            "type": "DoNothing",
+            "param": {}
+        }
+    }
+}

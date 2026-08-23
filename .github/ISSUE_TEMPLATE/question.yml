@@ -1,0 +1,42 @@
+name: Gakumas Helper 使用咨询
+description: 不确定是配置、上游还是派生功能问题
+title: "[Question] "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先查看 [指导中心](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/README.md)。不要在公开咨询中提交账号、完整配置、完整日志、缓存或未打码截图。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已阅读指导中心和故障排查
+          required: true
+        - label: 内容不含个人信息、凭据或私人附件
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: 当前使用版本
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: 问题
+      description: 请说明任务入口、期数/参数、管理员状态和你已尝试的步骤
+    validations:
+      required: true
+  - type: dropdown
+    id: upstream
+    attributes:
+      label: 是否只与派生版新增功能有关
+      options:
+        - 是
+        - 否，可能是上游问题
+        - 不确定
+    validations:
+      required: true

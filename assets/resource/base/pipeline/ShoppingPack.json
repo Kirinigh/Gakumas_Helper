@@ -1,0 +1,176 @@
+{
+  "ShoppingPack": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "ShoppingPackStart",
+      "ShoppingPackMenuClick",
+      "[JumpBack]CloseMenu",
+      "[JumpBack]BackHome",
+      "[JumpBack]CloseRoundButton"
+    ]
+  },
+  "ShoppingPackMenuClick": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          600,
+          1160,
+          120,
+          120
+        ],
+        "template": [
+          "menu.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ShoppingPackClick"
+    ]
+  },
+  "ShoppingPackClick": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "shopping.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500,
+    "next": [
+      "ShoppingPackStart"
+    ]
+  },
+  "ShoppingPackStart": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          0,
+          660,
+          720,
+          460
+        ],
+        "template": "shopping_pack.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500,
+    "next": [
+      "ShoppingPackBuyFreePack",
+      "ShoppingPackBuyFreePackSoldOut",
+      "[JumpBack]ShoppingPackSwipe"
+    ]
+  },
+  "ShoppingPackBuyFreePack": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "free_pack.png",
+        "method": 10001,
+        "threshold": 0.98,
+        "order_by": "Score"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 100,
+    "next": [
+      "ShoppingPackBuyFreePackConfirm"
+    ]
+  },
+  "ShoppingPackBuyFreePackSoldOut": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "free_pack_grayed_out.png",
+        "method": 10001,
+        "threshold": 0.98,
+        "order_by": "Score"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "BackHome"
+    ]
+  },
+  "ShoppingPackSwipe": {
+    "max_hit": 3,
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "Swipe",
+      "param": {
+        "begin": [
+          360,
+          1150
+        ],
+        "end": [
+          [
+            360,
+            730
+          ]
+        ],
+        "end_hold": 500,
+        "duration": 500
+      }
+    },
+    "post_wait_freezes": 100
+  },
+  "ShoppingPackBuyFreePackConfirm": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "decide.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 100,
+    "next": [
+      "ShoppingPackPurchased"
+    ]
+  },
+  "ShoppingPackPurchased": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "close.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "BackHome"
+    ]
+  }
+}

@@ -1,0 +1,227 @@
+{
+  "StartUp": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "StartUpStartGame"
+    ]
+  },
+  "StartUpStartGame": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "StartApp",
+      "param": {
+        "package": "com.bandainamcoent.idolmaster_gakuen"
+      }
+    },
+    "post_wait_freezes": 500,
+    "next": [
+      "StartUpTestScreen"
+    ],
+    "on_error": [
+      "StartUpError"
+    ]
+  },
+  "StartUpTestScreen": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "StartUpHomeFlag",
+      "[JumpBack]StartUpDownload",
+      "[JumpBack]StartUpLoginBonus",
+      "[JumpBack]StartUpGetFriendPoints",
+      "[JumpBack]StartUpCloseRoundButton",
+      "[JumpBack]StartUpScreenRotation",
+      "[JumpBack]ClickCenter"
+    ]
+  },
+  "StartUpHomeFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "home.png",
+          "home_1.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "UseCounter",
+        "custom_action_param": {
+          "name": "StartUp",
+          "max": 5,
+          "text": "主界面"
+        }
+      }
+    },
+    "next": [
+      "StartUpTestScreen"
+    ],
+    "on_error": [
+      "StartUpStopTest"
+    ]
+  },
+  "StartUpStopTest": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.Action.Succeeded": "[color:LimeGreen]游戏启动成功[/color]"
+    }
+  },
+  "StartUpDownload": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "decide.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "focus": {
+      "Node.Action.Succeeded": "[color:DeepSkyBlue]开始下载更新[/color]"
+    },
+    "next": [
+      "StartUpInitCounter"
+    ]
+  },
+  "StartUpLoginBonus": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "expected": [
+          "LOGIN",
+          "BONUS"
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "StartUpInitCounter"
+    ]
+  },
+  "StartUpGetFriendPoints": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "friend_points.png"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.Action.Succeeded": "[color:DeepSkyBlue]好友点数获取成功[/color]"
+    },
+    "next": [
+      "StartUpCloseButton"
+    ]
+  },
+  "StartUpCloseButton": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "close.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "StartUpInitCounter"
+    ]
+  },
+  "StartUpCloseRoundButton": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "close_icon.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "StartUpInitCounter"
+    ]
+  },
+  "StartUpInitCounter": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "InitCounter",
+        "custom_action_param": {
+          "name": "StartUp",
+          "max": 5,
+          "text": "主界面"
+        }
+      }
+    }
+  },
+  "StartUpScreenRotation": {
+    "recognition": {
+      "type": "Custom",
+      "param": {
+        "custom_recognition": "ScreenRotateCheck"
+      }
+    },
+    "action": {
+      "type": "StartApp",
+      "param": {
+        "package": "com.bandainamcoent.idolmaster_gakuen"
+      }
+    },
+    "post_wait_freezes": 500,
+    "post_delay": 3000,
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:OrangeRed]游戏启动失败，尝试重新启动[/color]"
+    }
+  },
+  "StartUpError": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.Action.Starting": "[color:OrangeRed]启动游戏失败，请检查是否正确选择游戏资源[/color]"
+    }
+  }
+}

@@ -1,0 +1,321 @@
+{
+  "Society": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "SocietyMenuClick",
+      "[JumpBack]CloseMenu",
+      "[JumpBack]BackHome",
+      "[JumpBack]CloseRoundButton"
+    ]
+  },
+  "SocietyMenuClick": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "menu.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "SocietyClick"
+    ]
+  },
+  "SocietyClick": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "society.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500,
+    "next": [
+      "SocietyDonation",
+      "SocietyRequest",
+      "BackHome",
+      "[JumpBack]CloseButton"
+    ]
+  },
+  "SocietyDonation": {
+    "enabled": true,
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "SocietyDonationCommit",
+      "SocietyCommitAlready",
+      "[JumpBack]CloseButton"
+    ]
+  },
+  "SocietyDonationCommit": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          26,
+          750,
+          666,
+          250
+        ],
+        "template": "society_commit.png",
+        "method": 10001,
+        "threshold": 0.95
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": {
+      "time": 500,
+      "target": [
+        0,
+        580,
+        720,
+        160
+      ]
+    },
+    "next": [
+      "SocietyDonationNext",
+      "[JumpBack]SocietyDonationConfirm",
+      "[JumpBack]CloseButton"
+    ]
+  },
+  "SocietyDonationConfirm": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "decide.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500
+  },
+  "SocietyDonationNext": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "society_next.png"
+      }
+    },
+    "action": {
+      "type": "Swipe",
+      "param": {
+        "begin": [
+          490,
+          855,
+          1,
+          1
+        ],
+        "end": [
+          182,
+          855,
+          1,
+          1
+        ]
+      }
+    },
+    "post_wait_freezes": {
+      "time": 200,
+      "target": [
+        0,
+        580,
+        720,
+        160
+      ]
+    },
+    "next": [
+      "SocietyDonationNextCount"
+    ]
+  },
+  "SocietyDonationNextCount": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "UseCounter",
+        "custom_action_param": {
+          "name": "Society",
+          "max": 6,
+          "text": "社团活动"
+        }
+      }
+    },
+    "next": [
+      "SocietyDonationCommit",
+      "SocietyCommitAlready"
+    ],
+    "on_error": [
+      "SocietyRequest",
+      "BackHome"
+    ]
+  },
+  "SocietyCommitAlready": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          26,
+          750,
+          666,
+          250
+        ],
+        "template": "society_commit_already.png",
+        "method": 10001,
+        "threshold": 0.95
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:DeepSkyBlue]社团捐赠物品已完成[/color]"
+    },
+    "next": [
+      "SocietyRequest",
+      "BackHome"
+    ]
+  },
+  "SocietyRequest": {
+    "enabled": true,
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "SocietyRequestItem",
+      "SocietyRequestsAlready"
+    ]
+  },
+  "SocietyRequestItem": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "society_requests.png",
+        "threshold": 0.95
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500,
+    "next": [
+      "SocietyRequestChoose",
+      "SocietyRequestGet"
+    ]
+  },
+  "SocietyRequestChoose": {
+    "recognition": {
+      "type": "Custom",
+      "param": {
+        "custom_recognition": "SocietyRequestAuto"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "SocietyRequestConfirm"
+    ]
+  },
+  "SocietyRequestConfirm": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "decide.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "focus": {
+      "Node.Action.Succeeded": "[color:DeepSkyBlue]已请求物品[/color]"
+    },
+    "next": [
+      "SocietyRequestConfirm",
+      "BackHome"
+    ]
+  },
+  "SocietyRequestsAlready": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "society_requests_already.png",
+        "threshold": 0.95
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "SocietyRequestGet",
+      "SocietyRequestClose"
+    ]
+  },
+  "SocietyRequestGet": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "society_requests_get.png"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "SocietyRequestClose"
+    ]
+  },
+  "SocietyRequestClose": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "close.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "BackHome"
+    ]
+  }
+}

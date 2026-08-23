@@ -1,0 +1,39 @@
+# Card-selection preset schema v1
+#
+# This conservative baseline intentionally ranks only basic, low-complexity cards
+# from gakumas-tools@3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6. An unlisted card
+# causes a pre-click STOP. The file is editable and version controlled; model
+# confidence thresholds remain in the pinned model manifest and are currently
+# null until D-103 is calibrated on an authorised frozen DMM set.
+schema_version: 1
+source:
+  repository: https://github.com/surisuririsu/gakumas-tools
+  commit: 3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6
+  card_table: packages/gakumas-data/csv/skill_cards.csv
+
+presets:
+  conservative-basic-v1:
+    description: Basic-card-only safe baseline; unknown or unranked candidates stop.
+    unranked: STOP
+    tie_break_min_confidence_gap: 0.05
+    baseline:
+      # Free-plan basics: mental protection before generic score.
+      free: [13, 3, 1]
+      # Sense: low-cost protection/setup before direct score basics.
+      sense: [670, 664, 668, 666, 642, 646, 644, 648, 15, 17, 5, 7]
+      # Logic: impression/motivation setup before score conversion.
+      logic: [674, 672, 678, 676, 680, 650, 654, 652, 19, 21, 9, 11]
+      # Anomaly: preservation/full-power setup before stance/direct score.
+      anomaly: [684, 686, 688, 682, 660, 662, 656, 658, 374, 376, 372, 370, 368]
+    overrides:
+      # Demonstrates stage/deck context without trusting the game recommendation.
+      # The override remains inert for production while the model threshold is null.
+      - id: nia-anomaly-early-with-stance-basic
+        priority: 100
+        when:
+          scene: NIA
+          plan: anomaly
+          p_idol: "*"
+          stage: early
+          deck_contains_all: [368]
+        order: [684, 686, 688, 374, 660, 662, 656, 658, 682, 376, 372, 370, 368]

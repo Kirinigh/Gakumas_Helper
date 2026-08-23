@@ -1,0 +1,2820 @@
+{
+  "task": [
+    {
+      "name": "开始培育-zh_CN",
+      "entry": "Produce",
+      "option": [
+        "培育难度",
+        "培育偶像-zh_CN",
+        "培育次数",
+        "使用体力药",
+        "使用道具",
+        "跳过选择偶像",
+        "启用自动支援卡",
+        "启用自动回忆",
+        "启用关注租借",
+        "启用培育失败重试",
+        "跳过准备阶段",
+        "智能选卡",
+        "Live 决策",
+        "跟随老师的建议",
+        "本地画面采集"
+      ],
+      "resource": [
+        "插件版汉化",
+        "DMM插件汉化版"
+      ],
+      "default_check": true,
+      "doc": "$培育说明",
+      "label": "$开始培育"
+    }
+  ],
+  "option": {
+    "培育偶像-zh_CN": {
+      "type": "select",
+      "default_case": "紫云清夏",
+      "cases": [
+        {
+          "name": "花海咲季",
+          "option": [
+            "花海咲季卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "月村手毬",
+          "option": [
+            "月村手毬卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "藤田琴音",
+          "option": [
+            "藤田琴音卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "有村麻央",
+          "option": [
+            "有村麻央卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "葛城莉莉娅",
+          "option": [
+            "葛城莉莉娅卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "仓本千奈",
+          "option": [
+            "仓本千奈卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "紫云清夏",
+          "option": [
+            "紫云清夏卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "筱泽广",
+          "option": [
+            "筱泽广卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "姬崎莉波",
+          "option": [
+            "姬崎莉波卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "花海佑芽",
+          "option": [
+            "花海佑芽卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "秦谷美铃",
+          "option": [
+            "秦谷美铃卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "十王星南",
+          "option": [
+            "十王星南卡片-zh_CN"
+          ]
+        },
+        {
+          "name": "雨夜燕",
+          "option": [
+            "雨夜燕卡片-zh_CN"
+          ]
+        }
+      ],
+      "label": "$培育偶像"
+    },
+    "雨夜燕卡片-zh_CN": {
+      "type": "select",
+      "default_case": "雨夜燕(互噬)",
+      "cases": [
+        {
+          "name": "雨夜燕(互噬)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "雨夜燕",
+                "song_name": "互噬"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "雨夜燕(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "雨夜燕",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "雨夜燕(用理论武装)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "雨夜燕",
+                "song_name": "用理论武装"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "雨夜燕(贯彻初志)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "雨夜燕",
+                "song_name": "贯彻初志"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "雨夜燕(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "雨夜燕",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$雨夜燕卡片"
+    },
+    "藤田琴音卡片-zh_CN": {
+      "type": "select",
+      "default_case": "藤田琴音(GO MY WAY!!)",
+      "cases": [
+        {
+          "name": "藤田琴音(GO MY WAY!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "GO MY WAY!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(全力以赴！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "全力以赴！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(自我肯定感爆棚↑↑超爱琴音之歌)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "自我肯定感爆棚↑↑超爱琴音之歌"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(雨后的鸢尾花)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "雨后的鸢尾花"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(White Night! White Wish!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "White Night! White Wish!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(冠菊)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "冠菊"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(初声)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "初声"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(Yellow Big Bang！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "Yellow Big Bang！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(世界第一可爱的我)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "世界第一可爱的我"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(可爱♡开始啦)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "可爱♡开始啦"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "藤田琴音",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$藤田ことね卡片"
+    },
+    "葛城莉莉娅卡片-zh_CN": {
+      "type": "select",
+      "default_case": "葛城莉莉娅(荆棘之路)",
+      "cases": [
+        {
+          "name": "葛城莉莉娅(荆棘之路)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "荆棘之路"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(ときめきエモーション)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "ときめきエモーション"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(Atmosphere)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "Atmosphere"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(Howling over the World)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "Howling over the World"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(樱花相册)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "樱花相册"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(极光)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "极光"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(White Night! White Wish!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "White Night! White Wish!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(初心)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "初心"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(冠菊)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "冠菊"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(白线)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "白线"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(迈出第一步的前方)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "迈出第一步的前方"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉娅(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "葛城莉莉娅",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$葛城リーリヤ卡片"
+    },
+    "花海咲季卡片-zh_CN": {
+      "type": "select",
+      "default_case": "花海咲季(荆棘之路)",
+      "cases": [
+        {
+          "name": "花海咲季(荆棘之路)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "荆棘之路"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(GO MY WAY!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "GO MY WAY!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(Wildest Flower)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "Wildest Flower"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(全力以赴！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "全力以赴！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(雨后的鸢尾花)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "雨后的鸢尾花"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(樱花相册)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "樱花相册"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(何时何地简简单单)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "何时何地简简单单"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(初声)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "初声"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(冠菊)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "冠菊"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(Boom Boom Pow)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "Boom Boom Pow"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(Fighting My Way)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "Fighting My Way"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(我是第一名！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "我是第一名！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海咲季(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海咲季",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$花海咲季卡片"
+    },
+    "花海佑芽卡片-zh_CN": {
+      "type": "select",
+      "default_case": "花海佑芽(GO MY WAY!!)",
+      "cases": [
+        {
+          "name": "花海佑芽(GO MY WAY!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "GO MY WAY!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(纯白画页与水彩绘就的主角)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "纯白画页与水彩绘就的主角"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(ENDLESS DANCE)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "ENDLESS DANCE"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(GUSUPI)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "GUSUPI"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(Star-mine)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "Star-mine"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(初阵)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "初阵"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(White Night! White Wish!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "White Night! White Wish!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(The Rolling Riceball)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "The Rolling Riceball"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(偶像，开始！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "偶像，开始！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "花海佑芽",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vo"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$花海佑芽卡片"
+    },
+    "紫云清夏卡片-zh_CN": {
+      "type": "select",
+      "default_case": "紫云清夏(ときめきエモーション)",
+      "cases": [
+        {
+          "name": "紫云清夏(ときめきエモーション)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "ときめきエモーション"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(奇迹正是现在(ﾟ∀ﾟ)！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "奇迹正是现在(ﾟ∀ﾟ)！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(Love & Joy)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "Love & Joy"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(樱花相册)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "樱花相册"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(隐藏的我)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "隐藏的我"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(初恋)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "初恋"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(与你共度的湛蓝夏日)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "与你共度的湛蓝夏日"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(Tame-Lie-One-Step)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "Tame-Lie-One-Step"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(为了梦想的再出发)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "为了梦想的再出发"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "紫云清夏",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$紫雲清夏卡片"
+    },
+    "筱泽广卡片-zh_CN": {
+      "type": "select",
+      "default_case": "筱泽广(荆棘之路)",
+      "cases": [
+        {
+          "name": "筱泽广(荆棘之路)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "荆棘之路"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(未知万千 广阔无限)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "未知万千 广阔无限"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(奇迹正是现在(ﾟ∀ﾟ)！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "奇迹正是现在(ﾟ∀ﾟ)！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(褪色)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "褪色"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(幸福千层酥)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "幸福千层酥"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(初恋)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "初恋"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(变装狂想曲)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "变装狂想曲"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(反差)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "反差"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(光景)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "光景"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(最不适合的事)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "最不适合的事"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "筱泽广(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "筱泽广",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$篠澤広卡片"
+    },
+    "有村麻央卡片-zh_CN": {
+      "type": "select",
+      "default_case": "有村麻央(SUGAR FLAVOR)",
+      "cases": [
+        {
+          "name": "有村麻央(SUGAR FLAVOR)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "SUGAR FLAVOR"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(看着我)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "看着我"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(奇迹正是现在(ﾟ∀ﾟ)！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "奇迹正是现在(ﾟ∀ﾟ)！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(雪融之时)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "雪融之时"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(初恋)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "初恋"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(Feel Jewel Dream)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "Feel Jewel Dream"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(与你共度的湛蓝夏日)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "与你共度的湛蓝夏日"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(Fluorite)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "Fluorite"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(慢慢地，一步一步来)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "慢慢地，一步一步来"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "有村麻央",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$有村麻央卡片"
+    },
+    "月村手毬卡片-zh_CN": {
+      "type": "select",
+      "default_case": "月村手毬(荆棘之路)",
+      "cases": [
+        {
+          "name": "月村手毬(荆棘之路)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "荆棘之路"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(究竟从何时起)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "究竟从何时起"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(全力以赴！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "全力以赴！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(雨后的鸢尾花)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "雨后的鸢尾花"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(雪融之时)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "雪融之时"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(变装狂想曲)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "变装狂想曲"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(初声)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "初声"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(常春藤)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "常春藤"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(Luna say maybe)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "Luna say maybe"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(一匹狼)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "一匹狼"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "月村手毬",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vo",
+                "second": "Da"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$月村手毬卡片"
+    },
+    "姬崎莉波卡片-zh_CN": {
+      "type": "select",
+      "default_case": "姬崎莉波(SUGAR FLAVOR)",
+      "cases": [
+        {
+          "name": "姬崎莉波(SUGAR FLAVOR)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "SUGAR FLAVOR"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(荆棘之路)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "荆棘之路"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(36℃ U･B･U)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "36℃ U･B･U"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(Howling over the World)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "Howling over the World"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(幸福千层酥)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "幸福千层酥"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(L.U.V)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "L.U.V"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(欢迎来到初星温泉)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "欢迎来到初星温泉"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(初心)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "初心"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(与你共度的湛蓝夏日)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "与你共度的湛蓝夏日"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(clumsy trick)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "clumsy trick"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(『自我』的开始)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "『自我』的开始"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "姬崎莉波",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Vi",
+                "second": "Da"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$姫崎莉波卡片"
+    },
+    "十王星南卡片-zh_CN": {
+      "type": "select",
+      "default_case": "十王星南(ENDLESS DANCE)",
+      "cases": [
+        {
+          "name": "十王星南(ENDLESS DANCE)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "ENDLESS DANCE"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南(赤裸裸)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "赤裸裸"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南(Star-mine)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "Star-mine"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南(初阵)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "初阵"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南(Our Chant)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "Our Chant"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南(幸福千层酥)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "幸福千层酥"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南(小小的野心)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "小小的野心"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南(一番星)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "一番星"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·全力",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "十王星南",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vi",
+                "second": "Vo"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$十王星南卡片"
+    },
+    "仓本千奈卡片-zh_CN": {
+      "type": "select",
+      "default_case": "仓本千奈(未知万千 广阔无限)",
+      "cases": [
+        {
+          "name": "仓本千奈(未知万千 广阔无限)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "未知万千 广阔无限"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(向天空约定)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "向天空约定"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(Howling over the World)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "Howling over the World"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(雪融之时)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "雪融之时"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(变装狂想曲)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "变装狂想曲"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(欢迎来到初星温泉)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "欢迎来到初星温泉"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·集中",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(初心)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "初心"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(每天、都有新发现！)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "每天、都有新发现！"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(Wonder Scale)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "Wonder Scale"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(挺起胸膛一步步前进)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "挺起胸膛一步步前进"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "仓本千奈",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Da",
+                "second": "Vi"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$倉本千奈卡片"
+    },
+    "秦谷美铃卡片-zh_CN": {
+      "type": "select",
+      "default_case": "秦谷美铃(VEIL)",
+      "cases": [
+        {
+          "name": "秦谷美铃(VEIL)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "秦谷美铃",
+                "song_name": "VEIL"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·强气",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃(ENDLESS DANCE)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "秦谷美铃",
+                "song_name": "ENDLESS DANCE"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃(Superlative)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "秦谷美铃",
+                "song_name": "Superlative"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·好印象",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃(Star-mine)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "秦谷美铃",
+                "song_name": "Star-mine"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "感性·好调",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃(初阵)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "秦谷美铃",
+                "song_name": "初阵"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃(Campus mode!!)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "秦谷美铃",
+                "song_name": "Campus mode!!"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "理性·干劲",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃(月之龟)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "秦谷美铃",
+                "song_name": "月之龟"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·温存",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃(慢慢来，一步一个脚印)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "秦谷美铃",
+                "song_name": "慢慢来，一步一个脚印"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·温存",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃(学园生活)",
+          "pipeline_override": {
+            "ProduceChooseIdol": {
+              "custom_recognition_param": {
+                "idol_name": "秦谷美铃",
+                "song_name": "学园生活"
+              }
+            },
+            "ProduceChooseNIAEventFlag": {
+              "custom_action_param": {
+                "effect": "非凡·温存",
+                "first": "Vo",
+                "second": "Vi"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$秦谷美鈴卡片"
+    }
+  }
+}
