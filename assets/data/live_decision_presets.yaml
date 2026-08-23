@@ -1,0 +1,12 @@
+schema_version: 1
+presets:
+  conservative-basic-v1:
+    description: Deterministic offline baseline; runtime thresholds remain separately gated.
+    weights:
+      score_gain: 1.0
+      stamina_recovery: 0.8
+      status_gain: 0.6
+      multiplier_synergy: 0.5
+      draw_value: 0.3
+      risk: -1.2
+      stamina_cost: 0.35

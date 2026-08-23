@@ -1,0 +1,1728 @@
+{
+  "interface_version": 2,
+  "name": "MaaGakumasu",
+  "version": "v1.4.8+gkh.260823",
+  "mirrorchyan_rid": "MaaGakumasu",
+  "mirrorchyan_multiplatform": true,
+  "github": "https://github.com/Kirinigh/Gakumas_Helper",
+  "contact": "QQ群: 799823681",
+  "icon": "./logo.ico",
+  "license": "./LICENSE",
+  "welcome": "欢迎使用基于全新架构的 学園アイドルマスター(学マス) 小助手。图像技术 + 模拟控制 + 深度学习，解放双手！由 MaaFramework 强力驱动！",
+  "description": "学園アイドルマスター（学マス）小助手 | Assistant For Gakuen Idolmaster",
+  "languages": {
+    "zh-CN": "lang/zh-CN.json",
+    "zh-Hant": "lang/zh-Hant.json"
+  },
+  "controller": [
+    {
+      "name": "模拟器",
+      "type": "Adb"
+    },
+    {
+      "name": "PC",
+      "label": "PC",
+      "type": "Win32",
+      "win32": {
+        "class_regex": "UnityWndClass",
+        "window_regex": "gakumas",
+        "screencap": "PrintWindow",
+        "mouse": "SendMessageWithCursorPos",
+        "keyboard": "SendMessageWithCursorPos"
+      },
+      "permission_required": true
+    },
+    {
+      "name": "PlayCover",
+      "type": "PlayCover"
+    }
+  ],
+  "resource": [
+    {
+      "name": "官服",
+      "path": [
+        "./resource/base"
+      ],
+      "controller": [
+        "模拟器",
+        "PlayCover"
+      ]
+    },
+    {
+      "name": "插件版汉化",
+      "path": [
+        "./resource/base",
+        "./resource/zh_CN"
+      ],
+      "controller": [
+        "模拟器",
+        "PlayCover"
+      ]
+    },
+    {
+      "name": "DMM",
+      "path": [
+        "./resource/base",
+        "./resource/DMM"
+      ],
+      "controller": [
+        "PC"
+      ]
+    },
+    {
+      "name": "DMM插件汉化版",
+      "path": [
+        "./resource/base",
+        "./resource/zh_CN",
+        "./resource/DMM"
+      ],
+      "controller": [
+        "PC"
+      ]
+    }
+  ],
+  "agent": {
+    "child_exec": "python",
+    "child_args": [
+      "-u",
+      "./../agent/main.py"
+    ]
+  },
+  "import": [
+    "./tasks/preset.json",
+    "./tasks/shopping.json",
+    "./tasks/produce.json",
+    "./tasks/produce_cn.json",
+    "./tasks/Shutdown.json"
+  ],
+  "task": [
+    {
+      "name": "启动游戏",
+      "entry": "StartUp",
+      "default_check": true,
+      "label": "$启动游戏"
+    },
+    {
+      "name": "收取活动费",
+      "entry": "ActivityFee",
+      "default_check": true,
+      "label": "$收取活动费"
+    },
+    {
+      "name": "安排工作",
+      "entry": "Work",
+      "option": [
+        "迷你演唱会Idol",
+        "迷你演唱会工作时长",
+        "直播活动Idol",
+        "直播活动工作时长"
+      ],
+      "default_check": true,
+      "doc": "$安排工作说明",
+      "label": "$安排工作"
+    },
+    {
+      "name": "社团活动",
+      "entry": "Society",
+      "option": [
+        "启用捐赠物品",
+        "启用请求物品",
+        "请求物品种类"
+      ],
+      "default_check": true,
+      "doc": "$社团活动说明",
+      "label": "$社团活动"
+    },
+    {
+      "name": "每日挑战",
+      "entry": "Challenge",
+      "option": [
+        "挑战模式",
+        "每日挑战本地画面采集"
+      ],
+      "default_check": true,
+      "doc": "$每日挑战说明",
+      "label": "$每日挑战"
+    },
+    {
+      "name": "arena_win_rate_manual_challenge",
+      "entry": "Challenge",
+      "option": [
+        "竞技场期数",
+        "竞技场胜率参数",
+        "每日挑战本地画面采集"
+      ],
+      "default_check": false,
+      "doc": "$竞技场胜率独立挑战说明",
+      "label": "$竞技场胜率独立挑战"
+    },
+    {
+      "name": "arena_recalculate_own_score",
+      "entry": "Challenge",
+      "option": [
+        "竞技场期数",
+        "arena_recalculate_own_score_parameters"
+      ],
+      "default_check": false,
+      "description": ".local/arena-win-rate/own-score-cache-summary.md",
+      "label": "重算竞技场己方总分"
+    },
+    {
+      "name": "每周免费初星包",
+      "entry": "ShoppingPack",
+      "default_check": true,
+      "doc": "",
+      "label": "$每周免费初星包"
+    },
+    {
+      "name": "领取奖励",
+      "entry": "Award",
+      "option": [
+        "启用领取礼物",
+        "启用领取任务"
+      ],
+      "default_check": true,
+      "doc": "",
+      "label": "$领取奖励"
+    },
+    {
+      "name": "支援卡识别",
+      "entry": "SupportCards",
+      "option": [],
+      "default_check": true,
+      "doc": "$支援卡识别说明",
+      "resource": [
+        "插件版汉化",
+        "DMM插件汉化版"
+      ],
+      "label": "$支援卡识别"
+    },
+    {
+      "name": "偶像之路",
+      "entry": "IdolRoad",
+      "option": [
+        "偶像之路自动回忆",
+        "偶像之路失败重试次数"
+      ],
+      "default_check": true,
+      "doc": "$偶像之路说明",
+      "label": "$偶像之路"
+    }
+  ],
+  "option": {
+    "竞技场期数": {
+      "type": "select",
+      "label": "$竞技场赛季",
+      "description": "$竞技场期数选择说明",
+      "default_case": "latest",
+      "cases": [
+        {
+          "name": "latest",
+          "label": "$竞技场目录最新",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": "latest"
+              }
+            }
+          }
+        },
+        {
+          "name": "season-1",
+          "label": "第 1 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 1
+              }
+            }
+          }
+        },
+        {
+          "name": "season-2",
+          "label": "第 2 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 2
+              }
+            }
+          }
+        },
+        {
+          "name": "season-3",
+          "label": "第 3 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 3
+              }
+            }
+          }
+        },
+        {
+          "name": "season-4",
+          "label": "第 4 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 4
+              }
+            }
+          }
+        },
+        {
+          "name": "season-5",
+          "label": "第 5 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 5
+              }
+            }
+          }
+        },
+        {
+          "name": "season-6",
+          "label": "第 6 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 6
+              }
+            }
+          }
+        },
+        {
+          "name": "season-7",
+          "label": "第 7 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 7
+              }
+            }
+          }
+        },
+        {
+          "name": "season-8",
+          "label": "第 8 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 8
+              }
+            }
+          }
+        },
+        {
+          "name": "season-9",
+          "label": "第 9 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 9
+              }
+            }
+          }
+        },
+        {
+          "name": "season-10",
+          "label": "第 10 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 10
+              }
+            }
+          }
+        },
+        {
+          "name": "season-11",
+          "label": "第 11 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 11
+              }
+            }
+          }
+        },
+        {
+          "name": "season-12",
+          "label": "第 12 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 12
+              }
+            }
+          }
+        },
+        {
+          "name": "season-13",
+          "label": "第 13 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 13
+              }
+            }
+          }
+        },
+        {
+          "name": "season-14",
+          "label": "第 14 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 14
+              }
+            }
+          }
+        },
+        {
+          "name": "season-15",
+          "label": "第 15 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 15
+              }
+            }
+          }
+        },
+        {
+          "name": "season-16",
+          "label": "第 16 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 16
+              }
+            }
+          }
+        },
+        {
+          "name": "season-17",
+          "label": "第 17 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 17
+              }
+            }
+          }
+        },
+        {
+          "name": "season-18",
+          "label": "第 18 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 18
+              }
+            }
+          }
+        },
+        {
+          "name": "season-19",
+          "label": "第 19 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 19
+              }
+            }
+          }
+        },
+        {
+          "name": "season-20",
+          "label": "第 20 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 20
+              }
+            }
+          }
+        },
+        {
+          "name": "season-21",
+          "label": "第 21 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 21
+              }
+            }
+          }
+        },
+        {
+          "name": "season-22",
+          "label": "第 22 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 22
+              }
+            }
+          }
+        },
+        {
+          "name": "season-23",
+          "label": "第 23 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 23
+              }
+            }
+          }
+        },
+        {
+          "name": "season-24",
+          "label": "第 24 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 24
+              }
+            }
+          }
+        },
+        {
+          "name": "season-25",
+          "label": "第 25 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 25
+              }
+            }
+          }
+        },
+        {
+          "name": "season-26",
+          "label": "第 26 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 26
+              }
+            }
+          }
+        },
+        {
+          "name": "season-27",
+          "label": "第 27 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 27
+              }
+            }
+          }
+        },
+        {
+          "name": "season-28",
+          "label": "第 28 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 28
+              }
+            }
+          }
+        },
+        {
+          "name": "season-29",
+          "label": "第 29 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 29
+              }
+            }
+          }
+        },
+        {
+          "name": "season-30",
+          "label": "第 30 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 30
+              }
+            }
+          }
+        },
+        {
+          "name": "season-31",
+          "label": "第 31 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 31
+              }
+            }
+          }
+        },
+        {
+          "name": "season-32",
+          "label": "第 32 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 32
+              }
+            }
+          }
+        },
+        {
+          "name": "season-33",
+          "label": "第 33 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 33
+              }
+            }
+          }
+        },
+        {
+          "name": "season-34",
+          "label": "第 34 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 34
+              }
+            }
+          }
+        },
+        {
+          "name": "season-35",
+          "label": "第 35 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 35
+              }
+            }
+          }
+        },
+        {
+          "name": "season-36",
+          "label": "第 36 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 36
+              }
+            }
+          }
+        },
+        {
+          "name": "season-37",
+          "label": "第 37 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 37
+              }
+            }
+          }
+        },
+        {
+          "name": "season-38",
+          "label": "第 38 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 38
+              }
+            }
+          }
+        },
+        {
+          "name": "season-39",
+          "label": "第 39 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 39
+              }
+            }
+          }
+        },
+        {
+          "name": "season-40",
+          "label": "第 40 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 40
+              }
+            }
+          }
+        },
+        {
+          "name": "season-41",
+          "label": "第 41 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 41
+              }
+            }
+          }
+        },
+        {
+          "name": "season-42",
+          "label": "第 42 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 42
+              }
+            }
+          }
+        },
+        {
+          "name": "season-43",
+          "label": "第 43 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 43
+              }
+            }
+          }
+        },
+        {
+          "name": "season-44",
+          "label": "第 44 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 44
+              }
+            }
+          }
+        },
+        {
+          "name": "season-45",
+          "label": "第 45 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 45
+              }
+            }
+          }
+        },
+        {
+          "name": "season-46",
+          "label": "第 46 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 46
+              }
+            }
+          }
+        },
+        {
+          "name": "season-47",
+          "label": "第 47 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 47
+              }
+            }
+          }
+        },
+        {
+          "name": "season-48",
+          "label": "第 48 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 48
+              }
+            }
+          }
+        },
+        {
+          "name": "season-49",
+          "label": "第 49 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 49
+              }
+            }
+          }
+        },
+        {
+          "name": "season-50",
+          "label": "第 50 期",
+          "description": "$竞技场预览期说明",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 50
+              }
+            }
+          }
+        }
+      ]
+    },
+    "arena_recalculate_own_score_parameters": {
+      "type": "input",
+      "label": "己方总分重算参数",
+      "description": "每日挑战默认复用己方缓存；首次使用、期数或编成变化后可手动运行本任务，也可在每日挑战的胜率模式中临时启用自动重算。任务说明会显示当前缓存摘要。",
+      "inputs": [
+        {
+          "name": "arena_own_score_simulations",
+          "label": "模拟次数",
+          "default": "2000",
+          "pipeline_type": "int",
+          "verify": "^[1-9]\\d{3,}$"
+        },
+        {
+          "name": "arena_own_score_timeout_seconds",
+          "label": "模拟超时（秒）",
+          "default": "180",
+          "pipeline_type": "int",
+          "verify": "^[1-9]\\d*$"
+        }
+      ],
+      "pipeline_override": {
+        "ChallengeChoose": {
+          "on_error": [
+            "ChallengeWinRateStop"
+          ],
+          "custom_action_param": {
+            "mode": "win_rate_recalculate_own",
+            "threshold_percent": 70,
+            "simulations": "{arena_own_score_simulations}",
+            "timeout_seconds": "{arena_own_score_timeout_seconds}"
+          }
+        }
+      }
+    },
+    "每日挑战本地画面采集": {
+      "type": "select",
+      "default_case": "关闭",
+      "description": "$本地画面采集说明",
+      "cases": [
+        {
+          "name": "关闭",
+          "label": "$关闭",
+          "pipeline_override": {
+            "LocalDataConfigureChallenge": {
+              "custom_action_param": {
+                "capture_mode": "off",
+                "root": ".local/runtime-data"
+              }
+            }
+          }
+        },
+        {
+          "name": "仅失败现场",
+          "label": "$仅失败现场",
+          "pipeline_override": {
+            "LocalDataConfigureChallenge": {
+              "custom_action_param": {
+                "capture_mode": "failure",
+                "root": ".local/runtime-data"
+              }
+            }
+          }
+        },
+        {
+          "name": "ROI与失败现场",
+          "label": "$ROI与失败现场",
+          "pipeline_override": {
+            "LocalDataConfigureChallenge": {
+              "custom_action_param": {
+                "capture_mode": "roi",
+                "root": ".local/runtime-data"
+              }
+            }
+          }
+        },
+        {
+          "name": "截图ROI与失败现场",
+          "label": "$截图ROI与失败现场",
+          "pipeline_override": {
+            "LocalDataConfigureChallenge": {
+              "custom_action_param": {
+                "capture_mode": "screenshot",
+                "root": ".local/runtime-data"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$本地画面采集"
+    },
+    "挑战模式": {
+      "type": "select",
+      "default_case": "胜率选敌",
+      "cases": [
+        {
+          "name": "胜率选敌",
+          "label": "$胜率选敌",
+          "description": "$胜率选敌说明",
+          "option": [
+            "竞技场期数",
+            "竞技场胜率参数",
+            "每日挑战自动重算己方数据"
+          ],
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "on_error": [
+                "ChallengeWinRateStop"
+              ],
+              "custom_action_param": {
+                "mode": "win_rate"
+              }
+            }
+          }
+        },
+        {
+          "name": "自动",
+          "label": "$自动",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "mode": "auto"
+              }
+            }
+          }
+        },
+        {
+          "name": "最大值",
+          "label": "$最大值",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "mode": "max"
+              }
+            }
+          }
+        },
+        {
+          "name": "最小值",
+          "label": "$最小值",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "mode": "min"
+              }
+            }
+          }
+        },
+        {
+          "name": "随机",
+          "label": "$随机",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "mode": "random"
+              }
+            }
+          }
+        },
+        {
+          "name": "固定第一位",
+          "label": "$固定第一位",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "mode": "fixed",
+                "index": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "固定第二位",
+          "label": "$固定第二位",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "mode": "fixed",
+                "index": 1
+              }
+            }
+          }
+        },
+        {
+          "name": "固定第三位",
+          "label": "$固定第三位",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "mode": "fixed",
+                "index": 2
+              }
+            }
+          }
+        }
+      ],
+      "label": "$挑战模式"
+    },
+    "每日挑战自动重算己方数据": {
+      "type": "switch",
+      "default_case": "No",
+      "description": "$每日挑战自动重算己方数据说明",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "auto_recalculate_own": true
+              }
+            }
+          }
+        },
+        {
+          "name": "No",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "auto_recalculate_own": false
+              }
+            }
+          }
+        }
+      ],
+      "label": "$每日挑战自动重算己方数据"
+    },
+    "竞技场胜率参数": {
+      "type": "input",
+      "label": "$竞技场胜率参数",
+      "description": "$竞技场胜率参数说明",
+      "inputs": [
+        {
+          "name": "arena_win_rate_threshold_percent",
+          "label": "$胜率门槛（百分比）",
+          "default": "70",
+          "pipeline_type": "int",
+          "verify": "^(?:100|[1-9]?\\d)$",
+          "pattern_msg": "$胜率门槛输入说明"
+        },
+        {
+          "name": "arena_win_rate_simulations",
+          "label": "$模拟次数",
+          "default": "2000",
+          "pipeline_type": "int",
+          "verify": "^[1-9]\\d{3,}$",
+          "pattern_msg": "$模拟次数输入说明"
+        },
+        {
+          "name": "arena_win_rate_timeout_seconds",
+          "label": "$模拟超时（秒）",
+          "default": "180",
+          "pipeline_type": "int",
+          "verify": "^[1-9]\\d*$",
+          "pattern_msg": "$模拟超时输入说明"
+        }
+      ],
+      "pipeline_override": {
+        "ChallengeChoose": {
+          "on_error": [
+            "ChallengeWinRateStop"
+          ],
+          "custom_action_param": {
+            "mode": "win_rate",
+            "threshold_percent": "{arena_win_rate_threshold_percent}",
+            "simulations": "{arena_win_rate_simulations}",
+            "timeout_seconds": "{arena_win_rate_timeout_seconds}"
+          }
+        },
+        "ChallengeSkip": {
+          "next": [
+            "ChallengeResultRecord",
+            "ChallengeSkip",
+            "[JumpBack]ClickCenter"
+          ]
+        }
+      }
+    },
+    "迷你演唱会工作时长": {
+      "type": "select",
+      "default_case": "12 小时",
+      "cases": [
+        {
+          "name": "4 小时",
+          "label": "$4 小时",
+          "pipeline_override": {
+            "WorkChooseShowTime": {
+              "expected": "4"
+            }
+          }
+        },
+        {
+          "name": "8 小时",
+          "label": "$8 小时",
+          "pipeline_override": {
+            "WorkChooseShowTime": {
+              "expected": "8"
+            }
+          }
+        },
+        {
+          "name": "12 小时",
+          "label": "$12 小时",
+          "pipeline_override": {
+            "WorkChooseShowTime": {
+              "expected": "12"
+            }
+          }
+        }
+      ],
+      "label": "$迷你演唱会工作时长"
+    },
+    "直播活动工作时长": {
+      "type": "select",
+      "default_case": "12 小时",
+      "cases": [
+        {
+          "name": "4 小时",
+          "label": "$4 小时",
+          "pipeline_override": {
+            "WorkChooseLiveTime": {
+              "expected": "4"
+            }
+          }
+        },
+        {
+          "name": "8 小时",
+          "label": "$8 小时",
+          "pipeline_override": {
+            "WorkChooseLiveTime": {
+              "expected": "8"
+            }
+          }
+        },
+        {
+          "name": "12 小时",
+          "label": "$12 小时",
+          "pipeline_override": {
+            "WorkChooseLiveTime": {
+              "expected": "12"
+            }
+          }
+        }
+      ],
+      "label": "$直播活动工作时长"
+    },
+    "迷你演唱会Idol": {
+      "type": "select",
+      "cases": [
+        {
+          "name": "自动",
+          "label": "$自动",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseAuto"
+            }
+          }
+        },
+        {
+          "name": "花海咲季",
+          "label": "$花海咲季",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/hanami_saki.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬",
+          "label": "$月村手毬",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/tukimura_temari.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音",
+          "label": "$藤田琴音",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/huzita_kotone.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波",
+          "label": "$姬崎莉波",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/himezaki_rinami.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏",
+          "label": "$紫云清夏",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/sion_sumika.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "篠泽广",
+          "label": "$篠泽广",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/sasazawa_hiro.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉亚",
+          "label": "$葛城莉莉亚",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/katuragi_ririya.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈",
+          "label": "$仓本千奈",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/kuramoto_tina.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央",
+          "label": "$有村麻央",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/arimura_mao.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽",
+          "label": "$花海佑芽",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/hanami_ume.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃",
+          "label": "$秦谷美铃",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/hataya_misuzu.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南",
+          "label": "$十王星南",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/zyuuou_sena.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "雨夜燕子",
+          "label": "$雨夜燕子",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/tsubame_amaya.png"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$迷你演唱会Idol"
+    },
+    "直播活动Idol": {
+      "type": "select",
+      "cases": [
+        {
+          "name": "自动",
+          "label": "$自动",
+          "pipeline_override": {
+            "WorkChooseShow": {
+              "custom_recognition": "WorkChooseAuto"
+            }
+          }
+        },
+        {
+          "name": "花海咲季",
+          "label": "$花海咲季",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/hanami_saki.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬",
+          "label": "$月村手毬",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/tukimura_temari.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田琴音",
+          "label": "$藤田琴音",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/huzita_kotone.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "姬崎莉波",
+          "label": "$姬崎莉波",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/himezaki_rinami.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫云清夏",
+          "label": "$紫云清夏",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/sion_sumika.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "篠泽广",
+          "label": "$篠泽广",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/sasazawa_hiro.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城莉莉亚",
+          "label": "$葛城莉莉亚",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/katuragi_ririya.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "仓本千奈",
+          "label": "$仓本千奈",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/kuramoto_tina.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央",
+          "label": "$有村麻央",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/arimura_mao.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽",
+          "label": "$花海佑芽",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/hanami_ume.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美铃",
+          "label": "$秦谷美铃",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/hataya_misuzu.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南",
+          "label": "$十王星南",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/zyuuou_sena.png"
+              }
+            }
+          }
+        },
+        {
+          "name": "雨夜燕子",
+          "label": "$雨夜燕子",
+          "pipeline_override": {
+            "WorkChooseLive": {
+              "custom_recognition": "WorkChooseIdol",
+              "custom_recognition_param": {
+                "idol": "idols/tsubame_amaya.png"
+              }
+            }
+          }
+        }
+      ],
+      "label": "$直播活动Idol"
+    },
+    "请求物品种类": {
+      "type": "select",
+      "default_case": "自动",
+      "cases": [
+        {
+          "name": "自动",
+          "label": "$自动",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "Custom",
+              "custom_recognition": "SocietyRequestAuto"
+            }
+          }
+        },
+        {
+          "name": "感性笔记(声乐)",
+          "label": "$感性笔记(声乐)",
+          "description": "![](resource/base/image/items/sense_red.png)",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "TemplateMatch",
+              "template": "items/sense_red.png",
+              "order_by": "Score"
+            }
+          }
+        },
+        {
+          "name": "感性笔记(舞蹈)",
+          "label": "$感性笔记(舞蹈)",
+          "description": "![](resource/base/image/items/sense_blue.png)",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "TemplateMatch",
+              "template": "items/sense_blue.png",
+              "order_by": "Score"
+            }
+          }
+        },
+        {
+          "name": "感性笔记(形象)",
+          "label": "$感性笔记(形象)",
+          "description": "![](resource/base/image/items/sense_yellow.png)",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "TemplateMatch",
+              "template": "items/sense_yellow.png",
+              "order_by": "Score"
+            }
+          }
+        },
+        {
+          "name": "理性笔记(声乐)",
+          "label": "$理性笔记(声乐)",
+          "description": "![](resource/base/image/items/logic_red.png)",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "TemplateMatch",
+              "template": "items/logic_red.png",
+              "order_by": "Score"
+            }
+          }
+        },
+        {
+          "name": "理性笔记(舞蹈)",
+          "label": "$理性笔记(舞蹈)",
+          "description": "![](resource/base/image/items/logic_blue.png)",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "TemplateMatch",
+              "template": "items/logic_blue.png",
+              "order_by": "Score"
+            }
+          }
+        },
+        {
+          "name": "理性笔记(形象)",
+          "label": "$理性笔记(形象)",
+          "description": "![](resource/base/image/items/logic_yellow.png)",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "TemplateMatch",
+              "template": "items/logic_yellow.png",
+              "order_by": "Score"
+            }
+          }
+        },
+        {
+          "name": "非凡笔记(声乐)",
+          "label": "$非凡笔记(声乐)",
+          "description": "![](resource/base/image/items/anomaly_red.png)",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "TemplateMatch",
+              "template": "items/anomaly_red.png",
+              "order_by": "Score"
+            }
+          }
+        },
+        {
+          "name": "非凡笔记(舞蹈)",
+          "label": "$非凡笔记(舞蹈)",
+          "description": "![](resource/base/image/items/anomaly_blue.png)",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "TemplateMatch",
+              "template": "items/anomaly_blue.png",
+              "order_by": "Score"
+            }
+          }
+        },
+        {
+          "name": "非凡笔记(形象)",
+          "label": "$非凡笔记(形象)",
+          "description": "![](resource/base/image/items/anomaly_yellow.png)",
+          "pipeline_override": {
+            "SocietyRequestChoose": {
+              "recognition": "TemplateMatch",
+              "template": "items/anomaly_yellow.png",
+              "order_by": "Score"
+            }
+          }
+        }
+      ],
+      "label": "$请求物品种类"
+    },
+    "启用捐赠物品": {
+      "type": "switch",
+      "default_case": "Yes",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": {
+            "SocietyDonation": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "No",
+          "pipeline_override": {
+            "SocietyDonation": {
+              "enabled": false
+            }
+          }
+        }
+      ],
+      "label": "$启用捐赠物品"
+    },
+    "启用请求物品": {
+      "type": "switch",
+      "default_case": "Yes",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": {
+            "SocietyRequest": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "No",
+          "pipeline_override": {
+            "SocietyRequest": {
+              "enabled": false
+            }
+          }
+        }
+      ],
+      "label": "$启用请求物品"
+    },
+    "启用领取礼物": {
+      "type": "switch",
+      "default_case": "Yes",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": {
+            "AwardGift": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "No",
+          "pipeline_override": {
+            "AwardGift": {
+              "enabled": false
+            }
+          }
+        }
+      ],
+      "label": "$启用领取礼物"
+    },
+    "启用领取任务": {
+      "type": "switch",
+      "default_case": "Yes",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": {
+            "AwardMission": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "No",
+          "pipeline_override": {
+            "AwardMission": {
+              "enabled": false
+            }
+          }
+        }
+      ],
+      "label": "$启用领取任务"
+    },
+    "偶像之路自动回忆": {
+      "type": "switch",
+      "default_case": "Yes",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": {
+            "IdolRoadFormationAuto": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "No",
+          "pipeline_override": {
+            "IdolRoadFormationAuto": {
+              "enabled": false
+            }
+          }
+        }
+      ],
+      "label": "$偶像之路自动回忆"
+    },
+    "偶像之路失败重试次数": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "idol_road_retry_times",
+          "label": "$偶像之路失败重试次数",
+          "default": "999",
+          "pipeline_type": "int",
+          "verify": "^[1-9]\\d*$",
+          "pattern_msg": "$偶像之路失败重试次数输入框说明"
+        }
+      ],
+      "pipeline_override": {
+        "IdolRoadRetryConfirm": {
+          "max_hit": "{idol_road_retry_times}"
+        }
+      }
+    }
+  }
+}

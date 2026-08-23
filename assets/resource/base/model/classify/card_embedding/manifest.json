@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "component": "128-dimensional card-art embedding retrieval",
+  "source": {
+    "dataset_id": "task075-authoritative-705100:0036",
+    "dataset_manifest_sha256": "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
+    "business_card_id_min": 1,
+    "business_card_id_max": 856,
+    "business_card_id_count": 856,
+    "visual_identity_count": 439,
+    "training_target": "official raw card art only"
+  },
+  "model": {
+    "path": "card_embedding_model.onnx",
+    "bytes": 441780,
+    "sha256": "FE4B2F14978482B58319C2D150391555873A6ACE4D0B9E72B0BB74827BAFD35B",
+    "input": "float32[N,3,64,64] RGB range [0,1]",
+    "output": "embedding float32[N,128] L2-normalised"
+  },
+  "gallery": {
+    "path": "card_embedding_gallery.npz",
+    "bytes": 4832393,
+    "sha256": "899F0759EEA834A0F51D2FD426C991133A8522E6E5B93DAA423CA1F90B073937",
+    "embedding_dim": 128,
+    "distance": "cosine_similarity",
+    "top_k": 5,
+    "class_table_path": "card_embedding_classes.json",
+    "class_table_bytes": 58790,
+    "class_table_sha256": "D0EE8928C03C636AB37B4FE37FC6BCBEEF0083AAF02CEE679599A8530F2C46E0"
+  },
+  "runtime": {
+    "acceptance_threshold": null,
+    "minimum_margin": null,
+    "upgrade_maximum_distance": 0.015,
+    "upgrade_minimum_margin": 0.015,
+    "state": "TASK100_CALIBRATION_REQUIRED",
+    "note": "Card identity thresholds remain null until the frozen DMM positive/negative/disturbance set is calibrated. Upgrade thresholds are bounded by the 3950-query augmentation gate and the initial 13-sample DMM atlas set."
+  },
+  "security": {
+    "scanned_at": "2026-08-13T18:47:36+08:00",
+    "scanner": "Windows Defender MpCmdRun custom scan",
+    "result": "NO_THREATS",
+    "exit_code": 0
+  }
+}

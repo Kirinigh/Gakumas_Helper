@@ -1,0 +1,7 @@
+maafw
+loguru
+Pillow
+numpy
+opencv-python-headless
+onnxruntime
+PyYAML

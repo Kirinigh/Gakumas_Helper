@@ -1,0 +1,611 @@
+{
+  "Challenge": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "LocalDataConfigureChallenge",
+      "[JumpBack]ReturnHome",
+      "[JumpBack]BackHome",
+      "[JumpBack]CloseMenu",
+      "[JumpBack]CloseRoundButton"
+    ]
+  },
+  "ChallengeHomeFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "home.png",
+          "home_1.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "ChallengeClick"
+    ]
+  },
+  "ChallengeClick": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "challenge.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "ChallengeEnter"
+    ]
+  },
+  "ChallengeEnter": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          426,
+          809,
+          213,
+          157
+        ],
+        "expected": [
+          "コンテスト"
+        ],
+        "replace": []
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ChallengePrepareOwnScore",
+      "ChallengeSelector",
+      "[JumpBack]ClickCenter"
+    ]
+  },
+  "ChallengePrepareOwnScore": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "challenge_battle_total.png",
+        "threshold": 0.9
+      }
+    },
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "ChallengePrepareOwnScore"
+      }
+    },
+    "on_error": [
+      "ChallengeWinRateStop"
+    ],
+    "next": [
+      "ChallengeSelector"
+    ]
+  },
+  "ChallengeResetOwnScorePreparation": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "ChallengeResetOwnScorePreparation"
+      }
+    },
+    "on_error": [
+      "ChallengeWinRateStop"
+    ],
+    "next": [
+      "ChallengePrepareOwnScore",
+      "ChallengeRunOut",
+      "ChallengeReadyPeriod",
+      "ChallengeHomeFlag",
+      "[JumpBack]ReturnHome",
+      "[JumpBack]BackHome",
+      "[JumpBack]CloseMenu",
+      "[JumpBack]CloseRoundButton",
+      "ChallengeEntryStateStop"
+    ]
+  },
+  "ChallengeSelector": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "ChallengeChoose",
+      "ChallengeRunOut",
+      "ChallengeReadyPeriod",
+      "[JumpBack]ChallengeError",
+      "[JumpBack]ClickCenter"
+    ]
+  },
+  "ChallengeChoose": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "challenge_battle_total.png",
+        "threshold": 0.9
+      }
+    },
+    "pre_delay": 0,
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "ChallengeAuto",
+        "custom_action_param": {
+          "mode": "auto",
+          "index": 1
+        }
+      }
+    },
+    "post_delay": 0,
+    "next": [
+      "ChallengeStart"
+    ]
+  },
+  "ChallengeWinRateStop": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": []
+  },
+  "ChallengeStatusNotification": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": []
+  },
+  "ChallengeEntryStateStop": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.ActionNode.Succeeded": {
+        "content": "竞技场任务未开始：未识别到竞技场主界面，也未能从当前页面返回主页。请确认游戏已启动、画面未被弹窗遮挡；本次未点击挑战。",
+        "display": [
+          "log",
+          "notification"
+        ]
+      }
+    },
+    "next": []
+  },
+  "ArenaReaderOCR": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "expected": ".+",
+        "order_by": "Vertical"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    }
+  },
+  "ArenaReaderOpponentCards": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "challenge_battle_total.png",
+        "roi": [
+          54,
+          575,
+          190,
+          512
+        ],
+        "order_by": "Vertical"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    }
+  },
+  "ChallengeIndex": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "challenge_battle_total.png",
+        "roi": [
+          54,
+          575,
+          190,
+          512
+        ],
+        "order_by": "Vertical",
+        "index": 1
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    }
+  },
+  "ChallengeStart": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "challenge_start.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "ChallengeReady",
+      "[JumpBack]ChallengeUnformation"
+    ]
+  },
+  "ChallengeReady": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          220,
+          1110,
+          250,
+          100
+        ],
+        "template": "challenge_ready.png"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "ChallengeSkip"
+    ]
+  },
+  "ChallengeSkip": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          482,
+          1020,
+          207,
+          64
+        ],
+        "template": "challenge_skip.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "timeout": 60000,
+    "next": [
+      "ChallengeNext",
+      "ChallengeSkip",
+      "[JumpBack]ClickCenter"
+    ]
+  },
+  "ChallengeResultRecord": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          0,
+          980,
+          720,
+          300
+        ],
+        "template": "challenge_next.png"
+      }
+    },
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "ArenaChallengeRecordResult"
+      }
+    },
+    "next": [
+      "ChallengeNext"
+    ]
+  },
+  "ChallengeNext": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          0,
+          980,
+          720,
+          300
+        ],
+        "template": [
+          "challenge_next.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "timeout": 60000,
+    "next": [
+      "ChallengeFinish",
+      "[JumpBack]ClickCenter"
+    ]
+  },
+  "ChallengeFinish": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          0,
+          980,
+          720,
+          300
+        ],
+        "template": "challenge_finish.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "ChallengeVerifyRefresh"
+    ]
+  },
+  "ChallengeVerifyRefresh": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "ArenaChallengeVerifyRefresh"
+      }
+    },
+    "next": [
+      "ChallengeSelector"
+    ]
+  },
+  "ChallengeRunOut": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "challenge_runout.png"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.Recognition.Succeeded": "今日挑战次数已用完"
+    },
+    "next": [
+      "BackHome"
+    ]
+  },
+  "ChallengeError": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "challenge_award.png",
+          "challenge_finish.png",
+          "challenge_next.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    }
+  },
+  "ChallengeReadyPeriod": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          20,
+          100,
+          330,
+          100
+        ],
+        "template": "challenge_ready_period.png"
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:orange]挑战准备期间[/color]"
+    },
+    "next": [
+      "BackHome",
+      "[JumpBack]ClickCenter"
+    ]
+  },
+  "ChallengeUnformation": {
+    "enabled": true,
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          25,
+          810,
+          280,
+          70
+        ],
+        "expected": "メモリー未編成"
+      }
+    },
+    "pre_wait_freezes": 200,
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:orange]尚未编队，即将自动编队[/color]"
+    },
+    "next": [
+      "ChallengeFormationCancel"
+    ]
+  },
+  "ChallengeFormationCancel": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "cancel.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ChallengeFormation"
+    ]
+  },
+  "ChallengeFormation": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          510,
+          1050,
+          190,
+          80
+        ],
+        "expected": [
+          "ユニット編成"
+        ],
+        "replace": []
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "ChallengeFormationAuto"
+    ]
+  },
+  "ChallengeFormationAuto": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          340,
+          1040,
+          190,
+          140
+        ],
+        "expected": [
+          "おまかせ"
+        ],
+        "replace": []
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ChallengeFormationAutoDecide"
+    ]
+  },
+  "ChallengeFormationAutoDecide": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "decide.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ChallengeBack",
+      "[JumpBack]CloseButton"
+    ]
+  },
+  "ChallengeBack": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          240,
+          1160,
+          125,
+          115
+        ],
+        "template": "back.png"
+      }
+    },
+    "pre_wait_freezes": 200,
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "next": [
+      "ChallengeRestart"
+    ]
+  },
+  "ChallengeRestart": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "challenge_start.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "focus": {
+      "Node.Action.Succeeded": "[color:DeepSkyBlue]自动编队完成[/color]"
+    }
+  }
+}

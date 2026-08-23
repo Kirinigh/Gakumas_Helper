@@ -1,0 +1,370 @@
+{
+  "Work": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "WorkHomeFlag",
+      "[JumpBack]ReturnHome",
+      "[JumpBack]BackHome",
+      "[JumpBack]CloseRoundButton"
+    ]
+  },
+  "WorkHomeFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "home.png",
+          "home_1.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "WorkClick"
+    ]
+  },
+  "WorkClick": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          0,
+          640,
+          140,
+          140
+        ],
+        "expected": [
+          "お仕事"
+        ],
+        "replace": [
+          [
+            "书",
+            "お"
+          ]
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "WorkFinished",
+      "WorkStartChooseShow",
+      "WorkStartChooseLive",
+      "BackHome",
+      "[JumpBack]ClickCenter"
+    ]
+  },
+  "WorkFinished": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "work_finish.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "focus": {
+      "Node.Action.Succeeded": "工作报酬已获得"
+    },
+    "next": [
+      "WorkFinished",
+      "WorkStartChooseShow",
+      "WorkStartChooseLive"
+    ]
+  },
+  "WorkStartChooseShow": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "work_choose_show.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "pre_wait_freezes": 200,
+    "next": [
+      "WorkChooseShowGoodFlag"
+    ]
+  },
+  "WorkStartChooseLive": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "work_choose_live.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "pre_wait_freezes": 200,
+    "next": [
+      "WorkChooseLiveGoodFlag"
+    ]
+  },
+  "WorkChooseShowGoodFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "work_choose_idol.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "WorkChooseShow"
+    ]
+  },
+  "WorkChooseLiveGoodFlag": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": [
+          "work_choose_idol.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "next": [
+      "WorkChooseLive"
+    ]
+  },
+  "WorkChooseShow": {
+    "recognition": {
+      "type": "Custom",
+      "param": {
+        "custom_recognition": "WorkChooseAuto",
+        "custom_recognition_param": {}
+      }
+    },
+    "pre_wait_freezes": 300,
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:DeepSkyBlue]演出角色识别成功[/color]",
+      "Node.Recognition.Failed": "[color:OrangeRed]演出角色识别失败[/color]"
+    },
+    "next": [
+      "WorkChooseShowConfirm"
+    ]
+  },
+  "WorkChooseLive": {
+    "recognition": {
+      "type": "Custom",
+      "param": {
+        "custom_recognition": "WorkChooseAuto",
+        "custom_recognition_param": {}
+      }
+    },
+    "pre_wait_freezes": 300,
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 200,
+    "focus": {
+      "Node.Recognition.Succeeded": "[color:DeepSkyBlue]直播角色识别成功[/color]",
+      "Node.Recognition.Failed": "[color:OrangeRed]直播角色识别失败[/color]"
+    },
+    "next": [
+      "WorkChooseLiveConfirm"
+    ]
+  },
+  "WorkChooseShowConfirm": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "work_choose_idol.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "WorkChooseShowTime",
+      "[JumpBack]DecideButton"
+    ]
+  },
+  "WorkChooseLiveConfirm": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "work_choose_idol.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "WorkChooseLiveTime",
+      "[JumpBack]DecideButton"
+    ]
+  },
+  "WorkChooseShowTime": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          36,
+          745,
+          650,
+          250
+        ],
+        "expected": "4時間",
+        "replace": [
+          [
+            "时",
+            "時"
+          ],
+          [
+            "间",
+            "間"
+          ]
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "WorkSure"
+    ]
+  },
+  "WorkChooseLiveTime": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          36,
+          745,
+          650,
+          250
+        ],
+        "expected": "4時間",
+        "replace": [
+          [
+            "时",
+            "時"
+          ],
+          [
+            "间",
+            "間"
+          ]
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "next": [
+      "WorkSure"
+    ]
+  },
+  "WorkSure": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "work_sure.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500,
+    "next": [
+      "WorkStart"
+    ]
+  },
+  "WorkStart": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "template": "work_start.png"
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {}
+    },
+    "post_wait_freezes": 500,
+    "focus": {
+      "Node.Action.Succeeded": "[color:DeepSkyBlue]开始工作[/color]"
+    },
+    "next": [
+      "WorkStartChooseShow",
+      "WorkStartChooseLive",
+      "BackHome"
+    ]
+  },
+  "WorkChooseGood": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          8,
+          709,
+          621,
+          317
+        ],
+        "template": [
+          "work_good.png"
+        ]
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    }
+  },
+  "WorkAlready": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "expected": [
+          "お仕事中"
+        ],
+        "replace": [
+          [
+            "书",
+            "お"
+          ]
+        ]
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    }
+  }
+}
