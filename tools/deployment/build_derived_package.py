@@ -12,7 +12,6 @@ import os
 import re
 import json
 import stat
-import uuid
 import shutil
 import hashlib
 import zipfile
@@ -29,6 +28,11 @@ DERIVED_RELEASE_VERSION_PATTERN = re.compile(
     r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:alpha|beta)\.(?:0|[1-9]\d*))?$"
 )
 DATED_PREVIEW_VERSION_PATTERN = re.compile(r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\+gkh\.\d{6}$")
+CHANNEL_VERSION_PATTERN = re.compile(
+    r"^v(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<prerelease>alpha|beta)\.(?P<prerelease_number>0|[1-9]\d*)"
+    r"|\+gkh\.(?:[0-9a-f]{7,40}|\d{6}))?$"
+)
 GITHUB_REPOSITORY_PATTERN = re.compile(r"^https://github\.com/[^/\s]+/[^/\s]+/?$")
 
 REPLACED_TREES = {
@@ -77,6 +81,66 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest().upper()
+
+
+def _tree_snapshot(root: Path) -> dict[str, tuple[str, int | None, str | None]]:
+    """Record path identity and content so runtime smoke must be read-only."""
+
+    snapshot: dict[str, tuple[str, int | None, str | None]] = {}
+    for path in root.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        metadata = path.lstat()
+        if _is_link_or_reparse(path):
+            snapshot[relative] = ("link_or_reparse", metadata.st_size, None)
+        elif stat.S_ISDIR(metadata.st_mode):
+            snapshot[relative] = ("directory", None, None)
+        elif stat.S_ISREG(metadata.st_mode):
+            snapshot[relative] = ("file", metadata.st_size, sha256_file(path))
+        else:
+            snapshot[relative] = ("other", metadata.st_size, None)
+    return snapshot
+
+
+def _semver_precedence(version: str) -> tuple[int, int, int, int, int]:
+    """Return supported SemVer precedence while intentionally ignoring build metadata."""
+
+    match = CHANNEL_VERSION_PATTERN.fullmatch(version)
+    if match is None:
+        raise BuildError(f"previous channel version is invalid: {version!r}")
+    prerelease = match.group("prerelease")
+    prerelease_rank = {"alpha": 0, "beta": 1, None: 2}[prerelease]
+    prerelease_number = int(match.group("prerelease_number") or 0)
+    return (
+        int(match.group("major")),
+        int(match.group("minor")),
+        int(match.group("patch")),
+        prerelease_rank,
+        prerelease_number,
+    )
+
+
+def _durable_update_semantics(
+    derived_version: str,
+    previous_channel_version: str | None,
+    *,
+    dated_preview: bool,
+) -> tuple[str, bool]:
+    if previous_channel_version is None:
+        if dated_preview:
+            raise BuildError("a dated preview requires an explicit previous channel version")
+        return "monotonic_semver_precedence", False
+    current_precedence = _semver_precedence(derived_version)
+    previous_precedence = _semver_precedence(previous_channel_version)
+    if current_precedence < previous_precedence:
+        raise BuildError("derived release version precedes the previous channel version")
+    if current_precedence == previous_precedence:
+        if dated_preview:
+            return "same_base_build_metadata_manual_bootstrap", True
+        raise BuildError("derived release version does not advance the previous channel version")
+    return (
+        "higher_base_semver_precedence" if dated_preview else "monotonic_semver_precedence",
+        False,
+    )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -371,7 +435,7 @@ def _validate_python_runtime(root: Path) -> dict[str, str]:
         "print(json.dumps({'numpy': numpy.__version__, 'onnxruntime': onnxruntime.__version__, "
         "'opencv-python-headless': cv2.__version__, 'pillow': PIL.__version__, 'pyyaml': yaml.__version__}))"
     )
-    inventory_before = {path.relative_to(root) for path in root.rglob("*")}
+    inventory_before = _tree_snapshot(root)
     with tempfile.TemporaryDirectory(prefix="gkh-runtime-smoke-", dir=root.parent) as runtime_text:
         runtime = Path(runtime_text)
         smoke_environment = os.environ.copy()
@@ -384,16 +448,24 @@ def _validate_python_runtime(root: Path) -> dict[str, str]:
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
             timeout=60,
             check=False,
         )
-    inventory_after = {path.relative_to(root) for path in root.rglob("*")}
+    inventory_after = _tree_snapshot(root)
     if inventory_after != inventory_before:
-        created = sorted(str(path) for path in inventory_after - inventory_before)
-        removed = sorted(str(path) for path in inventory_before - inventory_after)
+        paths_before = set(inventory_before)
+        paths_after = set(inventory_after)
+        created = sorted(paths_after - paths_before)
+        removed = sorted(paths_before - paths_after)
+        modified = sorted(
+            path
+            for path in paths_before & paths_after
+            if inventory_before[path] != inventory_after[path]
+        )
         raise BuildError(
             "candidate runtime smoke mutated the release tree: "
-            f"created={created[:10]}, removed={removed[:10]}"
+            f"created={created[:10]}, removed={removed[:10]}, modified={modified[:10]}"
         )
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()[-2000:]
@@ -420,6 +492,7 @@ def build_derived_package(
     update_repository: str,
     allow_upstream_trial_channel: bool,
     derived_version: str | None = None,
+    previous_channel_version: str | None = None,
     validate_python_runtime: bool = True,
 ) -> Path:
     source_root = source_root.resolve()
@@ -455,6 +528,8 @@ def build_derived_package(
     if update_repository == UPSTREAM_REPOSITORY:
         if derived_version is not None:
             raise BuildError("an explicit derived release version cannot use the upstream update repository")
+        if previous_channel_version is not None:
+            raise BuildError("a previous channel version cannot use the upstream update repository")
         derived_version = f"{upstream_tag}+gkh.{source_revision[:7]}"
         if LOCAL_TRIAL_VERSION_PATTERN.fullmatch(derived_version) is None:
             raise BuildError("local trial version is invalid")
@@ -469,12 +544,23 @@ def build_derived_package(
                 "derived release version must use vMAJOR.MINOR.PATCH, vMAJOR.MINOR.PATCH-beta.N, "
                 "vMAJOR.MINOR.PATCH-alpha.N, or the approved preview form vMAJOR.MINOR.PATCH+gkh.YYMMDD"
             )
+    dated_preview = DATED_PREVIEW_VERSION_PATTERN.fullmatch(derived_version) is not None
+    if update_repository == UPSTREAM_REPOSITORY:
+        version_ordering = "upstream_equal_precedence_build_metadata"
+        requires_manual_bootstrap = False
+    else:
+        version_ordering, requires_manual_bootstrap = _durable_update_semantics(
+            derived_version,
+            previous_channel_version,
+            dated_preview=dated_preview,
+        )
 
     engine_manifest = _validate_engine_bundle(engine_bundle)
     _validate_input_tree(python_site_packages, label="embedded Python site-packages", reject_private_names=True)
     output.parent.mkdir(parents=True, exist_ok=True)
-    staging = output.parent / f".{output.name}-staging-{uuid.uuid4().hex}"
-    staging.mkdir()
+    # Keep the transient root short: Windows native-extension loading can fail
+    # once the staged DLL path grows beyond legacy loader limits.
+    staging = Path(tempfile.mkdtemp(prefix=".gkh-", dir=output.parent))
     extracted = staging / "upstream"
     source_snapshot = staging / "source"
     candidate = staging / "candidate"
@@ -565,6 +651,7 @@ def build_derived_package(
             "update_contract": {
                 "mode": update_mode,
                 "repository": update_repository,
+                "previous_channel_version": previous_channel_version,
                 "release_channel": (
                     "alpha"
                     if "-alpha." in derived_version
@@ -572,14 +659,9 @@ def build_derived_package(
                     if "-beta." in derived_version or DATED_PREVIEW_VERSION_PATTERN.fullmatch(derived_version)
                     else "stable"
                 ),
-                "version_ordering": (
-                    "upstream_equal_precedence_build_metadata"
-                    if update_mode == "upstream_equal_precedence_trial"
-                    else "same_base_build_metadata_manual_bootstrap"
-                    if DATED_PREVIEW_VERSION_PATTERN.fullmatch(derived_version)
-                    else "monotonic_semver_precedence"
-                ),
-                "requires_manual_bootstrap": bool(DATED_PREVIEW_VERSION_PATTERN.fullmatch(derived_version)),
+                "version_ordering": version_ordering,
+                "requires_manual_bootstrap": requires_manual_bootstrap,
+                "automatic_update_e2e_verified": False,
                 "auto_update_setting": "preserve_user_configuration",
                 "safe_upstream_precedence": upstream_tag,
                 "requires_derived_release_before_newer_upstream": update_mode
@@ -611,6 +693,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--update-repository", default=UPSTREAM_REPOSITORY)
     parser.add_argument("--allow-upstream-trial-channel", action="store_true")
     parser.add_argument("--derived-version")
+    parser.add_argument("--previous-channel-version")
     return parser
 
 
@@ -628,6 +711,7 @@ def main() -> int:
         update_repository=args.update_repository,
         allow_upstream_trial_channel=args.allow_upstream_trial_channel,
         derived_version=args.derived_version,
+        previous_channel_version=args.previous_channel_version,
     )
     print(result)
     return 0

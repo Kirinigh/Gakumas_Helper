@@ -2,7 +2,7 @@
 
 这是基于 [MaaGakumasu](https://github.com/SuperWaterGod/MaaGakumasu) 的公开派生预览版。它保留上游 Maa 客户端与日常功能，并新增竞技场完整编成读取、本地计分、保守胜率选敌、结果记录以及配套识别资源。
 
-- 当前版本：`v1.4.8+gkh.260823`
+- 当前版本：`v1.4.9+gkh.260824`
 - 下载与校验：[https://github.com/Kirinigh/Gakumas_Helper Releases](https://github.com/Kirinigh/Gakumas_Helper/releases)
 - 上游项目：[SuperWaterGod/MaaGakumasu](https://github.com/SuperWaterGod/MaaGakumasu)
 - 许可证：AGPL-3.0；内嵌竞技场模拟引擎另按 BSD-3-Clause 与 Node.js 许可发布
@@ -12,7 +12,7 @@
 
 ## 快速开始
 
-1. 从 Releases 下载 `MaaGakumasu-win-x86_64-v1.4.8+gkh.260823.zip`，并核对 SHA-256。
+1. 从 Releases 下载 `MaaGakumasu-win-x86_64-v1.4.9+gkh.260824.zip`，并核对 SHA-256。
 2. 解压到新的独立目录，不要覆盖上游 Maa 或旧版 Gakumas Helper。
 3. 以管理员身份启动 `MaaGakumasu.exe`；程序不会读取或保存 DMM 账号密码。
 4. 首次使用先添加并单独运行“重算竞技场己方总分”，成功后再运行“竞技场胜率分析并挑战（单次）”或“每日挑战 → 胜率选敌”。
@@ -47,7 +47,7 @@
 
 ## 安装与更新边界
 
-`v1.4.8+gkh.260823` 使用语义化版本 (Semantic Versioning, SemVer) 构建元数据，与同一基础版本的上游包具有相同优先级。因此首次从对应上游版或其他同基础版本的派生包切入时必须手动安装；后续只有更高 SemVer 优先级的派生版本才能由现有更新入口自动升级。
+`v1.4.9+gkh.260824` 使用语义化版本 (Semantic Versioning, SemVer) 构建元数据，与同一基础版本的上游包具有相同优先级。因此首次从对应上游版或其他同基础版本的派生包切入时必须手动安装；后续只有更高 SemVer 优先级的派生版本才能由现有更新入口自动升级。
 
 当前只有 GitHub 更新仓库指向本项目；包内若显示上游 `MaaGakumasu` 的 MirrorChyan 入口，它不是 Gakumas Helper 更新通道，请勿用它更新本派生版。
 

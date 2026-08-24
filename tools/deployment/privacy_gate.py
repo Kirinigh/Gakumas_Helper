@@ -63,6 +63,13 @@ SECRET_BYTE_PATTERNS = (
     re.compile(rb"Authorization\s*:\s*Bearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
 )
 EMAIL_PATTERN = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
+BINARY_EMAIL_PATTERN = re.compile(
+    r"(?i)(?<![A-Za-z0-9._%+-])[A-Za-z0-9][A-Za-z0-9._%+-]{2,}"
+    r"@(?:[A-Za-z0-9-]{2,}\.)+[A-Za-z]{2,24}(?![A-Za-z0-9_.-])"
+)
+ASCII_TEXT_RUN_PATTERN = re.compile(rb"[\x20-\x7e]{6,}")
+UTF16_LE_TEXT_RUN_PATTERN = re.compile(rb"(?:[\x20-\x7e]\x00){6,}")
+UTF16_BE_TEXT_RUN_PATTERN = re.compile(rb"(?:\x00[\x20-\x7e]){6,}")
 _MACOS_PROFILE_PREFIX = "/" + "Users/"
 _LINUX_PROFILE_PREFIX = "/" + "home/"
 _PRIVATE_SAMPLE_PREFIXES = ("custom_" + "positive", "private_" + "sample", "user_" + "capture")
@@ -90,6 +97,7 @@ PRIVATE_SAMPLE_BYTE_PATTERN = re.compile(
     + b"256",
     re.IGNORECASE,
 )
+GENERIC_LOCAL_ACCOUNT_NAMES = {"admin", "administrator", "defaultuser0", "user"}
 
 
 class PrivacyGateError(RuntimeError):
@@ -111,6 +119,11 @@ def private_machine_markers() -> tuple[bytes, ...]:
             if len(spelling) >= 8:
                 markers.add(spelling.encode("utf-8"))
                 markers.add(spelling.encode("utf-16-le"))
+    computer_name = os.environ.get("COMPUTERNAME", "").strip()
+    if len(computer_name) >= 8:
+        for spelling in {computer_name, computer_name.casefold(), computer_name.upper()}:
+            markers.add(spelling.encode("utf-8"))
+            markers.add(spelling.encode("utf-16-le"))
     return tuple(sorted(markers, key=len, reverse=True))
 
 
@@ -138,7 +151,15 @@ def _check_private_path(relative: Path, *, allow_arena_engine_config: bool) -> N
         raise PrivacyGateError(f"candidate contains a private runtime file: {relative.as_posix()}")
 
 
-def _scan_bytes(relative: Path, payload: bytes, machine_markers: tuple[bytes, ...]) -> None:
+def _scan_bytes(
+    relative: Path,
+    payload: bytes,
+    machine_markers: tuple[bytes, ...],
+    *,
+    scan_personal_text: bool,
+    allowed_emails: Collection[str],
+    compressed_image_payload: bool = False,
+) -> None:
     if any(marker in payload for marker in machine_markers):
         raise PrivacyGateError(f"candidate contains a local machine path or profile marker: {relative.as_posix()}")
     if any(pattern.search(payload) for pattern in SECRET_BYTE_PATTERNS):
@@ -150,16 +171,86 @@ def _scan_bytes(relative: Path, payload: bytes, machine_markers: tuple[bytes, ..
     unlicensed_windows = b".local" + b"\\unlicensed"
     if unlicensed_posix in lowered or unlicensed_windows in lowered:
         raise PrivacyGateError(f"candidate references an unlicensed local source: {relative.as_posix()}")
+    if scan_personal_text:
+        email_pattern = (
+            BINARY_EMAIL_PATTERN
+            if compressed_image_payload
+            else EMAIL_PATTERN
+        )
+        text_run_patterns = (
+            (ASCII_TEXT_RUN_PATTERN, slice(None)),
+            (UTF16_LE_TEXT_RUN_PATTERN, slice(None, None, 2)),
+            (UTF16_BE_TEXT_RUN_PATTERN, slice(1, None, 2)),
+        )
+        for pattern, payload_slice in text_run_patterns:
+            for match in pattern.finditer(payload):
+                _scan_personal_text(
+                    relative,
+                    match.group(0)[payload_slice].decode("ascii"),
+                    allowed_emails,
+                    email_pattern=email_pattern,
+                )
 
 
-def _scan_personal_text(relative: Path, text: str, allowed_emails: Collection[str]) -> None:
+def _scan_personal_text(
+    relative: Path,
+    text: str,
+    allowed_emails: Collection[str],
+    *,
+    email_pattern: re.Pattern[str] = EMAIL_PATTERN,
+) -> None:
     allowed = {email.casefold() for email in allowed_emails}
-    for match in EMAIL_PATTERN.finditer(text):
+    for match in email_pattern.finditer(text):
         if match.group(0).casefold() not in allowed:
             raise PrivacyGateError(f"project text contains email address: {relative.as_posix()}")
     for label, pattern in PERSONAL_TEXT_PATTERNS:
         if pattern.search(text):
             raise PrivacyGateError(f"project text contains {label}: {relative.as_posix()}")
+    username = os.environ.get("USERNAME", "").strip()
+    if len(username) >= 4 and username.casefold() not in GENERIC_LOCAL_ACCOUNT_NAMES:
+        account_pattern = re.compile(
+            rf"(?i)[\"']?(?:user(?:name)?|account(?:_name)?|owner)[\"']?"
+            rf"\s*[:=]\s*[\"']?{re.escape(username)}(?![\w.-])"
+        )
+        if account_pattern.search(text):
+            raise PrivacyGateError(
+                f"project text contains a local account identifier: {relative.as_posix()}"
+            )
+    user_domain = os.environ.get("USERDOMAIN", "").strip()
+    if len(username) >= 4 and user_domain and re.search(
+        rf"(?i)(?<![\w.-]){re.escape(user_domain)}[\\/]{re.escape(username)}(?![\w.-])",
+        text,
+    ):
+        raise PrivacyGateError(
+            f"project text contains a local account identifier: {relative.as_posix()}"
+        )
+
+
+def validate_relative_path(
+    relative: Path,
+    *,
+    is_directory: bool,
+    allowed_emails: Collection[str] = (),
+    allow_arena_engine_config: bool = True,
+    machine_markers: tuple[bytes, ...] | None = None,
+) -> None:
+    """Apply the content privacy rules to one relative path string."""
+
+    checked_path = relative / "_" if is_directory else relative
+    _check_private_path(
+        checked_path,
+        allow_arena_engine_config=allow_arena_engine_config,
+    )
+    markers = private_machine_markers() if machine_markers is None else machine_markers
+    path_text = relative.as_posix()
+    _scan_bytes(
+        relative,
+        path_text.encode("utf-8"),
+        markers,
+        scan_personal_text=True,
+        allowed_emails=allowed_emails,
+    )
+    _scan_personal_text(relative, path_text, allowed_emails)
 
 
 def _scan_numpy_text(relative: Path, payload: bytes, allowed_emails: Collection[str]) -> None:
@@ -185,14 +276,28 @@ def _scan_archive(
     scan_personal_text: bool,
     allowed_emails: Collection[str],
 ) -> None:
-    if path.suffix.casefold() not in ARCHIVE_SUFFIXES:
+    recognized_suffix = path.suffix.casefold() in ARCHIVE_SUFFIXES
+    is_archive = zipfile.is_zipfile(path)
+    if is_archive and not recognized_suffix:
+        raise PrivacyGateError(
+            f"candidate contains a ZIP container with an unsupported suffix: {relative.as_posix()}"
+        )
+    if not recognized_suffix:
         return
+    if not is_archive:
+        raise PrivacyGateError(f"candidate contains an invalid nested archive: {relative.as_posix()}")
     try:
         with zipfile.ZipFile(path) as archive:
+            if archive.comment:
+                _scan_bytes(
+                    relative / "<archive-comment>",
+                    archive.comment,
+                    machine_markers,
+                    scan_personal_text=scan_personal_text,
+                    allowed_emails=allowed_emails,
+                )
             names: set[str] = set()
             for entry in archive.infolist():
-                if entry.is_dir():
-                    continue
                 member = Path(entry.filename.replace("\\", "/"))
                 mode = entry.external_attr >> 16
                 if member.is_absolute() or ".." in member.parts or stat.S_ISLNK(mode):
@@ -201,14 +306,41 @@ def _scan_archive(
                 if normalized in names:
                     raise PrivacyGateError(f"nested archive contains a duplicate member: {relative.as_posix()}!{normalized}")
                 names.add(normalized)
-                _check_private_path(member, allow_arena_engine_config=False)
+                member_relative = relative / member
+                validate_relative_path(
+                    member_relative,
+                    is_directory=entry.is_dir(),
+                    allowed_emails=allowed_emails,
+                    allow_arena_engine_config=False,
+                    machine_markers=machine_markers,
+                )
+                for label, metadata in (("comment", entry.comment), ("extra", entry.extra)):
+                    if metadata:
+                        _scan_bytes(
+                            member_relative / f"<{label}>",
+                            metadata,
+                            machine_markers,
+                            scan_personal_text=scan_personal_text,
+                            allowed_emails=allowed_emails,
+                        )
+                if entry.is_dir():
+                    continue
                 if entry.file_size > 256 * 1024 * 1024:
                     raise PrivacyGateError(
                         f"nested archive entry is too large for the privacy gate: {relative.as_posix()}!{entry.filename}"
                     )
                 payload = archive.read(entry)
-                member_relative = relative / member
-                _scan_bytes(member_relative, payload, machine_markers)
+                if zipfile.is_zipfile(io.BytesIO(payload)):
+                    raise PrivacyGateError(
+                        f"nested archive contains an unsupported archive container: {member_relative.as_posix()}"
+                    )
+                _scan_bytes(
+                    member_relative,
+                    payload,
+                    machine_markers,
+                    scan_personal_text=scan_personal_text,
+                    allowed_emails=allowed_emails,
+                )
                 if scan_personal_text and member.suffix.casefold() in TEXT_SUFFIXES:
                     try:
                         member_text = payload.decode("utf-8")
@@ -301,15 +433,30 @@ def validate_tree(
         relative = entry.relative_to(root)
         if is_link_or_reparse(entry):
             raise PrivacyGateError(f"candidate contains a link or reparse point: {relative.as_posix()}")
-        if entry.is_file():
-            _check_private_path(relative, allow_arena_engine_config=allow_arena_engine_config)
+        validate_relative_path(
+            relative,
+            is_directory=entry.is_dir(),
+            allowed_emails=allowed_emails,
+            allow_arena_engine_config=allow_arena_engine_config,
+            machine_markers=markers,
+        )
     for path in sorted(entry for entry in root.rglob("*") if entry.is_file()):
         relative = path.relative_to(root)
         payload = path.read_bytes()
         files += 1
         bytes_scanned += len(payload)
-        _scan_bytes(relative, payload, markers)
         is_project_path = project_path_predicate(relative)
+        is_project_image = is_project_path and path.suffix.casefold() in IMAGE_SUFFIXES
+        if is_project_image:
+            _validate_image_metadata(path, relative)
+        _scan_bytes(
+            relative,
+            payload,
+            markers,
+            scan_personal_text=is_project_path,
+            allowed_emails=allowed_emails,
+            compressed_image_payload=is_project_image,
+        )
         _scan_archive(
             path,
             relative,
@@ -324,6 +471,5 @@ def validate_tree(
                 raise PrivacyGateError(f"project text is not valid UTF-8: {relative.as_posix()}") from error
             _scan_personal_text(relative, text, allowed_emails)
         if is_project_path:
-            _validate_image_metadata(path, relative)
             _validate_embedded_png_metadata(path, relative)
     return {"files_scanned": files, "bytes_scanned": bytes_scanned}

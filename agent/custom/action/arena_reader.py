@@ -4035,11 +4035,19 @@ class MaaArenaReaderBackend:
         candidate_ids = self._card_candidate_groups.get((group_index, card_slot))
         if candidate_ids is None:
             raise ArenaReaderError("skill_card_prediction_missing", "card icon was not classified before its click")
-        return self._read_resolved_card_detail(
+        resolved = self._read_resolved_card_detail(
             key,
             candidate_ids,
             expected_customization_count=expected_customization_count,
         )
+        # The embedding result is only a pre-click visual-family hint.  Once
+        # the detail title/effects resolve the business ID, bind that
+        # authoritative identity before the close transaction verifies the
+        # restored source slot.  Otherwise a valid family mismatch (for
+        # example hint 752 resolving to actual card 747) is misreported as a
+        # failed close even though the original grid returned unchanged.
+        self._card_predictions[key] = resolved.card_id
+        return resolved
 
     def _resolve_clicked_card_text(
         self,
@@ -4251,22 +4259,43 @@ class MaaArenaReaderBackend:
         key: tuple[int, int],
         card_id: int,
     ) -> tuple[int, int, int] | None:
+        diagnostics = getattr(self, "_card_face_cost_diagnostics", None)
+        if diagnostics is None:
+            diagnostics = {}
+            self._card_face_cost_diagnostics = diagnostics
+        cached = diagnostics.get(key)
         hypotheses = self.catalog.generic_cost_hypotheses(card_id)
         if hypotheses is None:
+            # The visual-family hint may resolve to a different authoritative
+            # detail ID.  Do not leave evidence from the hinted generic-cost
+            # card attached to a slot whose confirmed card has no such field.
+            diagnostics.pop(key, None)
             return None
-        cached = self._card_face_cost_diagnostics.get(key)
+        hypotheses = tuple(int(value) for value in hypotheses)
         if cached is not None:
-            values = cached.get("frame_values")
-            if (
-                isinstance(values, list)
-                and len(values) == 3
-                and all(type(value) is int for value in values)
-            ):
-                return int(values[0]), int(values[1]), int(values[2])
-            raise ArenaReaderError(
-                "skill_card_cost_evidence_invalid",
-                f"cached card-face cost evidence is invalid for {key!r}",
+            cached_hypotheses = cached.get("hypotheses")
+            cache_matches = (
+                cached.get("card_id") == card_id
+                and isinstance(cached_hypotheses, list)
+                and tuple(cached_hypotheses) == hypotheses
             )
+            if cache_matches:
+                values = cached.get("frame_values")
+                if (
+                    isinstance(values, list)
+                    and len(values) == 3
+                    and all(type(value) is int for value in values)
+                ):
+                    return int(values[0]), int(values[1]), int(values[2])
+                raise ArenaReaderError(
+                    "skill_card_cost_evidence_invalid",
+                    f"cached card-face cost evidence is invalid for {key!r}",
+                )
+            # Detail title resolution is authoritative over the pre-click
+            # visual-family hint.  Re-evaluate the already frozen three source
+            # frames against the confirmed identity/hypotheses instead of
+            # reusing a semantically stale integer or taking another screenshot.
+            self._increment("skill_card_face_cost_cache_rebinds")
         group_index, card_slot = key
         frames = self._card_count_frames.get(group_index, ())
         if len(frames) != 3:
@@ -4304,7 +4333,7 @@ class MaaArenaReaderBackend:
                 time.perf_counter() - started,
             )
         self._increment("skill_card_face_cost_measurements")
-        self._card_face_cost_diagnostics[key] = {
+        diagnostics[key] = {
             "group_index": group_index,
             "slot": card_slot,
             "card_id": card_id,
@@ -4319,6 +4348,13 @@ class MaaArenaReaderBackend:
                     "best_error": prediction.best_error,
                     "class_margin": prediction.class_margin,
                     "pixel_count": prediction.pixel_count,
+                    "evidence_mode": prediction.evidence_mode,
+                    "zero_hole_box": (
+                        list(prediction.zero_hole_box)
+                        if prediction.zero_hole_box is not None
+                        else None
+                    ),
+                    "zero_alternative_error": prediction.zero_alternative_error,
                     "component_boxes": [
                         list(box) for box in prediction.component_boxes
                     ],
@@ -4406,6 +4442,9 @@ class MaaArenaReaderBackend:
         zero_confirmation_reads = 0
         zero_settle_wait_recorded = False
         zero_confirmation_extension_applied = False
+        positive_candidate: ClickedSkillCard | None = None
+        positive_confirmation_reads = 0
+        positive_confirmation_extension_applied = False
         terminal_error: ArenaReaderError | None = None
         same_frame_effect_roi_attempted = False
         while True:
@@ -4482,10 +4521,9 @@ class MaaArenaReaderBackend:
                         # A detail title becomes readable before its effect rows are
                         # guaranteed to finish animating.  The prior context-action
                         # overhead happened to hide this race; direct point dispatch
-                        # exposed it as a false zero.  Zero is therefore the only
-                        # result that must cross both a minimum render boundary and
-                        # one fresh, semantically identical detail frame.  Positive
-                        # detail remains immediately admissible.
+                        # exposed it as a false zero.  Zero therefore crosses both a
+                        # minimum render boundary and one fresh, semantically
+                        # identical detail frame.
                         now = time.monotonic()
                         if now < zero_not_before:
                             if not zero_settle_wait_recorded:
@@ -4729,6 +4767,61 @@ class MaaArenaReaderBackend:
                                 )
                         text = combined_text
                         self._card_detail_texts[key] = combined_text
+                    if (
+                        allow_zero_without_badge_count
+                        and expected_customization_count is None
+                        and resolved_count > 0
+                        and resolved.detail_evidence_mode == "positive_unique"
+                    ):
+                        # This branch supplies the badge count as well as the
+                        # concrete customization IDs.  A single transitional OCR
+                        # frame must not become self-authenticating positive
+                        # evidence, so require the same business resolution once
+                        # more from a fresh frame.  Structural-omission and
+                        # card-face-cost modes already carry independent channels.
+                        # This adds no navigation or broad retry.
+                        positive_confirmation_reads += 1
+                        self._increment(
+                            "skill_card_detail_positive_confirmation_reads"
+                        )
+                        if self._same_clicked_card_resolution(
+                            positive_candidate,
+                            resolved,
+                        ):
+                            resolved = ClickedSkillCard(
+                                resolved.card_id,
+                                dict(resolved.customizations),
+                                resolution_source=(
+                                    f"{resolved.resolution_source}_positive_confirmed"
+                                ),
+                                detail_confirmation_reads=(
+                                    positive_confirmation_reads
+                                ),
+                                detail_evidence_mode=resolved.detail_evidence_mode,
+                            )
+                            self._increment(
+                                "skill_card_detail_positive_confirmations"
+                            )
+                        else:
+                            if positive_candidate is not None:
+                                self._increment(
+                                    "skill_card_detail_positive_confirmation_conflicts"
+                                )
+                            positive_candidate = resolved
+                            if not positive_confirmation_extension_applied:
+                                deadline = max(
+                                    deadline,
+                                    time.monotonic() + 0.25,
+                                )
+                                positive_confirmation_extension_applied = True
+                                self._increment(
+                                    "skill_card_detail_positive_confirmation_extensions"
+                                )
+                            raise ArenaReaderError(
+                                "skill_card_detail_positive_unconfirmed",
+                                "an unconstrained positive detail requires one fresh "
+                                "semantically identical frame",
+                            )
                     reason = (
                         "badge_count_override"
                         if count_mismatch
@@ -5785,10 +5878,36 @@ class MaaArenaReaderBackend:
         reads = 0
         semantic_stable_frames = 0
         semantic_identity_frames: list[dict[str, Any]] = []
+        accepted_row = tuple(
+            getattr(self, "_card_rows", {}).get(group_index, ())
+        )
         while time.monotonic() < deadline:
             try:
                 image = self._capture()
-                row = self._validated_card_group_row(image, group_index)
+                detected_row = self._validated_card_group_row(image, group_index)
+                row = detected_row
+                if len(accepted_row) == 6:
+                    if self._card_rows_shifted(detected_row, accepted_row):
+                        raise ArenaReaderError(
+                            "skill_card_source_geometry_changed",
+                            f"group {group_index} returned with geometry outside the "
+                            f"accepted source row; accepted={accepted_row!r}; "
+                            f"detected={detected_row!r}",
+                        )
+                    # Detector NMS may retain a dense set before the click and
+                    # only two edge anchors after the overlay closes.  Those
+                    # equivalent observations can differ by a pixel or two.
+                    # Once the current frame proves the same fixed row within
+                    # the existing geometry tolerance, crop the clicked slot
+                    # with the pre-action row itself.  This keeps both the
+                    # 16x16 generation signature and clean-reference identity
+                    # bound to one physical ROI instead of letting detector
+                    # sparsity redefine the transaction mid-close.
+                    row = accepted_row
+                    if detected_row != accepted_row:
+                        self._increment(
+                            "skill_card_source_restore_frozen_geometry"
+                        )
                 reads += 1
                 self._increment("skill_card_source_restore_reads")
                 if restoration_signatures is not None:

@@ -231,18 +231,56 @@ def canonical_skill_card_rows(
         if abs(expected_centers[column] - center_x) > pitch * 0.42:
             continue
         plausible.append((x, y, box_width, box_height, column))
+    plausible = list(dict.fromkeys(plausible))
+
+    def column_anchor_y(
+        items: Sequence[tuple[int, int, int, int, int]],
+        column: int,
+    ) -> float:
+        column_items = tuple(item for item in items if item[4] == column)
+        dimension_error = min(
+            (
+                abs(item[2] - card_width) + abs(item[3] - card_height)
+                for item in column_items
+            ),
+            default=None,
+        )
+        if dimension_error is None:
+            raise ValueError("column anchor requires at least one detector box")
+        # A normal card face and its taller customization overlay can occupy
+        # the same fixed column.  The synthesized row is defined by the card
+        # face, so prefer the detection whose dimensions best match that face;
+        # only equally good, distinct y observations receive an internal vote.
+        best_y_values = {
+            item[1]
+            for item in column_items
+            if abs(item[2] - card_width) + abs(item[3] - card_height)
+            == dimension_error
+        }
+        return float(median(best_y_values))
+
+    def column_weighted_y(
+        items: Sequence[tuple[int, int, int, int, int]],
+    ) -> float:
+        columns = {item[4] for item in items}
+        column_anchors = tuple(
+            column_anchor_y(items, column)
+            for column in sorted(columns)
+        )
+        return float(median(column_anchors))
 
     clusters: list[list[tuple[int, int, int, int, int]]] = []
     y_tolerance = max(10, int(round(height * 0.018)))
     for item in sorted(plausible, key=lambda value: (value[1], value[0], value[3])):
-        cluster = next(
-            (
-                candidate
-                for candidate in clusters
-                if abs(round(sum(value[1] for value in candidate) / len(candidate)) - item[1])
-                <= y_tolerance
-            ),
-            None,
+        compatible_clusters = tuple(
+            candidate
+            for candidate in clusters
+            if abs(column_weighted_y(candidate) - item[1]) <= y_tolerance
+        )
+        cluster = min(
+            compatible_clusters,
+            key=lambda candidate: abs(column_weighted_y(candidate) - item[1]),
+            default=None,
         )
         if cluster is None:
             clusters.append([item])
@@ -263,7 +301,12 @@ def canonical_skill_card_rows(
     for columns, cluster in cluster_columns:
         if not columns or len(columns) < minimum_support:
             continue
-        row_y = int(round(sorted(item[1] for item in cluster)[len(cluster) // 2]))
+        # Each fixed column is one geometric vote.  The detector can emit
+        # several boxes for the same card (for example a normal face plus a
+        # taller customized-card overlay), so every column first selects its
+        # card-face anchor and then contributes exactly one vote.  Duplicate
+        # multiplicity therefore cannot move the row or its cluster support.
+        row_y = int(round(column_weighted_y(cluster)))
         rows.append(tuple((column_x, row_y, card_width, card_height) for column_x in expected_lefts))
     return tuple(sorted(rows, key=lambda row: row[0][1]))
 

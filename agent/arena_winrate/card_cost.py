@@ -36,6 +36,9 @@ class GenericCostPrediction:
     digit_best_error: float | None = None
     digit_class_margin: float | None = None
     digit_descriptor_hex: str = ""
+    evidence_mode: str = ""
+    zero_hole_box: tuple[int, int, int, int, int] | None = None
+    zero_alternative_error: float | None = None
 
 
 def _sha256_file(path: Path) -> str:
@@ -74,7 +77,6 @@ class GenericCostReferenceGallery:
         minimum_cutout_margin: float,
         maximum_digit_error: float,
         minimum_digit_margin: float,
-        maximum_zero_pixels: int,
     ) -> None:
         import numpy as np
 
@@ -112,7 +114,6 @@ class GenericCostReferenceGallery:
             or minimum_cutout_margin < minimum_class_margin
             or maximum_digit_error <= 0
             or minimum_digit_margin < minimum_class_margin
-            or maximum_zero_pixels < 0
         ):
             raise GenericCostReferenceError("generic-cost thresholds are invalid")
         self.maximum_mask_error = float(maximum_mask_error)
@@ -124,7 +125,6 @@ class GenericCostReferenceGallery:
         self.minimum_cutout_margin = float(minimum_cutout_margin)
         self.maximum_digit_error = float(maximum_digit_error)
         self.minimum_digit_margin = float(minimum_digit_margin)
-        self.maximum_zero_pixels = int(maximum_zero_pixels)
         self._card_indices = {
             int(card_id): index
             for index, card_id in enumerate(self.generic_card_ids)
@@ -174,7 +174,6 @@ class GenericCostReferenceGallery:
                 minimum_cutout_margin=float(runtime["minimum_cutout_margin"]),
                 maximum_digit_error=float(runtime["maximum_digit_error"]),
                 minimum_digit_margin=float(runtime["minimum_digit_margin"]),
-                maximum_zero_pixels=int(runtime["maximum_zero_pixels"]),
             )
 
     @staticmethod
@@ -498,6 +497,81 @@ class GenericCostReferenceGallery:
             interpolation=cv2.INTER_NEAREST,
         )
 
+    @classmethod
+    def _explicit_zero_hole(
+        cls,
+        digit: Any,
+    ) -> tuple[int, int, int, int, int] | None:
+        """Return the single enclosed counter of an explicit rendered ``0``.
+
+        The live contest renderer retains the coloured lower-right carrier for
+        a zero generic cost and draws an explicit ``0`` inside it.  Treating a
+        missing carrier or an empty ROI as zero would turn failed extraction
+        into false positive customization evidence.
+
+        This test is deliberately topological rather than a looser template
+        threshold.  It is reached only for the fixed ``{0, 2}`` hypotheses;
+        the normalized numeral must contain exactly one sizeable background
+        component that is fully enclosed by one dominant foreground glyph.
+        """
+
+        import cv2
+        import numpy as np
+
+        binary = (np.asarray(digit, dtype=np.uint8) > 0).astype(np.uint8)
+        if binary.shape != (cls.GLYPH_SIZE, cls.GLYPH_SIZE):
+            return None
+        foreground_count, _, foreground_stats, _ = (
+            cv2.connectedComponentsWithStats(binary, 8)
+        )
+        foreground_areas = tuple(
+            int(foreground_stats[label, cv2.CC_STAT_AREA])
+            for label in range(1, foreground_count)
+        )
+        foreground_pixels = int(binary.sum())
+        if (
+            foreground_pixels < 64
+            or not foreground_areas
+            or max(foreground_areas) < int(foreground_pixels * 0.9)
+        ):
+            return None
+
+        background = (binary == 0).astype(np.uint8)
+        component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
+            background,
+            8,
+        )
+        holes: list[tuple[int, int, int, int, int]] = []
+        for label in range(1, component_count):
+            x, y, width, height, area = (
+                int(value) for value in stats[label]
+            )
+            if (
+                x == 0
+                or y == 0
+                or x + width == cls.GLYPH_SIZE
+                or y + height == cls.GLYPH_SIZE
+                or labels[cls.GLYPH_SIZE // 2, cls.GLYPH_SIZE // 2]
+                != label
+                or width < 7
+                or height < 10
+                or area < 60
+            ):
+                continue
+            hole = labels[y : y + height, x : x + width] == label
+            if (
+                area / float(width * height) >= 0.9
+                or bool(hole[0, 0])
+                or bool(hole[0, -1])
+                or bool(hole[-1, 0])
+                or bool(hole[-1, -1])
+            ):
+                continue
+            holes.append((x, y, width, height, area))
+        if len(holes) != 1:
+            return None
+        return holes[0]
+
     def classify_mask(
         self,
         mask: Any,
@@ -519,14 +593,6 @@ class GenericCostReferenceGallery:
             return GenericCostPrediction("INVALID_ROI")
         query = query > 0
         pixel_count = int(query.sum())
-        if pixel_count <= self.maximum_zero_pixels:
-            return GenericCostPrediction(
-                "MEASURED" if 0 in allowed else "ZERO_NOT_ALLOWED",
-                value=0 if 0 in allowed else None,
-                best_error=0.0,
-                class_margin=float("inf"),
-                pixel_count=pixel_count,
-            )
         kind = self.cost_kinds[card_index]
         base_value = int(self.base_values[card_index])
         normalized_query = (query > 0).astype(np.uint8)
@@ -551,22 +617,14 @@ class GenericCostReferenceGallery:
             if symbol_query is not None
             else None
         )
+        zero_hole = (
+            self._explicit_zero_hole(digit_query)
+            if digit_query is not None and set(allowed) == {0, 2}
+            else None
+        )
         digit_ranked: list[tuple[float, int]] = []
         for value in allowed:
             if value == 0:
-                ranked.append((pixel_count / query.size, value))
-                if cutout_query is not None:
-                    cutout_ranked.append(
-                        (float(cutout_query.sum() / cutout_query.size), value)
-                    )
-                if symbol_query is not None:
-                    symbol_ranked.append(
-                        (float(symbol_query.sum() / symbol_query.size), value)
-                    )
-                if digit_query is not None:
-                    digit_ranked.append(
-                        (float(digit_query.sum() / digit_query.size), value)
-                    )
                 continue
             references = []
             if value == base_value:
@@ -640,32 +698,89 @@ class GenericCostReferenceGallery:
                 )
         ranked.sort()
         best_error, value = ranked[0]
-        margin = ranked[1][0] - best_error
+        margin = (
+            ranked[1][0] - best_error
+            if len(ranked) > 1
+            else float("inf")
+        )
         candidate_value = value
         cutout_ranked.sort()
-        if len(cutout_ranked) == 2:
+        if cutout_ranked:
             cutout_best_error, cutout_candidate_value = cutout_ranked[0]
-            cutout_class_margin = cutout_ranked[1][0] - cutout_best_error
+            cutout_class_margin = (
+                cutout_ranked[1][0] - cutout_best_error
+                if len(cutout_ranked) > 1
+                else float("inf")
+            )
         else:
             cutout_best_error = None
             cutout_candidate_value = None
             cutout_class_margin = None
         symbol_ranked.sort()
-        if len(symbol_ranked) == 2:
+        if symbol_ranked:
             symbol_best_error, symbol_candidate_value = symbol_ranked[0]
-            symbol_class_margin = symbol_ranked[1][0] - symbol_best_error
+            symbol_class_margin = (
+                symbol_ranked[1][0] - symbol_best_error
+                if len(symbol_ranked) > 1
+                else float("inf")
+            )
         else:
             symbol_best_error = None
             symbol_candidate_value = None
             symbol_class_margin = None
         digit_ranked.sort()
-        if len(digit_ranked) == 2:
+        if digit_ranked:
             digit_best_error, digit_candidate_value = digit_ranked[0]
-            digit_class_margin = digit_ranked[1][0] - digit_best_error
+            digit_class_margin = (
+                digit_ranked[1][0] - digit_best_error
+                if len(digit_ranked) > 1
+                else float("inf")
+            )
         else:
             digit_best_error = None
             digit_candidate_value = None
             digit_class_margin = None
+        if zero_hole is not None:
+            alternative_error = next(
+                (
+                    error
+                    for error, ranked_value in digit_ranked
+                    if ranked_value == 2
+                ),
+                None,
+            )
+            zero_certified = (
+                alternative_error is not None
+                and alternative_error > self.maximum_digit_error
+            )
+            return GenericCostPrediction(
+                "MEASURED" if zero_certified else "ZERO_TOPOLOGY_CONFLICT",
+                value=0 if zero_certified else None,
+                candidate_value=0,
+                pixel_count=pixel_count,
+                carrier_descriptor_hex=np.packbits(
+                    normalized_query.reshape(-1)
+                ).tobytes().hex(),
+                symbol_candidate_value=0,
+                symbol_descriptor_hex=np.packbits(
+                    symbol_query.reshape(-1)
+                ).tobytes().hex(),
+                digit_candidate_value=0,
+                digit_descriptor_hex=np.packbits(
+                    digit_query.reshape(-1)
+                ).tobytes().hex(),
+                evidence_mode=(
+                    "explicit_zero_hole"
+                    if zero_certified
+                    else "explicit_zero_hole_conflict"
+                ),
+                zero_hole_box=zero_hole,
+                zero_alternative_error=(
+                    round(alternative_error, 6)
+                    if alternative_error is not None
+                    else None
+                ),
+            )
         cutout_certified = (
             cutout_candidate_value == candidate_value
             and cutout_best_error is not None
@@ -680,10 +795,7 @@ class GenericCostReferenceGallery:
             and digit_class_margin is not None
             and digit_class_margin >= self.minimum_digit_margin
         )
-        if value == 0:
-            status = "ZERO_RESIDUE_PRESENT"
-            value = None
-        elif best_error > self.maximum_high_error:
+        if best_error > self.maximum_high_error:
             status = "MASK_ERROR_TOO_HIGH"
             value = None
         elif symbol_query is not None and not digit_certified:
@@ -789,6 +901,11 @@ class GenericCostReferenceGallery:
         digit = self._digit_descriptor(symbol)
         if digit is None:
             return GenericCostPrediction("DIGIT_EVIDENCE_MISSING")
+        zero_hole = (
+            self._explicit_zero_hole(digit)
+            if set(allowed) == {0, 2}
+            else None
+        )
         kind = self.cost_kinds[card_index]
         base_value = int(self.base_values[card_index])
         ranked: list[tuple[float, int]] = []
@@ -822,6 +939,39 @@ class GenericCostReferenceGallery:
         ranked.sort()
         if not ranked:
             return GenericCostPrediction("REFERENCE_VALUE_MISSING")
+        if zero_hole is not None:
+            alternative_error = next(
+                (error for error, ranked_value in ranked if ranked_value == 2),
+                None,
+            )
+            zero_certified = (
+                alternative_error is not None
+                and alternative_error > self.maximum_digit_error
+            )
+            return GenericCostPrediction(
+                "MEASURED" if zero_certified else "ZERO_TOPOLOGY_CONFLICT",
+                value=0 if zero_certified else None,
+                candidate_value=0,
+                symbol_candidate_value=0,
+                symbol_descriptor_hex=np.packbits(
+                    symbol.reshape(-1)
+                ).tobytes().hex(),
+                digit_candidate_value=0,
+                digit_descriptor_hex=np.packbits(
+                    digit.reshape(-1)
+                ).tobytes().hex(),
+                evidence_mode=(
+                    "explicit_zero_hole"
+                    if zero_certified
+                    else "explicit_zero_hole_conflict"
+                ),
+                zero_hole_box=zero_hole,
+                zero_alternative_error=(
+                    round(alternative_error, 6)
+                    if alternative_error is not None
+                    else None
+                ),
+            )
         best_error, candidate_value = ranked[0]
         class_margin = (
             ranked[1][0] - best_error
@@ -933,15 +1083,6 @@ class GenericCostReferenceGallery:
                     roi_x : roi_x + roi_width,
                 ].sum()
             )
-            if residue <= self.maximum_zero_pixels and 0 in allowed_values:
-                return GenericCostPrediction(
-                    "MEASURED",
-                    value=0,
-                    best_error=0.0,
-                    class_margin=float("inf"),
-                    pixel_count=residue,
-                    component_boxes=component_boxes,
-                )
             return GenericCostPrediction(
                 "COST_CARRIER_MISSING",
                 pixel_count=residue,

@@ -1,8 +1,9 @@
-"""Build a one-commit public source snapshot from an approved local revision.
+"""Build a public-only source snapshot from an approved local revision.
 
 The development repository and its history are never copied. Only explicitly
-listed product sources are exported, privacy-checked, and committed under a
-non-personal release identity.
+listed product sources are exported and privacy-checked. The first public
+snapshot is an explicit root; every later snapshot has the previously verified
+public ``main`` as its only parent, preserving a sanitized linear history.
 """
 
 from __future__ import annotations
@@ -10,18 +11,30 @@ from __future__ import annotations
 import os
 import re
 import json
-import stat
 import shutil
 import hashlib
+import tomllib
 import zipfile
 import tempfile
 import subprocess
 from pathlib import Path
+from datetime import datetime
+from collections.abc import Callable
 
 try:
-    from tools.deployment.privacy_gate import PrivacyGateError, validate_tree
+    from tools.deployment.privacy_gate import (
+        PrivacyGateError,
+        validate_tree,
+        validate_relative_path,
+        private_machine_markers,
+    )
 except ModuleNotFoundError:  # Direct script execution from tools/deployment.
-    from privacy_gate import PrivacyGateError, validate_tree
+    from privacy_gate import (
+        PrivacyGateError,
+        validate_tree,
+        validate_relative_path,
+        private_machine_markers,
+    )
 
 DIRECTORY_ALLOWLIST = (
     "agent",
@@ -81,6 +94,17 @@ DATA_ALLOWLIST = (
     "support_cards.json",
 )
 
+PUBLIC_TEST_ALLOWLIST = (
+    "tests/test_arena_grade.py",
+    "tests/test_arena_stage_catalog.py",
+)
+
+GENERATED_FILE_ALLOWLIST = (
+    ".gitignore",
+    "ASSET_PROVENANCE.md",
+    "README.md",
+)
+
 FORBIDDEN_PATH_NAMES = {
     ".claude",
     ".local",
@@ -98,17 +122,44 @@ FORBIDDEN_PATH_NAMES = {
 }
 FORBIDDEN_PATH_NAMES_CASEFOLD = {name.casefold() for name in FORBIDDEN_PATH_NAMES}
 
-VERSION_PATTERN = re.compile(r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\+gkh\.\d{6}$")
+VERSION_PATTERN = re.compile(
+    r"^v(?P<major>0|[1-9]\d*)\."
+    r"(?P<minor>0|[1-9]\d*)\."
+    r"(?P<patch>0|[1-9]\d*)\+gkh\.(?P<date>\d{6})$"
+)
 REPOSITORY_PATTERN = re.compile(r"^https://github\.com/[^/\s]+/[^/\s]+$")
 PUBLIC_AUTHOR_NAME = "Gakumas Helper Release"
 PUBLIC_AUTHOR_EMAIL = "noreply@gakumas-helper.invalid"
-PUBLIC_COMMIT_DATE = "2026-08-23T00:00:00Z"
 INTERNAL_TASK_IDENTIFIER_PATTERN = re.compile(rb"(?i)\bTA" rb"SK-[0-9]{3}\b")
 ZIP_CONTAINER_SUFFIXES = {".jar", ".npz", ".whl", ".zip"}
+WINDOWS_RESERVED_PATH_STEMS = {
+    "aux",
+    "clock$",
+    "con",
+    "conin$",
+    "conout$",
+    "nul",
+    "prn",
+    *(f"com{suffix}" for suffix in (*range(1, 10), "¹", "²", "³")),
+    *(f"lpt{suffix}" for suffix in (*range(1, 10), "¹", "²", "³")),
+}
 
 
 class PublicSnapshotError(RuntimeError):
     """Raised when a public source snapshot would violate the release boundary."""
+
+
+def _remove_tree(path: Path) -> None:
+    if not path.exists():
+        return
+
+    def make_writable_and_retry(
+        function: Callable[[str], object], target: str, _error: BaseException
+    ) -> None:
+        os.chmod(target, 0o700)
+        function(target)
+
+    shutil.rmtree(path, onexc=make_writable_and_retry)
 
 
 def _reject_internal_task_identifiers(output: Path) -> None:
@@ -131,6 +182,11 @@ def _reject_internal_task_identifiers(output: Path) -> None:
             for entry in archive.infolist():
                 if entry.is_dir():
                     continue
+                if INTERNAL_TASK_IDENTIFIER_PATTERN.search(entry.filename.encode("utf-8")):
+                    raise PublicSnapshotError(
+                        "public snapshot contains an internal task identifier in "
+                        f"{relative}!{entry.filename}"
+                    )
                 member = archive.read(entry)
                 if INTERNAL_TASK_IDENTIFIER_PATTERN.search(member):
                     raise PublicSnapshotError(
@@ -161,18 +217,125 @@ def _run(
     return completed.stdout.strip()
 
 
-def _safe_extract(archive_path: Path, destination: Path) -> None:
-    destination_root = destination.resolve()
-    with zipfile.ZipFile(archive_path) as archive:
-        for entry in archive.infolist():
-            relative = Path(entry.filename.replace("\\", "/"))
-            mode = entry.external_attr >> 16
-            target = (destination / relative).resolve()
-            if relative.is_absolute() or ".." in relative.parts or stat.S_ISLNK(mode):
-                raise PublicSnapshotError(f"source archive contains an unsafe member: {entry.filename}")
-            if os.path.commonpath((str(destination_root), str(target))) != str(destination_root):
-                raise PublicSnapshotError(f"source archive member escapes destination: {entry.filename}")
-        archive.extractall(destination)
+def _run_bytes(
+    arguments: tuple[str, ...],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> bytes:
+    completed = subprocess.run(
+        arguments,
+        cwd=cwd,
+        capture_output=True,
+        timeout=120,
+        check=False,
+        env=env,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout)[-4000:].decode("utf-8", errors="replace")
+        raise PublicSnapshotError(f"command failed ({' '.join(arguments[:3])}): {detail.strip()}")
+    return completed.stdout
+
+
+def _materialize_git_tree(
+    repository: Path,
+    revision: str,
+    destination: Path,
+    *,
+    env: dict[str, str],
+) -> int:
+    if destination.exists():
+        raise PublicSnapshotError(f"Git tree destination already exists: {destination}")
+    destination.mkdir()
+    listing = _run_bytes(
+        ("git", "ls-tree", "-r", "-t", "-z", "--full-tree", revision),
+        cwd=repository,
+        env=env,
+    )
+    records = listing.split(b"\0")
+    if records and records[-1] == b"":
+        records.pop()
+    seen_entries: set[str] = set()
+    seen_prefix_casefold: dict[str, str] = {}
+    tree_paths: set[str] = set()
+    blob_paths: set[str] = set()
+    path_machine_markers = private_machine_markers()
+    for record in records:
+        try:
+            metadata, raw_path = record.split(b"\t", 1)
+            mode, object_type, object_sha = metadata.decode("ascii").split()
+            git_path = raw_path.decode("utf-8")
+        except (UnicodeDecodeError, ValueError) as error:
+            raise PublicSnapshotError("public Git tree contains an invalid entry") from error
+        is_blob = object_type == "blob" and mode in {"100644", "100755"}
+        is_tree = object_type == "tree" and mode == "040000"
+        if not is_blob and not is_tree:
+            raise PublicSnapshotError(
+                f"public Git tree contains an unsupported entry: {git_path} ({mode} {object_type})"
+            )
+        if re.fullmatch(r"[0-9a-f]{40}", object_sha) is None:
+            raise PublicSnapshotError(f"public Git tree contains an invalid object id: {git_path}")
+        if git_path.startswith("/") or "\\" in git_path:
+            raise PublicSnapshotError(f"public Git tree contains an unsafe path: {git_path}")
+        parts = git_path.split("/")
+        if any(
+            not part
+            or part in {".", ".."}
+            or part.endswith((".", " "))
+            or any(character in '<>:"\\|?*' or ord(character) < 32 for character in part)
+            for part in parts
+        ):
+            raise PublicSnapshotError(f"public Git tree contains an unsafe path: {git_path}")
+        if any(
+            part.split(".", 1)[0].rstrip(" ").casefold() in WINDOWS_RESERVED_PATH_STEMS
+            for part in parts
+        ):
+            raise PublicSnapshotError(
+                f"public Git tree contains a reserved Windows device path: {git_path}"
+            )
+        try:
+            validate_relative_path(
+                Path(*parts),
+                is_directory=is_tree,
+                allowed_emails={PUBLIC_AUTHOR_EMAIL},
+                allow_arena_engine_config=False,
+                machine_markers=path_machine_markers,
+            )
+        except PrivacyGateError as error:
+            raise PublicSnapshotError(str(error)) from error
+        if git_path in seen_entries:
+            raise PublicSnapshotError(f"public Git tree contains a duplicate path: {git_path}")
+        seen_entries.add(git_path)
+        for length in range(1, len(parts) + 1):
+            prefix = "/".join(parts[:length])
+            prefix_casefolded = prefix.casefold()
+            previous_prefix = seen_prefix_casefold.get(prefix_casefolded)
+            if previous_prefix is not None and previous_prefix != prefix:
+                raise PublicSnapshotError(
+                    "public Git tree contains a case-colliding path prefix: "
+                    f"{previous_prefix} and {prefix}"
+                )
+            seen_prefix_casefold[prefix_casefolded] = prefix
+        if is_tree:
+            tree_paths.add(git_path)
+            continue
+        blob_paths.add(git_path)
+        target = destination.joinpath(*parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(
+            _run_bytes(("git", "cat-file", "blob", object_sha), cwd=repository, env=env)
+        )
+    nonempty_tree_paths = {
+        "/".join(blob_path.split("/")[:length])
+        for blob_path in blob_paths
+        for length in range(1, len(blob_path.split("/")))
+    }
+    empty_tree_paths = sorted(tree_paths - nonempty_tree_paths)
+    if empty_tree_paths:
+        raise PublicSnapshotError(
+            f"public Git tree contains an empty directory: {empty_tree_paths[0]}"
+        )
+    return len(blob_paths)
 
 
 def _copy_file(source_root: Path, output: Path, relative: str) -> None:
@@ -199,11 +362,182 @@ def _copy_tree(source_root: Path, output: Path, relative: str) -> None:
     )
 
 
+def _replace_required_toml_line(section: str, key: str, replacement: str) -> str:
+    pattern = re.compile(rf"(?m)^{re.escape(key)}\s*=.*$")
+    updated, replacements = pattern.subn(replacement, section)
+    if replacements != 1:
+        raise PublicSnapshotError(f"pyproject [project] must define {key} exactly once")
+    return updated
+
+
+def _replace_required_toml_array(section: str, key: str, values: list[str]) -> str:
+    pattern = re.compile(rf"(?ms)^{re.escape(key)}\s*=\s*\[.*?^\]\s*$")
+    rendered = f"{key} = [\n" + "".join(
+        f"    {json.dumps(value, ensure_ascii=False)},\n" for value in values
+    ) + "]\n"
+    updated, replacements = pattern.subn(rendered, section)
+    if replacements != 1:
+        raise PublicSnapshotError(f"pyproject [project] must define {key} exactly once")
+    return updated
+
+
+def _rewrite_pyproject(path: Path, *, version: str, repository: str) -> None:
+    try:
+        text = path.read_text(encoding="utf-8")
+        metadata = tomllib.loads(text)
+        project = metadata["project"]
+        classifiers = project["classifiers"]
+        dependencies = project["dependencies"]
+    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+        raise PublicSnapshotError("public pyproject metadata is unavailable or invalid") from error
+    if not isinstance(classifiers, list) or not all(isinstance(value, str) for value in classifiers):
+        raise PublicSnapshotError("public pyproject classifiers must be an array of strings")
+    if not isinstance(dependencies, list) or not all(isinstance(value, str) for value in dependencies):
+        raise PublicSnapshotError("public pyproject dependencies must be an array of strings")
+
+    project_header = re.search(r"(?m)^\[project\]\s*$", text)
+    if project_header is None:
+        raise PublicSnapshotError("pyproject is missing [project]")
+    following = re.search(r"(?m)^\[", text[project_header.end() :])
+    project_end = (
+        project_header.end() + following.start() if following is not None else len(text)
+    )
+    project_section = text[project_header.end() : project_end]
+    project_section = _replace_required_toml_line(
+        project_section,
+        "version",
+        f'version = "{version.removeprefix("v")}"',
+    )
+    project_section = _replace_required_toml_line(
+        project_section,
+        "license",
+        'license = {text = "AGPL-3.0-only"}',
+    )
+    public_classifiers = [
+        value for value in classifiers if not value.startswith("License ::")
+    ]
+    license_classifier = "License :: OSI Approved :: GNU Affero General Public License v3"
+    audience_index = next(
+        (
+            index + 1
+            for index, value in enumerate(public_classifiers)
+            if value.startswith("Intended Audience ::")
+        ),
+        len(public_classifiers),
+    )
+    public_classifiers.insert(audience_index, license_classifier)
+    project_section = _replace_required_toml_array(
+        project_section,
+        "classifiers",
+        public_classifiers,
+    )
+    public_dependencies = list(dependencies)
+    if not any(value.casefold() == "opencv-python-headless" for value in public_dependencies):
+        public_dependencies.append("opencv-python-headless")
+    project_section = _replace_required_toml_array(
+        project_section,
+        "dependencies",
+        public_dependencies,
+    )
+    text = text[: project_header.end()] + project_section + text[project_end:]
+
+    urls_header = re.search(r"(?m)^\[project\.urls\]\s*$", text)
+    if urls_header is None:
+        raise PublicSnapshotError("pyproject is missing [project.urls]")
+    following = re.search(r"(?m)^\[", text[urls_header.end() :])
+    urls_end = urls_header.end() + following.start() if following is not None else len(text)
+    urls_section = text[urls_header.end() : urls_end]
+    urls_section = _replace_required_toml_line(
+        urls_section,
+        "Homepage",
+        f'Homepage = "{repository}"',
+    )
+    urls_section = _replace_required_toml_line(
+        urls_section,
+        "Repository",
+        f'Repository = "{repository}"',
+    )
+    urls_section = _replace_required_toml_line(
+        urls_section,
+        "Issues",
+        f'Issues = "{repository}/issues"',
+    )
+    text = text[: urls_header.end()] + urls_section + text[urls_end:]
+
+    try:
+        rewritten = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise PublicSnapshotError("rewritten public pyproject is invalid TOML") from error
+    rewritten_project = rewritten.get("project", {})
+    rewritten_urls = rewritten_project.get("urls", {})
+    if (
+        rewritten_project.get("version") != version.removeprefix("v")
+        or rewritten_project.get("license") != {"text": "AGPL-3.0-only"}
+        or license_classifier not in rewritten_project.get("classifiers", [])
+        or any("MIT License" in value for value in rewritten_project.get("classifiers", []))
+        or "opencv-python-headless" not in rewritten_project.get("dependencies", [])
+        or rewritten_urls
+        != {
+            "Homepage": repository,
+            "Repository": repository,
+            "Issues": f"{repository}/issues",
+        }
+    ):
+        raise PublicSnapshotError("rewritten public pyproject metadata is inconsistent")
+    path.write_text(text, encoding="utf-8")
+
+
+def _is_allowlisted_public_file(relative: Path) -> bool:
+    normalized = relative.as_posix()
+    if normalized in GENERATED_FILE_ALLOWLIST or normalized in FILE_ALLOWLIST:
+        return True
+    if normalized in PUBLIC_TEST_ALLOWLIST:
+        return True
+    if normalized in {f"assets/data/{name}" for name in DATA_ALLOWLIST}:
+        return True
+    return any(
+        normalized.startswith(f"{directory}/")
+        for directory in DIRECTORY_ALLOWLIST
+    )
+
+
+def _version_commit_date(version: str) -> str:
+    match = VERSION_PATTERN.fullmatch(version)
+    if match is None:
+        raise PublicSnapshotError(
+            "public preview version must use vMAJOR.MINOR.PATCH+gkh.YYMMDD"
+        )
+    try:
+        calendar_date = datetime.strptime(f"20{match.group('date')}", "%Y%m%d")
+    except ValueError as error:
+        raise PublicSnapshotError("public preview version contains an invalid calendar date") from error
+    return calendar_date.strftime("%Y-%m-%dT00:00:00Z")
+
+
+def _version_lineage_key(version: str) -> tuple[tuple[int, int, int], int]:
+    match = VERSION_PATTERN.fullmatch(version)
+    if match is None:
+        raise PublicSnapshotError(
+            "public preview version must use vMAJOR.MINOR.PATCH+gkh.YYMMDD"
+        )
+    return (
+        tuple(int(match.group(name)) for name in ("major", "minor", "patch")),
+        int(match.group("date")),
+    )
+
+
 def _validate_snapshot(output: Path) -> dict[str, int]:
     for path in output.rglob("*"):
         relative = path.relative_to(output)
-        if any(part.casefold() in FORBIDDEN_PATH_NAMES_CASEFOLD for part in relative.parts):
+        is_public_test_path = relative == Path("tests") or relative.as_posix() in PUBLIC_TEST_ALLOWLIST
+        if not is_public_test_path and any(
+            part.casefold() in FORBIDDEN_PATH_NAMES_CASEFOLD for part in relative.parts
+        ):
             raise PublicSnapshotError(f"public snapshot contains a forbidden path: {relative.as_posix()}")
+        if path.is_file() and not _is_allowlisted_public_file(relative):
+            raise PublicSnapshotError(
+                f"public snapshot contains a file outside the public allowlist: {relative.as_posix()}"
+            )
     _reject_internal_task_identifiers(output)
     try:
         return validate_tree(
@@ -224,7 +558,7 @@ def _file_inventory(root: Path) -> dict[str, tuple[int, str]]:
     }
 
 
-def _release_git_environment(empty_config: Path) -> dict[str, str]:
+def _release_git_environment(empty_config: Path, *, commit_date: str) -> dict[str, str]:
     environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
     environment.update(
         {
@@ -232,13 +566,194 @@ def _release_git_environment(empty_config: Path) -> dict[str, str]:
             "GIT_AUTHOR_EMAIL": PUBLIC_AUTHOR_EMAIL,
             "GIT_COMMITTER_NAME": PUBLIC_AUTHOR_NAME,
             "GIT_COMMITTER_EMAIL": PUBLIC_AUTHOR_EMAIL,
-            "GIT_AUTHOR_DATE": PUBLIC_COMMIT_DATE,
-            "GIT_COMMITTER_DATE": PUBLIC_COMMIT_DATE,
+            "GIT_AUTHOR_DATE": commit_date,
+            "GIT_COMMITTER_DATE": commit_date,
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": str(empty_config),
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
         }
     )
     return environment
+
+
+def _git_path(repository: Path, name: str, *, env: dict[str, str]) -> Path:
+    value = Path(_run(("git", "rev-parse", "--git-path", name), cwd=repository, env=env))
+    if not value.is_absolute():
+        value = repository / value
+    return value.resolve()
+
+
+def _git_common_dir(repository: Path, *, env: dict[str, str]) -> Path:
+    value = Path(_run(("git", "rev-parse", "--git-common-dir"), cwd=repository, env=env))
+    if not value.is_absolute():
+        value = repository / value
+    return value.resolve()
+
+
+def _validate_public_history(
+    *,
+    parent_root: Path,
+    parent_revision: str,
+    source_root: Path,
+    repository: str,
+    temporary: Path,
+    env: dict[str, str],
+) -> tuple[str, ...]:
+    parent_root = parent_root.resolve()
+    if not parent_root.is_dir():
+        raise PublicSnapshotError(f"public parent repository is missing: {parent_root}")
+    if _run(("git", "rev-parse", "--is-inside-work-tree"), cwd=parent_root, env=env) != "true":
+        raise PublicSnapshotError("public parent must be a non-bare Git working tree")
+    top_level = Path(
+        _run(("git", "rev-parse", "--show-toplevel"), cwd=parent_root, env=env)
+    ).resolve()
+    if top_level != parent_root:
+        raise PublicSnapshotError("public parent path must be the repository top level")
+    if _run(("git", "rev-parse", "--is-shallow-repository"), cwd=parent_root, env=env) != "false":
+        raise PublicSnapshotError("public parent repository must contain the complete public history")
+    if _run(("git", "rev-parse", "--show-object-format"), cwd=parent_root, env=env) != "sha1":
+        raise PublicSnapshotError("public parent repository must use SHA-1 object identifiers")
+    parent_git_dir = Path(
+        _run(("git", "rev-parse", "--absolute-git-dir"), cwd=parent_root, env=env)
+    ).resolve()
+    parent_common_dir = _git_common_dir(parent_root, env=env)
+    if parent_git_dir != (parent_root / ".git").resolve() or parent_common_dir != parent_git_dir:
+        raise PublicSnapshotError("public parent must be an independent Git repository, not a linked worktree")
+    if (parent_git_dir / "commondir").exists():
+        raise PublicSnapshotError("public parent repository contains a commondir indirection")
+    if parent_common_dir == _git_common_dir(source_root, env=env):
+        raise PublicSnapshotError("development repository or worktree cannot be used as the public parent")
+    if _run(("git", "status", "--short"), cwd=parent_root, env=env):
+        raise PublicSnapshotError("public parent working tree must be clean")
+    if _run(("git", "symbolic-ref", "--short", "HEAD"), cwd=parent_root, env=env) != "main":
+        raise PublicSnapshotError("public parent must have main checked out")
+    if _run(("git", "rev-parse", "HEAD"), cwd=parent_root, env=env) != parent_revision:
+        raise PublicSnapshotError("public parent HEAD does not match the expected remote main")
+    if _run(("git", "rev-parse", "refs/heads/main"), cwd=parent_root, env=env) != parent_revision:
+        raise PublicSnapshotError("public parent main does not match the expected remote main")
+    if _run(("git", "cat-file", "-t", parent_revision), cwd=parent_root, env=env) != "commit":
+        raise PublicSnapshotError("public parent revision is not a commit")
+
+    if _run(("git", "remote"), cwd=parent_root, env=env):
+        raise PublicSnapshotError("public parent repository must not retain a Git remote")
+    refs = _run(
+        ("git", "for-each-ref", "--format=%(refname)"),
+        cwd=parent_root,
+        env=env,
+    )
+    if refs != "refs/heads/main":
+        raise PublicSnapshotError(f"public parent repository contains unexpected refs: {refs}")
+
+    if _run(("git", "for-each-ref", "--format=%(refname)", "refs/replace"), cwd=parent_root, env=env):
+        raise PublicSnapshotError("public parent repository contains replace refs")
+    for indirect_path in ("info/grafts", "objects/info/alternates", "shallow"):
+        if _git_path(parent_root, indirect_path, env=env).exists():
+            raise PublicSnapshotError(
+                f"public parent repository contains forbidden Git indirection: {indirect_path}"
+            )
+    _run(("git", "fsck", "--full", "--strict", "--no-reflogs"), cwd=parent_root, env=env)
+
+    history_lines = _run(
+        ("git", "rev-list", "--reverse", "--parents", parent_revision),
+        cwd=parent_root,
+        env=env,
+    ).splitlines()
+    commits: list[str] = []
+    parents_by_commit: dict[str, tuple[str, ...]] = {}
+    roots = 0
+    for line in history_lines:
+        fields = line.split()
+        if len(fields) == 1:
+            roots += 1
+        elif len(fields) != 2:
+            raise PublicSnapshotError("public parent history must be linear and contain no merge commits")
+        commits.append(fields[0])
+        parents_by_commit[fields[0]] = tuple(fields[1:])
+    if roots != 1 or not commits or commits[-1] != parent_revision:
+        raise PublicSnapshotError("public parent history must contain exactly one public root")
+
+    expected_identity = "|".join(
+        (PUBLIC_AUTHOR_NAME, PUBLIC_AUTHOR_EMAIL, PUBLIC_AUTHOR_NAME, PUBLIC_AUTHOR_EMAIL)
+    )
+    history_root = temporary / "verified-public-history"
+    history_root.mkdir()
+    seen_versions: set[str] = set()
+    previous_core: tuple[int, int, int] | None = None
+    previous_date: int | None = None
+    for index, commit in enumerate(commits):
+        metadata = _run(
+            ("git", "show", "-s", "--format=%an|%ae|%cn|%ce%n%s%n%aI%n%cI", commit),
+            cwd=parent_root,
+            env=env,
+        ).splitlines()
+        if len(metadata) != 4 or metadata[0] != expected_identity:
+            raise PublicSnapshotError(f"public history commit identity is not fixed: {commit}")
+        message_prefix = "release: "
+        if not metadata[1].startswith(message_prefix):
+            raise PublicSnapshotError(f"public history commit message is invalid: {commit}")
+        public_version = metadata[1].removeprefix(message_prefix)
+        expected_date = _version_commit_date(public_version)
+        core_version, release_date = _version_lineage_key(public_version)
+        if public_version in seen_versions:
+            raise PublicSnapshotError(
+                f"public history contains a duplicate version: {public_version}"
+            )
+        if previous_core is not None and previous_date is not None:
+            if core_version < previous_core or release_date < previous_date:
+                raise PublicSnapshotError(
+                    f"public history versions are not monotonic: {public_version}"
+                )
+            if core_version == previous_core and release_date <= previous_date:
+                raise PublicSnapshotError(
+                    f"public history dates must increase within one core version: {public_version}"
+                )
+        seen_versions.add(public_version)
+        previous_core = core_version
+        previous_date = release_date
+        if metadata[2:] != [expected_date, expected_date]:
+            raise PublicSnapshotError(f"public history commit date is inconsistent: {commit}")
+        raw_commit = _run_bytes(("git", "cat-file", "commit", commit), cwd=parent_root, env=env)
+        try:
+            raw_headers, raw_message = raw_commit.split(b"\n\n", 1)
+            header_keys = tuple(line.split(b" ", 1)[0] for line in raw_headers.splitlines())
+            decoded_message = raw_message.decode("utf-8")
+        except (UnicodeDecodeError, ValueError) as error:
+            raise PublicSnapshotError(f"public history commit object is invalid: {commit}") from error
+        expected_header_keys = (
+            b"tree",
+            *(b"parent" for _parent in parents_by_commit[commit]),
+            b"author",
+            b"committer",
+        )
+        if header_keys != expected_header_keys:
+            raise PublicSnapshotError(
+                f"public history commit contains unsupported headers or a signature: {commit}"
+            )
+        if decoded_message != f"release: {public_version}\n":
+            raise PublicSnapshotError(f"public history commit message must be one line: {commit}")
+
+        tree = history_root / f"{index:04d}-{commit}"
+        _materialize_git_tree(parent_root, commit, tree, env=env)
+        _validate_snapshot(tree)
+        interface_path = tree / "assets" / "interface.json"
+        try:
+            interface = json.loads(interface_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise PublicSnapshotError(
+                f"public history interface metadata is invalid: {commit}"
+            ) from error
+        if interface.get("version") != public_version:
+            raise PublicSnapshotError(
+                f"public history version does not match its commit message: {commit}"
+            )
+        if interface.get("github") != repository:
+            raise PublicSnapshotError(
+                f"public history repository does not match the target repository: {commit}"
+            )
+        shutil.rmtree(tree)
+    history_root.rmdir()
+    return tuple(commits)
 
 
 def build_public_snapshot(
@@ -248,22 +763,37 @@ def build_public_snapshot(
     output: Path,
     version: str,
     repository: str,
+    initial_public_root: bool = False,
+    public_parent_root: Path | None = None,
+    public_parent_revision: str | None = None,
 ) -> dict[str, object]:
     source_root = source_root.resolve()
     output = output.resolve()
     if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
         raise PublicSnapshotError("source revision must be a full lowercase Git SHA")
-    if VERSION_PATTERN.fullmatch(version) is None:
-        raise PublicSnapshotError("public preview version must use vMAJOR.MINOR.PATCH+gkh.YYMMDD")
+    commit_date = _version_commit_date(version)
     if REPOSITORY_PATTERN.fullmatch(repository) is None:
         raise PublicSnapshotError("public repository must be a GitHub repository URL without a trailing slash")
+    has_parent_root = public_parent_root is not None
+    has_parent_revision = public_parent_revision is not None
+    if has_parent_root != has_parent_revision:
+        raise PublicSnapshotError("public parent root and revision must be provided together")
+    if initial_public_root == has_parent_root:
+        raise PublicSnapshotError(
+            "choose exactly one history mode: initial public root or verified public parent"
+        )
+    if public_parent_revision is not None and re.fullmatch(
+        r"[0-9a-f]{40}", public_parent_revision
+    ) is None:
+        raise PublicSnapshotError("public parent revision must be a full lowercase Git SHA")
+    if public_parent_root is not None:
+        public_parent_root = public_parent_root.resolve()
     if output.exists():
         raise PublicSnapshotError(f"public snapshot output already exists: {output}")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="gkh-public-source-", dir=output.parent) as temporary_text:
         temporary = Path(temporary_text)
-        archive = temporary / "source.zip"
         exported = temporary / "source"
         empty_template = temporary / "empty-git-template"
         empty_hooks = temporary / "empty-git-hooks"
@@ -273,21 +803,32 @@ def build_public_snapshot(
         empty_hooks.mkdir()
         empty_attributes.write_text("", encoding="utf-8")
         empty_config.write_text("", encoding="utf-8")
-        release_git_environment = _release_git_environment(empty_config)
-        _run(
-            (
-                "git",
-                "-C",
-                str(source_root),
-                "archive",
-                "--format=zip",
-                f"--output={archive}",
-                source_revision,
-            ),
+        release_git_environment = _release_git_environment(
+            empty_config,
+            commit_date=commit_date,
+        )
+        parent_history: tuple[str, ...] = ()
+        if public_parent_root is not None and public_parent_revision is not None:
+            parent_history = _validate_public_history(
+                parent_root=public_parent_root,
+                parent_revision=public_parent_revision,
+                source_root=source_root,
+                repository=repository,
+                temporary=temporary,
+                env=release_git_environment,
+            )
+        if _run(
+            ("git", "cat-file", "-t", source_revision),
+            cwd=source_root,
+            env=release_git_environment,
+        ) != "commit":
+            raise PublicSnapshotError("source revision is not a commit")
+        _materialize_git_tree(
+            source_root,
+            source_revision,
+            exported,
             env=release_git_environment,
         )
-        exported.mkdir()
-        _safe_extract(archive, exported)
         output.mkdir()
         try:
             for relative in DIRECTORY_ALLOWLIST:
@@ -296,6 +837,8 @@ def build_public_snapshot(
                 _copy_file(exported, output, relative)
             for name in DATA_ALLOWLIST:
                 _copy_file(exported, output, f"assets/data/{name}")
+            for relative in PUBLIC_TEST_ALLOWLIST:
+                _copy_file(exported, output, relative)
 
             public_readme = output / "tools" / "deployment" / "public" / "README.md"
             readme_text = public_readme.read_text(encoding="utf-8")
@@ -312,6 +855,7 @@ def build_public_snapshot(
             interface["version"] = version
             interface["github"] = repository
             interface_path.write_text(json.dumps(interface, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            _rewrite_pyproject(output / "pyproject.toml", version=version, repository=repository)
 
             _validate_snapshot(output)
             _run(
@@ -328,45 +872,166 @@ def build_public_snapshot(
                 "-c",
                 f"core.hooksPath={empty_hooks}",
             )
-            _run(("git", *git_isolation, "add", "--", *top_level), cwd=output, env=release_git_environment)
+            if public_parent_root is not None and public_parent_revision is not None:
+                _run(
+                    (
+                        "git",
+                        *git_isolation,
+                        "-c",
+                        "protocol.file.allow=always",
+                        "-c",
+                        "fetch.fsckObjects=true",
+                        "fetch",
+                        "--no-tags",
+                        "--no-recurse-submodules",
+                        "--no-write-fetch-head",
+                        str(public_parent_root),
+                        public_parent_revision,
+                    ),
+                    cwd=output,
+                    env=release_git_environment,
+                )
+                _run(
+                    ("git", "cat-file", "-e", f"{public_parent_revision}^{{commit}}"),
+                    cwd=output,
+                    env=release_git_environment,
+                )
+                _run(
+                    (
+                        "git",
+                        "update-ref",
+                        "refs/heads/main",
+                        public_parent_revision,
+                        "0" * 40,
+                    ),
+                    cwd=output,
+                    env=release_git_environment,
+                )
+                _run(
+                    ("git", "symbolic-ref", "HEAD", "refs/heads/main"),
+                    cwd=output,
+                    env=release_git_environment,
+                )
+
+            _run(("git", *git_isolation, "read-tree", "--empty"), cwd=output, env=release_git_environment)
+            _run(
+                ("git", *git_isolation, "add", "--", *top_level),
+                cwd=output,
+                env=release_git_environment,
+            )
+            tree_revision = _run(
+                ("git", *git_isolation, "write-tree"),
+                cwd=output,
+                env=release_git_environment,
+            )
+            commit_arguments = ["git", *git_isolation, "commit-tree", tree_revision]
+            if public_parent_revision is not None:
+                commit_arguments.extend(("-p", public_parent_revision))
+            commit_arguments.extend(("-m", f"release: {version}"))
+            revision = _run(
+                tuple(commit_arguments),
+                cwd=output,
+                env=release_git_environment,
+            )
             _run(
                 (
                     "git",
-                    *git_isolation,
-                    "commit",
-                    "-q",
-                    "-m",
-                    f"release: {version}",
+                    "update-ref",
+                    "refs/heads/main",
+                    revision,
+                    public_parent_revision or "0" * 40,
                 ),
                 cwd=output,
                 env=release_git_environment,
             )
-            revision = _run(("git", "rev-parse", "HEAD"), cwd=output, env=release_git_environment)
-            if _run(("git", "rev-list", "--all", "--count"), cwd=output, env=release_git_environment) != "1":
-                raise PublicSnapshotError("public snapshot must contain exactly one commit")
+            _run(
+                ("git", "symbolic-ref", "HEAD", "refs/heads/main"),
+                cwd=output,
+                env=release_git_environment,
+            )
+
+            actual_parent = _run(
+                ("git", "show", "-s", "--format=%P", revision),
+                cwd=output,
+                env=release_git_environment,
+            )
+            expected_parent = public_parent_revision or ""
+            if actual_parent != expected_parent:
+                raise PublicSnapshotError(
+                    f"public snapshot parent is not the verified public main: {actual_parent}"
+                )
+            if public_parent_revision is not None:
+                if _run(
+                    ("git", "rev-list", "--count", f"{public_parent_revision}..{revision}"),
+                    cwd=output,
+                    env=release_git_environment,
+                ) != "1":
+                    raise PublicSnapshotError("public snapshot must add exactly one public commit")
+                _run(
+                    ("git", "merge-base", "--is-ancestor", public_parent_revision, revision),
+                    cwd=output,
+                    env=release_git_environment,
+                )
+            expected_commit_count = len(parent_history) + 1
+            if _run(
+                ("git", "rev-list", "--all", "--count"),
+                cwd=output,
+                env=release_git_environment,
+            ) != str(expected_commit_count):
+                raise PublicSnapshotError("public snapshot history contains unexpected commits")
             if _run(("git", "remote"), cwd=output, env=release_git_environment):
                 raise PublicSnapshotError("public snapshot must not inherit a Git remote")
-            identity = _run(
-                ("git", "log", "-1", "--format=%an|%ae|%cn|%ce"),
+            refs = _run(
+                ("git", "for-each-ref", "--format=%(refname)"),
                 cwd=output,
                 env=release_git_environment,
             )
-            expected_identity = "|".join((PUBLIC_AUTHOR_NAME, PUBLIC_AUTHOR_EMAIL, PUBLIC_AUTHOR_NAME, PUBLIC_AUTHOR_EMAIL))
-            if identity != expected_identity:
-                raise PublicSnapshotError(f"public snapshot commit identity is not fixed: {identity}")
+            if refs != "refs/heads/main":
+                raise PublicSnapshotError(f"public snapshot contains unexpected Git refs: {refs}")
             if _run(("git", "status", "--short"), cwd=output, env=release_git_environment):
                 raise PublicSnapshotError("public snapshot working tree changed during commit")
-            _run(("git", "fsck", "--full", "--no-reflogs"), cwd=output, env=release_git_environment)
-
-            committed_archive = temporary / "public-head.zip"
-            committed_tree = temporary / "public-head"
+            source_object = subprocess.run(
+                ("git", "cat-file", "-e", f"{source_revision}^{{commit}}"),
+                cwd=output,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=120,
+                check=False,
+                env=release_git_environment,
+            )
+            if source_object.returncode == 0:
+                raise PublicSnapshotError("development source commit leaked into public history")
             _run(
-                ("git", "archive", "--format=zip", f"--output={committed_archive}", "HEAD"),
+                ("git", "fsck", "--full", "--strict", "--no-reflogs"),
                 cwd=output,
                 env=release_git_environment,
             )
-            committed_tree.mkdir()
-            _safe_extract(committed_archive, committed_tree)
+            unreachable = _run(
+                ("git", "fsck", "--unreachable", "--full", "--strict", "--no-reflogs"),
+                cwd=output,
+                env=release_git_environment,
+            )
+            if unreachable:
+                raise PublicSnapshotError(f"public snapshot contains unreachable Git objects: {unreachable}")
+            verified_history = _validate_public_history(
+                parent_root=output,
+                parent_revision=revision,
+                source_root=source_root,
+                repository=repository,
+                temporary=temporary,
+                env=release_git_environment,
+            )
+            if len(verified_history) != expected_commit_count:
+                raise PublicSnapshotError("verified public history count is inconsistent")
+
+            committed_tree = temporary / "public-head"
+            _materialize_git_tree(
+                output,
+                "HEAD",
+                committed_tree,
+                env=release_git_environment,
+            )
             privacy = _validate_snapshot(committed_tree)
             if _file_inventory(output) != _file_inventory(committed_tree):
                 raise PublicSnapshotError("public snapshot Git tree differs from the privacy-checked working tree")
@@ -375,11 +1040,14 @@ def build_public_snapshot(
                 "revision": revision,
                 "version": version,
                 "repository": repository,
+                "lineage_mode": "initial_public_root" if initial_public_root else "linear_public_history",
+                "parent_revision": public_parent_revision,
+                "history_commit_count": len(verified_history),
                 "files_scanned": privacy["files_scanned"],
                 "bytes_scanned": privacy["bytes_scanned"],
             }
         except Exception:
-            shutil.rmtree(output, ignore_errors=True)
+            _remove_tree(output)
             raise
 
 
@@ -392,6 +1060,10 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--repository", required=True)
+    history_mode = parser.add_mutually_exclusive_group(required=True)
+    history_mode.add_argument("--initial-public-root", action="store_true")
+    history_mode.add_argument("--public-parent-root", type=Path)
+    parser.add_argument("--public-parent-revision")
     args = parser.parse_args()
     result = build_public_snapshot(
         source_root=args.source_root,
@@ -399,6 +1071,9 @@ def main() -> int:
         output=args.output,
         version=args.version,
         repository=args.repository,
+        initial_public_root=args.initial_public_root,
+        public_parent_root=args.public_parent_root,
+        public_parent_revision=args.public_parent_revision,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
