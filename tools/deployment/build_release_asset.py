@@ -55,6 +55,7 @@ PROJECT_TEXT_FILES = {"README.md", "interface.json", "GAKUMAS_HELPER_BUILD.json"
 ARENA_PREVIEW_VERSION_PATTERN = re.compile(
     r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-beta\.(?:0|[1-9]\d*)|\+gkh\.\d{6})$"
 )
+INTERNAL_TASK_IDENTIFIER_PATTERN = re.compile(rb"(?i)\bTA" rb"SK-[0-9]{3}\b")
 
 
 class ReleaseBuildError(RuntimeError):
@@ -375,7 +376,12 @@ def build_release_assets(
             ],
         }
         manifest_path = temporary_root / manifest_name
-        manifest_path.write_text(json.dumps(release_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        manifest_payload = (json.dumps(release_manifest, ensure_ascii=False, indent=2) + "\n").encode(
+            "utf-8"
+        )
+        if INTERNAL_TASK_IDENTIFIER_PATTERN.search(manifest_payload):
+            raise ReleaseBuildError("release manifest contains an internal task identifier")
+        manifest_path.write_bytes(manifest_payload)
         manifest_sha256 = sha256_file(manifest_path)
         checksums_path = temporary_root / checksums_name
         checksums_path.write_text(

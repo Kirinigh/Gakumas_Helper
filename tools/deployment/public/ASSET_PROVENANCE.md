@@ -4,7 +4,7 @@
 
 | 制品 | 固定来源／生成方式 | 公开内容 | 禁止公开内容 | 权利／通知 |
 | --- | --- | --- | --- | --- |
-| MaaGakumasu 应用、Agent、任务资源和基础模板 | `SuperWaterGod/MaaGakumasu` 的官方 `v1.4.8` Windows x86_64 Release，构建时核对 SHA-256 后替换本项目已提交树 | 本项目清洁修改及固定上游二进制包 | 上游账号、CI 密钥、用户配置与运行日志 | 根目录 `LICENSE`（AGPL-3.0）；不表示项目获得游戏商标或图形所有权 |
+| MaaGakumasu 应用、Agent、任务资源和基础模板 | `SuperWaterGod/MaaGakumasu` 的官方 `v1.4.9`（提交 `f520438c168e3d911b5775cc9b24297c19182e2e`）Windows x86_64 Release；ZIP SHA-256 `AA90F2BC6CE47F8B78B6CABD5937F96A19D2024ECC253C8BE13DE83680275D2F`，构建时重新核对后替换本项目已提交树 | 本项目清洁修改及固定上游二进制包 | 上游账号、CI 密钥、用户配置与运行日志 | 根目录 `LICENSE`（AGPL-3.0）；不表示项目获得游戏商标或图形所有权 |
 | 技能卡 embedding 基线 | 本项目脚本从本机固定官方 DMM 资源训练；最终模型与图库散列写入各自 `manifest.json` | ONNX 参数、128 维数值 embedding、小型强化标记参考张量、类表、生成脚本 | 原始卡图、提取图标、数据集 manifest、检查点、增强图、实机截图、私有样本指纹 | 项目代码与自产参数按根许可证发布；原始游戏图形权利不随 AGPL 转移 |
 | 竞技场技能卡 embedding | 前述基线加本项目合成强化覆盖训练；本机正样本截图不进入模型 manifest 或公开包 | ONNX 参数、数值 embedding、小型强化标记参考张量、类表 | 真实用户截图、ROI、私有正样本字节及其可链接指纹 | 与技能卡基线相同；manifest 不含私有样本散列 |
 | 竞技场徽标／费用参考 | 本项目构建脚本消费固定 `gakumas-tools@3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6` 数据和本机官方素材，输出粗粒度颜色条、二值掩膜和费用符号 | 固定数值／掩膜 NPZ、manifest、生成脚本 | 原始卡图、开发截图和标注集 | `gakumas-tools` 部分保留 BSD-3-Clause 通知；游戏图形权利由原权利人保留 |

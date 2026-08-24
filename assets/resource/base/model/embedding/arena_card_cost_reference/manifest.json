@@ -42,7 +42,6 @@
     "minimum_cutout_margin": 0.04,
     "maximum_digit_error": 0.18,
     "minimum_digit_margin": 0.05,
-    "maximum_zero_pixels": 3,
-    "rule_version": "task410-generic-cost-v6-robust-numeral-core"
+    "rule_version": "arena-generic-cost-v7-explicit-zero-topology"
   }
 }

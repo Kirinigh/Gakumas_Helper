@@ -40,14 +40,144 @@
         "interface_version": { "type": "integer" },
         "source_repository": { "type": "string", "pattern": "^https://github\\.com/[^/]+/[^/]+$" },
         "source_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "upstream": { "type": "object" },
-        "python_packages": { "type": "object" }
+        "upstream": {
+          "type": "object",
+          "required": ["repository", "tag", "archive", "sha256"],
+          "properties": {
+            "repository": { "type": "string", "pattern": "^https://github\\.com/[^/]+/[^/]+$" },
+            "tag": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+            "archive": { "type": "string", "minLength": 1 },
+            "sha256": { "type": "string", "pattern": "^[0-9A-F]{64}$" }
+          },
+          "additionalProperties": false
+        },
+        "python_packages": {
+          "type": "object",
+          "required": ["numpy", "onnxruntime", "opencv-python-headless", "pillow", "pyyaml"],
+          "properties": {
+            "numpy": { "type": "string", "minLength": 1 },
+            "onnxruntime": { "type": "string", "minLength": 1 },
+            "opencv-python-headless": { "type": "string", "minLength": 1 },
+            "pillow": { "type": "string", "minLength": 1 },
+            "pyyaml": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
-    "compatibility": { "type": "object" },
-    "components": { "type": "object" },
-    "redistribution": { "type": "object" },
+    "compatibility": {
+      "type": "object",
+      "required": [
+        "card_business_id_count",
+        "card_visual_identity_count",
+        "card_embedding_dimension",
+        "arena_card_business_id_max",
+        "arena_badge_rule_version",
+        "p_item_business_id_count",
+        "p_item_minimum_capture_size",
+        "arena_engine_revision",
+        "arena_adapter_protocol",
+        "arena_calibration_schema"
+      ],
+      "properties": {
+        "card_business_id_count": { "type": "integer", "minimum": 1 },
+        "card_visual_identity_count": { "type": "integer", "minimum": 1 },
+        "card_embedding_dimension": { "type": "integer", "minimum": 1 },
+        "arena_card_business_id_max": { "type": "integer", "minimum": 1 },
+        "arena_badge_rule_version": { "type": "string", "minLength": 1 },
+        "p_item_business_id_count": { "type": "integer", "minimum": 1 },
+        "p_item_minimum_capture_size": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "integer", "minimum": 1 }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "arena_engine_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "arena_adapter_protocol": { "const": "2.0" },
+        "arena_calibration_schema": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "components": {
+      "type": "object",
+      "required": [
+        "card_vision",
+        "arena_card_vision",
+        "arena_badge_reference",
+        "arena_cost_reference",
+        "p_item_reference",
+        "arena_engine_catalog"
+      ],
+      "properties": {
+        "card_vision": { "$ref": "#/$defs/component" },
+        "arena_card_vision": { "$ref": "#/$defs/component" },
+        "arena_badge_reference": { "$ref": "#/$defs/component" },
+        "arena_cost_reference": { "$ref": "#/$defs/component" },
+        "p_item_reference": { "$ref": "#/$defs/component" },
+        "arena_engine_catalog": { "$ref": "#/$defs/component" }
+      },
+      "additionalProperties": false
+    },
+    "redistribution": {
+      "type": "object",
+      "required": [
+        "project_and_upstream_license",
+        "gakumas_tools_license",
+        "self_trained_assets",
+        "user_runtime_capture_or_private_training_corpus_in_release",
+        "upstream_resource_templates_in_release",
+        "notices_embedded",
+        "notice_sha256",
+        "dependency_source_normalizations"
+      ],
+      "properties": {
+        "project_and_upstream_license": { "const": "AGPL-3.0" },
+        "gakumas_tools_license": { "const": "BSD-3-Clause" },
+        "self_trained_assets": { "const": "approved_for_this_release_by_human_gate" },
+        "user_runtime_capture_or_private_training_corpus_in_release": { "const": false },
+        "upstream_resource_templates_in_release": { "const": true },
+        "notices_embedded": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 6,
+          "uniqueItems": true
+        },
+        "notice_sha256": {
+          "type": "object",
+          "required": [
+            "LICENSE",
+            "ASSET_PROVENANCE.md",
+            "THIRD_PARTY_NOTICES/gakumas-tools-LICENSE",
+            "THIRD_PARTY_NOTICES/GAME-CONTENT-NOTICE.md",
+            "assets/arena-winrate/THIRD_PARTY_NOTICES/gakumas-tools-LICENSE",
+            "assets/arena-winrate/THIRD_PARTY_NOTICES/Node.js-LICENSE"
+          ],
+          "properties": {
+            "LICENSE": { "$ref": "#/$defs/sha256" },
+            "ASSET_PROVENANCE.md": { "$ref": "#/$defs/sha256" },
+            "THIRD_PARTY_NOTICES/gakumas-tools-LICENSE": { "$ref": "#/$defs/sha256" },
+            "THIRD_PARTY_NOTICES/GAME-CONTENT-NOTICE.md": { "$ref": "#/$defs/sha256" },
+            "assets/arena-winrate/THIRD_PARTY_NOTICES/gakumas-tools-LICENSE": { "$ref": "#/$defs/sha256" },
+            "assets/arena-winrate/THIRD_PARTY_NOTICES/Node.js-LICENSE": { "$ref": "#/$defs/sha256" }
+          },
+          "additionalProperties": false
+        },
+        "dependency_source_normalizations": {
+          "type": "object",
+          "properties": {
+            "maa/define.py": {
+              "const": "replace_nonfunctional_user_profile_example_with_relative_log_path"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "privacy_gate": {
       "type": "object",
       "required": ["schema_version", "policy", "files_scanned", "bytes_scanned"],
@@ -60,6 +190,18 @@
       "additionalProperties": false
     },
     "known_gates": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9A-F]{64}$" },
+    "component": {
+      "type": "object",
+      "required": ["manifest", "manifest_sha256"],
+      "properties": {
+        "manifest": { "type": "string", "minLength": 1 },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }
