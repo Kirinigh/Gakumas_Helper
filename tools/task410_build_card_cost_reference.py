@@ -247,7 +247,7 @@ def main() -> int:
             "minimum_cutout_margin": 0.04,
             "maximum_digit_error": 0.18,
             "minimum_digit_margin": 0.05,
-            "rule_version": "arena-generic-cost-v7-explicit-zero-topology",
+            "rule_version": "arena-generic-cost-v8-id-independent-zero-topology",
         },
     }
     (output_dir / "manifest.json").write_text(

@@ -359,6 +359,10 @@ class OwnScoreCacheError(RuntimeError):
         self.technical_detail = technical_detail
 
 
+class OwnScoreResimulationRequired(OwnScoreCacheError):
+    """Raised when a valid cached lineup only needs new simulator samples."""
+
+
 class OwnScoreCacheStore:
     """Persist one own lineup and its raw member samples for the active season."""
 
@@ -545,15 +549,15 @@ class OwnScoreCacheStore:
         if record.get("season") != season or record.get("stageIds") != list(stage_ids):
             return None
         if record.get("upstream_commit") != expected_upstream_commit:
-            raise OwnScoreCacheError("simulator revision changed; use manual recalculation")
+            raise OwnScoreResimulationRequired("simulator revision changed; resimulate the cached lineup")
         if record.get("seed") != seed:
-            raise OwnScoreCacheError("own-score seed changed; use manual recalculation")
+            raise OwnScoreResimulationRequired("own-score seed changed; resimulate the cached lineup")
         cached_simulations = record.get("simulations")
         if isinstance(cached_simulations, bool) or not isinstance(cached_simulations, int):
             raise OwnScoreCacheError("own-score cache sample count is invalid")
         if simulations > cached_simulations:
-            raise OwnScoreCacheError(
-                f"own-score cache has {cached_simulations} samples; manually recalculate before requesting {simulations}"
+            raise OwnScoreResimulationRequired(
+                f"own-score cache has {cached_simulations} samples; resimulate the cached lineup for {simulations}"
             )
         try:
             own_snapshot = validate_own_snapshot(record["own_snapshot"])
@@ -595,3 +599,26 @@ class OwnScoreCacheStore:
             "stages": cache_stages,
         }
         return own_snapshot, engine_cache
+
+    def load_snapshot_for_resimulation(
+        self,
+        *,
+        season: int,
+        stage_ids: tuple[int, int, int],
+    ) -> dict[str, Any] | None:
+        """Load only the lineup identity; old score samples remain unusable."""
+
+        if not self.path.is_file():
+            return None
+        try:
+            record = json.loads(self.path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise OwnScoreCacheError("own-score cache is unreadable; use manual recalculation") from error
+        if not isinstance(record, Mapping) or record.get("schema_version") != CACHE_SCHEMA_VERSION:
+            raise OwnScoreCacheError("own-score cache schema changed; use manual recalculation")
+        if record.get("season") != season or record.get("stageIds") != list(stage_ids):
+            return None
+        try:
+            return validate_own_snapshot(record["own_snapshot"])
+        except (KeyError, SnapshotValidationError) as error:
+            raise OwnScoreCacheError("cached own lineup is invalid; use manual recalculation") from error

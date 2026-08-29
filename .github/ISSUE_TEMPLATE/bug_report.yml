@@ -24,8 +24,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: 派生版本与资产名
-      description: 例如 vX.Y.Z+gkh.YYMMDD / MaaGakumasu-win-x86_64-...zip
+      label: GKH 版本、上游 Maa 版本与资产名
+      description: 例如 GKH vMAJOR.MINOR.PATCH / Maa vMAJOR.MINOR.PATCH / MaaGakumasu-win-x86_64-vXXX.zip
     validations:
       required: true
   - type: input

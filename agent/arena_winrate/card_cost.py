@@ -55,6 +55,8 @@ class GenericCostReferenceGallery:
     NORMALIZED_SIZE = 96
     ROI = (64, 62, 32, 34)
     GLYPH_SIZE = 24
+    ZERO_MIN_OUTER_SOLIDITY = 0.85
+    ZERO_MAX_HULL_BBOX_FILL = 0.98
 
     def __init__(
         self,
@@ -137,6 +139,29 @@ class GenericCostReferenceGallery:
         }
         if len(self._template_indices) != template_count:
             raise GenericCostReferenceError("generic-cost templates repeat a kind/value pair")
+        digit_reference_pools: dict[tuple[str, int], list[Any]] = {}
+        for kind, value, symbol in zip(
+            self.cost_kinds,
+            self.base_values,
+            self.base_symbols,
+            strict=True,
+        ):
+            digit = self._digit_descriptor(symbol)
+            if digit is not None:
+                digit_reference_pools.setdefault((kind, int(value)), []).append(digit)
+        for kind, value, symbol in zip(
+            self.template_kinds,
+            self.template_values,
+            self.template_symbols,
+            strict=True,
+        ):
+            digit = self._digit_descriptor(symbol)
+            if digit is not None:
+                digit_reference_pools.setdefault((kind, int(value)), []).append(digit)
+        self._digit_reference_pools = {
+            key: tuple(references)
+            for key, references in digit_reference_pools.items()
+        }
 
     @classmethod
     def load(cls, root: str | Path) -> "GenericCostReferenceGallery":
@@ -509,10 +534,12 @@ class GenericCostReferenceGallery:
         missing carrier or an empty ROI as zero would turn failed extraction
         into false positive customization evidence.
 
-        This test is deliberately topological rather than a looser template
-        threshold.  It is reached only for the fixed ``{0, 2}`` hypotheses;
-        the normalized numeral must contain exactly one sizeable background
-        component that is fully enclosed by one dominant foreground glyph.
+        This uses a topological core plus a coarse outer-geometry gate rather
+        than a looser template threshold.  It is reached only for the fixed
+        ``{0, 2}`` hypotheses; the normalized numeral must contain exactly one
+        sizeable background component that is fully enclosed by one dominant,
+        convex numeral-like foreground glyph rather than an axis-aligned UI
+        frame.
         """
 
         import cv2
@@ -521,7 +548,7 @@ class GenericCostReferenceGallery:
         binary = (np.asarray(digit, dtype=np.uint8) > 0).astype(np.uint8)
         if binary.shape != (cls.GLYPH_SIZE, cls.GLYPH_SIZE):
             return None
-        foreground_count, _, foreground_stats, _ = (
+        foreground_count, foreground_labels, foreground_stats, _ = (
             cv2.connectedComponentsWithStats(binary, 8)
         )
         foreground_areas = tuple(
@@ -535,13 +562,43 @@ class GenericCostReferenceGallery:
             or max(foreground_areas) < int(foreground_pixels * 0.9)
         ):
             return None
+        dominant_label = int(np.argmax(foreground_areas)) + 1
+        dominant = (foreground_labels == dominant_label).astype(np.uint8)
+        _, _, foreground_width, foreground_height, _ = (
+            int(value) for value in foreground_stats[dominant_label]
+        )
+        contours, _ = cv2.findContours(
+            dominant,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        points = cv2.findNonZero(dominant)
+        if len(contours) != 1 or points is None:
+            return None
+        outer = np.zeros_like(dominant)
+        cv2.drawContours(outer, contours, -1, 1, cv2.FILLED)
+        hull = cv2.convexHull(points)
+        hull_mask = np.zeros_like(dominant)
+        cv2.fillConvexPoly(hull_mask, hull, 1)
+        outer_support = int(outer.sum())
+        hull_support = int(hull_mask.sum())
+        foreground_box_area = foreground_width * foreground_height
+        if (
+            hull_support < 1
+            or foreground_box_area < 1
+            or outer_support / float(hull_support)
+            < cls.ZERO_MIN_OUTER_SOLIDITY
+            or hull_support / float(foreground_box_area)
+            >= cls.ZERO_MAX_HULL_BBOX_FILL
+        ):
+            return None
 
         background = (binary == 0).astype(np.uint8)
         component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
             background,
             8,
         )
-        holes: list[tuple[int, int, int, int, int]] = []
+        holes: list[tuple[int, int, int, int, int, int]] = []
         for label in range(1, component_count):
             x, y, width, height, area = (
                 int(value) for value in stats[label]
@@ -551,26 +608,23 @@ class GenericCostReferenceGallery:
                 or y == 0
                 or x + width == cls.GLYPH_SIZE
                 or y + height == cls.GLYPH_SIZE
-                or labels[cls.GLYPH_SIZE // 2, cls.GLYPH_SIZE // 2]
-                != label
                 or width < 7
                 or height < 10
                 or area < 60
             ):
                 continue
-            hole = labels[y : y + height, x : x + width] == label
-            if (
-                area / float(width * height) >= 0.9
-                or bool(hole[0, 0])
-                or bool(hole[0, -1])
-                or bool(hole[-1, 0])
-                or bool(hole[-1, -1])
-            ):
-                continue
-            holes.append((x, y, width, height, area))
+            # Corner occupancy and fill ratio inside the counter's own bounding
+            # box are rasterisation details, not topology.  Real zero counters
+            # can touch a corner or fill more than 90% of that box after
+            # nearest-neighbour normalisation.  The outer-glyph gate above owns
+            # UI-frame rejection instead.
+            holes.append((label, x, y, width, height, area))
         if len(holes) != 1:
             return None
-        return holes[0]
+        label, x, y, width, height, area = holes[0]
+        if labels[cls.GLYPH_SIZE // 2, cls.GLYPH_SIZE // 2] != label:
+            return None
+        return (x, y, width, height, area)
 
     def classify_mask(
         self,
@@ -741,13 +795,14 @@ class GenericCostReferenceGallery:
             digit_candidate_value = None
             digit_class_margin = None
         if zero_hole is not None:
-            alternative_error = next(
-                (
-                    error
-                    for error, ranked_value in digit_ranked
-                    if ranked_value == 2
-                ),
-                None,
+            alternative_references = self._digit_reference_pools.get((kind, 2), ())
+            alternative_error = (
+                min(
+                    self._shifted_error(digit_query, reference)
+                    for reference in alternative_references
+                )
+                if alternative_references
+                else None
             )
             zero_certified = (
                 alternative_error is not None
@@ -940,9 +995,14 @@ class GenericCostReferenceGallery:
         if not ranked:
             return GenericCostPrediction("REFERENCE_VALUE_MISSING")
         if zero_hole is not None:
-            alternative_error = next(
-                (error for error, ranked_value in ranked if ranked_value == 2),
-                None,
+            alternative_references = self._digit_reference_pools.get((kind, 2), ())
+            alternative_error = (
+                min(
+                    self._shifted_error(digit, reference)
+                    for reference in alternative_references
+                )
+                if alternative_references
+                else None
             )
             zero_certified = (
                 alternative_error is not None

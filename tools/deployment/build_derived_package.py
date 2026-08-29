@@ -24,10 +24,17 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 UPSTREAM_REPOSITORY = "https://github.com/SuperWaterGod/MaaGakumasu"
 LOCAL_TRIAL_VERSION_PATTERN = re.compile(r"^v\d+\.\d+\.\d+\+gkh\.[0-9a-f]{7,40}$")
-DERIVED_RELEASE_VERSION_PATTERN = re.compile(
-    r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:alpha|beta)\.(?:0|[1-9]\d*))?$"
+PROJECT_RELEASE_VERSION_PATTERN = re.compile(
+    r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$"
 )
-DATED_PREVIEW_VERSION_PATTERN = re.compile(r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\+gkh\.\d{6}$")
+LEGACY_DERIVED_VERSION_PATTERN = re.compile(
+    r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"\+gkh\.(?:[0-9a-f]{7,40}|\d{6})$"
+)
+MINIMUM_INDEPENDENT_PROJECT_VERSION = "v0.1.0"
+FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION = "v0.1.1"
+RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS = frozenset({"v0.1.0"})
+LAST_PUBLISHED_LEGACY_CHANNEL_VERSION = "v1.4.9+gkh.260823"
 CHANNEL_VERSION_PATTERN = re.compile(
     r"^v(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
     r"(?:-(?P<prerelease>alpha|beta)\.(?P<prerelease_number>0|[1-9]\d*)"
@@ -45,6 +52,10 @@ REPLACED_TREES = {
 }
 
 ROOT_FILES = ("README.md", "LICENSE", "logo.ico", "requirements.txt", "ASSET_PROVENANCE.md")
+INSTALL_PAYLOAD_FILES = {
+    "tools/deployment/Start-MaaGakumasu-Admin.cmd": "deployment/Start-MaaGakumasu-Admin.cmd",
+    "tools/deployment/.Start-MaaGakumasu-Admin.ps1": "deployment/.Start-MaaGakumasu-Admin.ps1",
+}
 MUTABLE_RUNTIME_PATHS = (".local", "config", "appsettings.json")
 PRIVATE_INPUT_NAMES = {".env", ".env.local", ".netrc", ".pypirc", "credentials.json", "secrets.json"}
 PRIVATE_INPUT_SUFFIXES = {".log", ".dmp", ".dump", ".tmp", ".bak", ".sqlite", ".sqlite3", ".db"}
@@ -63,6 +74,8 @@ REQUIRED_FILES = (
     "resource/base/model/embedding/arena_card/arena_card_embedding_model.onnx",
     "resource/base/model/embedding/p_item_reference/p_item_rendered_reference_gallery.npz",
     "assets/arena-winrate/manifest.json",
+    "deployment/Start-MaaGakumasu-Admin.cmd",
+    "deployment/.Start-MaaGakumasu-Admin.ps1",
 )
 
 REQUIRED_TASKS = {
@@ -122,25 +135,57 @@ def _semver_precedence(version: str) -> tuple[int, int, int, int, int]:
 def _durable_update_semantics(
     derived_version: str,
     previous_channel_version: str | None,
-    *,
-    dated_preview: bool,
 ) -> tuple[str, bool]:
     if previous_channel_version is None:
-        if dated_preview:
-            raise BuildError("a dated preview requires an explicit previous channel version")
-        return "monotonic_semver_precedence", False
+        raise BuildError("a project release requires an explicit previous channel version")
+    if _semver_precedence(derived_version) < _semver_precedence(
+        MINIMUM_INDEPENDENT_PROJECT_VERSION
+    ):
+        raise BuildError(
+            "project release version must not precede the minimum independent GKH version "
+            f"{MINIMUM_INDEPENDENT_PROJECT_VERSION}"
+        )
+    if derived_version in RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS:
+        raise BuildError(
+            f"project release version {derived_version} is permanently reserved after a "
+            "failed pre-publication install and must not be rebuilt or published; use at least "
+            f"{FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION}"
+        )
+    if LEGACY_DERIVED_VERSION_PATTERN.fullmatch(previous_channel_version) is not None:
+        if previous_channel_version != LAST_PUBLISHED_LEGACY_CHANNEL_VERSION:
+            raise BuildError(
+                "legacy channel migration must start from the last published legacy release "
+                f"{LAST_PUBLISHED_LEGACY_CHANNEL_VERSION}"
+            )
+        if derived_version != FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION:
+            raise BuildError(
+                "legacy channel migration is allowed only for the first publishable independent "
+                f"GKH version {FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION}"
+            )
+        return "legacy_combined_to_independent_semver_manual_bootstrap", True
+    if PROJECT_RELEASE_VERSION_PATTERN.fullmatch(previous_channel_version) is None:
+        raise BuildError(
+            "a later project release requires a previous independent GKH SemVer version"
+        )
+    if previous_channel_version in RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS:
+        raise BuildError(
+            f"previous channel version {previous_channel_version} is permanently reserved and "
+            "must not appear in public release lineage"
+        )
+    if _semver_precedence(previous_channel_version) < _semver_precedence(
+        FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION
+    ):
+        raise BuildError(
+            "previous independent GKH version must not precede the first publishable version "
+            f"{FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION}"
+        )
     current_precedence = _semver_precedence(derived_version)
     previous_precedence = _semver_precedence(previous_channel_version)
     if current_precedence < previous_precedence:
         raise BuildError("derived release version precedes the previous channel version")
     if current_precedence == previous_precedence:
-        if dated_preview:
-            return "same_base_build_metadata_manual_bootstrap", True
         raise BuildError("derived release version does not advance the previous channel version")
-    return (
-        "higher_base_semver_precedence" if dated_preview else "monotonic_semver_precedence",
-        False,
-    )
+    return "independent_gkh_semver_precedence", False
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -313,18 +358,9 @@ def _validate_engine_bundle(bundle: Path) -> dict[str, Any]:
     return manifest
 
 
-def _validate_arena_period_selector(root: Path, interface: dict[str, Any]) -> None:
-    """Keep the fixed UI choices identical to the bundled complete seasons."""
+def _load_contest_stage_catalog(stages_path: Path) -> dict[int, dict[int, bool]]:
+    """Load complete three-stage contest seasons from one fixed engine tree."""
 
-    stages_path = (
-        root
-        / "assets"
-        / "arena-winrate"
-        / "node_modules"
-        / "gakumas-data"
-        / "json"
-        / "stages.json"
-    )
     try:
         rows = json.loads(stages_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -359,37 +395,100 @@ def _validate_arena_period_selector(root: Path, interface: dict[str, Any]) -> No
     complete_seasons = sorted(contest_stages)
     if not complete_seasons:
         raise BuildError("candidate contest stage catalog has no complete season")
+    return contest_stages
+
+
+def _expected_arena_period_cases(
+    contest_stages: dict[int, dict[int, bool]],
+) -> list[dict[str, Any]]:
+    latest_season = max(contest_stages)
+
+    def make_case(selection: str | int, *, season: int) -> dict[str, Any]:
+        case: dict[str, Any] = {
+            "name": "latest" if selection == "latest" else f"season-{selection}",
+            "label": "$竞技场目录最新" if selection == "latest" else f"第 {selection} 期",
+            "pipeline_override": {
+                "ChallengeChoose": {"custom_action_param": {"season": selection}}
+            },
+        }
+        if any(contest_stages[season].values()):
+            case["description"] = "$竞技场预览期说明"
+        return case
+
+    return [
+        make_case("latest", season=latest_season),
+        *(
+            make_case(season, season=season)
+            for season in sorted(contest_stages, reverse=True)
+            if season != latest_season
+        ),
+    ]
+
+
+def _synchronize_arena_period_selector(
+    root: Path,
+    interface: dict[str, Any],
+    *,
+    stages_path: Path,
+) -> int:
+    """Generate the release selector and latest label from the fixed catalog."""
+
+    contest_stages = _load_contest_stage_catalog(stages_path)
+    options = interface.get("option")
+    period = options.get("竞技场期数") if isinstance(options, dict) else None
+    if period is None or period.get("type") != "select":
+        raise BuildError("candidate fixed arena period selector is missing")
+    period["default_case"] = "latest"
+    period["cases"] = _expected_arena_period_cases(contest_stages)
+
+    latest_season = max(contest_stages)
+    latest_labels = {
+        "zh-CN.json": f"最新（第 {latest_season} 期，推荐）",
+        "zh-Hant.json": f"最新（第 {latest_season} 期，建議）",
+    }
+    for file_name, label in latest_labels.items():
+        language_path = root / "lang" / file_name
+        language = _load_json(language_path)
+        language["竞技场目录最新"] = label
+        language_path.write_text(
+            json.dumps(language, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    return latest_season
+
+
+def _validate_arena_period_selector(root: Path, interface: dict[str, Any]) -> None:
+    """Keep the fixed UI choices identical to the bundled complete seasons."""
+
+    stages_path = (
+        root
+        / "assets"
+        / "arena-winrate"
+        / "node_modules"
+        / "gakumas-data"
+        / "json"
+        / "stages.json"
+    )
+    contest_stages = _load_contest_stage_catalog(stages_path)
 
     options = interface.get("option")
     period = options.get("竞技场期数") if isinstance(options, dict) else None
     cases = period.get("cases") if isinstance(period, dict) else None
     if period is None or period.get("type") != "select" or not isinstance(cases, list):
         raise BuildError("candidate fixed arena period selector is missing")
-    expected_values: list[str | int] = ["latest", *complete_seasons]
-    actual_values: list[str | int] = []
-    for index, case in enumerate(cases):
-        if not isinstance(case, dict):
-            raise BuildError("candidate arena period selector contains an invalid case")
-        try:
-            selection = case["pipeline_override"]["ChallengeChoose"]["custom_action_param"]["season"]
-        except (KeyError, TypeError) as error:
-            raise BuildError("candidate arena period case has no season override") from error
-        actual_values.append(selection)
-        expected_name = "latest" if index == 0 else f"season-{selection}"
-        if case.get("name") != expected_name:
-            raise BuildError("candidate arena period case names or order are unstable")
-        if isinstance(selection, int):
-            if isinstance(selection, bool) or selection not in contest_stages:
-                raise BuildError("candidate arena period selector contains an unsupported season")
-            expected_description = (
-                "$竞技场预览期说明"
-                if any(contest_stages[selection].values())
-                else None
-            )
-            if case.get("description") != expected_description:
-                raise BuildError("candidate arena period preview labels differ from the engine catalog")
-    if actual_values != expected_values or period.get("default_case") != "latest":
+    expected_cases = _expected_arena_period_cases(contest_stages)
+    if cases != expected_cases or period.get("default_case") != "latest":
         raise BuildError("candidate arena period selector differs from the engine catalog")
+
+    latest_season = max(contest_stages)
+    expected_labels = {
+        "zh-CN.json": f"最新（第 {latest_season} 期，推荐）",
+        "zh-Hant.json": f"最新（第 {latest_season} 期，建議）",
+    }
+    for file_name, expected_label in expected_labels.items():
+        language = _load_json(root / "lang" / file_name)
+        if language.get("竞技场目录最新") != expected_label:
+            raise BuildError("candidate arena latest-period label differs from the engine catalog")
 
 
 def _validate_candidate(root: Path, *, version: str, update_repository: str) -> dict[str, str]:
@@ -423,7 +522,7 @@ def _validate_python_runtime(root: Path) -> dict[str, str]:
     executable = root / "python" / "python.exe"
     if not executable.is_file():
         raise BuildError("candidate embedded Python is missing")
-    script = (
+    import_script = (
         "import json, sys; "
         f"sys.path.insert(0, {str(root)!r}); "
         f"sys.path.insert(0, {str(root / 'agent')!r}); "
@@ -433,16 +532,28 @@ def _validate_python_runtime(root: Path) -> dict[str, str]:
         "import agent.custom.action.arena_reader; "
         "import agent.p_item_recognition.embedding; "
         "print(json.dumps({'numpy': numpy.__version__, 'onnxruntime': onnxruntime.__version__, "
-        "'opencv-python-headless': cv2.__version__, 'pillow': PIL.__version__, 'pyyaml': yaml.__version__}))"
+        "'opencv-python-headless': cv2.__version__, 'pillow': PIL.__version__, "
+        "'pyyaml': yaml.__version__}))"
+    )
+    agent_client_script = (
+        "import json; "
+        "from maa.agent_client import AgentClient; "
+        "agent_client = AgentClient('gkh-build-smoke'); "
+        "agent_identifier = agent_client.identifier; "
+        "del agent_client; "
+        "assert isinstance(agent_identifier, str) and agent_identifier; "
+        "print(json.dumps({'agent-client-construction': 'ok'}))"
     )
     inventory_before = _tree_snapshot(root)
-    with tempfile.TemporaryDirectory(prefix="gkh-runtime-smoke-", dir=root.parent) as runtime_text:
+    short_temp_parent = Path(root.anchor) / "Temp"
+    runtime_parent = short_temp_parent if short_temp_parent.is_dir() else root.parent
+    with tempfile.TemporaryDirectory(prefix="gkh-runtime-smoke-", dir=runtime_parent) as runtime_text:
         runtime = Path(runtime_text)
         smoke_environment = os.environ.copy()
         for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"):
             smoke_environment[name] = str(runtime)
-        completed = subprocess.run(
-            (str(executable), "-B", "-c", script),
+        agent_client_completed = subprocess.run(
+            (str(executable), "-B", "-c", agent_client_script),
             cwd=runtime,
             env=smoke_environment,
             capture_output=True,
@@ -452,6 +563,20 @@ def _validate_python_runtime(root: Path) -> dict[str, str]:
             timeout=60,
             check=False,
         )
+        completed_processes = [("AgentClient", agent_client_completed)]
+        if agent_client_completed.returncode == 0:
+            import_completed = subprocess.run(
+                (str(executable), "-B", "-c", import_script),
+                cwd=runtime,
+                env=smoke_environment,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+                check=False,
+            )
+            completed_processes.append(("import", import_completed))
     inventory_after = _tree_snapshot(root)
     if inventory_after != inventory_before:
         paths_before = set(inventory_before)
@@ -467,15 +592,33 @@ def _validate_python_runtime(root: Path) -> dict[str, str]:
             "candidate runtime smoke mutated the release tree: "
             f"created={created[:10]}, removed={removed[:10]}, modified={modified[:10]}"
         )
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip()[-2000:]
-        raise BuildError(f"candidate embedded Python import smoke failed: {detail}")
-    try:
-        versions = json.loads(completed.stdout)
-    except json.JSONDecodeError as error:
-        raise BuildError("candidate embedded Python returned invalid version inventory") from error
-    if not isinstance(versions, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in versions.items()):
-        raise BuildError("candidate embedded Python version inventory is invalid")
+    versions: dict[str, str] = {}
+    for label, completed in completed_processes:
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()[-2000:]
+            raise BuildError(
+                f"candidate embedded Python {label} smoke failed: {detail}"
+            )
+        try:
+            process_versions = json.loads(completed.stdout)
+        except json.JSONDecodeError as error:
+            raise BuildError(
+                f"candidate embedded Python {label} smoke returned invalid version inventory"
+            ) from error
+        if not isinstance(process_versions, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in process_versions.items()
+        ):
+            raise BuildError(
+                f"candidate embedded Python {label} version inventory is invalid"
+            )
+        if label == "AgentClient":
+            if process_versions != {"agent-client-construction": "ok"}:
+                raise BuildError(
+                    "candidate embedded Python AgentClient smoke returned an invalid marker"
+                )
+            continue
+        versions.update(process_versions)
     return versions
 
 
@@ -535,16 +678,11 @@ def build_derived_package(
             raise BuildError("local trial version is invalid")
     else:
         if derived_version is None:
-            raise BuildError("a durable derived release requires an explicit monotonic version")
-        if (
-            DERIVED_RELEASE_VERSION_PATTERN.fullmatch(derived_version) is None
-            and DATED_PREVIEW_VERSION_PATTERN.fullmatch(derived_version) is None
-        ):
+            raise BuildError("a durable derived release requires an explicit project version")
+        if PROJECT_RELEASE_VERSION_PATTERN.fullmatch(derived_version) is None:
             raise BuildError(
-                "derived release version must use vMAJOR.MINOR.PATCH, vMAJOR.MINOR.PATCH-beta.N, "
-                "vMAJOR.MINOR.PATCH-alpha.N, or the approved preview form vMAJOR.MINOR.PATCH+gkh.YYMMDD"
+                "derived release version must use independent GKH SemVer vMAJOR.MINOR.PATCH"
             )
-    dated_preview = DATED_PREVIEW_VERSION_PATTERN.fullmatch(derived_version) is not None
     if update_repository == UPSTREAM_REPOSITORY:
         version_ordering = "upstream_equal_precedence_build_metadata"
         requires_manual_bootstrap = False
@@ -552,7 +690,6 @@ def build_derived_package(
         version_ordering, requires_manual_bootstrap = _durable_update_semantics(
             derived_version,
             previous_channel_version,
-            dated_preview=dated_preview,
         )
 
     engine_manifest = _validate_engine_bundle(engine_bundle)
@@ -594,6 +731,14 @@ def build_derived_package(
             if source_file.is_file():
                 shutil.copy2(source_file, candidate / file_name)
 
+        for source_relative, target_relative in INSTALL_PAYLOAD_FILES.items():
+            source_file = source_snapshot / source_relative
+            if not source_file.is_file():
+                raise BuildError(f"source install payload is missing: {source_relative}")
+            target_file = candidate / target_relative
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, target_file)
+
         shutil.copy2(source_snapshot / "assets" / "interface.json", candidate / "interface.json")
         interface = _load_json(candidate / "interface.json")
         interface["version"] = derived_version
@@ -603,6 +748,17 @@ def build_derived_package(
             raise BuildError("source interface Agent configuration is invalid")
         agent["child_exec"] = "./python/python.exe"
         agent["child_args"] = ["-u", "./agent/main.py"]
+        _synchronize_arena_period_selector(
+            candidate,
+            interface,
+            stages_path=(
+                engine_bundle
+                / "node_modules"
+                / "gakumas-data"
+                / "json"
+                / "stages.json"
+            ),
+        )
         (candidate / "interface.json").write_text(
             json.dumps(interface, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -652,16 +808,17 @@ def build_derived_package(
                 "mode": update_mode,
                 "repository": update_repository,
                 "previous_channel_version": previous_channel_version,
-                "release_channel": (
-                    "alpha"
-                    if "-alpha." in derived_version
-                    else "beta"
-                    if "-beta." in derived_version or DATED_PREVIEW_VERSION_PATTERN.fullmatch(derived_version)
-                    else "stable"
+                "release_channel": "beta" if update_mode == "derived_release_channel" else "local",
+                "version_namespace": (
+                    "independent_gkh_semver"
+                    if update_mode == "derived_release_channel"
+                    else "legacy_upstream_based_local_trial"
                 ),
                 "version_ordering": version_ordering,
                 "requires_manual_bootstrap": requires_manual_bootstrap,
-                "automatic_update_e2e_verified": False,
+                "client_updater": "mfa_builtin_resource_update",
+                "payload_scope": "full_derived_package",
+                "python_dependency_updater": "existing_agent_pip_update",
                 "auto_update_setting": "preserve_user_configuration",
                 "safe_upstream_precedence": upstream_tag,
                 "requires_derived_release_before_newer_upstream": update_mode

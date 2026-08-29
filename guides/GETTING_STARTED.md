@@ -8,17 +8,17 @@
 
 ## 下载与安装
 
-1. 打开 [GitHub Releases](https://github.com/Kirinigh/Gakumas_Helper/releases)，下载当前 Windows x86_64 ZIP 和 checksums 文件。
-2. 在 PowerShell 中核对 SHA-256：
+1. 打开 [GitHub Releases](https://github.com/Kirinigh/Gakumas_Helper/releases)，下载当前 Windows x86_64 完整 ZIP。首次安装、从旧组合版本迁移，以及 Release Notes 仍标明“人工迁移预览”的版本都须手动解压并保持 MFA 默认 Stable；只有后续发布预检明确宣布自动升级恢复时，才使用 MFA 内置 GitHub 资源更新。
+2. Release 同时提供 checksums。需要人工复核首次下载时，可在 PowerShell 中核对 SHA-256：
 
    ```powershell
-   Get-FileHash "MaaGakumasu-win-x86_64-<版本>.zip" -Algorithm SHA256
+   Get-FileHash "MaaGakumasu-win-x86_64-vXXX.zip" -Algorithm SHA256
    ```
 
-   请把 `<版本>` 替换为实际下载资产中的完整版本号。
+   请把 `vXXX` 替换为实际下载资产中的完整版本号。
 
-3. 将 ZIP 解压到一个新的目录。不要覆盖上游 Maa、其他派生版或旧版 Gakumas Helper。
-4. 右键 `MaaGakumasu.exe`，选择“以管理员身份运行”。非管理员输入端不能控制管理员游戏窗口，程序会在开始任务或挑战前停止。
+3. 手动安装时将 ZIP 解压到一个新的目录。不要把单个文件手工覆盖进上游 Maa、其他派生版或旧版 Gakumas Helper；自动升级恢复后的完整包更新再交给 MFA 内置入口。
+4. 运行版本内 `deployment\Start-MaaGakumasu-Admin.cmd`，通过管理员入口启动 Maa。该入口会为 Maa/Agent 子进程设置唯一且初始为空的 TEMP/TMP；直接双击 `MaaGakumasu.exe` 会绕过这项运行环境隔离。非管理员输入端不能控制管理员游戏窗口，程序会在开始任务或挑战前停止。
 5. 在 Maa 中按上游方式连接游戏。程序只通过截图、图像识别、光学字符识别 (Optical Character Recognition, OCR) 和正常界面输入工作，不读取游戏进程内存，也不处理 DMM 账号密码。
 
 DMM 用户首次打开时先把控制器从默认“模拟器”改为“PC”，再把资源切换为“DMM”。切换前 MFA 可能针对默认模拟器执行一次连接探针，并在没有 Android 调试桥 (Android Debug Bridge, ADB) 序列号时记录空地址诊断；这不表示“一键日常”业务任务已经执行，也不会连接 DMM 游戏。

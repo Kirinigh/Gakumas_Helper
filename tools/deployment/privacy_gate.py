@@ -275,14 +275,15 @@ def _scan_archive(
     *,
     scan_personal_text: bool,
     allowed_emails: Collection[str],
+    allow_embedded_container: bool,
 ) -> None:
     recognized_suffix = path.suffix.casefold() in ARCHIVE_SUFFIXES
     is_archive = zipfile.is_zipfile(path)
-    if is_archive and not recognized_suffix:
+    if is_archive and not recognized_suffix and not allow_embedded_container:
         raise PrivacyGateError(
             f"candidate contains a ZIP container with an unsupported suffix: {relative.as_posix()}"
         )
-    if not recognized_suffix:
+    if not recognized_suffix and not allow_embedded_container:
         return
     if not is_archive:
         raise PrivacyGateError(f"candidate contains an invalid nested archive: {relative.as_posix()}")
@@ -331,9 +332,17 @@ def _scan_archive(
                     )
                 payload = archive.read(entry)
                 if zipfile.is_zipfile(io.BytesIO(payload)):
-                    raise PrivacyGateError(
-                        f"nested archive contains an unsupported archive container: {member_relative.as_posix()}"
-                    )
+                    try:
+                        with zipfile.ZipFile(io.BytesIO(payload)) as nested_archive:
+                            nested_members = nested_archive.infolist()
+                    except zipfile.BadZipFile as error:
+                        raise PrivacyGateError(
+                            f"nested archive contains an invalid archive container: {member_relative.as_posix()}"
+                        ) from error
+                    if nested_members:
+                        raise PrivacyGateError(
+                            f"nested archive contains an unsupported archive container: {member_relative.as_posix()}"
+                        )
                 _scan_bytes(
                     member_relative,
                     payload,
@@ -423,10 +432,12 @@ def validate_tree(
     project_path_predicate: Callable[[Path], bool],
     allowed_emails: Collection[str] = (),
     allow_arena_engine_config: bool = True,
+    allowed_embedded_archives: Collection[str] = (),
 ) -> dict[str, int]:
     """Validate the exact files present below ``root`` and return scan counts."""
 
     markers = private_machine_markers()
+    embedded_archives = {path.casefold() for path in allowed_embedded_archives}
     files = 0
     bytes_scanned = 0
     for entry in root.rglob("*"):
@@ -463,6 +474,7 @@ def validate_tree(
             markers,
             scan_personal_text=is_project_path,
             allowed_emails=allowed_emails,
+            allow_embedded_container=relative.as_posix().casefold() in embedded_archives,
         )
         if is_project_path and path.suffix.casefold() in TEXT_SUFFIXES:
             try:

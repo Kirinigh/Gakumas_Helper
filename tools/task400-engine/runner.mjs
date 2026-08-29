@@ -27,7 +27,7 @@ import {
 } from "./scoring.mjs";
 
 const SCHEMA_VERSION = "2.0";
-const UPSTREAM_COMMIT = "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6";
+const UPSTREAM_COMMIT = "5658ec13ec9978f1117ccc191dfb83c346d42f6f";
 const SCORE_AGGREGATION = "raw_sum_plus_stage_wide_first_place_20_percent";
 const MATCH_RULE = "best_of_three_strict_wins";
 const OWN_SCORE_METHOD = "independent_empirical_own_three_stage_scores";

@@ -1,7 +1,7 @@
 {
   "interface_version": 2,
   "name": "MaaGakumasu",
-  "version": "v1.4.9+gkh.260824",
+  "version": "v0.1.1",
   "mirrorchyan_rid": "MaaGakumasu",
   "mirrorchyan_multiplatform": true,
   "github": "https://github.com/Kirinigh/Gakumas_Helper",
@@ -219,6 +219,7 @@
         {
           "name": "latest",
           "label": "$竞技场目录最新",
+          "description": "$竞技场预览期说明",
           "pipeline_override": {
             "ChallengeChoose": {
               "custom_action_param": {
@@ -228,529 +229,12 @@
           }
         },
         {
-          "name": "season-1",
-          "label": "第 1 期",
+          "name": "season-50",
+          "label": "第 50 期",
           "pipeline_override": {
             "ChallengeChoose": {
               "custom_action_param": {
-                "season": 1
-              }
-            }
-          }
-        },
-        {
-          "name": "season-2",
-          "label": "第 2 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 2
-              }
-            }
-          }
-        },
-        {
-          "name": "season-3",
-          "label": "第 3 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 3
-              }
-            }
-          }
-        },
-        {
-          "name": "season-4",
-          "label": "第 4 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 4
-              }
-            }
-          }
-        },
-        {
-          "name": "season-5",
-          "label": "第 5 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 5
-              }
-            }
-          }
-        },
-        {
-          "name": "season-6",
-          "label": "第 6 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 6
-              }
-            }
-          }
-        },
-        {
-          "name": "season-7",
-          "label": "第 7 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 7
-              }
-            }
-          }
-        },
-        {
-          "name": "season-8",
-          "label": "第 8 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 8
-              }
-            }
-          }
-        },
-        {
-          "name": "season-9",
-          "label": "第 9 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 9
-              }
-            }
-          }
-        },
-        {
-          "name": "season-10",
-          "label": "第 10 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 10
-              }
-            }
-          }
-        },
-        {
-          "name": "season-11",
-          "label": "第 11 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 11
-              }
-            }
-          }
-        },
-        {
-          "name": "season-12",
-          "label": "第 12 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 12
-              }
-            }
-          }
-        },
-        {
-          "name": "season-13",
-          "label": "第 13 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 13
-              }
-            }
-          }
-        },
-        {
-          "name": "season-14",
-          "label": "第 14 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 14
-              }
-            }
-          }
-        },
-        {
-          "name": "season-15",
-          "label": "第 15 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 15
-              }
-            }
-          }
-        },
-        {
-          "name": "season-16",
-          "label": "第 16 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 16
-              }
-            }
-          }
-        },
-        {
-          "name": "season-17",
-          "label": "第 17 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 17
-              }
-            }
-          }
-        },
-        {
-          "name": "season-18",
-          "label": "第 18 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 18
-              }
-            }
-          }
-        },
-        {
-          "name": "season-19",
-          "label": "第 19 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 19
-              }
-            }
-          }
-        },
-        {
-          "name": "season-20",
-          "label": "第 20 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 20
-              }
-            }
-          }
-        },
-        {
-          "name": "season-21",
-          "label": "第 21 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 21
-              }
-            }
-          }
-        },
-        {
-          "name": "season-22",
-          "label": "第 22 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 22
-              }
-            }
-          }
-        },
-        {
-          "name": "season-23",
-          "label": "第 23 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 23
-              }
-            }
-          }
-        },
-        {
-          "name": "season-24",
-          "label": "第 24 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 24
-              }
-            }
-          }
-        },
-        {
-          "name": "season-25",
-          "label": "第 25 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 25
-              }
-            }
-          }
-        },
-        {
-          "name": "season-26",
-          "label": "第 26 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 26
-              }
-            }
-          }
-        },
-        {
-          "name": "season-27",
-          "label": "第 27 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 27
-              }
-            }
-          }
-        },
-        {
-          "name": "season-28",
-          "label": "第 28 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 28
-              }
-            }
-          }
-        },
-        {
-          "name": "season-29",
-          "label": "第 29 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 29
-              }
-            }
-          }
-        },
-        {
-          "name": "season-30",
-          "label": "第 30 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 30
-              }
-            }
-          }
-        },
-        {
-          "name": "season-31",
-          "label": "第 31 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 31
-              }
-            }
-          }
-        },
-        {
-          "name": "season-32",
-          "label": "第 32 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 32
-              }
-            }
-          }
-        },
-        {
-          "name": "season-33",
-          "label": "第 33 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 33
-              }
-            }
-          }
-        },
-        {
-          "name": "season-34",
-          "label": "第 34 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 34
-              }
-            }
-          }
-        },
-        {
-          "name": "season-35",
-          "label": "第 35 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 35
-              }
-            }
-          }
-        },
-        {
-          "name": "season-36",
-          "label": "第 36 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 36
-              }
-            }
-          }
-        },
-        {
-          "name": "season-37",
-          "label": "第 37 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 37
-              }
-            }
-          }
-        },
-        {
-          "name": "season-38",
-          "label": "第 38 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 38
-              }
-            }
-          }
-        },
-        {
-          "name": "season-39",
-          "label": "第 39 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 39
-              }
-            }
-          }
-        },
-        {
-          "name": "season-40",
-          "label": "第 40 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 40
-              }
-            }
-          }
-        },
-        {
-          "name": "season-41",
-          "label": "第 41 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 41
-              }
-            }
-          }
-        },
-        {
-          "name": "season-42",
-          "label": "第 42 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 42
-              }
-            }
-          }
-        },
-        {
-          "name": "season-43",
-          "label": "第 43 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 43
-              }
-            }
-          }
-        },
-        {
-          "name": "season-44",
-          "label": "第 44 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 44
-              }
-            }
-          }
-        },
-        {
-          "name": "season-45",
-          "label": "第 45 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 45
-              }
-            }
-          }
-        },
-        {
-          "name": "season-46",
-          "label": "第 46 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 46
-              }
-            }
-          }
-        },
-        {
-          "name": "season-47",
-          "label": "第 47 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 47
-              }
-            }
-          }
-        },
-        {
-          "name": "season-48",
-          "label": "第 48 期",
-          "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
-                "season": 48
+                "season": 50
               }
             }
           }
@@ -767,13 +251,529 @@
           }
         },
         {
-          "name": "season-50",
-          "label": "第 50 期",
-          "description": "$竞技场预览期说明",
+          "name": "season-48",
+          "label": "第 48 期",
           "pipeline_override": {
             "ChallengeChoose": {
               "custom_action_param": {
-                "season": 50
+                "season": 48
+              }
+            }
+          }
+        },
+        {
+          "name": "season-47",
+          "label": "第 47 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 47
+              }
+            }
+          }
+        },
+        {
+          "name": "season-46",
+          "label": "第 46 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 46
+              }
+            }
+          }
+        },
+        {
+          "name": "season-45",
+          "label": "第 45 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 45
+              }
+            }
+          }
+        },
+        {
+          "name": "season-44",
+          "label": "第 44 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 44
+              }
+            }
+          }
+        },
+        {
+          "name": "season-43",
+          "label": "第 43 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 43
+              }
+            }
+          }
+        },
+        {
+          "name": "season-42",
+          "label": "第 42 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 42
+              }
+            }
+          }
+        },
+        {
+          "name": "season-41",
+          "label": "第 41 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 41
+              }
+            }
+          }
+        },
+        {
+          "name": "season-40",
+          "label": "第 40 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 40
+              }
+            }
+          }
+        },
+        {
+          "name": "season-39",
+          "label": "第 39 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 39
+              }
+            }
+          }
+        },
+        {
+          "name": "season-38",
+          "label": "第 38 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 38
+              }
+            }
+          }
+        },
+        {
+          "name": "season-37",
+          "label": "第 37 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 37
+              }
+            }
+          }
+        },
+        {
+          "name": "season-36",
+          "label": "第 36 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 36
+              }
+            }
+          }
+        },
+        {
+          "name": "season-35",
+          "label": "第 35 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 35
+              }
+            }
+          }
+        },
+        {
+          "name": "season-34",
+          "label": "第 34 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 34
+              }
+            }
+          }
+        },
+        {
+          "name": "season-33",
+          "label": "第 33 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 33
+              }
+            }
+          }
+        },
+        {
+          "name": "season-32",
+          "label": "第 32 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 32
+              }
+            }
+          }
+        },
+        {
+          "name": "season-31",
+          "label": "第 31 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 31
+              }
+            }
+          }
+        },
+        {
+          "name": "season-30",
+          "label": "第 30 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 30
+              }
+            }
+          }
+        },
+        {
+          "name": "season-29",
+          "label": "第 29 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 29
+              }
+            }
+          }
+        },
+        {
+          "name": "season-28",
+          "label": "第 28 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 28
+              }
+            }
+          }
+        },
+        {
+          "name": "season-27",
+          "label": "第 27 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 27
+              }
+            }
+          }
+        },
+        {
+          "name": "season-26",
+          "label": "第 26 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 26
+              }
+            }
+          }
+        },
+        {
+          "name": "season-25",
+          "label": "第 25 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 25
+              }
+            }
+          }
+        },
+        {
+          "name": "season-24",
+          "label": "第 24 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 24
+              }
+            }
+          }
+        },
+        {
+          "name": "season-23",
+          "label": "第 23 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 23
+              }
+            }
+          }
+        },
+        {
+          "name": "season-22",
+          "label": "第 22 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 22
+              }
+            }
+          }
+        },
+        {
+          "name": "season-21",
+          "label": "第 21 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 21
+              }
+            }
+          }
+        },
+        {
+          "name": "season-20",
+          "label": "第 20 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 20
+              }
+            }
+          }
+        },
+        {
+          "name": "season-19",
+          "label": "第 19 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 19
+              }
+            }
+          }
+        },
+        {
+          "name": "season-18",
+          "label": "第 18 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 18
+              }
+            }
+          }
+        },
+        {
+          "name": "season-17",
+          "label": "第 17 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 17
+              }
+            }
+          }
+        },
+        {
+          "name": "season-16",
+          "label": "第 16 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 16
+              }
+            }
+          }
+        },
+        {
+          "name": "season-15",
+          "label": "第 15 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 15
+              }
+            }
+          }
+        },
+        {
+          "name": "season-14",
+          "label": "第 14 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 14
+              }
+            }
+          }
+        },
+        {
+          "name": "season-13",
+          "label": "第 13 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 13
+              }
+            }
+          }
+        },
+        {
+          "name": "season-12",
+          "label": "第 12 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 12
+              }
+            }
+          }
+        },
+        {
+          "name": "season-11",
+          "label": "第 11 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 11
+              }
+            }
+          }
+        },
+        {
+          "name": "season-10",
+          "label": "第 10 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 10
+              }
+            }
+          }
+        },
+        {
+          "name": "season-9",
+          "label": "第 9 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 9
+              }
+            }
+          }
+        },
+        {
+          "name": "season-8",
+          "label": "第 8 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 8
+              }
+            }
+          }
+        },
+        {
+          "name": "season-7",
+          "label": "第 7 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 7
+              }
+            }
+          }
+        },
+        {
+          "name": "season-6",
+          "label": "第 6 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 6
+              }
+            }
+          }
+        },
+        {
+          "name": "season-5",
+          "label": "第 5 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 5
+              }
+            }
+          }
+        },
+        {
+          "name": "season-4",
+          "label": "第 4 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 4
+              }
+            }
+          }
+        },
+        {
+          "name": "season-3",
+          "label": "第 3 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 3
+              }
+            }
+          }
+        },
+        {
+          "name": "season-2",
+          "label": "第 2 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 2
+              }
+            }
+          }
+        },
+        {
+          "name": "season-1",
+          "label": "第 1 期",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "season": 1
               }
             }
           }

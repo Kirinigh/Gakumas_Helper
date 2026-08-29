@@ -2,7 +2,8 @@
 
 这是基于 [MaaGakumasu](https://github.com/SuperWaterGod/MaaGakumasu) 的公开派生预览版。它保留上游 Maa 客户端与日常功能，并新增竞技场完整编成读取、本地计分、保守胜率选敌、结果记录以及配套识别资源。
 
-- 当前版本：`@VERSION@`
+- GKH 版本格式：独立语义化版本 (Semantic Versioning, SemVer) `vMAJOR.MINOR.PATCH`
+- 上游 Maa 基线：在每版 Release manifest 与来源记录中单独固定，不拼入 GKH 版本
 - 下载与校验：[@REPOSITORY@ Releases](@REPOSITORY@/releases)
 - 上游项目：[SuperWaterGod/MaaGakumasu](https://github.com/SuperWaterGod/MaaGakumasu)
 - 许可证：AGPL-3.0；内嵌竞技场模拟引擎另按 BSD-3-Clause 与 Node.js 许可发布
@@ -12,9 +13,9 @@
 
 ## 快速开始
 
-1. 从 Releases 下载 `MaaGakumasu-win-x86_64-@VERSION@.zip`，并核对 SHA-256。
+1. 首次安装时从 Releases 下载 `MaaGakumasu-win-x86_64-vXXX.zip`；`vXXX` 代表资产名中的完整版本，checksums 可用于人工复核下载字节。
 2. 解压到新的独立目录，不要覆盖上游 Maa 或旧版 Gakumas Helper。
-3. 以管理员身份启动 `MaaGakumasu.exe`；程序不会读取或保存 DMM 账号密码。
+3. 运行版本内 `deployment\Start-MaaGakumasu-Admin.cmd`，以管理员身份和唯一空 TEMP/TMP 启动；程序不会读取或保存 DMM 账号密码。
 4. 首次使用先添加并单独运行“重算竞技场己方总分”，成功后再运行“竞技场胜率分析并挑战（单次）”或“每日挑战 → 胜率选敌”。
 
 详细步骤、默认参数、分辨率要求和失败处理见[首次使用](guides/GETTING_STARTED.md)。
@@ -47,7 +48,9 @@
 
 ## 安装与更新边界
 
-`@VERSION@` 使用语义化版本 (Semantic Versioning, SemVer) 构建元数据，与同一基础版本的上游包具有相同优先级。因此首次从对应上游版或其他同基础版本的派生包切入时必须手动安装；后续只有更高 SemVer 优先级的派生版本才能由现有更新入口自动升级。
+GKH 版本独立于上游 Maa 标签。项目处于 `0.x` 时，`MINOR` 表示基础大更新，`PATCH` 表示该基础上的内部迭代；项目正式完工时才把 `MAJOR` 升至 `1`。从旧 `vMAJOR.MINOR.PATCH+gkh.*` 命名空间切入独立 GKH SemVer 时须手动安装一次；迁移预览期间保持 MFA 资源更新通道为默认 Stable，不要切换到 Beta 或 Alpha。独立版本之间按 SemVer 递增，但只有发布预检确认 MFA 的目标更新通道不会再选中数值更高的旧组合 Release 后，才允许启用自动升级；满足该门后，唯一客户端更新入口仍是 MFAAvalonia 内置 GitHub 资源更新。完整包会同时更新程序、Agent、资源、UI、模型、图库及竞技场离线基线，不需要手工逐组件校验或第二套客户端更新器。
+
+内置 pip 入口只管理 pip 与 `requirements.txt` 中的 Python 依赖，不更新上述项目资产。竞技场 RIS engine/data 是严格窄例外：每个 Agent 进程首次需要模拟器时可按最新成功 production deployment 的不可变 SHA 成对更新，失败保留旧组件；它不更新客户端、Agent、UI、模型或图库。版本化目录、`current` 联接和本机安装器只服务开发部署与故障维护，不是普通客户端更新路径。
 
 当前只有 GitHub 更新仓库指向本项目；包内若显示上游 `MaaGakumasu` 的 MirrorChyan 入口，它不是 Gakumas Helper 更新通道，请勿用它更新本派生版。
 

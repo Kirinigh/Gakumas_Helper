@@ -51,6 +51,7 @@ from arena_winrate import (
     p_item_screen_slot_to_engine_slot,
     p_item_screen_order_to_engine_order,
     stable_customization_badge_presence,
+    validate_conservative_cost_fallback,
     is_duplicate_marker_visual_candidate,
     stable_excluded_duplicate_card_flags,
     stable_reference_business_candidates,
@@ -81,16 +82,11 @@ def _normalize_latin_anchor(value: str) -> str:
 
 
 def _grade_ocr_value(value: str) -> int | None:
-    """Map only proven single-glyph Grade OCR variants to their value."""
+    """Map only the supported single-digit Grade domain to its value."""
 
     normalized = _normalize_latin_anchor(value)
     if re.fullmatch(r"[1-7]", normalized) is not None:
         return int(normalized)
-    # The stylized Grade-7 glyph is alternately emitted as 7 and V by the
-    # same OCR model. This alias is consumed only inside the unique Grade
-    # geometry below; it is never a global OCR replacement.
-    if normalized == "V":
-        return 7
     return None
 
 
@@ -433,6 +429,8 @@ class MaaArenaReaderBackend:
         self._card_content_generation_diagnostics: tuple[dict[str, Any], ...] = ()
         self._card_face_cost_diagnostics: dict[tuple[int, int], dict[str, Any]] = {}
         self._card_face_cost_optional_errors: dict[tuple[int, int], str] = {}
+        self._cost_customization_fallbacks: dict[tuple[int, int], dict[str, Any]] = {}
+        self._runtime_cost_customization_fallbacks: list[dict[str, Any]] = []
         self._secondary_presence_cache: dict[
             int,
             tuple[Any, tuple[dict[str, Any], ...]],
@@ -498,7 +496,9 @@ class MaaArenaReaderBackend:
             "counts": dict(sorted(self._runtime_counts.items())),
             "duration_percentiles_seconds": sample_summaries,
             "badge_workers": None if selection is None else selection.workers,
-            "badge_worker_cache_hit": None if selection is None else selection.cache_hit,
+            "badge_worker_cache_hit": None
+            if selection is None
+            else selection.cache_hit,
             "badge_worker_benchmarks": (
                 [] if selection is None else list(selection.benchmarks)
             ),
@@ -507,6 +507,14 @@ class MaaArenaReaderBackend:
                 round(self._member_long_press_seconds * 1000)
             ),
             "point_click_dispatch": "controller_point_context_box",
+            "cost_customization_fallbacks": [
+                dict(value)
+                for value in getattr(
+                    self,
+                    "_runtime_cost_customization_fallbacks",
+                    (),
+                )
+            ],
         }
 
     def diagnostic_port(self) -> ArenaReaderDiagnosticPort:
@@ -522,7 +530,6 @@ class MaaArenaReaderBackend:
     ) -> dict[str, Any]:
         """Return only low-dimensional evidence from the active member page."""
 
-        del target
         if self._member_metric_baseline is None:
             raise ArenaReaderError(
                 "member_observation_generation_missing",
@@ -641,6 +648,17 @@ class MaaArenaReaderBackend:
                 dict(value)
                 for value in self._badge_candidate_detail_checks
                 if value.get("stage_number") == stage_number
+                and value.get("member_slot") == member_slot
+            ],
+            "cost_customization_fallbacks": [
+                dict(value)
+                for value in getattr(
+                    self,
+                    "_cost_customization_fallbacks",
+                    {},
+                ).values()
+                if value.get("team_id") == target.team_id
+                and value.get("stage_number") == stage_number
                 and value.get("member_slot") == member_slot
             ],
             "screenshots_persisted": False,
@@ -3263,19 +3281,22 @@ class MaaArenaReaderBackend:
                 member_slot,
                 group_index,
                 card_slot,
-                expected_customization_count or 1,
+                (
+                    1
+                    if expected_customization_count is None
+                    else expected_customization_count
+                ),
             )
             overlay_opened = True
             self._card_transaction_kinds[key] = detail_kind
             inferred = self._read_resolved_card_detail(
                 key,
                 candidate_ids,
-                expected_customization_count=(
-                    None
-                    if allow_zero_without_badge_count
-                    else expected_customization_count
-                ),
+                expected_customization_count=expected_customization_count,
                 allow_zero_without_badge_count=allow_zero_without_badge_count,
+                target=target,
+                stage_number=stage_number,
+                member_slot=member_slot,
             )
         except ArenaReaderError as error:
             if error.code == "skill_card_detail_noninteractive":
@@ -3327,8 +3348,11 @@ class MaaArenaReaderBackend:
             inferred = self._read_resolved_card_detail(
                 key,
                 candidate_ids,
-                expected_customization_count=None,
+                expected_customization_count=0,
                 allow_zero_without_badge_count=True,
+                target=target,
+                stage_number=stage_number,
+                member_slot=member_slot,
             )
             if inferred.customizations:
                 raise ArenaReaderError(
@@ -3876,15 +3900,68 @@ class MaaArenaReaderBackend:
                     int(value) for value in inferred.customizations.values()
                 )
                 if inferred_count < 1:
-                    raise ArenaReaderError(
-                        "skill_card_cached_detail_inference_empty",
-                        f"group {group_index}/slot {index} cached no positive customization",
+                    fallback_claimed = (
+                        inferred.conservative_cost_assumption is not None
+                        or inferred.resolution_source.startswith(
+                            "generic_cost_conservative_fallback"
+                        )
+                        or inferred.detail_evidence_mode
+                        == "conservative_generic_cost_bound"
                     )
+                    if fallback_claimed:
+                        validate_conservative_cost_fallback(
+                            inferred,
+                            catalog=self.catalog,
+                            expected_policy=(
+                                "assume_unenhanced"
+                                if target.is_own_team
+                                else "assume_enhanced"
+                            ),
+                            expected_count=None,
+                            expected_count_kind="observed",
+                        )
+                    elif not (
+                        not inferred.customizations
+                        and (
+                            (
+                                inferred.resolution_source == "detail_known_zero"
+                                and inferred.detail_evidence_mode == "known_zero"
+                            )
+                            or (
+                                inferred.resolution_source.endswith("_zero_confirmed")
+                                and not isinstance(
+                                    inferred.detail_confirmation_reads,
+                                    bool,
+                                )
+                                and isinstance(
+                                    inferred.detail_confirmation_reads,
+                                    int,
+                                )
+                                and inferred.detail_confirmation_reads >= 2
+                            )
+                        )
+                    ):
+                        raise ArenaReaderError(
+                            "skill_card_zero_cache_contract_invalid",
+                            f"cached zero detail for group {group_index}/slot {index} is neither known-zero nor freshly confirmed",
+                        )
                 counts[index - 1] = inferred_count
                 count_diagnostics[index - 1].update(
                     {
-                        "fallback_state": "POSITIVE",
-                        "fallback_reason": "preswipe_detail_unique_positive_count",
+                        "fallback_state": (
+                            "POSITIVE"
+                            if inferred_count > 0
+                            else CustomizationBadgeState.CONFIDENT_ZERO.value
+                        ),
+                        "fallback_reason": (
+                            "preswipe_detail_unique_positive_count"
+                            if inferred_count > 0
+                            else (
+                                "preswipe_generic_cost_conservative_zero"
+                                if inferred.conservative_cost_assumption is not None
+                                else "preswipe_detail_confirmed_zero"
+                            )
+                        ),
                         "fallback_mode": "preswipe_clicked_detail_cache",
                         "inferred_card_id": inferred.card_id,
                         "inferred_customizations": dict(inferred.customizations),
@@ -4020,7 +4097,6 @@ class MaaArenaReaderBackend:
         card_slot: int,
         expected_customization_count: int,
     ) -> ClickedSkillCard:
-        del target, stage_number, member_slot
         key = (group_index, card_slot)
         inferred = self._inferred_clicked_cards.get(key)
         if self._active_inferred_clicked_card == key and inferred is not None:
@@ -4034,11 +4110,17 @@ class MaaArenaReaderBackend:
             return inferred
         candidate_ids = self._card_candidate_groups.get((group_index, card_slot))
         if candidate_ids is None:
-            raise ArenaReaderError("skill_card_prediction_missing", "card icon was not classified before its click")
+            raise ArenaReaderError(
+                "skill_card_prediction_missing",
+                "card icon was not classified before its click",
+            )
         resolved = self._read_resolved_card_detail(
             key,
             candidate_ids,
             expected_customization_count=expected_customization_count,
+            target=target,
+            stage_number=stage_number,
+            member_slot=member_slot,
         )
         # The embedding result is only a pre-click visual-family hint.  Once
         # the detail title/effects resolve the business ID, bind that
@@ -4057,8 +4139,11 @@ class MaaArenaReaderBackend:
         expected_customization_count: int | None,
         allow_zero_without_badge_count: bool = False,
         allow_auxiliary_badge_glyph: bool = True,
+        generic_cost_fallback_policy: str | None = None,
+        allow_generic_cost_fallback: bool = False,
         key: tuple[int, int] | None = None,
     ) -> ClickedSkillCard:
+        conservative_cost_assumption: dict[str, Any] | None = None
         try:
             try:
                 card_id = self.catalog.confirm_clicked_skill_card_candidates(
@@ -4084,17 +4169,85 @@ class MaaArenaReaderBackend:
                 if key is not None
                 else None
             )
-            if expected_customization_count is None:
+            cost_error = (
+                getattr(self, "_card_face_cost_optional_errors", {}).get(key)
+                if key is not None
+                else None
+            )
+            if expected_customization_count == 0:
+                customizations = self.catalog.resolve_effective_customizations(
+                    card_id,
+                    text,
+                    expected_count=0,
+                    allow_positive_completion=False,
+                )
+                if customizations:
+                    raise ArenaCatalogError(
+                        "a known-zero card resolved a positive customization state"
+                    )
+                resolution_source = "detail_known_zero"
+                detail_evidence_mode = "known_zero"
+            elif generic_cost_fallback_policy is not None and cost_error is not None:
+                if generic_cost_fallback_policy not in {
+                    "assume_unenhanced",
+                    "assume_enhanced",
+                }:
+                    raise ArenaReaderError(
+                        "skill_card_cost_fallback_policy_invalid",
+                        f"unsupported generic-cost fallback policy {generic_cost_fallback_policy!r}",
+                    )
+                if not allow_generic_cost_fallback:
+                    self._increment("skill_card_cost_fallback_settle_waits")
+                    raise ArenaReaderError(
+                        "skill_card_cost_fallback_before_settle",
+                        "generic-cost fallback is deferred until settled detail evidence",
+                    )
+                pair = self.catalog.resolve_generic_cost_ambiguity(
+                    card_id,
+                    text,
+                    observed_badge_count=expected_customization_count,
+                )
+                unenhanced = dict(pair.unenhanced_customizations)
+                enhanced = dict(pair.enhanced_customizations)
+                customizations = (
+                    enhanced
+                    if generic_cost_fallback_policy == "assume_enhanced"
+                    else unenhanced
+                )
+                hypotheses = self.catalog.generic_cost_hypotheses(card_id)
+                if hypotheses is None:
+                    raise ArenaCatalogError(
+                        f"card {card_id} lost its generic-cost hypotheses"
+                    )
+                conservative_cost_assumption = {
+                    "reason_code": "skill_card_cost_evidence_inconclusive",
+                    "policy": generic_cost_fallback_policy,
+                    "card_id": card_id,
+                    "generic_customization_id": pair.generic_customization_id,
+                    "observed_badge_count": expected_customization_count,
+                    "cost_hypotheses": list(hypotheses),
+                    "non_cost_customizations": {
+                        key: value
+                        for key, value in unenhanced.items()
+                        if key != str(pair.generic_customization_id)
+                    },
+                    "candidate_customizations": {
+                        "unenhanced": unenhanced,
+                        "enhanced": enhanced,
+                    },
+                    "applied_customizations": dict(customizations),
+                }
+                resolution_source = "generic_cost_conservative_fallback"
+                detail_evidence_mode = "conservative_generic_cost_bound"
+            elif expected_customization_count is None:
                 detail_evidence_mode = "unconstrained"
                 customizations = None
                 if generic_cost_frame_values is not None:
                     try:
-                        customizations = (
-                            self.catalog.resolve_effective_customizations_with_generic_cost_evidence(
-                                card_id,
-                                text,
-                                generic_cost_frame_values=generic_cost_frame_values,
-                            )
+                        customizations = self.catalog.resolve_effective_customizations_with_generic_cost_evidence(
+                            card_id,
+                            text,
+                            generic_cost_frame_values=generic_cost_frame_values,
                         )
                     except ArenaCatalogError:
                         # A presence shortlist may still be an uncustomized
@@ -4146,11 +4299,13 @@ class MaaArenaReaderBackend:
                                 f"{error.detail}; card_face_cost={cost_error}",
                             ) from error
                         if auxiliary_count == 0:
-                            customizations = self.catalog.resolve_effective_customizations(
-                                card_id,
-                                text,
-                                expected_count=0,
-                                allow_positive_completion=False,
+                            customizations = (
+                                self.catalog.resolve_effective_customizations(
+                                    card_id,
+                                    text,
+                                    expected_count=0,
+                                    allow_positive_completion=False,
+                                )
                             )
                             if customizations:
                                 raise ArenaCatalogError(
@@ -4227,6 +4382,7 @@ class MaaArenaReaderBackend:
             customizations,
             resolution_source=resolution_source,
             detail_evidence_mode=detail_evidence_mode,
+            conservative_cost_assumption=conservative_cost_assumption,
         )
 
     def read_clicked_skill_card_unconstrained(
@@ -4421,6 +4577,9 @@ class MaaArenaReaderBackend:
         expected_customization_count: int | None,
         timeout_seconds: float = 1.50,
         allow_zero_without_badge_count: bool = False,
+        target: TeamTarget | None = None,
+        stage_number: int | None = None,
+        member_slot: int | None = None,
     ) -> ClickedSkillCard:
         """Resolve the accepted overlay text, rereading only while effects settle."""
 
@@ -4445,8 +4604,18 @@ class MaaArenaReaderBackend:
         positive_candidate: ClickedSkillCard | None = None
         positive_confirmation_reads = 0
         positive_confirmation_extension_applied = False
+        cost_fallback_candidate: ClickedSkillCard | None = None
+        cost_fallback_confirmation_reads = 0
+        cost_fallback_confirmation_extension_applied = False
         terminal_error: ArenaReaderError | None = None
         same_frame_effect_roi_attempted = False
+        generic_cost_fallback_policy = (
+            None
+            if target is None
+            else "assume_unenhanced"
+            if target.is_own_team
+            else "assume_enhanced"
+        )
         while True:
             # Provenance is frame-local.  A title-anchored ROI may resolve an
             # otherwise ambiguous detail on the accepted frame itself; keep
@@ -4466,9 +4635,9 @@ class MaaArenaReaderBackend:
                             allow_zero_without_badge_count=(
                                 allow_zero_without_badge_count
                             ),
-                            allow_auxiliary_badge_glyph=(
-                                auxiliary_badge_glyph_allowed
-                            ),
+                            allow_auxiliary_badge_glyph=(auxiliary_badge_glyph_allowed),
+                            generic_cost_fallback_policy=(generic_cost_fallback_policy),
+                            allow_generic_cost_fallback=(auxiliary_badge_glyph_allowed),
                             key=key,
                         )
                     except ArenaReaderError as initial_error:
@@ -4498,15 +4667,13 @@ class MaaArenaReaderBackend:
                         resolved = self._resolve_clicked_card_text(
                             candidate_ids,
                             combined_text,
-                            expected_customization_count=(
-                                expected_customization_count
-                            ),
+                            expected_customization_count=(expected_customization_count),
                             allow_zero_without_badge_count=(
                                 allow_zero_without_badge_count
                             ),
-                            allow_auxiliary_badge_glyph=(
-                                auxiliary_badge_glyph_allowed
-                            ),
+                            allow_auxiliary_badge_glyph=(auxiliary_badge_glyph_allowed),
+                            generic_cost_fallback_policy=(generic_cost_fallback_policy),
+                            allow_generic_cost_fallback=(auxiliary_badge_glyph_allowed),
                             key=key,
                         )
                         text = combined_text
@@ -4514,10 +4681,131 @@ class MaaArenaReaderBackend:
                         self._increment(
                             "skill_card_detail_same_frame_effect_roi_recoveries"
                         )
+                    conservative_cost_assumption = getattr(
+                        resolved,
+                        "conservative_cost_assumption",
+                        None,
+                    )
+                    if (
+                        conservative_cost_assumption is not None
+                        and same_frame_effect_roi_context is None
+                    ):
+                        detail_image = self._card_detail_images.get(key)
+                        if detail_image is None:
+                            raise ArenaReaderError(
+                                "skill_card_cost_fallback_detail_image_missing",
+                                "generic-cost fallback has no accepted detail image",
+                            )
+                        roi_text = self._skill_card_title_anchored_effect_roi_text(
+                            detail_image,
+                            resolved.card_id,
+                        )
+                        same_frame_effect_roi_context = (text, roi_text)
+                        combined_text = f"{text}\n{roi_text}"
+                        combined_resolved = self._resolve_clicked_card_text(
+                            candidate_ids,
+                            combined_text,
+                            expected_customization_count=(expected_customization_count),
+                            allow_zero_without_badge_count=(
+                                allow_zero_without_badge_count
+                            ),
+                            allow_auxiliary_badge_glyph=(auxiliary_badge_glyph_allowed),
+                            generic_cost_fallback_policy=(generic_cost_fallback_policy),
+                            allow_generic_cost_fallback=True,
+                            key=key,
+                        )
+                        if not self._same_clicked_card_resolution(
+                            resolved,
+                            combined_resolved,
+                        ):
+                            raise ArenaReaderError(
+                                "skill_card_cost_fallback_roi_conflict",
+                                "full detail and title-bound effect ROI do not leave the same generic-cost pair",
+                            )
+                        resolved = combined_resolved
+                        text = combined_text
+                        self._card_detail_texts[key] = combined_text
+                        self._increment(
+                            "skill_card_cost_fallback_title_bound_roi_confirmations"
+                        )
                     resolved_count = sum(
                         int(value) for value in resolved.customizations.values()
                     )
-                    if allow_zero_without_badge_count and resolved_count == 0:
+                    conservative_cost_assumption = getattr(
+                        resolved,
+                        "conservative_cost_assumption",
+                        None,
+                    )
+                    if (
+                        cost_fallback_candidate is not None
+                        and conservative_cost_assumption is None
+                    ):
+                        raise ArenaReaderError(
+                            "skill_card_cost_fallback_frame_conflict",
+                            "a settled fallback frame was followed by a different non-fallback resolution",
+                        )
+                    if conservative_cost_assumption is not None:
+                        if any(
+                            candidate is not None
+                            for candidate in (
+                                confirmation_candidate,
+                                zero_candidate,
+                                positive_candidate,
+                            )
+                        ):
+                            raise ArenaReaderError(
+                                "skill_card_cost_fallback_frame_conflict",
+                                "a non-fallback confirmation candidate was followed by a generic-cost fallback resolution",
+                            )
+                        cost_fallback_confirmation_reads += 1
+                        self._increment("skill_card_cost_fallback_confirmation_reads")
+                        if self._same_clicked_card_resolution(
+                            cost_fallback_candidate,
+                            resolved,
+                        ):
+                            resolved = ClickedSkillCard(
+                                resolved.card_id,
+                                dict(resolved.customizations),
+                                resolution_source=(
+                                    "generic_cost_conservative_fallback_confirmed"
+                                ),
+                                detail_confirmation_reads=(
+                                    cost_fallback_confirmation_reads
+                                ),
+                                detail_evidence_mode=(resolved.detail_evidence_mode),
+                                conservative_cost_assumption=dict(
+                                    conservative_cost_assumption
+                                ),
+                            )
+                            self._increment("skill_card_cost_fallback_confirmations")
+                        else:
+                            if cost_fallback_candidate is not None:
+                                self._increment(
+                                    "skill_card_cost_fallback_confirmation_conflicts"
+                                )
+                                raise ArenaReaderError(
+                                    "skill_card_cost_fallback_frame_conflict",
+                                    "settled detail frames leave different generic-cost bounds",
+                                )
+                            cost_fallback_candidate = resolved
+                            if not cost_fallback_confirmation_extension_applied:
+                                deadline = max(
+                                    deadline,
+                                    time.monotonic() + 0.45,
+                                )
+                                cost_fallback_confirmation_extension_applied = True
+                                self._increment(
+                                    "skill_card_cost_fallback_confirmation_extensions"
+                                )
+                            raise ArenaReaderError(
+                                "skill_card_cost_fallback_unconfirmed",
+                                "generic-cost fallback requires one fresh settled detail frame with the same bounded pair",
+                            )
+                    if (
+                        allow_zero_without_badge_count
+                        and resolved_count == 0
+                        and conservative_cost_assumption is None
+                    ):
                         # A detail title becomes readable before its effect rows are
                         # guaranteed to finish animating.  The prior context-action
                         # overhead happened to hide this race; direct point dispatch
@@ -4545,6 +4833,11 @@ class MaaArenaReaderBackend:
                                 ),
                                 detail_confirmation_reads=zero_confirmation_reads,
                                 detail_evidence_mode=resolved.detail_evidence_mode,
+                                conservative_cost_assumption=getattr(
+                                    resolved,
+                                    "conservative_cost_assumption",
+                                    None,
+                                ),
                             )
                             self._increment("skill_card_detail_zero_confirmations")
                         else:
@@ -4587,12 +4880,27 @@ class MaaArenaReaderBackend:
                         expected_customization_count is not None
                         and resolved_count != expected_customization_count
                     )
-                    if count_mismatch and (
-                        resolved.resolution_source not in {
-                            "detail_unique",
-                            "detail_card_face_unique",
-                        }
-                        or resolved_count < 1
+                    cost_fallback_confirmed = (
+                        getattr(
+                            resolved,
+                            "conservative_cost_assumption",
+                            None,
+                        )
+                        is not None
+                        and resolved.resolution_source
+                        == "generic_cost_conservative_fallback_confirmed"
+                    )
+                    if (
+                        count_mismatch
+                        and not cost_fallback_confirmed
+                        and (
+                            resolved.resolution_source
+                            not in {
+                                "detail_unique",
+                                "detail_card_face_unique",
+                            }
+                            or resolved_count < 1
+                        )
                     ):
                         raise ArenaReaderError(
                             "skill_card_detail_count_conflict",
@@ -4648,11 +4956,9 @@ class MaaArenaReaderBackend:
                             # first pass. A bounded fresh-frame retry remains
                             # only for genuinely incomplete effect animation.
                             effect_roi_title_bound = True
-                            roi_text = (
-                                self._skill_card_title_anchored_effect_roi_text(
-                                    detail_image,
-                                    resolved.card_id,
-                                )
+                            roi_text = self._skill_card_title_anchored_effect_roi_text(
+                                detail_image,
+                                resolved.card_id,
                             )
                             combined_text = f"{text}\n{roi_text}"
                             resolved = self._resolve_clicked_card_text(
@@ -4667,11 +4973,16 @@ class MaaArenaReaderBackend:
                                 allow_auxiliary_badge_glyph=(
                                     auxiliary_badge_glyph_allowed
                                 ),
+                                generic_cost_fallback_policy=(
+                                    generic_cost_fallback_policy
+                                ),
+                                allow_generic_cost_fallback=(
+                                    auxiliary_badge_glyph_allowed
+                                ),
                                 key=key,
                             )
                         resolved_count = sum(
-                            int(value)
-                            for value in resolved.customizations.values()
+                            int(value) for value in resolved.customizations.values()
                         )
                         evidence_customization_count = expected_customization_count
                         if (
@@ -4754,6 +5065,11 @@ class MaaArenaReaderBackend:
                                 resolution_source=resolved.resolution_source,
                                 detail_confirmation_reads=resolved.detail_confirmation_reads,
                                 detail_evidence_mode=certified_mode,
+                                conservative_cost_assumption=getattr(
+                                    resolved,
+                                    "conservative_cost_assumption",
+                                    None,
+                                ),
                             )
                             self._increment(
                                 "skill_card_detail_external_evidence_certifications"
@@ -4794,10 +5110,13 @@ class MaaArenaReaderBackend:
                                 resolution_source=(
                                     f"{resolved.resolution_source}_positive_confirmed"
                                 ),
-                                detail_confirmation_reads=(
-                                    positive_confirmation_reads
-                                ),
+                                detail_confirmation_reads=(positive_confirmation_reads),
                                 detail_evidence_mode=resolved.detail_evidence_mode,
+                                conservative_cost_assumption=getattr(
+                                    resolved,
+                                    "conservative_cost_assumption",
+                                    None,
+                                ),
                             )
                             self._increment(
                                 "skill_card_detail_positive_confirmations"
@@ -4822,12 +5141,26 @@ class MaaArenaReaderBackend:
                                 "an unconstrained positive detail requires one fresh "
                                 "semantically identical frame",
                             )
+                    if count_mismatch and cost_fallback_confirmed:
+                        assert expected_customization_count is not None
+                        self._record_detail_count_override(
+                            key,
+                            expected_customization_count,
+                            resolved,
+                        )
                     reason = (
                         "badge_count_override"
-                        if count_mismatch
+                        if count_mismatch and not cost_fallback_confirmed
                         else None
                     )
                     if reason is None:
+                        self._record_cost_customization_fallback(
+                            key,
+                            resolved,
+                            target=target,
+                            stage_number=stage_number,
+                            member_slot=member_slot,
+                        )
                         return resolved
 
                     resolution_reads += 1
@@ -4844,6 +5177,11 @@ class MaaArenaReaderBackend:
                             resolution_source=f"{resolved.resolution_source}_confirmed",
                             detail_confirmation_reads=resolution_reads,
                             detail_evidence_mode=resolved.detail_evidence_mode,
+                            conservative_cost_assumption=getattr(
+                                resolved,
+                                "conservative_cost_assumption",
+                                None,
+                            ),
                         )
                         self._record_detail_semantic_confirmation(
                             key,
@@ -4858,6 +5196,13 @@ class MaaArenaReaderBackend:
                                 expected_customization_count,
                                 confirmed,
                             )
+                        self._record_cost_customization_fallback(
+                            key,
+                            confirmed,
+                            target=target,
+                            stage_number=stage_number,
+                            member_slot=member_slot,
+                        )
                         return confirmed
                     if confirmation_candidate is not None:
                         resolution_conflicts += 1
@@ -4873,6 +5218,15 @@ class MaaArenaReaderBackend:
                     confirmation_candidate = None
                     confirmation_reason = None
                     last_error = str(error)
+                    if error.code in {
+                        "skill_card_cost_fallback_changed",
+                        "skill_card_cost_fallback_contract_invalid",
+                        "skill_card_cost_fallback_frame_conflict",
+                        "skill_card_cost_fallback_location_missing",
+                        "skill_card_cost_fallback_roi_conflict",
+                    }:
+                        terminal_error = error
+                        break
                     if error.code == "skill_card_detail_positive_evidence_missing":
                         if effect_roi_failures < 1:
                             # The title can become readable before the effect rows
@@ -4925,6 +5279,8 @@ class MaaArenaReaderBackend:
             left is not None
             and left.card_id == right.card_id
             and dict(left.customizations) == dict(right.customizations)
+            and getattr(left, "conservative_cost_assumption", None)
+            == getattr(right, "conservative_cost_assumption", None)
         )
 
     @staticmethod
@@ -5161,6 +5517,80 @@ class MaaArenaReaderBackend:
         }
         self._increment("skill_card_detail_count_overrides")
 
+    def _record_cost_customization_fallback(
+        self,
+        key: tuple[int, int],
+        resolved: ClickedSkillCard,
+        *,
+        target: TeamTarget | None,
+        stage_number: int | None,
+        member_slot: int | None,
+    ) -> None:
+        assumption = getattr(
+            resolved,
+            "conservative_cost_assumption",
+            None,
+        )
+        if assumption is None:
+            return
+        if (
+            target is None
+            or stage_number not in (1, 2, 3)
+            or member_slot not in (1, 2, 3)
+        ):
+            raise ArenaReaderError(
+                "skill_card_cost_fallback_location_missing",
+                "a conservative generic-cost fallback lacks its team/member location",
+            )
+        validate_conservative_cost_fallback(
+            resolved,
+            catalog=self.catalog,
+            expected_policy=(
+                "assume_unenhanced" if target.is_own_team else "assume_enhanced"
+            ),
+            expected_count=sum(
+                int(value) for value in resolved.customizations.values()
+            ),
+            expected_count_kind="effective",
+        )
+        record = {
+            **dict(assumption),
+            "side": "own" if target.is_own_team else "opponent",
+            "team_id": target.team_id,
+            "opponent_position": target.opponent_position,
+            "stage_number": stage_number,
+            "member_slot": member_slot,
+            "group_index": key[0],
+            "card_slot": key[1],
+            "detail_confirmation_reads": resolved.detail_confirmation_reads,
+            "resolution_source": resolved.resolution_source,
+            "detail_evidence_mode": resolved.detail_evidence_mode,
+        }
+        per_member = getattr(self, "_cost_customization_fallbacks", None)
+        if per_member is None:
+            per_member = {}
+            self._cost_customization_fallbacks = per_member
+        prior = per_member.get(key)
+        if prior is not None:
+            if prior != record:
+                raise ArenaReaderError(
+                    "skill_card_cost_fallback_changed",
+                    f"generic-cost fallback for {key!r} changed within one member",
+                )
+            return
+        per_member[key] = record
+        runtime = getattr(self, "_runtime_cost_customization_fallbacks", None)
+        if runtime is None:
+            runtime = []
+            self._runtime_cost_customization_fallbacks = runtime
+        runtime.append(dict(record))
+        self._increment("skill_card_cost_customization_fallbacks")
+        self._increment(
+            "skill_card_cost_customization_fallbacks_own"
+            if target.is_own_team
+            else "skill_card_cost_customization_fallbacks_opponent"
+        )
+
     def close_skill_card(
         self,
         target: TeamTarget,
@@ -5262,6 +5692,7 @@ class MaaArenaReaderBackend:
         self._card_content_generation_diagnostics = ()
         self._card_face_cost_diagnostics.clear()
         self._card_face_cost_optional_errors.clear()
+        self._cost_customization_fallbacks.clear()
         self._zero_card_identity_fusion_diagnostics.clear()
         self._zero_card_embedding_detail_candidates.clear()
         self._zero_card_detail_candidates.clear()
@@ -5739,23 +6170,27 @@ class MaaArenaReaderBackend:
                 f"found {len(labels)} GRADE labels on the arena main screen",
             )
         label_x, label_y, label_width, label_height = _box(labels[0])
-        left = max(0, label_x - label_width)
-        top = min(height - 1, label_y + label_height)
+        # The Grade digit and label are part of one emblem: the digit is
+        # centred above the GRADE word.  Derive a tight, scale-aware region
+        # from the label itself so stage numbers and the inter-stage ornament
+        # below the label can never become Grade evidence.
+        left = max(0, label_x)
+        right = min(width, label_x + label_width)
+        vertical_span = max(label_width * 2, label_height * 4)
+        top = max(0, label_y - vertical_span)
+        bottom = min(height, label_y)
+        minimum_digit_height = max(1, round(label_width * 0.35))
         roi = (
             left,
             top,
-            min(width - left, label_width * 3),
-            min(
-                height - top,
-                max(label_height * 8, int(height * 0.14)),
-            ),
+            max(0, right - left),
+            max(0, bottom - top),
         )
-        right = left + roi[2]
-        bottom = top + roi[3]
         matches = tuple(
             (item, grade_value)
             for item in observations
             if (grade_value := _grade_ocr_value(_text(item))) is not None
+            and _box(item)[3] >= minimum_digit_height
             and (
                 left
                 <= _box(item)[0] + _box(item)[2] / 2
@@ -5770,12 +6205,13 @@ class MaaArenaReaderBackend:
             # Full-screen OCR can consistently omit the large stylised Grade
             # digit while still resolving the surrounding small menu text.
             # Reuse the same screenshot and label-derived ROI for one focused
-            # pass; never widen the ROI toward the unrelated single-digit
-            # notification badge on the right side of this page.
+            # pass; never widen the ROI toward the notification badge on the
+            # right or the stage controls below this emblem.
             targeted = tuple(
                 (item, grade_value)
-                for item in self._ocr(image, r"^[1-7V]$", roi=roi)
+                for item in self._ocr(image, r"^[1-7]$", roi=roi)
                 if (grade_value := _grade_ocr_value(_text(item))) is not None
+                and _box(item)[3] >= minimum_digit_height
             )
             if len(targeted) == 1:
                 return targeted[0][1]
@@ -5787,14 +6223,14 @@ class MaaArenaReaderBackend:
                     left
                     <= _box(item)[0] + _box(item)[2] / 2
                     <= right
-                    and label_y
+                    and top
                     <= _box(item)[1] + _box(item)[3] / 2
-                    <= bottom
+                    <= label_y + label_height
                 )
             )
             raise ArenaReaderError(
                 "arena_grade_ambiguous",
-                f"found {len(matches)} geometrically valid Grade digits below the "
+                f"found {len(matches)} geometrically valid Grade digits above the "
                 f"GRADE anchor in {roi}; targeted_ocr="
                 f"{tuple((_text(item), _box(item)) for item, _ in targeted)!r}; "
                 f"nearby_ocr={nearby!r}",
