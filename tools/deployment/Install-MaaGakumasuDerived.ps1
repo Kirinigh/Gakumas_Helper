@@ -1,3 +1,12 @@
+<#
+.SYNOPSIS
+Installs a verified derived package for local development or recovery.
+
+.DESCRIPTION
+This maintenance tool is not the product update path. Normal installed clients use
+MFAAvalonia's built-in GitHub resource updater and receive one full derived package.
+It deploys a version directory and switches current, but preserves the stable root launcher.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -37,6 +46,95 @@ function Assert-Manifest {
         if ($actual -ne $expected) {
             throw "Build manifest hash mismatch: $relative; actual $actual; expected $expected"
         }
+    }
+}
+
+function Install-AtomicFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+        throw "Atomic install source is missing: $Source"
+    }
+    $destinationDirectory = Split-Path -Parent $Destination
+    if (-not (Test-Path -LiteralPath $destinationDirectory -PathType Container)) {
+        throw "Atomic install destination directory is missing: $destinationDirectory"
+    }
+
+    $stagedPath = Join-Path $destinationDirectory ('.' + [IO.Path]::GetFileName($Destination) + '.new-' + [guid]::NewGuid().ToString('N'))
+    $previouslyExisted = Test-Path -LiteralPath $Destination -PathType Leaf
+    $backupPath = $null
+    $installed = $false
+    try {
+        Copy-Item -LiteralPath $Source -Destination $stagedPath
+        if ((Get-Sha256 -Path $stagedPath) -ne (Get-Sha256 -Path $Source)) {
+            throw "Atomic install staging hash mismatch: $Destination"
+        }
+
+        if ($previouslyExisted) {
+            $backupPath = Join-Path $destinationDirectory ('.' + [IO.Path]::GetFileName($Destination) + '.previous-' + [guid]::NewGuid().ToString('N'))
+            [IO.File]::Replace($stagedPath, $Destination, $backupPath, $true)
+        }
+        else {
+            [IO.File]::Move($stagedPath, $Destination)
+        }
+        $installed = $true
+
+        $installedHash = Get-Sha256 -Path $Destination
+        if ($installedHash -ne (Get-Sha256 -Path $Source)) {
+            throw "Atomic install destination hash mismatch: $Destination"
+        }
+        return [pscustomobject]@{
+            Destination = $Destination
+            BackupPath = $backupPath
+            PreviouslyExisted = $previouslyExisted
+            Sha256 = $installedHash
+        }
+    }
+    catch {
+        if ($installed) {
+            if ($previouslyExisted -and $backupPath -and (Test-Path -LiteralPath $backupPath -PathType Leaf)) {
+                [IO.File]::Replace($backupPath, $Destination, $null)
+            }
+            elseif (-not $previouslyExisted -and (Test-Path -LiteralPath $Destination -PathType Leaf)) {
+                Remove-Item -LiteralPath $Destination -Force
+            }
+        }
+        throw
+    }
+    finally {
+        if (Test-Path -LiteralPath $stagedPath) {
+            Remove-Item -LiteralPath $stagedPath -Force
+        }
+    }
+}
+
+function Restore-AtomicFile {
+    param([Parameter(Mandatory = $true)]$Record)
+
+    if ($Record.PreviouslyExisted) {
+        if (-not $Record.BackupPath -or -not (Test-Path -LiteralPath $Record.BackupPath -PathType Leaf)) {
+            throw "Atomic install backup is unavailable: $($Record.Destination)"
+        }
+        if (Test-Path -LiteralPath $Record.Destination -PathType Leaf) {
+            [IO.File]::Replace($Record.BackupPath, $Record.Destination, $null)
+        }
+        else {
+            [IO.File]::Move($Record.BackupPath, $Record.Destination)
+        }
+    }
+    elseif (Test-Path -LiteralPath $Record.Destination -PathType Leaf) {
+        Remove-Item -LiteralPath $Record.Destination -Force
+    }
+}
+
+function Remove-AtomicFileBackup {
+    param([Parameter(Mandatory = $true)]$Record)
+
+    if ($Record.BackupPath -and (Test-Path -LiteralPath $Record.BackupPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $Record.BackupPath -Force
     }
 }
 
@@ -97,7 +195,10 @@ function Set-PipBootstrapVersion {
 }
 
 function Invoke-ArenaPeriodConfigMigration {
-    param([Parameter(Mandatory = $true)][string]$Root)
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [string]$PreviousInterface
+    )
 
     $instancesPath = Join-Path $Root 'config\instances'
     if (-not (Test-Path -LiteralPath $instancesPath -PathType Container)) {
@@ -112,7 +213,21 @@ function Invoke-ArenaPeriodConfigMigration {
         }
     }
 
-    $output = & $pythonPath -B $migrationPath --instances-dir $instancesPath --interface $interfacePath 2>&1
+    $arguments = @(
+        '-B',
+        $migrationPath,
+        '--instances-dir',
+        $instancesPath,
+        '--interface',
+        $interfacePath
+    )
+    if ($PreviousInterface) {
+        if (-not (Test-Path -LiteralPath $PreviousInterface -PathType Leaf)) {
+            throw "Previous arena interface is unavailable: $PreviousInterface"
+        }
+        $arguments += @('--previous-interface', $PreviousInterface)
+    }
+    $output = & $pythonPath @arguments 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Arena period configuration migration failed: $($output -join [Environment]::NewLine)"
     }
@@ -152,6 +267,25 @@ $version = [string]$manifest.derived_version
 if ($version -notmatch '^v\d+\.\d+\.\d+(?:-(?:alpha|beta)\.\d+|\+gkh\.(?:[0-9a-f]{7,40}|\d{6}))?$') {
     throw "Candidate version is invalid: $version"
 }
+$interfacePath = Join-Path $candidateRoot 'interface.json'
+if (-not (Test-Path -LiteralPath $interfacePath -PathType Leaf)) {
+    throw 'Candidate is missing interface.json.'
+}
+$interface = Get-Content -LiteralPath $interfacePath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([string]$interface.version -ne $version) {
+    throw 'Candidate version does not match interface.json.'
+}
+if ([string]$manifest.update_contract.mode -eq 'derived_release_channel') {
+    if ($version -notmatch '^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$') {
+        throw 'Published candidate version must use independent GKH SemVer.'
+    }
+    if ([string]$manifest.upstream.tag -notmatch '^v\d+\.\d+\.\d+$') {
+        throw 'Published candidate must record its upstream Maa version separately.'
+    }
+    if ([string]$manifest.update_contract.version_namespace -ne 'independent_gkh_semver') {
+        throw 'Published candidate must use the independent GKH SemVer namespace.'
+    }
+}
 
 if (Get-Process -Name 'MaaGakumasu', 'MFAAvalonia' -ErrorAction SilentlyContinue) {
     throw 'MaaGakumasu/MFAAvalonia is running; the install root was not changed.'
@@ -177,7 +311,11 @@ $previousTarget = $null
 $previousLink = $null
 $newLink = Join-Path $installRootFull ('.current-new-' + [guid]::NewGuid().ToString('N'))
 $currentMoved = $false
+$currentActivated = $false
 $arenaPeriodMigration = $null
+$previousInterfacePath = $null
+$rootInstallRecords = @()
+$metadataSourcePaths = @()
 
 try {
     New-Item -ItemType Directory -Path $stagingPath | Out-Null
@@ -189,6 +327,12 @@ try {
             throw "current is not a verifiable junction: $currentPath"
         }
         $previousTarget = [string]$currentItem.Target
+        $previousInterfacePath = Join-Path $currentPath 'interface.json'
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $previousLink = Join-Path $installRootFull ("current.previous-$stamp")
+        if (Test-Path -LiteralPath $previousLink) {
+            throw "Rollback junction name already exists: $previousLink"
+        }
 
         foreach ($mutablePath in @('config', '.local')) {
             $source = Join-Path $currentPath $mutablePath
@@ -210,25 +354,16 @@ try {
     # Preserve the user's pip update/install switches, but mark this exact resource
     # version as bootstrapped so Agent startup does not replace the embedded set.
     Set-PipBootstrapVersion -Root $stagingPath -Version $version
-    $arenaPeriodMigration = Invoke-ArenaPeriodConfigMigration -Root $stagingPath
+    $arenaPeriodMigration = Invoke-ArenaPeriodConfigMigration `
+        -Root $stagingPath `
+        -PreviousInterface $previousInterfacePath
     Initialize-ArenaOwnScoreSummary -Root $stagingPath
 
     Assert-Manifest -Root $stagingPath -Manifest $manifest
+
     Move-Item -LiteralPath $stagingPath -Destination $targetPath
 
     New-Item -ItemType Junction -Path $newLink -Target $targetPath | Out-Null
-    if (Test-Path -LiteralPath $currentPath) {
-        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-        $previousLink = Join-Path $installRootFull ("current.previous-$stamp")
-        if (Test-Path -LiteralPath $previousLink) {
-            throw "Rollback junction name already exists: $previousLink"
-        }
-        Move-Item -LiteralPath $currentPath -Destination $previousLink
-        $currentMoved = $true
-    }
-    Move-Item -LiteralPath $newLink -Destination $currentPath
-
-    Set-Content -LiteralPath (Join-Path $installRootFull 'CURRENT_VERSION.txt') -Value $version -Encoding ASCII
     $record = @"
 # MaaGakumasu local derived deployment record
 
@@ -244,14 +379,30 @@ try {
 - Previous target: $previousTarget
 - Rollback junction: $previousLink
 - User configuration: preserved from the previous current; EnableAutoUpdateResource was not changed
-- Arena period configuration: legacy free-text values migrated to the fixed selector before activation
+- Arena period configuration: legacy values and saved indices remapped by season value before activation
 - Arena own-score summary: initialized from the preserved authoritative JSON cache before activation
 - Python bootstrap: last_version synchronized to the embedded candidate; existing pip update/install switches preserved
+- Administrator launcher: stable root bootstrap preserved; its root helper resolves the active current junction and scopes TEMP/TMP to a unique version-local leaf
 - Windows Defender: $(if ($SkipDefenderScan) { 'explicitly skipped for this run' } else { 'candidate directory scanned' })
 "@
-    Set-Content -LiteralPath (Join-Path $installRootFull 'DEPLOYMENT.md') -Value $record -Encoding UTF8
+    $versionMetadataSource = Join-Path $installRootFull ('.CURRENT_VERSION.txt.source-' + [guid]::NewGuid().ToString('N'))
+    $deploymentMetadataSource = Join-Path $installRootFull ('.DEPLOYMENT.md.source-' + [guid]::NewGuid().ToString('N'))
+    $metadataSourcePaths = @($versionMetadataSource, $deploymentMetadataSource)
+    Set-Content -LiteralPath $versionMetadataSource -Value $version -Encoding ASCII
+    Set-Content -LiteralPath $deploymentMetadataSource -Value $record -Encoding UTF8
+    $rootInstallRecords += Install-AtomicFile `
+        -Source $versionMetadataSource `
+        -Destination (Join-Path $installRootFull 'CURRENT_VERSION.txt')
+    $rootInstallRecords += Install-AtomicFile `
+        -Source $deploymentMetadataSource `
+        -Destination (Join-Path $installRootFull 'DEPLOYMENT.md')
+    foreach ($metadataSourcePath in $metadataSourcePaths) {
+        Remove-Item -LiteralPath $metadataSourcePath -Force
+    }
+    $metadataSourcePaths = @()
 
-    [pscustomobject]@{
+    $arenaPeriodMigrationValue = ConvertFrom-Json -InputObject $arenaPeriodMigration
+    $resultJson = [pscustomobject]@{
         Version = $version
         TargetPath = $targetPath
         CurrentPath = $currentPath
@@ -260,8 +411,28 @@ try {
         AutoUpdateResourcePreserved = $true
         PipBootstrapVersion = $version
         DefenderScanned = -not $SkipDefenderScan
-        ArenaPeriodMigration = (ConvertFrom-Json -InputObject $arenaPeriodMigration)
+        ArenaPeriodMigration = $arenaPeriodMigrationValue
     } | ConvertTo-Json -Depth 4
+
+    # The current junction is the final throwing commit point. Root deployment
+    # metadata and result serialization are prepared before the active version changes.
+    if (Test-Path -LiteralPath $currentPath) {
+        Move-Item -LiteralPath $currentPath -Destination $previousLink
+        $currentMoved = $true
+    }
+    Move-Item -LiteralPath $newLink -Destination $currentPath
+    $currentActivated = $true
+
+    foreach ($rootInstallRecord in $rootInstallRecords) {
+        try {
+            Remove-AtomicFileBackup -Record $rootInstallRecord
+        }
+        catch {
+            Write-Verbose "Installed root-file backup could not be removed: $($rootInstallRecord.BackupPath)"
+        }
+    }
+
+    Write-Output $resultJson
 }
 catch {
     if (-not (Test-Path -LiteralPath $currentPath) -and $currentMoved -and $previousLink -and (Test-Path -LiteralPath $previousLink)) {
@@ -269,6 +440,16 @@ catch {
     }
     if (Test-Path -LiteralPath $newLink) {
         Remove-Item -LiteralPath $newLink -Force
+    }
+    foreach ($metadataSourcePath in $metadataSourcePaths) {
+        if (Test-Path -LiteralPath $metadataSourcePath -PathType Leaf) {
+            Remove-Item -LiteralPath $metadataSourcePath -Force
+        }
+    }
+    if (-not $currentActivated) {
+        for ($index = $rootInstallRecords.Count - 1; $index -ge 0; $index--) {
+            Restore-AtomicFile -Record $rootInstallRecords[$index]
+        }
     }
     throw
 }

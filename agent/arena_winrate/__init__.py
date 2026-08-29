@@ -21,6 +21,7 @@ from .reader import (
     MemberObservationScope,
     classify_arena_page,
     arena_page_allows_team_entry,
+    validate_conservative_cost_fallback,
 )
 from .schema import SnapshotValidationError, validate_snapshot, validate_own_snapshot
 from .stages import (
@@ -68,6 +69,7 @@ from .own_cache import (
     DEFAULT_OWN_SCORE_SUMMARY,
     OwnScoreCacheError,
     OwnScoreCacheStore,
+    OwnScoreResimulationRequired,
 )
 from .badge_workers import (
     DEFAULT_BADGE_WORKER_CACHE,
@@ -89,6 +91,13 @@ from .badge_reference import (
     stable_reference_business_identity,
     stable_reference_business_candidates,
 )
+from .upstream_component import (
+    ArenaComponentError,
+    ArenaComponentManager,
+    GitHubProductionSource,
+    ArenaComponentResolution,
+    resolve_arena_component,
+)
 from .customization_badge import (
     CustomizationBadgeState,
     CustomizationBadgeDecision,
@@ -101,6 +110,9 @@ from .customization_badge import (
 
 __all__ = [
     "AdapterError",
+    "ArenaComponentError",
+    "ArenaComponentManager",
+    "ArenaComponentResolution",
     "ArenaRuntimeConfig",
     "ArenaDecision",
     "ArenaEvaluation",
@@ -132,6 +144,7 @@ __all__ = [
     "GenericCostPrediction",
     "GenericCostReferenceError",
     "GenericCostReferenceGallery",
+    "GitHubProductionSource",
     "CustomizationBadgeDecision",
     "CustomizationBadgeState",
     "MemberSlotMetrics",
@@ -145,6 +158,7 @@ __all__ = [
     "DEFAULT_OWN_SCORE_SUMMARY",
     "DEFAULT_BADGE_WORKER_CACHE",
     "OwnScoreCacheError",
+    "OwnScoreResimulationRequired",
     "OwnScoreCacheStore",
     "StageEstimate",
     "TeamTarget",
@@ -165,6 +179,7 @@ __all__ = [
     "p_item_screen_order_to_engine_order",
     "p_item_screen_slot_to_engine_slot",
     "resolve_excluded_duplicate_card_flags",
+    "resolve_arena_component",
     "result_observations_complete",
     "stable_excluded_duplicate_card_flags",
     "customization_badge_internal_features",
@@ -181,4 +196,5 @@ __all__ = [
     "stage_member_cap",
     "validate_snapshot",
     "validate_own_snapshot",
+    "validate_conservative_cost_fallback",
 ]

@@ -13,7 +13,7 @@ from dataclasses import field, dataclass
 from .decision import StageEstimate, OpponentEstimate
 
 PROTOCOL_VERSION = "2.0"
-UPSTREAM_COMMIT = "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6"
+UPSTREAM_COMMIT = "5658ec13ec9978f1117ccc191dfb83c346d42f6f"
 SIMULATION_METHOD = "independent_empirical_three_stage_match"
 SCORE_AGGREGATION = "raw_sum_plus_stage_wide_first_place_20_percent"
 MATCH_RULE = "best_of_three_strict_wins"

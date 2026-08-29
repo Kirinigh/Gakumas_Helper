@@ -36,6 +36,15 @@ class EffectiveCustomizationResolution:
 
 
 @dataclass(frozen=True)
+class GenericCostAmbiguityResolution:
+    """The only two exact states left after detail, differing by generic cost."""
+
+    generic_customization_id: int
+    unenhanced_customizations: Mapping[str, int]
+    enhanced_customizations: Mapping[str, int]
+
+
+@dataclass(frozen=True)
 class CustomizationEvidenceInventoryEntry:
     """One legal catalog state and every evidence carrier it may require.
 
@@ -81,6 +90,24 @@ def _normalise_text(value: object) -> str:
         return ""
     compact = "".join(value.split())
     return compact.translate(str.maketrans(_TEXT_NORMALIZATION_REPLACEMENTS))
+
+
+def _contains_exact_integer_token(
+    compact: str,
+    prefix: str,
+    value: int,
+    suffix: str = "",
+) -> bool:
+    """Match one rendered integer without accepting it as a longer number."""
+
+    return (
+        re.search(
+            rf"{re.escape(prefix)}{re.escape(str(value))}"
+            rf"(?!\d|[.,．，。]\d){re.escape(suffix)}",
+            compact,
+        )
+        is not None
+    )
 
 
 def _exact_title_anchor_branch(value: str) -> str:
@@ -144,6 +171,16 @@ class ArenaEntityCatalog:
     """A strict lookup view over bundled ``gakumas-data`` JSON files."""
 
     DATA_DIRECTORY = Path("node_modules") / "gakumas-data" / "json"
+    _PURE_GENERIC_COST_EFFECT = re.compile(
+        r"at:prestage\{target:this\{g\.cost\+=([1-9][0-9]*);?\}\}"
+    )
+    _GENERIC_COST_EMPTY_FIELDS = (
+        "forceInitialHand",
+        "conditions",
+        "cost",
+        "actions",
+        "limit",
+    )
 
     def __init__(
         self,
@@ -757,7 +794,7 @@ class ArenaEntityCatalog:
         definition = self._customizations[customization_id]
         if self._effective_detail_matcher(card, customization_id) is None:
             return "unsupported_fail_closed"
-        if "g.cost+=" in str(definition.get("effects", "")):
+        if self._pure_generic_cost_delta(customization_id) is not None:
             return "card_face_generic_cost"
         if _normalise_text(definition.get("actions")) == "upgradeHand":
             return "badge_constraint_only"
@@ -828,42 +865,124 @@ class ArenaEntityCatalog:
                 f"skill-card ID is absent from the bundled catalog: {card_id}"
             )
         generic = tuple(
-            customization_id
+            (customization_id, delta)
             for customization_id in self.available_customization_ids(card_id)
-            if "g.cost+="
-            in str(self._customizations[customization_id].get("effects", ""))
+            if (delta := self._pure_generic_cost_delta(customization_id)) is not None
         )
         if not generic:
             return None
         if len(generic) != 1:
             raise ArenaCatalogError(
-                f"card {card_id} has multiple generic-cost customizations {generic!r}"
+                f"card {card_id} has multiple generic-cost customizations "
+                f"{tuple(customization_id for customization_id, _delta in generic)!r}"
             )
-        customization_id = generic[0]
-        definition = self._customizations[customization_id]
-        if int(definition["max"]) != 1:
-            raise ArenaCatalogError(
-                f"card {card_id} generic-cost customization must be single-level"
-            )
+        _, delta = generic[0]
         base_match = re.fullmatch(
             r"(?:cost|stamina)-=([0-9]+)",
             str(card.get("cost", "")),
         )
-        delta_match = re.search(
-            r"g\.cost\+=([0-9]+)",
-            str(definition.get("effects", "")),
-        )
-        if base_match is None or delta_match is None:
+        if base_match is None:
             raise ArenaCatalogError(
                 f"card {card_id} generic-cost DSL has no visible card-face hypothesis"
             )
         base_value = int(base_match.group(1))
-        customized_value = max(0, base_value - int(delta_match.group(1)))
+        customized_value = max(0, base_value - delta)
         if customized_value == base_value:
             raise ArenaCatalogError(
                 f"card {card_id} generic-cost hypotheses are not distinguishable"
             )
         return base_value, customized_value
+
+    def validate_generic_cost_fallback_pair(
+        self,
+        card_id: int,
+        *,
+        generic_customization_id: int,
+        unenhanced: Mapping[str, int],
+        enhanced: Mapping[str, int],
+        cost_hypotheses: Sequence[int],
+        observed_badge_count: int | None,
+    ) -> None:
+        """Revalidate a serialized generic-cost bound against this catalog."""
+
+        mappings_valid = all(
+            isinstance(group, Mapping)
+            and all(
+                isinstance(key, str)
+                and key.isdigit()
+                and str(int(key)) == key
+                and not isinstance(level, bool)
+                and isinstance(level, int)
+                and level > 0
+                for key, level in group.items()
+            )
+            for group in (unenhanced, enhanced)
+        )
+        hypotheses_valid = (
+            isinstance(cost_hypotheses, Sequence)
+            and not isinstance(cost_hypotheses, (str, bytes))
+            and len(cost_hypotheses) == 2
+            and all(
+                not isinstance(value, bool) and isinstance(value, int) and value >= 0
+                for value in cost_hypotheses
+            )
+        )
+        observed_valid = observed_badge_count is None or (
+            not isinstance(observed_badge_count, bool)
+            and isinstance(observed_badge_count, int)
+            and observed_badge_count > 0
+        )
+        if (
+            isinstance(card_id, bool)
+            or not isinstance(card_id, int)
+            or card_id < 1
+            or isinstance(generic_customization_id, bool)
+            or not isinstance(generic_customization_id, int)
+            or generic_customization_id < 1
+            or not mappings_valid
+            or not hypotheses_valid
+            or not observed_valid
+        ):
+            raise ArenaCatalogError("generic-cost fallback pair has invalid types")
+
+        available = self.available_customization_ids(card_id)
+        generic_ids = tuple(
+            customization_id
+            for customization_id in available
+            if self._pure_generic_cost_delta(customization_id) is not None
+        )
+        if generic_ids != (generic_customization_id,):
+            raise ArenaCatalogError(
+                f"card {card_id} does not bind generic-cost customization {generic_customization_id}"
+            )
+        expected_hypotheses = self.generic_cost_hypotheses(card_id)
+        if expected_hypotheses is None or tuple(cost_hypotheses) != expected_hypotheses:
+            raise ArenaCatalogError(
+                f"card {card_id} generic-cost hypotheses do not match the catalog"
+            )
+        generic_key = str(generic_customization_id)
+        expected_enhanced = dict(unenhanced)
+        expected_enhanced[generic_key] = 1
+        if generic_key in unenhanced or dict(enhanced) != expected_enhanced:
+            raise ArenaCatalogError(
+                f"card {card_id} fallback pair is not the catalog generic-cost bit"
+            )
+        for label, group in (("unenhanced", unenhanced), ("enhanced", enhanced)):
+            legal = self.legal_customization_groups(
+                card_id,
+                expected_count=sum(group.values()),
+            )
+            if dict(group) not in legal:
+                raise ArenaCatalogError(
+                    f"card {card_id} {label} fallback state is not catalog-legal"
+                )
+        if observed_badge_count is not None and observed_badge_count not in {
+            sum(unenhanced.values()),
+            sum(enhanced.values()),
+        }:
+            raise ArenaCatalogError(
+                f"card {card_id} observed badge count is outside the fallback pair"
+            )
 
     def card_face_cost_descriptor(self, card_id: int) -> tuple[str, int] | None:
         """Return the rendered generic/stamina cost kind and base value."""
@@ -918,8 +1037,7 @@ class ArenaEntityCatalog:
         generic_ids = tuple(
             customization_id
             for customization_id in self.available_customization_ids(card_id)
-            if "g.cost+="
-            in str(self._customizations[customization_id].get("effects", ""))
+            if self._pure_generic_cost_delta(customization_id) is not None
         )
         selected_level = int(resolved.get(str(generic_ids[0]), 0))
         if selected_level not in (0, 1):
@@ -1102,10 +1220,7 @@ class ArenaEntityCatalog:
             int(customization_text)
             for customization_text, level in normalized_resolved.items()
             if int(level) > 0
-            and "g.cost+="
-            in str(
-                self._customizations[int(customization_text)].get("effects", "")
-            )
+            and self._pure_generic_cost_delta(int(customization_text)) is not None
         )
         selected_structural_omissions = tuple(
             customization_id
@@ -1204,7 +1319,7 @@ class ArenaEntityCatalog:
         for customization_text, level in normalized_resolved.items():
             customization_id = int(customization_text)
             definition = self._customizations[customization_id]
-            generic_cost = "g.cost+=" in str(definition.get("effects", ""))
+            generic_cost = self._pure_generic_cost_delta(customization_id) is not None
             if generic_cost and generic_cost_frame_values is not None:
                 self.certify_card_face_generic_cost(
                     card_id,
@@ -1528,7 +1643,25 @@ class ArenaEntityCatalog:
                 int(typed_cost.group(2)) - int(cost_delta.group(1)) * level,
             )
             if expected == 0:
-                return f"{labels[typed_cost.group(1)]}0" in compact
+                return _contains_exact_integer_token(
+                    compact,
+                    labels[typed_cost.group(1)],
+                    0,
+                )
+        if "g.scoreTimes+=1" in str(definition.get("effects", "")):
+            base_scores = _all_integer_increments(
+                card.get("actions"),
+                "score",
+            )
+            return any(
+                re.search(
+                    rf"(?:スコア|スコア値増加)\+{score}"
+                    rf"(?![0-9]|[.,．，。][0-9])\(2回\)",
+                    compact,
+                )
+                is not None
+                for score in base_scores
+            )
         if definition.get("limit") == 0 and card.get("limit") == 1:
             return "試験・ステージ中1回" in compact
         return True
@@ -1567,9 +1700,10 @@ class ArenaEntityCatalog:
                 "motivation": "やる気消費",
                 "perfectConditionTurns": "絶好調消費",
             }
-            return (
-                f"{labels[typed_cost.group(1)]}{int(typed_cost.group(2))}"
-                in compact
+            return _contains_exact_integer_token(
+                compact,
+                labels[typed_cost.group(1)],
+                int(typed_cost.group(2)),
             )
 
         scalar_labels = {
@@ -1592,9 +1726,62 @@ class ArenaEntityCatalog:
             ):
                 continue
             base_value = _first_integer_increment(card.get("actions"), field)
+            return base_value is not None and _contains_exact_integer_token(
+                compact,
+                prefix,
+                base_value,
+                suffix,
+            )
+
+        percentage_growths = (
+            (
+                "scoreByGenki",
+                "genki",
+                "元気の",
+            ),
+            (
+                "scoreByMotivation",
+                "motivation",
+                "やる気の",
+            ),
+            (
+                "scoreByGoodImpressionTurns",
+                "goodImpressionTurns",
+                "好印象の",
+            ),
+        )
+        for growth_field, action_field, prefix in percentage_growths:
+            if not any(
+                re.search(
+                    rf"g\.{re.escape(growth_field)}\+=",
+                    _selected_level_patch(definition.get("effects"), level),
+                )
+                for level in range(1, int(definition["max"]) + 1)
+            ):
+                continue
+            base = re.search(
+                rf"score\+={re.escape(action_field)}\*([0-9]+(?:\.[0-9]+)?)",
+                str(card.get("actions", "")),
+            )
+            if base is None:
+                return False
+            return _contains_exact_integer_token(
+                compact,
+                prefix,
+                int(round(float(base.group(1)) * 100)),
+                "%分スコア",
+            )
+
+        if "g.stanceLevel+=1" in str(definition.get("effects", "")):
+            base_stance = re.search(
+                r"setStance\((strength|preservation)\)",
+                str(card.get("actions", "")),
+            )
+            if base_stance is None:
+                return False
+            label = "強気" if base_stance.group(1) == "strength" else "温存"
             return (
-                base_value is not None
-                and f"{prefix}{base_value}{suffix}" in compact
+                f"{label}に変更" in compact and f"{label}2段階目に変更" not in compact
             )
 
         if definition.get("limit") == 0 and card.get("limit") == 1:
@@ -1991,6 +2178,163 @@ class ArenaEntityCatalog:
             )
         return next(iter(unique.values()))
 
+    def resolve_generic_cost_ambiguity(
+        self,
+        card_id: int,
+        detail_text: str,
+        *,
+        observed_badge_count: int | None,
+    ) -> GenericCostAmbiguityResolution:
+        """Prove that one unreadable card-face cost is the only open bit.
+
+        The result is deliberately a pair rather than an inferred truth.  It
+        is valid only when the fixed catalog, settled detail text and every
+        non-cost customization leave exactly two legal states.  Those states
+        must differ solely by one single-level ``g.cost+=`` customization.
+        """
+
+        if observed_badge_count is not None and (
+            isinstance(observed_badge_count, bool)
+            or not isinstance(observed_badge_count, int)
+            or observed_badge_count < 1
+        ):
+            raise ArenaCatalogError(
+                "generic-cost ambiguity requires a positive badge count or no count"
+            )
+        card = self._cards_by_id.get(card_id)
+        if card is None:
+            raise ArenaCatalogError(
+                f"skill-card ID is absent from the bundled catalog: {card_id}"
+            )
+        available = self.available_customization_ids(card_id)
+        generic_ids = tuple(
+            customization_id
+            for customization_id in available
+            if self._pure_generic_cost_delta(customization_id) is not None
+        )
+        if len(generic_ids) != 1:
+            raise ArenaCatalogError(
+                f"card {card_id} must have exactly one generic-cost customization"
+            )
+        generic_id = generic_ids[0]
+        if int(self._customizations[generic_id]["max"]) != 1:
+            raise ArenaCatalogError(
+                f"card {card_id} generic-cost customization must be single-level"
+            )
+        # This also proves that the fixed DSL exposes two distinct card-face
+        # hypotheses.  The caller separately proves that their visual carrier
+        # was attempted but remained inconclusive.
+        self.generic_cost_hypotheses(card_id)
+
+        matchers = {
+            customization_id: self._effective_detail_matcher(
+                card,
+                customization_id,
+            )
+            for customization_id in available
+        }
+        unsupported = tuple(
+            customization_id
+            for customization_id, matcher in matchers.items()
+            if matcher is None
+        )
+        if unsupported:
+            raise ArenaCatalogError(
+                f"card {card_id} has unsupported final-effect signatures for customizations {unsupported!r}"
+            )
+        compact = _normalise_text(detail_text)
+        maximum_total = sum(
+            int(self._customizations[customization_id]["max"])
+            for customization_id in available
+        )
+        candidates = tuple(
+            group
+            for expected_count in range(maximum_total + 1)
+            for group in self.legal_customization_groups(
+                card_id,
+                expected_count=expected_count,
+            )
+            if all(
+                matchers[customization_id](
+                    compact,
+                    group.get(str(customization_id), 0),
+                )
+                for customization_id in available
+            )
+        )
+        if len(candidates) != 2:
+            raise ArenaCatalogError(
+                f"card {card_id} detail must leave exactly two generic-cost states; candidates={candidates!r}"
+            )
+
+        by_generic_level: dict[int, dict[str, int]] = {}
+        non_cost_states: set[tuple[tuple[str, int], ...]] = set()
+        for candidate in candidates:
+            generic_level = int(candidate.get(str(generic_id), 0))
+            if generic_level not in (0, 1) or generic_level in by_generic_level:
+                raise ArenaCatalogError(
+                    f"card {card_id} detail does not leave one state per generic-cost level"
+                )
+            normalized = {
+                str(key): int(value)
+                for key, value in candidate.items()
+                if int(value) > 0
+            }
+            by_generic_level[generic_level] = normalized
+            non_cost_states.add(
+                tuple(
+                    sorted(
+                        (key, value)
+                        for key, value in normalized.items()
+                        if key != str(generic_id)
+                    )
+                )
+            )
+        if set(by_generic_level) != {0, 1} or len(non_cost_states) != 1:
+            raise ArenaCatalogError(
+                f"card {card_id} detail ambiguity is not limited to generic cost"
+            )
+        if observed_badge_count is not None and observed_badge_count not in {
+            sum(candidate.values()) for candidate in by_generic_level.values()
+        }:
+            raise ArenaCatalogError(
+                f"card {card_id} badge count {observed_badge_count} is outside the two generic-cost states"
+            )
+
+        # Missing non-cost rows are not reclassified as zero.  Every other
+        # selected level must have a visible positive signature, and every
+        # zero level must have an explicitly rendered baseline.  This keeps
+        # the bounded assumption strictly on the generic-cost bit.
+        representative = by_generic_level[0]
+        for customization_id in available:
+            if customization_id == generic_id:
+                continue
+            level = int(representative.get(str(customization_id), 0))
+            visible = (
+                self._positive_signature_is_visible(
+                    card,
+                    customization_id,
+                    compact,
+                    level,
+                )
+                if level > 0
+                else self._zero_signature_is_visible(
+                    card,
+                    customization_id,
+                    compact,
+                )
+            )
+            if not visible:
+                raise ArenaCatalogError(
+                    f"card {card_id} non-cost customization {customization_id} level {level} lacks an explicit detail signature"
+                )
+
+        return GenericCostAmbiguityResolution(
+            generic_customization_id=generic_id,
+            unenhanced_customizations=dict(by_generic_level[0]),
+            enhanced_customizations=dict(by_generic_level[1]),
+        )
+
     def _validate_customization_index(self) -> None:
         """Reject a mismatched or incomplete fixed ``gakumas-data`` snapshot."""
 
@@ -2019,9 +2363,44 @@ class ArenaEntityCatalog:
             maximum = definition.get("max")
             if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum < 1:
                 raise ArenaCatalogError(f"customization {customization_id} has an invalid maximum")
+            self._pure_generic_cost_delta(customization_id)
         unreferenced = sorted(set(self._customizations) - referenced)
         if unreferenced:
             raise ArenaCatalogError(f"bundled customizations are unreferenced: {unreferenced!r}")
+
+    def _pure_generic_cost_delta(self, customization_id: int) -> int | None:
+        """Return one pure card-face cost delta or reject an impure definition."""
+
+        definition = self._customizations.get(customization_id)
+        if definition is None:
+            raise ArenaCatalogError(
+                f"customization {customization_id} is absent from the bundled catalog"
+            )
+        effects = definition.get("effects")
+        compact_effects = _normalise_text(effects)
+        if "g.cost+=" not in compact_effects:
+            return None
+        empty_fields = tuple(
+            field
+            for field in self._GENERIC_COST_EMPTY_FIELDS
+            if (value := definition.get(field)) is not None
+            and (not isinstance(value, str) or bool(value.strip()))
+        )
+        maximum = definition.get("max")
+        match = self._PURE_GENERIC_COST_EFFECT.fullmatch(compact_effects)
+        if (
+            definition.get("type") != "cost"
+            or isinstance(maximum, bool)
+            or not isinstance(maximum, int)
+            or maximum != 1
+            or empty_fields
+            or match is None
+        ):
+            raise ArenaCatalogError(
+                f"customization {customization_id} generic-cost DSL is not a pure "
+                "single-level card-face cost change"
+            )
+        return int(match.group(1))
 
     def _effective_detail_matcher(
         self,
@@ -2030,13 +2409,17 @@ class ArenaEntityCatalog:
     ) -> Any:
         definition = self._customizations.get(customization_id)
         if definition is None:
-            raise ArenaCatalogError(f"customization {customization_id} is absent from the bundled catalog")
+            raise ArenaCatalogError(
+                f"customization {customization_id} is absent from the bundled catalog"
+            )
 
         typed_cost = re.fullmatch(
             r"(concentration|cost|stamina|fullPowerCharge|goodConditionTurns|goodImpressionTurns|motivation|perfectConditionTurns)-=([0-9]+)",
             str(card.get("cost", "")),
         )
-        cost_delta = re.search(r"g\.typedCost\+=([0-9]+)", str(definition.get("effects", "")))
+        cost_delta = re.search(
+            r"g\.typedCost\+=([0-9]+)", str(definition.get("effects", ""))
+        )
         if typed_cost and cost_delta:
             labels = {
                 "concentration": "集中消費",
@@ -2055,13 +2438,25 @@ class ArenaEntityCatalog:
             def match_typed_cost(compact: str, count: int) -> bool:
                 expected = max(0, base_value - delta * count)
                 if expected == 0:
-                    return label not in compact or f"{label}0" in compact
-                return f"{label}{expected}" in compact
+                    return label not in compact or _contains_exact_integer_token(
+                        compact,
+                        label,
+                        0,
+                    )
+                return _contains_exact_integer_token(
+                    compact,
+                    label,
+                    expected,
+                )
 
             return match_typed_cost
 
         if "g.scoreTimes+=1" in str(definition.get("effects", "")):
             customization_effects = str(definition.get("effects", ""))
+            base_score_values = _all_integer_increments(
+                card.get("actions"),
+                "score",
+            )
             base_growth_score = (
                 re.search(
                     r"@grow\s+.*?target:this\s*\{\s*g\.score\+=([0-9]+)",
@@ -2073,12 +2468,22 @@ class ArenaEntityCatalog:
 
             def match_score_times(compact: str, count: int) -> bool:
                 if base_growth_score is None:
+                    if not base_score_values:
+                        return False
                     repeated = "(2回)" in compact or "（2回）" in compact
                     return repeated is (count > 0)
                 score = int(base_growth_score.group(1))
-                base_visible = f"スコア値増加+{score}" in compact
+                base_visible = _contains_exact_integer_token(
+                    compact,
+                    "スコア値増加+",
+                    score,
+                )
                 times_visible = (
-                    "スコア上昇回数増加+1" in compact
+                    _contains_exact_integer_token(
+                        compact,
+                        "スコア上昇回数増加+",
+                        1,
+                    )
                     and "2回まで" in compact
                 )
                 return (
@@ -2124,7 +2529,12 @@ class ArenaEntityCatalog:
                 delta = 0 if count == 0 else deltas.get(count)
                 if delta is None:
                     return False
-                return f"{prefix}{base_value + delta}{suffix}" in compact
+                return _contains_exact_integer_token(
+                    compact,
+                    prefix,
+                    base_value + delta,
+                    suffix,
+                )
 
             return match_scalar_growth
 
@@ -2151,12 +2561,20 @@ class ArenaEntityCatalog:
                 compact: str,
                 count: int,
                 *,
-                token: str = token,
+                prefix: str = prefix,
+                added_value: int = added_value,
+                suffix: str = suffix,
                 base_has_same_token: bool = base_has_same_token,
             ) -> bool:
                 if base_has_same_token:
                     return True
-                return (token in compact) is (count > 0)
+                visible = _contains_exact_integer_token(
+                    compact,
+                    prefix,
+                    added_value,
+                    suffix,
+                )
+                return visible is (count > 0)
 
             return match_added_action
 
@@ -2437,7 +2855,11 @@ class ArenaEntityCatalog:
                 return (
                     expected is not None
                     and target_visible
-                    and f"スコア値増加+{expected}" in compact
+                    and _contains_exact_integer_token(
+                        compact,
+                        "スコア値増加+",
+                        expected,
+                    )
                 )
 
             return match_hand_growth
@@ -2458,7 +2880,11 @@ class ArenaEntityCatalog:
                 return (
                     expected is not None
                     and target_visible
-                    and f"スコア値増加+{expected}" in compact
+                    and _contains_exact_integer_token(
+                        compact,
+                        "スコア値増加+",
+                        expected,
+                    )
                 )
 
             return match_held_growth
@@ -2478,7 +2904,11 @@ class ArenaEntityCatalog:
                 if count == 0:
                     return marker not in compact
                 expected = all_growth_levels.get(count)
-                return expected is not None and f"{marker}{expected}" in compact
+                return expected is not None and _contains_exact_integer_token(
+                    compact,
+                    marker,
+                    expected,
+                )
 
             return match_all_growth
 
@@ -2538,7 +2968,7 @@ class ArenaEntityCatalog:
 
             return match_upgrade_hand
 
-        if "g.cost+=" in str(definition.get("effects", "")):
+        if self._pure_generic_cost_delta(customization_id) is not None:
 
             def match_unrendered_generic_cost(compact: str, count: int) -> bool:
                 del compact, count

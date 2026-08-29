@@ -13,12 +13,11 @@ from arena_winrate import (
     AdapterError,
     ArenaReaderError,
     ArenaLineupReader,
-    StageCatalogError,
     ArenaRuntimeConfig,
     OwnScoreCacheError,
     OwnScoreCacheStore,
+    ArenaComponentError,
     ArenaWinRateService,
-    ContestStageCatalog,
     ArenaOwnScoreService,
     SubprocessArenaAdapter,
     ArenaChallengeFlowError,
@@ -26,6 +25,7 @@ from arena_winrate import (
     contest_day_key,
     new_challenge_id,
     prepare_own_score_cache,
+    resolve_arena_component,
     reset_prepared_own_score_cache,
 )
 from maa.custom_action import CustomAction
@@ -35,6 +35,9 @@ from arena_winrate.user_messages import (
     describe_arena_error,
     own_score_user_status,
     win_rate_stop_user_status,
+)
+from arena_winrate.cost_fallback_logging import (
+    cost_customization_fallback_log_payloads,
 )
 from arena_winrate.maa_challenge_actions import (
     ArenaChallengeRecordResultAction,
@@ -120,6 +123,7 @@ def _log_own_score_evaluation(
     evaluation: object,
     *,
     trigger: str,
+    cost_customization_fallbacks: tuple[dict[str, object], ...] = (),
 ) -> None:
     logger.info(
         json.dumps(
@@ -128,11 +132,33 @@ def _log_own_score_evaluation(
                 "executed": True,
                 "trigger": trigger,
                 "evaluation": asdict(evaluation),
+                "cost_customization_fallbacks": list(cost_customization_fallbacks),
             },
             ensure_ascii=False,
             sort_keys=True,
         )
     )
+
+
+def _log_cost_customization_fallbacks(
+    reader: ArenaLineupReader,
+    *,
+    side: str,
+) -> tuple[dict[str, object], ...]:
+    """Log only assumptions belonging to the accepted reader attempt."""
+
+    records = tuple(
+        dict(value) for value in reader.last_cost_customization_fallbacks(side=side)
+    )
+    for payload in cost_customization_fallback_log_payloads(records, side=side):
+        logger.warning(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+    return records
 
 
 def _select_challenge_index(
@@ -204,8 +230,16 @@ class ChallengePrepareOwnScore(CustomAction):
         except ValueError as error:
             return _stop_with_error(context, "每日挑战自动重算参数无效，已安全停止", error)
         try:
-            season = ContestStageCatalog.from_bundle(config.bundle_dir).resolve(config.season)
-        except StageCatalogError as error:
+            logger.info("正在解析竞技场组件；默认目录在本进程首次使用时会检查 RIS 生产版本")
+            component = resolve_arena_component(config.bundle_dir, config.season)
+            season = component.season
+            for warning in component.warnings:
+                logger.warning(warning)
+            logger.info(
+                "竞技场组件就绪: "
+                f"状态={component.status}, RIS={component.commit[:12]}, 赛季={season.season}"
+            )
+        except ArenaComponentError as error:
             return _stop_with_error(
                 context,
                 "每日挑战自动重算无法解析竞技场期数，已安全停止",
@@ -214,10 +248,10 @@ class ChallengePrepareOwnScore(CustomAction):
 
         contest_day = contest_day_key()
         try:
-            backend = MaaArenaReaderBackend(context, season, config.bundle_dir)
+            backend = MaaArenaReaderBackend(context, season, component.bundle_dir)
             reader = ArenaLineupReader(backend, season)
             adapter = SubprocessArenaAdapter.from_bundle(
-                config.bundle_dir,
+                component.bundle_dir,
                 timeout_seconds=config.timeout_seconds,
             )
             cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
@@ -234,7 +268,17 @@ class ChallengePrepareOwnScore(CustomAction):
             )
             if evaluation is None:
                 raise OwnScoreCacheError("automatic recalculation did not produce an evaluation")
-            _log_own_score_evaluation(evaluation, trigger="daily_option")
+            own_cost_fallbacks = (
+                _log_cost_customization_fallbacks(reader, side="own")
+                if evaluation.status
+                in {"calculated", "adapter_failure", "cache_failure"}
+                else ()
+            )
+            _log_own_score_evaluation(
+                evaluation,
+                trigger="daily_option",
+                cost_customization_fallbacks=own_cost_fallbacks,
+            )
             if evaluation.status != "calculated":
                 return _publish_status(
                     context,
@@ -439,28 +483,37 @@ class ChallengeAuto(CustomAction):
                 f"超时={config.timeout_seconds}s"
             )
             try:
-                season = ContestStageCatalog.from_bundle(config.bundle_dir).resolve(config.season)
-            except StageCatalogError as error:
+                logger.info("正在解析竞技场组件；默认目录在本进程首次使用时会检查 RIS 生产版本")
+                component = resolve_arena_component(config.bundle_dir, config.season)
+                season = component.season
+                for warning in component.warnings:
+                    logger.warning(warning)
+                logger.info(
+                    "竞技场组件就绪: "
+                    f"状态={component.status}, RIS={component.commit[:12]}, 赛季={season.season}"
+                )
+            except ArenaComponentError as error:
                 return _stop_with_error(
                     context,
-                    "竞技场赛季无法由固定模拟器目录解析，已安全停止",
+                    "竞技场组件无法安全满足所选期数，已停止",
                     error,
                 )
             logger.info(f"竞技场赛季 {season.season} 对应场地 ID: {season.stage_ids}")
             if config.season == "latest":
                 logger.warning(
-                    "竞技场赛季使用固定目录 latest 默认值；将继续运行，若与游戏当期不一致请在 UI 手动选择期数"
+                    f"竞技场赛季使用 latest，当前 RIS 组件解析为第 {season.season} 期；"
+                    "若与游戏当期不一致请在 UI 手动选择期数"
                 )
             if season.preview:
                 logger.warning(
-                    "固定目录将所选赛季标为预览；将继续运行并保留警告，用户可在 UI 手动选择其他期数"
+                    "RIS 目录将所选赛季标为预览；将继续运行并保留警告，用户可在 UI 手动选择其他期数"
                 )
             try:
                 contest_day = contest_day_key()
-                backend = MaaArenaReaderBackend(context, season, config.bundle_dir)
+                backend = MaaArenaReaderBackend(context, season, component.bundle_dir)
                 reader = ArenaLineupReader(backend, season)
                 adapter = SubprocessArenaAdapter.from_bundle(
-                    config.bundle_dir,
+                    component.bundle_dir,
                     timeout_seconds=config.timeout_seconds,
                 )
                 cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
@@ -470,7 +523,17 @@ class ChallengeAuto(CustomAction):
                         simulations=config.simulations,
                         cache_store=cache_store,
                     ).calculate(reader)
-                    _log_own_score_evaluation(own_evaluation, trigger="manual_task")
+                    own_cost_fallbacks = (
+                        _log_cost_customization_fallbacks(reader, side="own")
+                        if own_evaluation.status
+                        in {"calculated", "adapter_failure", "cache_failure"}
+                        else ()
+                    )
+                    _log_own_score_evaluation(
+                        own_evaluation,
+                        trigger="manual_task",
+                        cost_customization_fallbacks=own_cost_fallbacks,
+                    )
                     return _publish_status(
                         context,
                         own_score_user_status(
@@ -485,7 +548,7 @@ class ChallengeAuto(CustomAction):
                     )
 
                 try:
-                    _, cached = prepare_own_score_cache(
+                    own_cache_evaluation, cached = prepare_own_score_cache(
                         adapter,
                         reader,
                         cache_store,
@@ -510,6 +573,23 @@ class ChallengeAuto(CustomAction):
                         "“自动重算己方数据”，或手动运行“重算竞技场己方总分”",
                         error,
                     )
+                if own_cache_evaluation is not None:
+                    _log_own_score_evaluation(
+                        own_cache_evaluation,
+                        trigger="cached_lineup_resimulation",
+                    )
+                    if own_cache_evaluation.status != "calculated":
+                        return _publish_status(
+                            context,
+                            own_score_user_status(
+                                own_cache_evaluation,
+                                simulations=config.simulations,
+                            ),
+                            log_detail=(
+                                own_cache_evaluation.error_detail
+                                or own_cache_evaluation.error
+                            ),
+                        )
                 if cached is None:
                     return _stop_with_error(
                         context,
@@ -549,12 +629,26 @@ class ChallengeAuto(CustomAction):
                     "竞技场只读编成读取或模拟初始化失败，已安全停止",
                     error,
                 )
+            opponent_cost_fallbacks = (
+                _log_cost_customization_fallbacks(
+                    reader,
+                    side="opponent",
+                )
+                if provider.snapshot is not None
+                else ()
+            )
             logger.info(
                 json.dumps(
                     {
                         "event": "arena_win_rate_evaluation",
                         "executed": False,
+                        "source_capture_id": (
+                            None
+                            if provider.snapshot is None
+                            else provider.snapshot.get("capture_id")
+                        ),
                         "evaluation": asdict(evaluation),
+                        "cost_customization_fallbacks": list(opponent_cost_fallbacks),
                     },
                     ensure_ascii=False,
                     sort_keys=True,
@@ -606,6 +700,7 @@ class ChallengeAuto(CustomAction):
                         "decision_rule": evaluation.decision.decision_rule,
                         "threshold": evaluation.decision.threshold,
                         "estimate": selected_row,
+                        "cost_customization_fallbacks": list(opponent_cost_fallbacks),
                     }
                 )
                 begun = True

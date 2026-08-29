@@ -23,7 +23,7 @@
       "type": "object",
       "required": ["version", "channel", "repository", "asset", "asset_bytes", "asset_sha256", "platform"],
       "properties": {
-        "version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-(?:alpha|beta)\\.[0-9]+|\\+gkh\\.[0-9]{6})?$" },
+        "version": { "type": "string", "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$" },
         "channel": { "enum": ["alpha", "beta", "stable"] },
         "repository": { "type": "string", "pattern": "^https://github\\.com/[^/]+/[^/]+$" },
         "asset": { "type": "string", "pattern": "^MaaGakumasu-win-x86_64-v.+\\.zip$" },

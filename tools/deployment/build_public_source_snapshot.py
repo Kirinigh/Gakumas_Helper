@@ -122,11 +122,23 @@ FORBIDDEN_PATH_NAMES = {
 }
 FORBIDDEN_PATH_NAMES_CASEFOLD = {name.casefold() for name in FORBIDDEN_PATH_NAMES}
 
-VERSION_PATTERN = re.compile(
+PROJECT_VERSION_PATTERN = re.compile(
+    r"^v(?P<major>0|[1-9]\d*)\."
+    r"(?P<minor>0|[1-9]\d*)\."
+    r"(?P<patch>0|[1-9]\d*)$"
+)
+LEGACY_PUBLIC_VERSION_PATTERN = re.compile(
     r"^v(?P<major>0|[1-9]\d*)\."
     r"(?P<minor>0|[1-9]\d*)\."
     r"(?P<patch>0|[1-9]\d*)\+gkh\.(?P<date>\d{6})$"
 )
+KNOWN_LEGACY_PUBLIC_VERSIONS = {
+    "v1.4.8+gkh.260823",
+    "v1.4.9+gkh.260824",
+}
+MINIMUM_INDEPENDENT_PROJECT_VERSION = "v0.1.0"
+FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION = "v0.1.1"
+RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS = frozenset({"v0.1.0"})
 REPOSITORY_PATTERN = re.compile(r"^https://github\.com/[^/\s]+/[^/\s]+$")
 PUBLIC_AUTHOR_NAME = "Gakumas Helper Release"
 PUBLIC_AUTHOR_EMAIL = "noreply@gakumas-helper.invalid"
@@ -501,29 +513,75 @@ def _is_allowlisted_public_file(relative: Path) -> bool:
     )
 
 
-def _version_commit_date(version: str) -> str:
-    match = VERSION_PATTERN.fullmatch(version)
-    if match is None:
-        raise PublicSnapshotError(
-            "public preview version must use vMAJOR.MINOR.PATCH+gkh.YYMMDD"
-        )
+def _release_commit_date(release_date: str) -> str:
     try:
-        calendar_date = datetime.strptime(f"20{match.group('date')}", "%Y%m%d")
+        calendar_date = datetime.strptime(release_date, "%Y-%m-%d")
     except ValueError as error:
-        raise PublicSnapshotError("public preview version contains an invalid calendar date") from error
+        raise PublicSnapshotError("release date must use a valid YYYY-MM-DD calendar date") from error
+    if calendar_date.strftime("%Y-%m-%d") != release_date:
+        raise PublicSnapshotError("release date must use zero-padded YYYY-MM-DD")
     return calendar_date.strftime("%Y-%m-%dT00:00:00Z")
 
 
-def _version_lineage_key(version: str) -> tuple[tuple[int, int, int], int]:
-    match = VERSION_PATTERN.fullmatch(version)
+def _legacy_version_commit_date(version: str) -> str:
+    match = LEGACY_PUBLIC_VERSION_PATTERN.fullmatch(version)
+    if match is None:
+        raise PublicSnapshotError("legacy public version is invalid")
+    try:
+        calendar_date = datetime.strptime(f"20{match.group('date')}", "%Y%m%d")
+    except ValueError as error:
+        raise PublicSnapshotError("legacy public version contains an invalid calendar date") from error
+    return calendar_date.strftime("%Y-%m-%dT00:00:00Z")
+
+
+def _version_core(match: re.Match[str]) -> tuple[int, int, int]:
+    return tuple(int(match.group(name)) for name in ("major", "minor", "patch"))
+
+
+def _legacy_version_lineage_key(version: str) -> tuple[tuple[int, int, int], int, int]:
+    match = LEGACY_PUBLIC_VERSION_PATTERN.fullmatch(version)
+    if match is None:
+        raise PublicSnapshotError("legacy public version is invalid")
+    return (
+        _version_core(match),
+        int(match.group("date")),
+        0,
+    )
+
+
+def _project_version_key(version: str) -> tuple[int, int, int]:
+    match = PROJECT_VERSION_PATTERN.fullmatch(version)
     if match is None:
         raise PublicSnapshotError(
-            "public preview version must use vMAJOR.MINOR.PATCH+gkh.YYMMDD"
+            "public release version must use independent GKH SemVer vMAJOR.MINOR.PATCH"
         )
-    return (
-        tuple(int(match.group(name)) for name in ("major", "minor", "patch")),
-        int(match.group("date")),
-    )
+    version_key = _version_core(match)
+    first_version_match = PROJECT_VERSION_PATTERN.fullmatch(MINIMUM_INDEPENDENT_PROJECT_VERSION)
+    assert first_version_match is not None
+    if version_key < _version_core(first_version_match):
+        raise PublicSnapshotError(
+            "public release version must not precede the first independent GKH version "
+            f"{MINIMUM_INDEPENDENT_PROJECT_VERSION}"
+        )
+    return version_key
+
+
+def _release_commit_message(version: str) -> str:
+    return f"chore(release): 发布 {version} 并同步更新文档与公告"
+
+
+def _release_version_from_message(message: str) -> str | None:
+    legacy_prefix = "release: "
+    if message.startswith(legacy_prefix):
+        version = message.removeprefix(legacy_prefix)
+        return version if version in KNOWN_LEGACY_PUBLIC_VERSIONS else None
+    prefix = "chore(release): 发布 "
+    suffix = " 并同步更新文档与公告"
+    if message.startswith(prefix) and message.endswith(suffix):
+        version = message[len(prefix) : -len(suffix)]
+        if PROJECT_VERSION_PATTERN.fullmatch(version) is not None:
+            return version
+    return None
 
 
 def _validate_snapshot(output: Path) -> dict[str, int]:
@@ -679,8 +737,12 @@ def _validate_public_history(
     history_root = temporary / "verified-public-history"
     history_root.mkdir()
     seen_versions: set[str] = set()
-    previous_core: tuple[int, int, int] | None = None
-    previous_date: int | None = None
+    previous_commit_date: str | None = None
+    previous_legacy_core: tuple[int, int, int] | None = None
+    previous_legacy_date: int | None = None
+    previous_legacy_revision: int | None = None
+    previous_project_version: tuple[int, int, int] | None = None
+    independent_namespace_started = False
     for index, commit in enumerate(commits):
         metadata = _run(
             ("git", "show", "-s", "--format=%an|%ae|%cn|%ce%n%s%n%aI%n%cI", commit),
@@ -689,30 +751,82 @@ def _validate_public_history(
         ).splitlines()
         if len(metadata) != 4 or metadata[0] != expected_identity:
             raise PublicSnapshotError(f"public history commit identity is not fixed: {commit}")
-        message_prefix = "release: "
-        if not metadata[1].startswith(message_prefix):
+        public_version = _release_version_from_message(metadata[1])
+        if public_version is None:
             raise PublicSnapshotError(f"public history commit message is invalid: {commit}")
-        public_version = metadata[1].removeprefix(message_prefix)
-        expected_date = _version_commit_date(public_version)
-        core_version, release_date = _version_lineage_key(public_version)
         if public_version in seen_versions:
             raise PublicSnapshotError(
                 f"public history contains a duplicate version: {public_version}"
             )
-        if previous_core is not None and previous_date is not None:
-            if core_version < previous_core or release_date < previous_date:
+        if public_version in RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS:
+            raise PublicSnapshotError(
+                f"public history contains permanently reserved version: {public_version}"
+            )
+        legacy_match = LEGACY_PUBLIC_VERSION_PATTERN.fullmatch(public_version)
+        if legacy_match is not None:
+            if independent_namespace_started:
                 raise PublicSnapshotError(
-                    f"public history versions are not monotonic: {public_version}"
+                    "legacy upstream-based versions cannot follow independent GKH SemVer"
                 )
-            if core_version == previous_core and release_date <= previous_date:
+            expected_date = _legacy_version_commit_date(public_version)
+            core_version, legacy_date, local_revision = _legacy_version_lineage_key(
+                public_version
+            )
+            if (
+                previous_legacy_core is not None
+                and previous_legacy_date is not None
+                and previous_legacy_revision is not None
+            ):
+                if core_version < previous_legacy_core or legacy_date < previous_legacy_date:
+                    raise PublicSnapshotError(
+                        f"public history legacy versions are not monotonic: {public_version}"
+                    )
+                if core_version == previous_legacy_core and (
+                    legacy_date,
+                    local_revision,
+                ) <= (
+                    previous_legacy_date,
+                    previous_legacy_revision,
+                ):
+                    raise PublicSnapshotError(
+                        "public history legacy suffixes must increase within one upstream version: "
+                        f"{public_version}"
+                    )
+            previous_legacy_core = core_version
+            previous_legacy_date = legacy_date
+            previous_legacy_revision = local_revision
+            expected_message = f"release: {public_version}\n"
+        else:
+            independent_namespace_started = True
+            project_version = _project_version_key(public_version)
+            if (
+                previous_project_version is None
+                and public_version != FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION
+            ):
                 raise PublicSnapshotError(
-                    f"public history dates must increase within one core version: {public_version}"
+                    "the first independent GKH public version must be "
+                    f"{FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION}"
                 )
-        seen_versions.add(public_version)
-        previous_core = core_version
-        previous_date = release_date
+            if (
+                previous_project_version is not None
+                and project_version <= previous_project_version
+            ):
+                raise PublicSnapshotError(
+                    f"public history independent GKH versions are not monotonic: {public_version}"
+                )
+            previous_project_version = project_version
+            if metadata[2] != metadata[3]:
+                raise PublicSnapshotError(f"public history commit date is inconsistent: {commit}")
+            expected_date = _release_commit_date(metadata[2].removesuffix("T00:00:00Z"))
+            expected_message = f"{_release_commit_message(public_version)}\n"
         if metadata[2:] != [expected_date, expected_date]:
             raise PublicSnapshotError(f"public history commit date is inconsistent: {commit}")
+        if previous_commit_date is not None and expected_date < previous_commit_date:
+            raise PublicSnapshotError(
+                f"public history commit dates are not monotonic: {commit}"
+            )
+        seen_versions.add(public_version)
+        previous_commit_date = expected_date
         raw_commit = _run_bytes(("git", "cat-file", "commit", commit), cwd=parent_root, env=env)
         try:
             raw_headers, raw_message = raw_commit.split(b"\n\n", 1)
@@ -730,7 +844,7 @@ def _validate_public_history(
             raise PublicSnapshotError(
                 f"public history commit contains unsupported headers or a signature: {commit}"
             )
-        if decoded_message != f"release: {public_version}\n":
+        if decoded_message != expected_message:
             raise PublicSnapshotError(f"public history commit message must be one line: {commit}")
 
         tree = history_root / f"{index:04d}-{commit}"
@@ -762,6 +876,7 @@ def build_public_snapshot(
     source_revision: str,
     output: Path,
     version: str,
+    release_date: str,
     repository: str,
     initial_public_root: bool = False,
     public_parent_root: Path | None = None,
@@ -771,7 +886,14 @@ def build_public_snapshot(
     output = output.resolve()
     if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
         raise PublicSnapshotError("source revision must be a full lowercase Git SHA")
-    commit_date = _version_commit_date(version)
+    _project_version_key(version)
+    if version in RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS:
+        raise PublicSnapshotError(
+            f"public release version {version} is permanently reserved after a failed "
+            "pre-publication install and must not be rebuilt or published; use at least "
+            f"{FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION}"
+        )
+    commit_date = _release_commit_date(release_date)
     if REPOSITORY_PATTERN.fullmatch(repository) is None:
         raise PublicSnapshotError("public repository must be a GitHub repository URL without a trailing slash")
     has_parent_root = public_parent_root is not None
@@ -852,6 +974,13 @@ def build_public_snapshot(
             shutil.copy2(public_provenance, output / "ASSET_PROVENANCE.md")
             interface_path = output / "assets" / "interface.json"
             interface = json.loads(interface_path.read_text(encoding="utf-8"))
+            upstream_version = interface.get("version")
+            if not isinstance(upstream_version, str) or PROJECT_VERSION_PATTERN.fullmatch(
+                upstream_version
+            ) is None:
+                raise PublicSnapshotError(
+                    "source interface must record a separate upstream Maa vMAJOR.MINOR.PATCH tag"
+                )
             interface["version"] = version
             interface["github"] = repository
             interface_path.write_text(json.dumps(interface, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -927,7 +1056,7 @@ def build_public_snapshot(
             commit_arguments = ["git", *git_isolation, "commit-tree", tree_revision]
             if public_parent_revision is not None:
                 commit_arguments.extend(("-p", public_parent_revision))
-            commit_arguments.extend(("-m", f"release: {version}"))
+            commit_arguments.extend(("-m", _release_commit_message(version)))
             revision = _run(
                 tuple(commit_arguments),
                 cwd=output,
@@ -1039,6 +1168,8 @@ def build_public_snapshot(
                 "output": str(output),
                 "revision": revision,
                 "version": version,
+                "release_date": release_date,
+                "upstream_version": upstream_version,
                 "repository": repository,
                 "lineage_mode": "initial_public_root" if initial_public_root else "linear_public_history",
                 "parent_revision": public_parent_revision,
@@ -1059,6 +1190,7 @@ def main() -> int:
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--release-date", required=True)
     parser.add_argument("--repository", required=True)
     history_mode = parser.add_mutually_exclusive_group(required=True)
     history_mode.add_argument("--initial-public-root", action="store_true")
@@ -1070,6 +1202,7 @@ def main() -> int:
         source_revision=args.source_revision,
         output=args.output,
         version=args.version,
+        release_date=args.release_date,
         repository=args.repository,
         initial_public_root=args.initial_public_root,
         public_parent_root=args.public_parent_root,

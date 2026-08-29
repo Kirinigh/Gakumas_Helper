@@ -1,51 +1,62 @@
 # 更新与回滚
 
-## 三类更新分别做什么
+## 三条更新通道分别做什么
 
-| 更新 | 负责内容 | 当前状态 |
+Gakumas Helper 的普通客户端升级只使用 MFAAvalonia 内置 GitHub 资源更新 (GitHub resource update)。项目 Release 提供完整 Windows 派生包，其中包含 Maa/MFA、Agent、资源、任务与界面、模型、图库及可离线运行的竞技场基线。竞技场另有一个严格限于 RIS engine/data 的依赖更新通道；它不会替换客户端、Agent、UI 或识别资产。
+
+| 更新 | 负责内容 | 使用方式 |
 | --- | --- | --- |
-| Maa/MFA GitHub 资源更新 | `agent`、`resource`、任务/UI、模型和 `interface.json` | 派生包把 GitHub 更新仓库指向本项目；首次切入仍需手动安装 |
-| pip 更新 | 内嵌 Python 运行依赖 | 沿用 Maa 的依赖入口；不负责竞技场模型、图库或 UI |
-| 独立资产热更新 | 单独更新自训练模型、图库或规则数据 | 尚未启用，当前随完整派生包一起发布 |
-| MirrorChyan | 上游 Maa 的第三方分发入口 | 当前没有 Gakumas Helper 专用通道；界面若仍显示上游 `MaaGakumasu` 标识，不要用它更新本派生版 |
-
-上游 Maa 的资源更新会重写 Agent、资源和界面配置。不要把本项目文件手工覆盖到上游安装目录；下一次上游更新会把它们删除或替换，也可能形成版本不兼容的混合目录。
+| MFA 内置 GitHub 资源更新 | 完整 Gakumas Helper 派生包 | 正常版本升级的唯一客户端入口 |
+| pip 更新 | pip 本身与 `requirements.txt` 中的 Python 依赖 | 沿用 Maa 现有启动逻辑；不更新模型、图库、引擎、数据或 UI |
+| RIS 竞技场组件更新 | 同一成功 production SHA 的 `gakumas-engine` + `gakumas-data` | 每个 Agent 进程首次需要竞技场模拟器时检查一次；失败保留旧组件 |
+| 独立识别资产热更新 | 单独更新模型、图库或规则数据 | 当前不提供；这些资产随完整包更新 |
+| MirrorChyan | 上游 Maa 的第三方分发入口 | 当前不是 Gakumas Helper 更新源，不要用它更新本派生版 |
 
 > [!WARNING]
-> 当前只有 GitHub 更新仓库被改向本项目。包内仍可能保留上游 `MaaGakumasu` 的 MirrorChyan 元数据；该入口不是 Gakumas Helper 更新源，使用它可能切回上游资源并移除派生功能。
+> 当前 GitHub 更新仓库指向本项目，但包内仍可能显示上游 `MaaGakumasu` 的 MirrorChyan 入口。它不是 Gakumas Helper 更新源，使用它可能切回上游资源并移除派生功能。
 
-## 哪些版本首次安装必须手动完成
+## 内置完整包更新会做什么
 
-当派生版本只是在已安装基础版本后增加 `+gkh...` 时，`+` 后内容属于 SemVer 构建元数据，不提高版本优先级。Maa 更新器不会把同优先级版本当作升级目标。因此 Release Notes 标明“与上游同优先级”时，首次切入必须：
+MFA 会按版本、通道、平台和架构选择 GitHub Release 资产，下载失败时按原生策略重试。GitHub 提供 Release digest 时会核对 SHA-256；桌面端遇到未提供 digest 的资产会警告后继续。解压后会检查基本包结构，停止正在运行的 Maa 任务和 Agent，通过文件事务应用完整包，并在应用异常时恢复本次已改文件，最后重启客户端。
 
-1. 从[本项目 Releases](https://github.com/Kirinigh/Gakumas_Helper/releases)手动下载完整 ZIP；
-2. 核对 checksums；
-3. 解压到新目录；
-4. 以管理员身份启动新目录中的 `MaaGakumasu.exe`。
+因此，普通用户不需要在每次更新前再手工下载 manifest、逐组件计算散列、运行 Defender、创建候选目录或切换 `current`。这些属于发布构建或本机维护证据，不是客户端更新协议。
 
-后续只有发布更高 SemVer 优先级的派生版本后，GitHub 更新入口才可能自动选择它。每一版仍以其 Release Notes 为准。
+## 首次安装与旧命名空间迁移
 
-## 更新前检查
+Gakumas Helper 使用独立语义化版本 (Semantic Versioning, SemVer) `vMAJOR.MINOR.PATCH`。上游 Maa 标签不参与 GKH 版本编号，而是在 Release manifest 和来源记录中单独固定。项目处于 `0.x` 时，`MINOR` 表示基础大更新，`PATCH` 表示该基础上的内部迭代；项目正式完工时才把 `MAJOR` 升至 `1`。
 
-- 阅读 Release Notes，确认支持的系统、架构和预览边界；
-- 下载完整 ZIP、Release manifest 和 checksums；
-- 使用 `Get-FileHash <文件> -Algorithm SHA256` 与 checksums 对照；
-- 保留当前可运行目录，不要先删除；
-- 不把旧版的整个 `.local`、`config` 或 `appsettings.json` 公开上传或无差别复制到新版本。
+以下情况仍需手动安装完整 ZIP：
 
-Release manifest 会记录上游 Maa 版本、公开源码 revision、引擎 revision、模型/图库/适配器兼容字段和通知文件散列。checksums 证明下载字节是否一致，但不代表某项业务功能已经完成全部验收。
+- 机器上还没有 Gakumas Helper；
+- 从旧 `vMAJOR.MINOR.PATCH+gkh.*` 命名空间首次迁移到独立 GKH 版本；这是一次性手动切换，不能依赖 MFA 比较两套命名空间；
+- 内置更新入口本身无法启动，需要从已发布版本恢复。
 
-## 安全回滚
+手动安装时，从[本项目 Releases](https://github.com/Kirinigh/Gakumas_Helper/releases)下载 `MaaGakumasu-win-x86_64-vXXX.zip`，解压到独立目录，并使用版本内 `deployment\Start-MaaGakumasu-Admin.cmd` 启动。Release 同时提供 checksums 供希望人工复核下载字节的用户使用，但它不是后续日常升级的重复硬门。
 
-本预览版采用并列目录，而不是原地覆盖：
+独立 GKH SemVer 只解决新版本之间的顺序，不会自动清除同一 GitHub 仓库里的旧组合版本。当前人工迁移预览必须保持 MFA 资源更新通道为默认 Stable；不要切换到 Beta 或 Alpha，否则旧组合版本可能因数值更高而被误判为“更新”。Stable 不会发现 prerelease，因此新的 `0.x` 预览在旧 Release 完成通道隔离前仍须逐版手动安装；只有发布预检证明旧候选已被隔离后，才可宣称更高 GKH SemVer 能通过 MFA 自动升级。
 
-1. 关闭新版本 Maa，确认没有运行中的任务；
-2. 启动之前保留的旧目录；
-3. 如果新版曾开始真实竞技场挑战且结果未完整记录，先停止继续挑战，不要通过切换目录规避待决状态；
-4. 在 Issue 中说明新旧版本、是否消耗次数和前台错误码。
+## pip 更新的边界
 
-回滚不需要删除新版本目录。待问题确认后再决定是否保留其本地缓存；任何删除都应由用户在确认目标目录后手工完成。
+启用 `enable_pip_update` 时，Agent 启动会检查并尝试升级 pip。启用 `enable_pip_install` 时，只有 `interface.json` 版本与 `pip_config.last_version` 不同，或旧记录为 `unknown`，才执行 `pip install -U -r requirements.txt`；成功后写回当前版本，失败则记录警告并继续启动。
 
-## 当前未完成边界
+不要用 pip 安装或替换竞技场模型、图库、引擎、赛季数据或界面资源。模型、图库和 UI 必须来自完整派生 Release；只有 engine/data 可由 RIS 竞技场组件通道共同更新。
 
-当前已建立版本清单、公开源码快照、完整包、校验和和隐私门，但下载失败、兼容失败、校验失败、候选切换和自动回滚的全套演练尚未完成。Gakumas Helper 专用 MirrorChyan 通道和模型/数据独立热更新也未启用。发生更新异常时，首选独立目录手动安装或回到保留的旧目录。
+## RIS 竞技场组件更新
+
+竞技场首次需要模拟时，Agent 会查询 `surisuririsu/gakumas-tools` 最新成功的 production deployment，并比较其完整提交 SHA。版本不同才下载该不可变 revision 的 `gakumas-engine` 与 `gakumas-data`，使用当前 GKH 自带的 Node、runner、scoring 和协议构建候选；目录、实体、三舞台、引擎 DSL 与真实 runner 协议验证通过后，才原子更新本地活动指针。
+
+- 断网、GitHub 限流、下载或验证失败不会损坏当前组件，也不会触发游戏操作。
+- 显式选择的旧期数若仍由当前组件完整支持，可以警告后继续。
+- 选择 `latest` 时，若已明确知道 RIS 有更高期数但新组件无法激活，竞技场会停止，绝不把旧期数当作最新。
+- 引擎 revision 更新后旧分数样本作废；同赛季己方完整编成快照可直接重模拟，不自动进游戏重读。
+- 该通道不更新识别模型、图库或读卡逻辑；这类内容仍随完整 GKH Release 更新。
+
+## 更新失败或新版有问题
+
+- 网络、下载、解压或文件应用失败：保留当前窗口与日志，MFA 文件事务会撤销本次未完成的文件变更；不要混入手工复制的单个 Agent、模型或数据文件。
+- 更新完成后发现业务缺陷：停止会消耗游戏资源的任务，到 Releases 手动安装上一已知可用完整版本；不要只回退其中一个客户端组件。
+- RIS engine/data 候选失败：保留原活动组件；如果已知 production 目录出现更高期数而 `latest` 无法满足，保持停止并反馈，不能把旧期冒充最新。
+- 如果挑战已经开始但结果尚未完整记录：先停止继续挑战，不要用换版本绕过待决记录。
+- 反馈时说明更新前后版本、前台错误和是否已开始真实挑战；不要上传完整 `config`、`.local`、日志包或未脱敏截图。
+
+本机开发使用的版本化目录、`current` 联接和 `Install-MaaGakumasuDerived.ps1` 只服务版本目录部署、开发调试或故障维护，不是普通客户端的第二套更新器。

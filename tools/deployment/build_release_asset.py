@@ -53,9 +53,22 @@ FORBIDDEN_MUTABLE_PATHS = (
 PROJECT_TEXT_ROOTS = {"agent", "resource", "tasks", "lang", "data"}
 PROJECT_TEXT_FILES = {"README.md", "interface.json", "GAKUMAS_HELPER_BUILD.json", "requirements.txt"}
 ARENA_PREVIEW_VERSION_PATTERN = re.compile(
-    r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-beta\.(?:0|[1-9]\d*)|\+gkh\.\d{6})$"
+    r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$"
 )
+MINIMUM_INDEPENDENT_PROJECT_VERSION = "v0.1.0"
+FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION = "v0.1.1"
+RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS = frozenset({"v0.1.0"})
+LAST_PUBLISHED_LEGACY_CHANNEL_VERSION = "v1.4.9+gkh.260823"
 INTERNAL_TASK_IDENTIFIER_PATTERN = re.compile(rb"(?i)\bTA" rb"SK-[0-9]{3}\b")
+RUNTIME_EMBEDDED_ARCHIVES = {
+    "MaaAgentBinary/maatouch/universal/maatouch",
+    "libs/MaaAgentBinary/maatouch/universal/maatouch",
+    "libs/SharpCompress.dll",
+    "python/Lib/site-packages/MaaAgentBinary/maatouch/universal/maatouch",
+    "python/Scripts/pip.exe",
+    "python/Scripts/pip3.exe",
+    "python/Scripts/pip3.12.exe",
+}
 
 
 class ReleaseBuildError(RuntimeError):
@@ -97,7 +110,11 @@ def _is_project_text(relative: Path) -> bool:
 
 def _validate_release_privacy(candidate: Path) -> dict[str, int]:
     try:
-        return validate_tree(candidate, project_path_predicate=_is_project_text)
+        return validate_tree(
+            candidate,
+            project_path_predicate=_is_project_text,
+            allowed_embedded_archives=RUNTIME_EMBEDDED_ARCHIVES,
+        )
     except PrivacyGateError as error:
         raise ReleaseBuildError(str(error)) from error
 
@@ -144,6 +161,50 @@ def _validate_candidate(candidate: Path, expected_version: str, expected_reposit
         raise ReleaseBuildError("candidate is not configured for the durable derived release channel")
     if update_contract.get("repository") != expected_repository or interface.get("github") != expected_repository:
         raise ReleaseBuildError("candidate update repository does not match the release repository")
+    expected_update_contract = {
+        "version_namespace": "independent_gkh_semver",
+        "client_updater": "mfa_builtin_resource_update",
+        "payload_scope": "full_derived_package",
+        "python_dependency_updater": "existing_agent_pip_update",
+    }
+    if any(update_contract.get(key) != value for key, value in expected_update_contract.items()):
+        raise ReleaseBuildError(
+            "candidate update contract must use the MFA built-in full-package update path"
+        )
+    if update_contract.get("release_channel") != "beta":
+        raise ReleaseBuildError("arena preview candidate must record the beta release channel")
+    previous_channel_version = update_contract.get("previous_channel_version")
+    if expected_version == FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION:
+        if previous_channel_version != LAST_PUBLISHED_LEGACY_CHANNEL_VERSION:
+            raise ReleaseBuildError(
+                "first publishable independent GKH release must migrate from the last published "
+                f"legacy release {LAST_PUBLISHED_LEGACY_CHANNEL_VERSION}"
+            )
+        if (
+            update_contract.get("version_ordering")
+            != "legacy_combined_to_independent_semver_manual_bootstrap"
+            or update_contract.get("requires_manual_bootstrap") is not True
+        ):
+            raise ReleaseBuildError(
+                "first publishable independent GKH release must preserve the one-time legacy "
+                "manual migration contract"
+            )
+    else:
+        if (
+            not isinstance(previous_channel_version, str)
+            or ARENA_PREVIEW_VERSION_PATTERN.fullmatch(previous_channel_version) is None
+            or previous_channel_version in RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS
+            or _project_version_key(previous_channel_version)
+            < _project_version_key(FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION)
+            or _project_version_key(previous_channel_version)
+            >= _project_version_key(expected_version)
+            or update_contract.get("version_ordering")
+            != "independent_gkh_semver_precedence"
+            or update_contract.get("requires_manual_bootstrap") is not False
+        ):
+            raise ReleaseBuildError(
+                "later independent GKH releases must advance an independent non-bootstrap channel version"
+            )
     source = build.get("source")
     if (
         not isinstance(source, dict)
@@ -165,6 +226,13 @@ def _validate_candidate(candidate: Path, expected_version: str, expected_reposit
         if sha256_file(path).casefold() != expected_hash.casefold():
             raise ReleaseBuildError(f"candidate critical file hash mismatch: {relative}")
     return build, interface
+
+
+def _project_version_key(version: str) -> tuple[int, int, int]:
+    match = ARENA_PREVIEW_VERSION_PATTERN.fullmatch(version)
+    if match is None:
+        raise ReleaseBuildError("release version must use independent GKH SemVer")
+    return tuple(int(part) for part in version.removeprefix("v").split("."))
 
 
 def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
@@ -276,12 +344,34 @@ def build_release_assets(
         raise ReleaseBuildError("this release path is currently approved only for the arena preview qualification")
     if not candidate.is_dir():
         raise ReleaseBuildError(f"candidate directory is missing: {candidate}")
-    if ARENA_PREVIEW_VERSION_PATTERN.fullmatch(release_version) is None:
+    version_match = ARENA_PREVIEW_VERSION_PATTERN.fullmatch(release_version)
+    if version_match is None:
         raise ReleaseBuildError(
-            "arena preview releases must use vMAJOR.MINOR.PATCH-beta.N or vMAJOR.MINOR.PATCH+gkh.YYMMDD"
+            "arena preview releases must use independent GKH SemVer vMAJOR.MINOR.PATCH"
+        )
+    if _project_version_key(release_version) < _project_version_key(
+        MINIMUM_INDEPENDENT_PROJECT_VERSION
+    ):
+        raise ReleaseBuildError(
+            "arena preview version must not precede the first independent GKH version "
+            f"{MINIMUM_INDEPENDENT_PROJECT_VERSION}"
+        )
+    if release_version in RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS:
+        raise ReleaseBuildError(
+            f"arena preview version {release_version} is permanently reserved after a failed "
+            "pre-publication install and must not be rebuilt or published; use at least "
+            f"{FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION}"
         )
 
     build, interface = _validate_candidate(candidate, release_version, release_repository)
+    upstream = build.get("upstream")
+    if not isinstance(upstream, dict) or re.fullmatch(
+        r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)",
+        str(upstream.get("tag", "")),
+    ) is None:
+        raise ReleaseBuildError(
+            "candidate must record its upstream Maa version separately from the GKH version"
+        )
     components, raw = _component_inventory(candidate)
     required_notices = (
         candidate / "LICENSE",

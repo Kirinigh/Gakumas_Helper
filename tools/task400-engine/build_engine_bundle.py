@@ -10,7 +10,7 @@ import zipfile
 import argparse
 from pathlib import Path
 
-UPSTREAM_COMMIT = "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6"
+UPSTREAM_COMMIT = "5658ec13ec9978f1117ccc191dfb83c346d42f6f"
 PACKAGE_NAMES = ("gakumas-engine", "gakumas-data")
 NODE_VERSION = "24.19.0"
 NODE_ARCHIVE_NAME = f"node-v{NODE_VERSION}-win-x64.zip"

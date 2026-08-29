@@ -29,7 +29,8 @@ def stage(stage_id: int, season: int, stage_number: int, *, preview: bool = Fals
 def rows() -> list[dict[str, object]]:
     return [
         *(stage(169 + offset, 49, offset + 1) for offset in range(3)),
-        *(stage(172 + offset, 50, offset + 1, preview=True) for offset in range(3)),
+        *(stage(172 + offset, 50, offset + 1) for offset in range(3)),
+        *(stage(175 + offset, 51, offset + 1, preview=True) for offset in range(3)),
         {**stage(999, 99, 1), "type": "event"},
     ]
 
@@ -37,13 +38,13 @@ def rows() -> list[dict[str, object]]:
 class ContestStageCatalogTests(unittest.TestCase):
     def test_latest_uses_highest_catalog_season_and_preserves_preview(self) -> None:
         season = ContestStageCatalog.from_rows(rows()).resolve("latest")
-        self.assertEqual(season.season, 50)
-        self.assertEqual(season.stage_ids, (172, 173, 174))
+        self.assertEqual(season.season, 51)
+        self.assertEqual(season.stage_ids, (175, 176, 177))
         self.assertTrue(season.preview)
 
     def test_manual_season_maps_all_three_stage_ids(self) -> None:
-        season = ContestStageCatalog.from_rows(rows()).resolve(49)
-        self.assertEqual(season.stage_ids, (169, 170, 171))
+        season = ContestStageCatalog.from_rows(rows()).resolve(50)
+        self.assertEqual(season.stage_ids, (172, 173, 174))
         self.assertFalse(season.preview)
 
     def test_unknown_or_incomplete_season_fails_closed(self) -> None:
@@ -51,15 +52,15 @@ class ContestStageCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(StageCatalogError, "exactly stages 1, 2 and 3"):
             catalog.resolve("latest")
         with self.assertRaisesRegex(StageCatalogError, "not present"):
-            catalog.resolve(51)
+            catalog.resolve(52)
 
     def test_catalog_is_loaded_from_the_version_matched_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             catalog_path = Path(directory) / CATALOG_RELATIVE_PATH
             catalog_path.parent.mkdir(parents=True)
             catalog_path.write_text(json.dumps(rows()), encoding="utf-8")
-            season = ContestStageCatalog.from_bundle(directory).resolve(50)
-        self.assertEqual(season.stage_ids, (172, 173, 174))
+            season = ContestStageCatalog.from_bundle(directory).resolve(51)
+        self.assertEqual(season.stage_ids, (175, 176, 177))
 
 
 if __name__ == "__main__":

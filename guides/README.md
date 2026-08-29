@@ -10,7 +10,7 @@
 | 第一次运行 | [首次使用](GETTING_STARTED.md) | 下载、校验、管理员启动、首次己方重算 |
 | 使用竞技场 | [竞技场胜率功能](ARENA_WIN_RATE.md) | 计分规则、缓存、参数、真实挑战边界 |
 | 遇到错误 | [故障排查](TROUBLESHOOTING.md) | 按界面提示和错误码恢复，不盲目重试 |
-| 更新前后 | [更新与回滚](UPDATE_AND_ROLLBACK.md) | 独立安装、自动更新边界、回退旧版 |
+| 更新前后 | [更新与回滚](UPDATE_AND_ROLLBACK.md) | MFA 内置完整包、pip 与 RIS 边界、首次安装和故障恢复 |
 | 反馈之前 | [隐私与安全](PRIVACY_AND_SAFETY.md) | 哪些数据只留本机，Issue 如何脱敏 |
 | 提交反馈 | [问题反馈与分流](../SUPPORT.md) | 发到本项目还是上游、需要提供什么 |
 | 参与开发 | [贡献说明](../CONTRIBUTING.md) | 代码、测试、资源和来源要求 |

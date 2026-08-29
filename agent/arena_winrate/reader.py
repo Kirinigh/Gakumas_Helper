@@ -89,6 +89,169 @@ class ClickedSkillCard:
     resolution_source: str = "badge_constrained"
     detail_confirmation_reads: int = 1
     detail_evidence_mode: str = "negative_dependent"
+    conservative_cost_assumption: Mapping[str, Any] | None = None
+
+
+class GenericCostFallbackCatalog(Protocol):
+    """Catalog boundary needed to distrust serialized fallback metadata."""
+
+    def validate_generic_cost_fallback_pair(
+        self,
+        card_id: int,
+        *,
+        generic_customization_id: int,
+        unenhanced: Mapping[str, int],
+        enhanced: Mapping[str, int],
+        cost_hypotheses: Sequence[int],
+        observed_badge_count: int | None,
+    ) -> None: ...
+
+
+def _positive_customization_mapping(value: object) -> dict[str, int] | None:
+    if not isinstance(value, Mapping):
+        return None
+    normalized: dict[str, int] = {}
+    for raw_key, raw_count in value.items():
+        if (
+            type(raw_key) is not str
+            or not raw_key.isdigit()
+            or str(int(raw_key)) != raw_key
+            or isinstance(raw_count, bool)
+            or not isinstance(raw_count, int)
+            or raw_count < 1
+            or raw_key in normalized
+        ):
+            return None
+        normalized[raw_key] = raw_count
+    return normalized
+
+
+def validate_conservative_cost_fallback(
+    clicked: ClickedSkillCard,
+    *,
+    catalog: GenericCostFallbackCatalog,
+    expected_policy: str,
+    expected_count: int | None,
+    expected_count_kind: str,
+) -> None:
+    """Validate the complete internal proof carried by one bounded assumption."""
+
+    assumption = clicked.conservative_cost_assumption
+    invalid = False
+    if expected_policy not in {
+        "assume_unenhanced",
+        "assume_enhanced",
+    } or expected_count_kind not in {"observed", "effective", "reader"}:
+        invalid = True
+    if (
+        type(clicked.card_id) is not int
+        or clicked.card_id < 1
+        or clicked.resolution_source != "generic_cost_conservative_fallback_confirmed"
+        or type(clicked.detail_confirmation_reads) is not int
+        or clicked.detail_confirmation_reads < 2
+        or clicked.detail_evidence_mode != "conservative_generic_cost_bound"
+        or not isinstance(assumption, Mapping)
+    ):
+        invalid = True
+
+    if invalid:
+        raise ArenaReaderError(
+            "skill_card_cost_fallback_contract_invalid",
+            "generic-cost fallback lacks a confirmed bounded-assumption envelope",
+        )
+    assert isinstance(assumption, Mapping)
+    generic_id = assumption.get("generic_customization_id")
+    observed_badge_count = assumption.get("observed_badge_count")
+    assumption_card_id = assumption.get("card_id")
+    hypotheses = assumption.get("cost_hypotheses")
+    candidates = assumption.get("candidate_customizations")
+    unenhanced = (
+        _positive_customization_mapping(candidates.get("unenhanced"))
+        if isinstance(candidates, Mapping)
+        else None
+    )
+    enhanced = (
+        _positive_customization_mapping(candidates.get("enhanced"))
+        if isinstance(candidates, Mapping)
+        else None
+    )
+    non_cost = _positive_customization_mapping(
+        assumption.get("non_cost_customizations")
+    )
+    applied = _positive_customization_mapping(assumption.get("applied_customizations"))
+    resolved = _positive_customization_mapping(clicked.customizations)
+    expected_count_valid = (
+        expected_count_kind == "observed" and expected_count is None
+    ) or (
+        type(expected_count) is int
+        and expected_count >= (1 if expected_count_kind == "observed" else 0)
+    )
+    observed_count_valid = observed_badge_count is None or (
+        type(observed_badge_count) is int and observed_badge_count > 0
+    )
+    if (
+        assumption.get("reason_code") != "skill_card_cost_evidence_inconclusive"
+        or assumption.get("policy") != expected_policy
+        or type(assumption_card_id) is not int
+        or assumption_card_id != clicked.card_id
+        or type(generic_id) is not int
+        or generic_id < 1
+        or not expected_count_valid
+        or not observed_count_valid
+        or not isinstance(hypotheses, list)
+        or len(hypotheses) != 2
+        or any(type(value) is not int or value < 0 for value in hypotheses)
+        or len(set(hypotheses)) != 2
+        or unenhanced is None
+        or enhanced is None
+        or non_cost is None
+        or applied is None
+        or resolved is None
+    ):
+        raise ArenaReaderError(
+            "skill_card_cost_fallback_contract_invalid",
+            "generic-cost fallback metadata is incomplete or inconsistent",
+        )
+    generic_key = str(generic_id)
+    expected_enhanced = dict(unenhanced)
+    expected_enhanced[generic_key] = 1
+    selected = enhanced if expected_policy == "assume_enhanced" else unenhanced
+    if expected_count_kind == "observed":
+        count_matches = observed_badge_count == expected_count
+    elif expected_count_kind == "effective":
+        count_matches = sum(resolved.values()) == expected_count
+    else:
+        count_matches = (
+            observed_badge_count == expected_count
+            if observed_badge_count is not None
+            else sum(resolved.values()) == expected_count
+        )
+    if (
+        generic_key in unenhanced
+        or enhanced != expected_enhanced
+        or non_cost != unenhanced
+        or applied != selected
+        or resolved != selected
+        or not count_matches
+    ):
+        raise ArenaReaderError(
+            "skill_card_cost_fallback_contract_invalid",
+            "generic-cost fallback states are not the declared one-bit bound",
+        )
+    try:
+        catalog.validate_generic_cost_fallback_pair(
+            clicked.card_id,
+            generic_customization_id=generic_id,
+            unenhanced=unenhanced,
+            enhanced=enhanced,
+            cost_hypotheses=hypotheses,
+            observed_badge_count=observed_badge_count,
+        )
+    except (TypeError, ValueError) as error:
+        raise ArenaReaderError(
+            "skill_card_cost_fallback_contract_invalid",
+            f"generic-cost fallback does not match the fixed catalog: {error}",
+        ) from error
 
 
 class MemberObservationScope(str, Enum):
@@ -330,6 +493,174 @@ class ArenaLineupReader:
 
         return tuple(observation.to_card_report() for observation in self._last_observations)
 
+    def last_cost_customization_fallbacks(
+        self,
+        *,
+        side: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Return accepted, location-bound generic-cost assumptions."""
+
+        if side not in {None, "own", "opponent"}:
+            raise ValueError("side must be 'own', 'opponent', or None")
+        records: list[dict[str, Any]] = []
+        seen_locations: set[tuple[str, int, int, int, int]] = set()
+        for observation in self._last_observations:
+            for record in self._validated_cost_customization_fallback_records(
+                observation
+            ):
+                group_index = int(record["group_index"])
+                card_slot = int(record["card_slot"])
+                location = (
+                    observation.team_id,
+                    observation.stage_number,
+                    observation.member_slot,
+                    group_index,
+                    card_slot,
+                )
+                if location in seen_locations:
+                    raise ArenaReaderError(
+                        "skill_card_cost_fallback_duplicate",
+                        f"fallback location was recorded twice: {location!r}",
+                    )
+                seen_locations.add(location)
+                if side is None or record["side"] == side:
+                    records.append(record)
+        return tuple(
+            sorted(
+                records,
+                key=lambda value: (
+                    str(value.get("team_id", "")),
+                    int(value.get("stage_number", 0)),
+                    int(value.get("member_slot", 0)),
+                    int(value.get("group_index", 0)),
+                    int(value.get("card_slot", 0)),
+                    int(value.get("card_id", 0)),
+                ),
+            )
+        )
+
+    def _validated_cost_customization_fallback_records(
+        self,
+        observation: MemberObservation,
+    ) -> tuple[dict[str, Any], ...]:
+        """Bind backend fallback evidence to the final member observation."""
+
+        raw = observation.evidence.get("cost_customization_fallbacks", ())
+        if not isinstance(raw, (list, tuple)):
+            raise ArenaReaderError(
+                "skill_card_cost_fallback_contract_invalid",
+                f"{observation.observation_id} fallback evidence is not a sequence",
+            )
+        expected_side = "own" if observation.team_id == "self" else "opponent"
+        opponent_token = observation.team_id.removeprefix("opponent-")
+        if expected_side == "opponent" and not (
+            observation.team_id.startswith("opponent-")
+            and opponent_token in {"0", "1", "2"}
+        ):
+            raise ArenaReaderError(
+                "skill_card_cost_fallback_location_invalid",
+                f"unknown observation team identity: {observation.team_id!r}",
+            )
+        expected_position = None if expected_side == "own" else int(opponent_token)
+        fallback_catalog = getattr(self.backend, "catalog", None)
+        if raw and fallback_catalog is None:
+            raise ArenaReaderError(
+                "skill_card_cost_fallback_contract_invalid",
+                "fallback evidence cannot be checked without its fixed catalog",
+            )
+        records: list[dict[str, Any]] = []
+        seen_slots: set[tuple[int, int]] = set()
+        for value in raw:
+            if not isinstance(value, Mapping):
+                raise ArenaReaderError(
+                    "skill_card_cost_fallback_contract_invalid",
+                    f"{observation.observation_id} contains a non-object fallback",
+                )
+            record = dict(value)
+            group_index = record.get("group_index")
+            card_slot = record.get("card_slot")
+            record_stage_number = record.get("stage_number")
+            record_member_slot = record.get("member_slot")
+            record_opponent_position = record.get("opponent_position")
+            position_valid = (
+                record_opponent_position is None
+                if expected_position is None
+                else type(record_opponent_position) is int
+                and record_opponent_position == expected_position
+            )
+            location_valid = (
+                type(group_index) is int
+                and group_index in (0, 1)
+                and type(card_slot) is int
+                and 1 <= card_slot <= 6
+                and type(record.get("team_id")) is str
+                and record.get("team_id") == observation.team_id
+                and type(record_stage_number) is int
+                and record_stage_number == observation.stage_number
+                and type(record_member_slot) is int
+                and record_member_slot == observation.member_slot
+                and type(record.get("side")) is str
+                and record.get("side") == expected_side
+                and position_valid
+            )
+            if not location_valid:
+                raise ArenaReaderError(
+                    "skill_card_cost_fallback_location_invalid",
+                    f"{observation.observation_id} fallback location is inconsistent",
+                )
+            assert isinstance(group_index, int)
+            assert isinstance(card_slot, int)
+            slot_key = (group_index, card_slot)
+            if slot_key in seen_slots:
+                raise ArenaReaderError(
+                    "skill_card_cost_fallback_duplicate",
+                    f"fallback slot was recorded twice: {slot_key!r}",
+                )
+            seen_slots.add(slot_key)
+            expected_card_id = observation.skill_card_id_groups[group_index][
+                card_slot - 1
+            ]
+            expected_customizations = dict(
+                observation.customization_groups[group_index][card_slot - 1]
+            )
+            record_card_id = record.get("card_id")
+            if type(record_card_id) is not int or record_card_id != expected_card_id:
+                raise ArenaReaderError(
+                    "skill_card_cost_fallback_card_mismatch",
+                    f"fallback card does not match final slot {slot_key!r}",
+                )
+            resolution_source = record.get("resolution_source")
+            detail_evidence_mode = record.get("detail_evidence_mode")
+            if (
+                type(resolution_source) is not str
+                or type(detail_evidence_mode) is not str
+            ):
+                raise ArenaReaderError(
+                    "skill_card_cost_fallback_contract_invalid",
+                    f"fallback evidence modes are not strings at {slot_key!r}",
+                )
+            validate_conservative_cost_fallback(
+                ClickedSkillCard(
+                    expected_card_id,
+                    expected_customizations,
+                    resolution_source=resolution_source,
+                    detail_confirmation_reads=record.get(
+                        "detail_confirmation_reads", 0
+                    ),
+                    detail_evidence_mode=detail_evidence_mode,
+                    conservative_cost_assumption=record,
+                ),
+                catalog=fallback_catalog,
+                expected_policy=(
+                    "assume_unenhanced" if expected_side == "own" else "assume_enhanced"
+                ),
+                expected_count=sum(expected_customizations.values()),
+                expected_count_kind="effective",
+            )
+            record["observation_id"] = observation.observation_id
+            records.append(record)
+        return tuple(records)
+
     def read(self) -> dict[str, Any]:
         self._last_observations.clear()
         targets = (
@@ -547,6 +878,7 @@ class ArenaLineupReader:
         customization_groups: list[list[dict[str, int]]] = [[], []]
         excluded_duplicate_groups: list[list[bool]] = [[], []]
         empty_groups: list[list[bool]] = [[], []]
+        clicked_cost_fallback_slots: set[tuple[int, int]] = set()
         group_order = (1, 0)
         # Establish one post-swipe page generation before any authoritative
         # slot classification.  The pre-swipe upper-left guard is only an
@@ -726,18 +1058,49 @@ class ArenaLineupReader:
                 cards[card_slot - 1] = clicked.card_id
                 resolved = dict(clicked.customizations)
                 resolved_count = sum(resolved.values())
-                if resolved_count < 1:
+                fallback_claimed = (
+                    clicked.conservative_cost_assumption is not None
+                    or clicked.resolution_source.startswith(
+                        "generic_cost_conservative_fallback"
+                    )
+                    or clicked.detail_evidence_mode == "conservative_generic_cost_bound"
+                )
+                if fallback_claimed:
+                    fallback_catalog = getattr(self.backend, "catalog", None)
+                    if fallback_catalog is None:
+                        raise ArenaReaderError(
+                            "skill_card_cost_fallback_contract_invalid",
+                            "generic-cost fallback cannot be checked without its fixed catalog",
+                        )
+                    validate_conservative_cost_fallback(
+                        clicked,
+                        catalog=fallback_catalog,
+                        expected_policy=(
+                            "assume_unenhanced"
+                            if target.is_own_team
+                            else "assume_enhanced"
+                        ),
+                        expected_count=customization_count,
+                        expected_count_kind="reader",
+                    )
+                    clicked_cost_fallback_slots.add((group_index, card_slot))
+                conservative_cost_fallback = fallback_claimed
+                if resolved_count < 1 and not conservative_cost_fallback:
                     raise ArenaReaderError(
                         "skill_card_customization_detail_empty",
                         f"group {group_index}/slot {card_slot} opened from a positive "
                         "badge but detail resolved no customization",
                     )
                 if resolved_count != customization_count and not (
-                    clicked.resolution_source in {
-                        "detail_unique_confirmed",
-                        "detail_card_face_unique_confirmed",
-                    }
-                    and clicked.detail_confirmation_reads >= 2
+                    conservative_cost_fallback
+                    or (
+                        clicked.resolution_source
+                        in {
+                            "detail_unique_confirmed",
+                            "detail_card_face_unique_confirmed",
+                        }
+                        and clicked.detail_confirmation_reads >= 2
+                    )
                 ):
                     raise ArenaReaderError(
                         "skill_card_customization_total_mismatch",
@@ -823,6 +1186,21 @@ class ArenaLineupReader:
             slot_state_groups=(slot_state_groups[0], slot_state_groups[1]),
             evidence=evidence,
         )
+        validated_fallback_records = (
+            self._validated_cost_customization_fallback_records(observation)
+        )
+        recorded_fallback_slots = {
+            (int(record["group_index"]), int(record["card_slot"]))
+            for record in validated_fallback_records
+        }
+        missing_fallback_slots = sorted(
+            clicked_cost_fallback_slots - recorded_fallback_slots
+        )
+        if missing_fallback_slots:
+            raise ArenaReaderError(
+                "skill_card_cost_fallback_location_missing",
+                f"{observation.observation_id} accepted fallback cards without location-bound evidence: {missing_fallback_slots!r}",
+            )
         return observation
 
     @staticmethod

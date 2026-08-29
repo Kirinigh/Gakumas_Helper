@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Callable, Protocol
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import replace, dataclass
 
 from .config import DEFAULT_SIMULATIONS
 from .schema import SnapshotValidationError, validate_snapshot, validate_own_snapshot
@@ -18,7 +18,7 @@ from .adapter import (
     SimulationBatch,
 )
 from .decision import ArenaDecision, select_first_qualified
-from .own_cache import OwnScoreCacheError, OwnScoreCacheStore
+from .own_cache import OwnScoreCacheError, OwnScoreCacheStore, OwnScoreResimulationRequired
 from .challenge_flow import contest_day_key
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -204,14 +204,15 @@ def prepare_own_score_cache(
         reset_prepared_own_score_cache(cache_store)
     preparation_day = contest_day_key()
     evaluation: ArenaOwnScoreEvaluation | None = None
-    if force_recalculate:
-        def ensure_preparation_day() -> None:
-            if contest_day_key() != preparation_day:
-                raise OwnScoreCacheError(
-                    "竞技场日期在己方缓存落盘前跨过了每日 04:00 刷新边界；"
-                    "新缓存未落盘，请重新运行任务"
-                )
 
+    def ensure_preparation_day() -> None:
+        if contest_day_key() != preparation_day:
+            raise OwnScoreCacheError(
+                "竞技场日期在己方缓存落盘前跨过了每日 04:00 刷新边界；"
+                "新缓存未落盘，请重新运行任务"
+            )
+
+    if force_recalculate:
         evaluation = ArenaOwnScoreService(
             adapter,
             simulations=simulations,
@@ -220,13 +221,80 @@ def prepare_own_score_cache(
         ).calculate(provider, before_cache_save=ensure_preparation_day)
         if evaluation.status != "calculated":
             return evaluation, None
-    cached = cache_store.load_for_match(
-        season=season,
-        stage_ids=stage_ids,
-        simulations=simulations,
-        seed=seed,
-        expected_upstream_commit=expected_upstream_commit,
-    )
+    try:
+        cached = cache_store.load_for_match(
+            season=season,
+            stage_ids=stage_ids,
+            simulations=simulations,
+            seed=seed,
+            expected_upstream_commit=expected_upstream_commit,
+        )
+    except OwnScoreResimulationRequired as error:
+        if force_recalculate and evaluation is not None:
+            return (
+                replace(
+                    evaluation,
+                    status="cache_failure",
+                    cache_path=None,
+                    error=str(error),
+                    error_detail=error.technical_detail or str(error),
+                ),
+                None,
+            )
+        snapshot = cache_store.load_snapshot_for_resimulation(
+            season=season,
+            stage_ids=stage_ids,
+        )
+        if snapshot is None:
+            cached = None
+        else:
+            class CachedOwnSnapshotProvider:
+                def read_own(self) -> Mapping[str, Any]:
+                    return snapshot
+
+            evaluation = ArenaOwnScoreService(
+                adapter,
+                simulations=simulations,
+                seed=seed,
+                cache_store=cache_store,
+            ).calculate(
+                CachedOwnSnapshotProvider(),
+                before_cache_save=ensure_preparation_day,
+            )
+            if evaluation.status != "calculated":
+                return evaluation, None
+            try:
+                cached = cache_store.load_for_match(
+                    season=season,
+                    stage_ids=stage_ids,
+                    simulations=simulations,
+                    seed=seed,
+                    expected_upstream_commit=expected_upstream_commit,
+                )
+            except OwnScoreCacheError as error:
+                return (
+                    replace(
+                        evaluation,
+                        status="cache_failure",
+                        cache_path=None,
+                        error=str(error),
+                        error_detail=error.technical_detail or str(error),
+                    ),
+                    None,
+                )
+    except OwnScoreCacheError as error:
+        if not force_recalculate or evaluation is None:
+            raise
+        return (
+            replace(
+                evaluation,
+                status="cache_failure",
+                cache_path=None,
+                error=str(error),
+                error_detail=error.technical_detail or str(error),
+            ),
+            None,
+        )
     if force_recalculate and cached is not None:
         capture_id = str(cached[0]["capture_id"])
         _PREPARED_CACHE_DAYS[cache_path] = (preparation_day, capture_id)

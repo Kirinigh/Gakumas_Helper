@@ -7,8 +7,8 @@
 ## 1. 当前适用范围
 
 - 当前自动化只批准 `arena_preview` 公开预览版。
-- 日期式预览版本使用 `vMAJOR.MINOR.PATCH+gkh.YYMMDD`。
-- 正式稳定版、自动更新端到端验收和安装后自动回滚尚未由当前发布器完整支持；不得仅通过去掉 `--prerelease` 将预览包宣称为稳定版。
+- 公开预览版本使用独立 GKH 语义化版本 (Semantic Versioning, SemVer) `vMAJOR.MINOR.PATCH`；本批次固定的上游 Maa 标签作为独立来源字段记录，不拼入 GKH 版本。
+- 当前发布器只批准 `arena_preview`，不得仅通过去掉 `--prerelease` 将预览包宣称为稳定版。普通客户端更新固定复用 MFAAvalonia 内置 GitHub 资源更新及其文件事务回滚；本文的候选、散列、Defender 和公开历史门只服务构建／发布，不构成第二套客户端更新协议。
 - 公开发布与本机安装是两个独立批次。发布流程不得覆盖现有安装，也不得自动切换 `current`。
 
 ## 2. 完成定义与硬对齐门
@@ -28,7 +28,7 @@
 
 | 对象 | 必须成立的关系 |
 | --- | --- |
-| `README.md`、`assets/interface.json`、`pyproject.toml` | 均声明本次派生版本和公开仓库 |
+| `README.md`、`assets/interface.json`、`pyproject.toml` | README 使用通用版本结构，机器元数据声明本次 GKH 版本和公开仓库 |
 | 候选包 `interface.json`、构建清单、Release manifest | 版本、仓库、上游标签和源码 SHA 一致 |
 | 完整 ZIP、Release manifest、checksums | 本地文件名、大小和 SHA-256 互相一致 |
 | GitHub Release 资产 | 数量、文件名、大小、`uploaded` 状态和 digest 与本地一致 |
@@ -59,12 +59,13 @@ PREPARE
 
 ## 4. 版本语义
 
-1. 批次必须固定上一通道版本，并传给 `--previous-channel-version`。
-2. `v1.4.8+gkh.YYMMDD` 到 `v1.4.9+gkh.YYMMDD` 的基础版本升高，具有更高的 SemVer 优先级。
-3. 两个版本若只在 `+gkh.YYMMDD` 不同，其 SemVer 优先级相同，因为 `+` 后是构建元数据。此类版本必须标记为人工安装，不能宣称可自动升级。
-4. 低于上一通道版本的候选必须由构建器拒绝。
-5. 若需要在同一基础版本上连续发布可自动升级的修复，不得临时发明版本格式；必须先单独批准并实现新的单调版本策略及迁移测试。
-6. 构建清单中的 `automatic_update_e2e_verified` 为 `false` 时，即使版本优先级升高，发布说明仍须建议人工下载安装，直到成功更新和失败回滚演练完成。
+1. 批次必须分别固定 GKH 版本、上游 Maa 标签和上一通道版本，并把后者传给 `--previous-channel-version`；上游标签只能写入独立 provenance／manifest 字段。
+2. GKH 版本只允许 `vMAJOR.MINOR.PATCH`。项目处于 `0.x` 时，`MINOR` 表示基础大更新，`PATCH` 表示该基础上的内部迭代；只有项目正式完工才把 `MAJOR` 升至 `1`。
+3. 已进入独立命名空间后，新版本必须按 SemVer 严格高于上一通道版本；已生成不可变候选、已安装、已发布，或验证失败后已封存的版本号均视为已消耗，不得复用、覆盖或移动，修复必须递增 `PATCH`。
+4. 旧 `vMAJOR.MINOR.PATCH+gkh.*` 组合版本到独立 GKH SemVer 只允许一次人工安装迁移。构建清单必须把这次迁移标记为 `requires_manual_bootstrap=true`；此后不得回退到旧命名空间。
+5. README、指南和 Issue 示例使用 `vXXX` 或结构占位符，不冻结当前精确版本；`interface.json`、构建清单、Release Notes、来源／散列证据和历史任务记录必须保留实际版本。
+6. `update_contract.requires_manual_bootstrap=true` 时发布说明必须要求手动安装；否则说明应引导用户使用 MFAAvalonia 内置 GitHub 资源更新，不得再用自定义“全故障矩阵未完成”阻止正常升级。
+7. 独立 GKH SemVer 不重置 MFA 对同一仓库全部 Release 的版本比较。远端仍存在数值更高的旧组合 Release 时，必须逐通道模拟 MFA 的筛选与 SemVer 排序；任何声明为自动更新入口的通道会把旧版选为候选时，不得宣称自动升级已恢复。首个独立版本可作为纯手动迁移 prerelease 发布，但 Release Notes 必须要求保持默认 Stable，并明确 Beta／Alpha 不受支持且 Stable 看不到后续 prerelease。
 
 ## 5. PREPARE：冻结批次输入
 
@@ -89,11 +90,14 @@ $Python = (Resolve-Path -LiteralPath '<VERIFIED_PYTHON_EXE>').Path
 $DevelopmentWorktree = (Resolve-Path -LiteralPath '<DEVELOPMENT_WORKTREE>').Path
 $Repository = 'https://github.com/Kirinigh/Gakumas_Helper'
 $Version = '<VERSION>'
+$PreviousVersion = '<PREVIOUS_MFA_CHANNEL_VERSION>'
+$ReleaseDate = '<YYYY-MM-DD>'
 $ExpectedRemoteMainSha = '<40_HEX_REMOTE_MAIN_SHA>'
 $PublicParentDirectory = [System.IO.Path]::GetFullPath('<NEW_VERIFIED_PUBLIC_PARENT_DIRECTORY>')
 ```
 
 - `$ReleaseWorktree` 必须是本批次已经验证的隔离发布工作树；三个发布脚本一律从该绝对路径调用，不依赖当前目录。
+- `$PreviousVersion` 来自目标 MFA 通道实际可枚举 Release 的最高候选，不是公开 `main` 中 `interface.json` 的版本；两者必须分别记录。
 - `$Python` 必须是已经验证的虚拟环境解释器绝对路径。执行 `& $Python --version` 并记录版本；不得在命令失败时退回 PATH 中的 `python`。
 - 所有已有输入路径用 `Resolve-Path -LiteralPath` 固定为绝对路径；尚不存在的输出目录用 `[System.IO.Path]::GetFullPath(...)` 固定，并确认其父目录正确且目标不存在。
 - 其余尖括号值也先绑定为变量。PowerShell 变量作为独立参数传入，确保含空格的路径或标题不会被拆分。
@@ -144,6 +148,7 @@ git -C $PublicParentDirectory checkout -q -f main
   --source-revision $DevelopmentSha `
   --output $PublicSnapshotDirectory `
   --version $Version `
+  --release-date $ReleaseDate `
   --repository $Repository `
   --public-parent-root $PublicParentDirectory `
   --public-parent-revision $ExpectedRemoteMainSha
@@ -156,7 +161,7 @@ git -C $PublicParentDirectory checkout -q -f main
 - 工作树干净，`git fsck --full --strict --no-reflogs` 通过且无不可达对象；
 - 每个可达提交的原始 Git tree 路径与 blob 都通过公开允许清单和隐私扫描；空树、Windows 设备名、路径大小写碰撞、路径个人标识、伪装或嵌套 ZIP，以及归档成员路径、内容、comment/extra 元数据均失败关闭；不能以 `.gitattributes` 的 `export-ignore` 或 `export-subst` 隐藏内容；
 - 无本机运行态、用户数据、凭据、链接/重解析点、内部任务标识或开发历史；
-- 每个可达提交都使用固定通用作者、单行版本消息和与版本日期一致的提交日期，不含签名或额外提交头；
+- 每个可达提交都使用固定通用作者、单行版本消息和该批次显式 `--release-date` 对应的提交日期，不含签名或额外提交头；新提交消息固定为 `chore(release): 发布 <版本> 并同步更新文档与公告`；
 - `README.md`、`assets/interface.json`、`pyproject.toml` 的版本、仓库和许可证元数据正确；
 - 使用已冻结解释器在公开快照内执行测试并返回 0：
 
@@ -226,8 +231,8 @@ finally {
 - 完整序列化 manifest 和最终资产通过隐私/内部标识门；
 - checksums 只引用本次 ZIP 和 manifest，散列与本地文件一致；
 - 最终 ZIP Defender 扫描无目标检测；
-- 将最终 ZIP 解压到新的可丢弃目录，在该副本中执行无游戏输入的启动/退出冒烟并核对窗口标题；不得运行或修改正式候选；
-- Release Notes 根据实际 `update_contract` 描述版本优先级和人工安装边界。
+- 将最终 ZIP 解压到新的可丢弃目录，先运行版本内 `deployment\Start-MaaGakumasu-Admin.cmd --check`，再经对应授权用同一版本入口执行无游戏输入的启动／退出冒烟并核对窗口标题；不得运行或修改正式候选；
+- Release Notes 根据实际 `update_contract` 描述版本优先级、MFA 内置更新入口、RIS engine/data 窄例外和人工首次安装边界。
 
 在 `ASSETS_VERIFIED` 完成前，还必须冻结本次 Release 标题和说明文件。它们不是下载资产，但属于公开发布输入：
 
@@ -246,6 +251,7 @@ finally {
 - 远端 `main` 精确 SHA 与本批次记录的预期值一致；
 - 目标 tag 不存在；
 - 同版本 Release（包括 draft）不存在；
+- 未认证 `/releases` 与认证维护者视角均已枚举；按安装态 MFA 的 Stable／Beta／Alpha 过滤与 SemVer 规则计算候选；自动更新所支持的通道不得把新 GKH 版本降回旧组合版本，纯手动迁移 prerelease 则必须证明默认 Stable 会过滤全部 prerelease，并在说明中禁用 Beta／Alpha；`make_latest=false` 不作为隔离证据；
 - GitHub 登录身份和仓库权限正确；
 - 本地公开快照工作树干净，`HEAD` 等于 `<PUBLIC_SHA>`；
 - 本地公开快照 `HEAD^` 等于远端预期 SHA，且两者之间恰好一个提交；
@@ -326,8 +332,8 @@ gh release edit $Version `
 
 - Release 为非 draft、prerelease，且 `published_at` 非空；
 - 远端 `main`、tag、Release tag 目标和两个 manifest 的源码 SHA 一致；
-- GitHub 首页 `README.md` 显示本次版本；
-- `main` 和 tag 下的 `README.md`、`pyproject.toml`、`assets/interface.json` 均为本次版本；
+- GitHub 首页 `README.md` 显示独立 GKH 版本结构与通用 `vXXX` 资产示例，不冻结本次精确版本；
+- `main` 和 tag 下的 `pyproject.toml`、`assets/interface.json` 均为本次版本，README 保持通用占位符；
 - 三个资产仍为 `uploaded`，大小和 digest 不变；
 - 旧 tag 和旧 Release 仍可用于公开版本回滚；本机旧安装目录的保留与核对属于独立安装批次，不作为本次公开发布完成门。
 
@@ -351,10 +357,11 @@ gh release edit $Version `
 执行下一批次前必须逐项检查；未关闭时不得依赖默认值：
 
 1. `tools/deployment/public/ASSET_PROVENANCE.md` 当前固定记录一个上游版本、提交和 ZIP 散列；升级上游时必须同步并复核。
-2. `tools/deployment/public/RELEASE_NOTES.md` 默认描述同基础版本人工安装；基础版本升高时必须根据构建清单实际 `update_contract` 生成或重写说明。
+2. `tools/deployment/public/RELEASE_NOTES.md` 包含旧组合命名空间的一次性人工迁移说明；迁移完成后的发布必须根据构建清单实际 `update_contract` 生成或重写说明。
 3. `build_release_asset.py` 当前只允许公开预览资格；稳定版必须先扩展代码、测试和验收门。
 4. 当前没有统一的 GitHub 发布编排器；`main`、tag、draft、资产核对和最终发布仍须按本文逐项人工执行。
-5. 自动更新下载、兼容失败、校验失败、候选切换和完整回滚尚未全部端到端闭环；不得把较高 SemVer 优先级写成“已经验证自动升级”。
+5. 后续较高 SemVer Release 仍应完成一次 MFA 内置完整包更新冒烟；这只验证资产命名和原生入口接线，不新增项目下载器、客户端候选目录、逐组件散列、Defender 或独立回滚矩阵。RIS engine/data 依赖通道按其独立组件契约验证，不改变客户端 Release 契约。
+6. 既有公开仓库仍有数值高于首个独立 GKH 版本的旧组合 prerelease。MFA 会分页枚举 Release 并按通道筛选后取 SemVer 最大值；在旧候选完成通道隔离或使用不含旧 Release 的获准更新仓库前，独立版本只能作为要求保持 Stable 的人工迁移 prerelease 发布，MFA 自动更新声明保持阻断。
 
 这些缺口必须在开发源码或模板中解决并重新生成产物；不得直接手工修改已经验证的候选、ZIP 或 manifest。
 
@@ -362,7 +369,7 @@ gh release edit $Version `
 
 - 初次建库必须显式使用 `--initial-public-root`；已有公开 `main` 后禁止再次生成根提交。
 - 后续每版只以上一版实时核验的公开 `main` 为唯一父提交，并只增加一个脱敏提交。开发仓库、开发 worktree、浅历史、merge、replace、graft、alternate、额外 ref 和任意历史隐私门失败都必须拒绝。
-- 完整公开链中的版本必须唯一；`MAJOR.MINOR.PATCH` 不得回退，发布日期不得回退，同一核心版本下的 `gkh.YYMMDD` 必须严格递增。同日提升核心版本可以保留，重复版本或倒序版本失败关闭。
+- 完整公开链中的 GKH 版本必须唯一，显式发布日期不得回退。既有 `vMAJOR.MINOR.PATCH+gkh.*` 组合版本仅在迁移前作为兼容历史接受；出现首个独立 GKH SemVer 后，后续版本必须按 SemVer 严格递增且不得重新出现旧命名空间，重复或倒序版本失败关闭。各提交记录的上游 Maa 标签仍须作为独立来源字段通过验证。
 - 构建器逐提交读取原始 Git blob 验证完整公开链；公开历史不得依赖导出属性隐藏内容。
 - 推送只使用普通 fast-forward。远端 SHA 漂移时停止并重新生成，不通过 force、临时 merge 或父提交替换补救。
 - 生成的新公开快照本身就是下一版可复用的父仓库；应保留到下一版成功发布并完成远端复核。
