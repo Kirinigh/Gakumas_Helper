@@ -1,0 +1,78 @@
+{
+  "base_gallery": {
+    "business_id_count": 426,
+    "inherited_business_id_count": 424,
+    "replaced_business_ids": [
+      475,
+      476
+    ],
+    "sha256": "B65D4686D368665AEA229AA4C09AF35FD1FFA04BC4119BD29571A889CD455D9E"
+  },
+  "catalog": {
+    "excluded_current_rows": [
+      {
+        "business_id": 477,
+        "mode": "produce",
+        "name": "真夏に咲く太陽",
+        "reason": "produce-mode row is outside the upstream stage entity contract",
+        "source_type": "support"
+      }
+    ],
+    "included_business_ids": [
+      475,
+      476
+    ],
+    "p_items_git_blob_sha1": "a05aeb88dd69998b713c1ec8076b31b0cc4cd4c7",
+    "p_items_sha256": "FB13629F06837C852B0887E7D50B2ADAF67573E444109DEFE173C1F825DB005B",
+    "path": "packages/gakumas-data/json/p_items.json",
+    "repository": "https://github.com/surisuririsu/gakumas-tools",
+    "revision": "d476e78b1d3b9fb8eac61924e3869b647ca82ab2",
+    "stage_scope_contract": "EntityBank selectable entities use modes=['stage']; coverage/generate-suite filters p.mode === 'stage'"
+  },
+  "official_rendered_source": {
+    "first_added_revision": "b3179036ae5f33a5a5f7cb3eb7f79380a888efd9",
+    "first_successful_production_revision": "fe8f45f16ad240abb1f303f379c1a71a824b3cd9",
+    "gk_img_gitlink_path": "gk-img",
+    "gk_img_gitlink_repository": "https://github.com/surisuririsu/gk-img",
+    "gk_img_gitlink_revision": "4acb592e4dc81acabad7df7ed08fe5b5fb572adc",
+    "package_path": "packages/gakumas-images",
+    "production_deployment": {
+      "deployment_id": 6156565906,
+      "revision": "d476e78b1d3b9fb8eac61924e3869b647ca82ab2",
+      "status": "success"
+    },
+    "references": {
+      "475": {
+        "dimensions": [
+          130,
+          130
+        ],
+        "git_blob_sha1": "d05b62bb5b8d903b702cd874c576c12ab0fb40ea",
+        "path": "packages/gakumas-images/images/pItems/icons/475.png",
+        "png_sha256": "99BA242663DB343452C8E8B92E59315C7444C6FB819826A51919DD33FE177382",
+        "rgb_pixel_sha256": "FAC001C4EBCC8C491DD8EFD12156B2EEAAC91D8B993278A734B4A5761EB8AEA2",
+        "size": 21906
+      },
+      "476": {
+        "dimensions": [
+          130,
+          130
+        ],
+        "git_blob_sha1": "8cf3db4f7f97cd5dc144c4d9a23a416fe1920e2f",
+        "path": "packages/gakumas-images/images/pItems/icons/476.png",
+        "png_sha256": "5273E42C3404C70A632D21671781DFA5279C3E721013C1E34C0A1292B79064CC",
+        "rgb_pixel_sha256": "F397CF562A3ECDA4D2F2AAABC8981832869F2DCB38A662D3A6EE397351CBD9A0",
+        "size": 22457
+      }
+    },
+    "repository": "https://github.com/surisuririsu/gakumas-tools"
+  },
+  "schema_version": 1,
+  "source": {
+    "business_id_count": 426,
+    "revision": "base-gallery-sha256@B65D4686D368665AEA229AA4C09AF35FD1FFA04BC4119BD29571A889CD455D9E+gakumas-tools@d476e78b1d3b9fb8eac61924e3869b647ca82ab2",
+    "sanitized_icons_sha256": "27BB3B65DA00369B1B4553C0C0A6346E3AB3E6C87D6B1655A89917AE9C0F350E",
+    "source_icons_sha256": "936912459DDF7D7FC3A7D4FC66C2CE579DB399D6C257E8C8EEDB7C6F467C43E1"
+  },
+  "tool_contract": "task095-p-item-production-source-evidence-v1"
+}

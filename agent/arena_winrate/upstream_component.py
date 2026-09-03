@@ -18,7 +18,7 @@ import urllib.request
 from typing import Any, Protocol
 from pathlib import Path, PurePosixPath
 from dataclasses import dataclass
-from collections.abc import Mapping, Callable
+from collections.abc import Mapping, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .config import PROJECT_ROOT, DEFAULT_BUNDLE_DIR
@@ -36,6 +36,13 @@ REPOSITORY = "surisuririsu/gakumas-tools"
 API_BASE = f"https://api.github.com/repos/{REPOSITORY}"
 RAW_BASE = f"https://raw.githubusercontent.com/{REPOSITORY}"
 DEFAULT_COMPONENT_ROOT = PROJECT_ROOT / ".local" / "runtime-data" / "arena-components"
+HOST_P_ITEM_REFERENCE_RELATIVE_ROOT = (
+    Path("resource")
+    / "base"
+    / "model"
+    / "embedding"
+    / "p_item_reference"
+)
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 STATE_SCHEMA_VERSION = 1
 COMPONENT_UPDATE_SCHEMA_VERSION = 1
@@ -59,6 +66,27 @@ REQUIRED_SOURCE_PATHS = {
 
 class ArenaComponentError(RuntimeError):
     """Raised when no installed component can satisfy the selected arena season."""
+
+
+class ArenaPItemCoverageError(ArenaComponentError):
+    """Raised when engine P-item reachability and the host gallery disagree."""
+
+
+def _resolve_host_p_item_reference_root() -> Path:
+    """Resolve the fixed gallery in source-tree or installed Maa layout."""
+
+    candidates = (
+        PROJECT_ROOT / "assets" / HOST_P_ITEM_REFERENCE_RELATIVE_ROOT,
+        PROJECT_ROOT / HOST_P_ITEM_REFERENCE_RELATIVE_ROOT,
+    )
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if (candidate / "manifest.json").is_file()
+        ),
+        candidates[0],
+    )
 
 
 class ArenaUpstreamSource(Protocol):
@@ -98,6 +126,7 @@ class _CheckOutcome:
     status: str
     update_activated: bool
     warnings: tuple[str, ...]
+    p_item_coverage_update_failed: bool = False
 
 
 class GitHubProductionSource:
@@ -401,6 +430,10 @@ class ArenaComponentManager:
                     "activated component stage catalog differs from the immutable production catalog"
                 )
         except Exception as error:
+            p_item_coverage_update_failed = isinstance(
+                error,
+                ArenaPItemCoverageError,
+            )
             warnings.append(
                 f"RIS 竞技场组件更新到 {remote_commit[:12]} 失败，继续使用 {active.commit[:12]}：{error}"
             )
@@ -411,6 +444,7 @@ class ArenaComponentManager:
                 status="update_failed_using_active",
                 update_activated=False,
                 warnings=tuple(warnings),
+                p_item_coverage_update_failed=p_item_coverage_update_failed,
             )
 
         return _CheckOutcome(
@@ -456,6 +490,8 @@ class ArenaComponentManager:
         if destination.is_dir():
             try:
                 existing = self.validator(destination, commit)
+            except ArenaPItemCoverageError:
+                raise
             except Exception:
                 raise ArenaComponentError(
                     "cached component directory is invalid; the immutable version was not overwritten"
@@ -584,9 +620,28 @@ def _validate_component_bundle(bundle: Path, expected_commit: str) -> _BundleInf
     if info.commit != expected_commit:
         raise ArenaComponentError("arena component commit does not match the requested production deployment")
     try:
-        ArenaEntityCatalog.from_bundle(bundle)
+        entity_catalog = ArenaEntityCatalog.from_bundle(bundle)
     except (ArenaCatalogError, OSError, ValueError) as error:
         raise ArenaComponentError(f"arena component entity catalog is invalid: {error}") from error
+    try:
+        from p_item_recognition import PItemReferenceError, PItemRenderedReferenceGallery
+    except ImportError as error:
+        raise ArenaComponentError(
+            "host P-item reference runtime is unavailable"
+        ) from error
+    try:
+        reference_gallery = PItemRenderedReferenceGallery.load(
+            _resolve_host_p_item_reference_root()
+        )
+    except (OSError, KeyError, TypeError, ValueError, PItemReferenceError) as error:
+        raise ArenaComponentError(
+            "host P-item reference gallery is unavailable or invalid"
+        ) from error
+    _validate_component_p_item_coverage(
+        entity_catalog,
+        reference_gallery.p_item_ids,
+        provisional_gallery_ids=reference_gallery.provisional_p_item_ids,
+    )
 
     stage_ids = [
         stage.stage_id
@@ -638,6 +693,38 @@ def _validate_component_bundle(bundle: Path, expected_commit: str) -> _BundleInf
         raise ArenaComponentError(f"arena component import smoke failed: {detail}")
     _validate_runner_protocol(bundle, info)
     return info
+
+
+def _validate_component_p_item_coverage(
+    catalog: ArenaEntityCatalog,
+    gallery_ids: Sequence[int],
+    *,
+    provisional_gallery_ids: Sequence[int] = (),
+) -> None:
+    """Reject activation before new arena IDs outrun the host visual contract."""
+
+    represented = frozenset(int(value) for value in gallery_ids)
+    required = frozenset(catalog.arena_p_item_reference_required_ids())
+    missing = tuple(sorted(required - represented))
+    if missing:
+        raise ArenaPItemCoverageError(
+            "arena component requires P-item IDs absent from the host reference "
+            f"gallery: {missing!r}"
+        )
+    provisional = frozenset(int(value) for value in provisional_gallery_ids)
+    stale_provisional = tuple(sorted(provisional - required))
+    if stale_provisional:
+        raise ArenaPItemCoverageError(
+            "host provisional P-item IDs are absent from the candidate arena-stage "
+            f"catalog: {stale_provisional!r}"
+        )
+    catalog_ids = frozenset(catalog.p_item_business_ids())
+    unknown_gallery_ids = tuple(sorted(represented - catalog_ids))
+    if unknown_gallery_ids:
+        raise ArenaPItemCoverageError(
+            "host P-item reference gallery contains IDs absent from the candidate "
+            f"P-item catalog: {unknown_gallery_ids!r}"
+        )
 
 
 def _validate_runner_protocol(bundle: Path, info: _BundleInfo) -> None:
@@ -719,6 +806,16 @@ def _resolve_selection(outcome: _CheckOutcome, selection: str | int) -> ArenaCom
         season = outcome.bundle.catalog.resolve(selection)
     except StageCatalogError as error:
         raise ArenaComponentError(f"active arena component cannot resolve the selected season: {error}") from error
+    if (
+        outcome.p_item_coverage_update_failed
+        and outcome.remote_latest_season is not None
+        and season.season >= outcome.remote_latest_season
+    ):
+        raise ArenaComponentError(
+            "RIS production P-item coverage changed, but its complete engine/data "
+            "component could not be activated; the current/latest season will not use "
+            "the older P-item catalog"
+        )
     if (
         selection == "latest"
         and outcome.remote_latest_season is not None

@@ -16,6 +16,19 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
+def _canonical_json_bytes(value: object) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _named_file_set_sha256(paths: tuple[Path, ...]) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(paths, key=lambda item: item.name):
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(_sha256(path)))
+    return digest.hexdigest().upper()
+
+
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog-dir", type=Path, required=True)
@@ -225,6 +238,12 @@ def main() -> int:
             "repository": "https://github.com/surisuririsu/gakumas-tools",
             "revision": args.source_revision,
             "license": "BSD-3-Clause",
+            "catalog_file_set_sha256": _named_file_set_sha256(
+                (
+                    catalog_dir / "skill_cards.json",
+                    catalog_dir / "customizations.json",
+                )
+            ),
             "source_set_sha256": source_digest.hexdigest().upper(),
         },
         "gallery": {
@@ -249,11 +268,16 @@ def main() -> int:
             "minimum_digit_margin": 0.05,
             "rule_version": "arena-generic-cost-v8-id-independent-zero-topology",
         },
+        "build": {
+            "deterministic_output": "NPZ_AND_CANONICAL_LF_JSON",
+            "tool_contract": "task095-arena-card-cost-reference-v1",
+        },
+        "production_handoff": {
+            "reason": ("fixed card-cost reference candidate requires container and offline behavior evaluation before promotion"),
+            "status": "PENDING_VALIDATION",
+        },
     }
-    (output_dir / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    (output_dir / "manifest.json").write_bytes(_canonical_json_bytes(manifest))
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0
 

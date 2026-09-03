@@ -4,6 +4,7 @@ import json
 from typing import Any
 from pathlib import Path
 from dataclasses import dataclass
+from collections.abc import Mapping
 
 from .model import ModelIntegrityError, sha256_file
 from .types import UNKNOWN, CandidateBox, CardPrediction
@@ -28,6 +29,76 @@ CARD_ART_EXCLUSION_BOXES = (
     (0.64, 0.58, 1.00, 1.00),
 )
 UPGRADE_MARKER_BOX = (0.75, 0.36, 0.98, 0.64)
+
+
+def _declared_business_card_ids(source: Any) -> frozenset[str]:
+    """Expand one manifest's exact business-card coverage declaration."""
+
+    if not isinstance(source, Mapping):
+        raise ModelIntegrityError("embedding source metadata is missing")
+
+    declared: set[int] | None = None
+    raw_ids = source.get("business_card_ids")
+    if raw_ids is not None:
+        if not isinstance(raw_ids, list) or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in raw_ids
+        ):
+            raise ModelIntegrityError("embedding business-card ID declaration is invalid")
+        if len(raw_ids) != len(set(raw_ids)):
+            raise ModelIntegrityError("embedding business-card ID declaration contains duplicates")
+        declared = set(raw_ids)
+
+    raw_ranges = source.get("business_card_id_ranges")
+    if raw_ranges is not None:
+        if not isinstance(raw_ranges, list):
+            raise ModelIntegrityError("embedding business-card ID ranges are invalid")
+        expanded: set[int] = set()
+        for item in raw_ranges:
+            if (
+                not isinstance(item, list)
+                or len(item) != 2
+                or any(isinstance(value, bool) or not isinstance(value, int) for value in item)
+                or item[0] < 1
+                or item[1] < item[0]
+            ):
+                raise ModelIntegrityError("embedding business-card ID ranges are invalid")
+            values = set(range(item[0], item[1] + 1))
+            if expanded.intersection(values):
+                raise ModelIntegrityError("embedding business-card ID ranges overlap")
+            expanded.update(values)
+        if declared is not None and declared != expanded:
+            raise ModelIntegrityError("embedding business-card ID declarations disagree")
+        declared = expanded
+
+    minimum = source.get("business_card_id_min")
+    maximum = source.get("business_card_id_max")
+    if (minimum is None) != (maximum is None):
+        raise ModelIntegrityError("embedding business-card ID range is incomplete")
+    if minimum is not None:
+        if (
+            isinstance(minimum, bool)
+            or isinstance(maximum, bool)
+            or not isinstance(minimum, int)
+            or not isinstance(maximum, int)
+            or minimum < 1
+            or maximum < minimum
+        ):
+            raise ModelIntegrityError("embedding business-card ID range is invalid")
+        contiguous = set(range(minimum, maximum + 1))
+        if declared is None:
+            declared = contiguous
+        elif declared != contiguous:
+            raise ModelIntegrityError("embedding business-card ID range disagrees with the exact set")
+
+    if not declared:
+        raise ModelIntegrityError("embedding manifest has no exact business-card ID set")
+    count = source.get("business_card_id_count")
+    if count is not None and (
+        isinstance(count, bool) or not isinstance(count, int) or count != len(declared)
+    ):
+        raise ModelIntegrityError("embedding business-card ID count disagrees with the exact set")
+    return frozenset(str(value) for value in declared)
 
 
 def focus_card_art(image: Any) -> Any:
@@ -522,16 +593,36 @@ class EmbeddingCardRecognizer:
             not isinstance(class_table, list)
             or not all(isinstance(value, str) and value.split("_", 1)[0].isdigit() for value in class_table)
             or len(class_table) != len(set(class_table))
-            or {value.split("_", 1)[0] for value in class_table} != {str(value) for value in range(1, 857)}
         ):
-            raise ModelIntegrityError("embedding class table must cover every business ID 1..856")
+            raise ModelIntegrityError("embedding class table is invalid")
+        gallery = EmbeddingGallery.load(
+            root / str(gallery_info.get("path", "")),
+            manifest_path,
+        )
+        if tuple(class_table) != gallery.class_names:
+            raise ModelIntegrityError("embedding class table and gallery order disagree")
+        declared_ids = _declared_business_card_ids(manifest.get("source"))
+        actual_ids = frozenset(gallery.card_ids)
+        if actual_ids != declared_ids:
+            missing = sorted(declared_ids - actual_ids, key=int)
+            surplus = sorted(actual_ids - declared_ids, key=int)
+            raise ModelIntegrityError(
+                f"embedding gallery business-card coverage disagrees: missing={missing}, surplus={surplus}"
+            )
+        visual_identity_count = manifest["source"].get("visual_identity_count")
+        if (
+            isinstance(visual_identity_count, bool)
+            or not isinstance(visual_identity_count, int)
+            or visual_identity_count != len(set(gallery.visual_group_ids))
+        ):
+            raise ModelIntegrityError("embedding visual-identity count disagrees with the gallery")
         return cls(
             OnnxCardEmbedder(
                 root / str(model.get("path", "")),
                 expected_model_sha256=str(model.get("sha256", "")),
                 source_color_order=source_color_order,
             ),
-            EmbeddingGallery.load(root / str(gallery_info.get("path", "")), manifest_path),
+            gallery,
             classes_sha256=classes_sha256,
             upgrade_maximum_distance=float(runtime["upgrade_maximum_distance"]),
             upgrade_minimum_margin=float(runtime["upgrade_minimum_margin"]),

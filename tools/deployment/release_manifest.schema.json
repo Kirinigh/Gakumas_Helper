@@ -35,7 +35,7 @@
     },
     "application": {
       "type": "object",
-      "required": ["interface_version", "source_repository", "source_revision", "upstream", "python_packages"],
+      "required": ["interface_version", "source_repository", "source_revision", "upstream", "mfa_core", "python_packages"],
       "properties": {
         "interface_version": { "type": "integer" },
         "source_repository": { "type": "string", "pattern": "^https://github\\.com/[^/]+/[^/]+$" },
@@ -51,6 +51,7 @@
           },
           "additionalProperties": false
         },
+        "mfa_core": { "$ref": "#/$defs/mfa_core" },
         "python_packages": {
           "type": "object",
           "required": ["numpy", "onnxruntime", "opencv-python-headless", "pillow", "pyyaml"],
@@ -143,7 +144,7 @@
         "notices_embedded": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
-          "minItems": 6,
+          "minItems": 7,
           "uniqueItems": true
         },
         "notice_sha256": {
@@ -153,6 +154,7 @@
             "ASSET_PROVENANCE.md",
             "THIRD_PARTY_NOTICES/gakumas-tools-LICENSE",
             "THIRD_PARTY_NOTICES/GAME-CONTENT-NOTICE.md",
+            "THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE",
             "assets/arena-winrate/THIRD_PARTY_NOTICES/gakumas-tools-LICENSE",
             "assets/arena-winrate/THIRD_PARTY_NOTICES/Node.js-LICENSE"
           ],
@@ -161,6 +163,7 @@
             "ASSET_PROVENANCE.md": { "$ref": "#/$defs/sha256" },
             "THIRD_PARTY_NOTICES/gakumas-tools-LICENSE": { "$ref": "#/$defs/sha256" },
             "THIRD_PARTY_NOTICES/GAME-CONTENT-NOTICE.md": { "$ref": "#/$defs/sha256" },
+            "THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE": { "$ref": "#/$defs/sha256" },
             "assets/arena-winrate/THIRD_PARTY_NOTICES/gakumas-tools-LICENSE": { "$ref": "#/$defs/sha256" },
             "assets/arena-winrate/THIRD_PARTY_NOTICES/Node.js-LICENSE": { "$ref": "#/$defs/sha256" }
           },
@@ -199,6 +202,141 @@
       "properties": {
         "manifest": { "type": "string", "minLength": 1 },
         "manifest_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "mfa_core": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "component",
+        "status",
+        "bundle_manifest_sha256",
+        "upstream",
+        "patch",
+        "build",
+        "input",
+        "payload",
+        "license"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "component": { "const": "mfaavalonia_core" },
+        "status": { "const": "READY" },
+        "bundle_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "upstream": {
+          "type": "object",
+          "required": [
+            "repository",
+            "tag",
+            "commit",
+            "source_archive",
+            "source_archive_sha256",
+            "version_checker_git_blob_sha1"
+          ],
+          "properties": {
+            "repository": { "const": "https://github.com/MaaXYZ/MFAAvalonia" },
+            "tag": { "const": "v2.15.2" },
+            "commit": { "const": "6065fe33798b72906c5079fa6f210646801d9a5c" },
+            "source_archive": { "const": "MFAAvalonia-2.15.2.zip" },
+            "source_archive_sha256": { "const": "76DD02AFE4B1529B1D4F6416B3442E1BD7E64F13B72D8A3B428F955B5E26F67A" },
+            "version_checker_git_blob_sha1": { "const": "6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7" }
+          },
+          "additionalProperties": false
+        },
+        "patch": {
+          "type": "object",
+          "required": ["path", "sha256", "scope"],
+          "properties": {
+            "path": { "const": "tools/deployment/mfa/MFAAvalonia-v2.15.2-resource-update-github-fallback.patch" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "scope": {
+              "type": "array",
+              "prefixItems": [
+                { "const": "resource_update_check" },
+                { "const": "resource_update_apply" },
+                { "const": "deterministic_build_path" }
+              ],
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "additionalProperties": false
+        },
+        "build": {
+          "type": "object",
+          "required": [
+            "sdk_version_components",
+            "sdk_archive_sha512",
+            "configuration",
+            "runtime",
+            "project",
+            "source_revision_id",
+            "sentry_project_directory",
+            "compiler_path_map_target",
+            "project_directory_override_scope",
+            "continuous_integration_build",
+            "deterministic",
+            "incremental_build",
+            "max_cpu_count",
+            "sentry_cli"
+          ],
+          "properties": {
+            "sdk_version_components": {
+              "type": "array",
+              "prefixItems": [
+                { "const": 10 },
+                { "const": 0 },
+                { "const": 400 }
+              ],
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "sdk_archive_sha512": { "const": "9B8B88590E4DA131BFD0DA7AA089D0FC04D5418D5F8607EC13D55DC5A17B4399AFD54D496C12657FA05C6C6546DC5EAB930F26AC6C50F2D3A7712C0FB378C366" },
+            "configuration": { "const": "Release" },
+            "runtime": { "const": "win-x64" },
+            "project": { "const": "MFAAvalonia/MFAAvalonia.csproj" },
+            "source_revision_id": { "const": "6065fe33798b72906c5079fa6f210646801d9a5c" },
+            "sentry_project_directory": { "const": "/_/MFAAvalonia/" },
+            "compiler_path_map_target": { "const": "/_/MFAAvalonia/" },
+            "project_directory_override_scope": { "const": "WriteSentryAttributes" },
+            "continuous_integration_build": { "const": true },
+            "deterministic": { "const": true },
+            "incremental_build": { "const": false },
+            "max_cpu_count": { "const": 1 },
+            "sentry_cli": { "const": false }
+          },
+          "additionalProperties": false
+        },
+        "input": {
+          "type": "object",
+          "required": ["baseline_dll_sha256"],
+          "properties": {
+            "baseline_dll_sha256": { "const": "2DF2226CE45FCE8AF0C4DF8022F399B0FA74E8378C9B23C4177BAC5EE6C295C8" }
+          },
+          "additionalProperties": false
+        },
+        "payload": {
+          "type": "object",
+          "required": ["bundle_path", "install_path", "sha256", "size"],
+          "properties": {
+            "bundle_path": { "const": "MFAAvalonia.Core.dll" },
+            "install_path": { "const": "libs/MFAAvalonia.Core.dll" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "size": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "license": {
+          "type": "object",
+          "required": ["spdx", "upstream_file", "sha256"],
+          "properties": {
+            "spdx": { "const": "GPL-3.0-only" },
+            "upstream_file": { "const": "LICENSE" },
+            "sha256": { "const": "3972DC9744F6499F0F9B2DBF76696F2AE7AD8AF9B23DDE66D6AF86C9DFB36986" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     }

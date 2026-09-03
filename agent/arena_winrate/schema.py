@@ -289,6 +289,10 @@ def _validate_root_header(
     season = root.get("season")
     if not _is_int(season) or season < 1:
         issues.append(ValidationIssue("$.season", "must be a positive integer"))
+    if "arena_grade" in root:
+        arena_grade = root.get("arena_grade")
+        if not _is_int(arena_grade) or not 1 <= arena_grade <= 7:
+            issues.append(ValidationIssue("$.arena_grade", "must be an integer from 1 through 7"))
 
     stage_ids = _validate_int_list(root.get("stageIds"), "$.stageIds", issues, length=3, allow_zero=False)
     if stage_ids is not None and len(set(stage_ids)) != len(stage_ids):

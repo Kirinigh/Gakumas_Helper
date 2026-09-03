@@ -7,15 +7,21 @@ import json
 import math
 from uuid import uuid4
 from typing import Any
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 
 from .schema import SnapshotValidationError, validate_own_snapshot
 from .adapter import UPSTREAM_COMMIT, OwnScoreBatch
 
-CACHE_SCHEMA_VERSION = 1
-SUMMARY_RENDER_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
+LEGACY_CACHE_SCHEMA_VERSION = 1
+SUPPORTED_CACHE_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION}
+)
+SUMMARY_RENDER_VERSION = 2
 MAX_SUMMARY_CACHE_BYTES = 64 * 1024 * 1024
 MAX_SUMMARY_FILE_BYTES = 1024 * 1024
 DEFAULT_OWN_SCORE_CACHE = (
@@ -32,10 +38,72 @@ class _CacheSummaryError(ValueError):
     """Raised when cached display fields cannot support a truthful summary."""
 
 
+@dataclass(frozen=True)
+class OwnGradeState:
+    """Recognized, manually overridden, and effective arena Grade state."""
+
+    recognized_grade: int | None
+    grade_override: int | None
+    effective_grade: int | None
+    source: str
+
+
 def _positive_integer(value: object, *, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise _CacheSummaryError(f"{field} 不是正整数")
     return value
+
+
+def _cache_schema_version(record: Mapping[str, Any]) -> int:
+    value = record.get("schema_version")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _CacheSummaryError("缓存格式版本无效")
+    if value not in SUPPORTED_CACHE_SCHEMA_VERSIONS:
+        raise _CacheSummaryError("缓存格式版本不兼容")
+    return value
+
+
+def _grade_value(value: object, *, field: str, allow_none: bool) -> int | None:
+    if value is None and allow_none:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 7:
+        raise _CacheSummaryError(f"{field} 必须是 1 到 7 的整数")
+    return value
+
+
+def _grade_state(
+    record: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> OwnGradeState:
+    cache_schema = _cache_schema_version(record)
+    recognized = (
+        _grade_value(snapshot.get("arena_grade"), field="arena_grade", allow_none=False)
+        if "arena_grade" in snapshot
+        else None
+    )
+    override = None
+    if cache_schema >= CACHE_SCHEMA_VERSION and "grade_override" in record:
+        override = _grade_value(
+            record.get("grade_override"),
+            field="grade_override",
+            allow_none=True,
+        )
+    if override is not None:
+        return OwnGradeState(recognized, override, override, "manual_override")
+    if recognized is not None:
+        return OwnGradeState(recognized, None, recognized, "recognized")
+    return OwnGradeState(None, None, None, "unrecognized")
+
+
+def _round_half_up_mean(scores: Sequence[int]) -> int:
+    if not scores:
+        raise _CacheSummaryError("原始分数样本为空")
+    return int(
+        (Decimal(sum(scores)) / Decimal(len(scores))).quantize(
+            Decimal("1"),
+            rounding=ROUND_HALF_UP,
+        )
+    )
 
 
 def _summarize_scores(scores: Sequence[int]) -> dict[str, int | float]:
@@ -127,18 +195,47 @@ def _unloaded_summary(reason: str) -> str:
     )
 
 
+def _grade_summary_line(state: OwnGradeState) -> str:
+    source_labels = {
+        "manual_override": "人工覆盖",
+        "recognized": "己方读取",
+        "unrecognized": "未识别",
+    }
+    grade = "未识别" if state.effective_grade is None else str(state.effective_grade)
+    return f"- 有效 Grade：{grade}（来源：{source_labels[state.source]}）"
+
+
+def _empty_member_average_table() -> list[str]:
+    lines = [
+        "| 舞台/栏位 | 成员分数平均值 |",
+        "| --- | ---: |",
+    ]
+    for stage_number in range(1, 4):
+        for slot in range(1, 4):
+            lines.append(f"| {stage_number}/{slot} | 未识别 |")
+    return lines
+
+
 def _missing_summary() -> str:
-    return (
-        "### 当前己方缓存\n\n"
-        "**状态：尚未生成**\n\n"
-        "请先选择正确的竞技场期数，再运行“重算竞技场己方总分”。\n\n"
-        "> 重算完成后，切换到其他任务再返回本页即可刷新摘要。\n"
-    )
+    lines = [
+        "### 当前己方缓存",
+        "",
+        "**状态：尚未生成**",
+        "",
+        _grade_summary_line(OwnGradeState(None, None, None, "unrecognized")),
+        "",
+        *_empty_member_average_table(),
+        "",
+        "请先选择正确的竞技场期数，再运行“重算竞技场己方总分”。",
+        "",
+        "> 重算完成后，切换到其他任务再返回本页即可刷新摘要。",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _render_summary(record: Mapping[str, Any], *, cache_mtime: float | None = None) -> str:
-    if record.get("schema_version") != CACHE_SCHEMA_VERSION:
-        raise _CacheSummaryError("缓存格式版本不兼容")
+    _cache_schema_version(record)
     snapshot_value = record.get("own_snapshot")
     if not isinstance(snapshot_value, Mapping):
         raise _CacheSummaryError("己方快照缺失")
@@ -146,6 +243,7 @@ def _render_summary(record: Mapping[str, Any], *, cache_mtime: float | None = No
         snapshot = validate_own_snapshot(snapshot_value)
     except SnapshotValidationError as error:
         raise _CacheSummaryError("己方快照结构不完整") from error
+    grade_state = _grade_state(record, snapshot)
 
     season = _positive_integer(record.get("season"), field="season")
     simulations = _positive_integer(record.get("simulations"), field="simulations")
@@ -173,9 +271,10 @@ def _render_summary(record: Mapping[str, Any], *, cache_mtime: float | None = No
         raise _CacheSummaryError("缓存必须包含三个舞台的分数")
 
     stage_rows: list[tuple[int, int, int, dict[str, int | float]]] = []
-    member_rows: list[
-        tuple[int, int, list[int], list[int], int, int, int | None, int | float]
-    ] = []
+    member_rows: dict[
+        tuple[int, int],
+        tuple[list[int], list[int], int, int, int | None, int],
+    ] = {}
     total_members = 0
     total_p_items = 0
     total_skill_cards = 0
@@ -217,8 +316,9 @@ def _render_summary(record: Mapping[str, Any], *, cache_mtime: float | None = No
                 raise _CacheSummaryError(f"舞台 {stage_number} 成员 {member_index} 的原始样本无效")
             validated_scores = list(scores)
             validated_member_scores.append(validated_scores)
-            member_distribution = _summarize_scores(validated_scores)
             slot = _positive_integer(member.get("slot"), field=f"舞台 {stage_number} 成员栏位")
+            if slot > 3 or (stage_number, slot) in member_rows:
+                raise _CacheSummaryError(f"舞台 {stage_number} 成员栏位无效或重复")
             loadout = member.get("loadout")
             if not isinstance(loadout, Mapping):
                 raise _CacheSummaryError(f"舞台 {stage_number} 栏位 {slot} 的配置缺失")
@@ -258,17 +358,13 @@ def _render_summary(record: Mapping[str, Any], *, cache_mtime: float | None = No
                 duplicates_fully_recorded = False
             else:
                 total_duplicates += duplicate_count
-            member_rows.append(
-                (
-                    stage_number,
-                    slot,
-                    list(params),
-                    visible_p_items,
-                    len(visible_skills),
-                    customization_count,
-                    duplicate_count,
-                    member_distribution["median"],
-                )
+            member_rows[(stage_number, slot)] = (
+                list(params),
+                visible_p_items,
+                len(visible_skills),
+                customization_count,
+                duplicate_count,
+                _round_half_up_mean(validated_scores),
             )
 
         raw_team_scores = [
@@ -304,6 +400,7 @@ def _render_summary(record: Mapping[str, Any], *, cache_mtime: float | None = No
         f"- 模拟样本：{simulations:,} 次；seed：{seed}",
         f"- 模拟器版本：{upstream_commit[:12]}",
         f"- 来源：{source}；支援加成：{support_bonus:.2f}%",
+        _grade_summary_line(grade_state),
         time_line,
     ]
     if isinstance(read_seconds, (int, float)) and not isinstance(read_seconds, bool):
@@ -327,17 +424,25 @@ def _render_summary(record: Mapping[str, Any], *, cache_mtime: float | None = No
     lines.extend(
         [
             "",
-            "| 舞台/栏位 | Vo / Da / Vi / 体力 | P 道具 ID | 有效卡 | 强化次数 | 排除重复 | 成员分数中位数 |",
+            "| 舞台/栏位 | Vo / Da / Vi / 体力 | P 道具 ID | 有效卡 | 强化次数 | 排除重复 | 成员分数平均值 |",
             "| --- | --- | --- | ---: | ---: | ---: | ---: |",
         ]
     )
-    for stage_number, slot, params, p_items, card_count, customization_count, duplicates, median in member_rows:
-        p_item_text = ", ".join(str(item) for item in p_items) if p_items else "无"
-        duplicate_text = str(duplicates) if duplicates is not None else "未知（缓存未记录）"
-        lines.append(
-            f"| {stage_number}/{slot} | {' / '.join(str(item) for item in params)} | {p_item_text} | "
-            f"{card_count} | {customization_count} | {duplicate_text} | {_format_score(median)} |"
-        )
+    for stage_number in range(1, 4):
+        for slot in range(1, 4):
+            row = member_rows.get((stage_number, slot))
+            if row is None:
+                lines.append(
+                    f"| {stage_number}/{slot} | 未识别 | 未识别 | 未识别 | 未识别 | 未识别 | 未识别 |"
+                )
+                continue
+            params, p_items, card_count, customization_count, duplicates, mean = row
+            p_item_text = ", ".join(str(item) for item in p_items) if p_items else "无"
+            duplicate_text = str(duplicates) if duplicates is not None else "未知（缓存未记录）"
+            lines.append(
+                f"| {stage_number}/{slot} | {' / '.join(str(item) for item in params)} | {p_item_text} | "
+                f"{card_count} | {customization_count} | {duplicate_text} | {_format_score(mean)} |"
+            )
     lines.extend(
         [
             "",
@@ -388,6 +493,92 @@ class OwnScoreCacheStore:
                 temporary.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def _read_record(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise OwnScoreCacheError("own-score cache is unreadable; use manual recalculation") from error
+        if not isinstance(value, Mapping):
+            raise OwnScoreCacheError("own-score cache schema changed; use manual recalculation")
+        try:
+            _cache_schema_version(value)
+        except _CacheSummaryError as error:
+            raise OwnScoreCacheError("own-score cache schema changed; use manual recalculation") from error
+        return dict(value)
+
+    def get_grade_state(self) -> OwnGradeState:
+        """Return recognized, overridden, and effective Grade without changing the cache."""
+
+        if not self.path.is_file():
+            return OwnGradeState(None, None, None, "unrecognized")
+        record = self._read_record()
+        snapshot_value = record.get("own_snapshot")
+        if not isinstance(snapshot_value, Mapping):
+            raise OwnScoreCacheError("cached own lineup is invalid; use manual recalculation")
+        try:
+            snapshot = validate_own_snapshot(snapshot_value)
+            return _grade_state(record, snapshot)
+        except (SnapshotValidationError, _CacheSummaryError) as error:
+            raise OwnScoreCacheError("cached arena Grade is invalid; use manual recalculation") from error
+
+    def set_grade_override(self, value: int | None) -> OwnGradeState:
+        """Set or clear the manual Grade override and atomically persist the cache."""
+
+        try:
+            normalized = _grade_value(value, field="grade_override", allow_none=True)
+        except _CacheSummaryError as error:
+            raise ValueError(str(error)) from error
+        if not self.path.is_file():
+            raise OwnScoreCacheError("own-score cache is missing; use manual recalculation")
+        record = self._read_record()
+        snapshot_value = record.get("own_snapshot")
+        if not isinstance(snapshot_value, Mapping):
+            raise OwnScoreCacheError("cached own lineup is invalid; use manual recalculation")
+        try:
+            snapshot = validate_own_snapshot(snapshot_value)
+            current_state = _grade_state(record, snapshot)
+        except (SnapshotValidationError, _CacheSummaryError) as error:
+            raise OwnScoreCacheError("cached arena Grade is invalid; use manual recalculation") from error
+        if (
+            record.get("schema_version") == CACHE_SCHEMA_VERSION
+            and record.get("grade_override") == normalized
+        ):
+            return current_state
+        updated = dict(record)
+        updated["schema_version"] = CACHE_SCHEMA_VERSION
+        updated["grade_override"] = normalized
+        try:
+            summary = _render_summary(updated)
+        except _CacheSummaryError as error:
+            raise OwnScoreCacheError(f"own-score cache summary data is invalid: {error}") from error
+        try:
+            self._atomic_write(
+                self.path,
+                json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True),
+            )
+        except OSError as error:
+            raise OwnScoreCacheError(
+                f"own-score cache could not be written: {_summary_write_reason(error)}",
+                technical_detail=f"cache_path={self.path!s}; {error!r}",
+            ) from error
+        state = _grade_state(updated, snapshot)
+        self.last_summary_error = None
+        self.last_summary_error_detail = None
+        try:
+            cache_stat = self.path.stat()
+            self._atomic_write(
+                self.summary_path,
+                _with_summary_header(
+                    summary,
+                    cache_size=cache_stat.st_size,
+                    cache_mtime_ns=cache_stat.st_mtime_ns,
+                ),
+            )
+        except OSError as error:
+            self.last_summary_error = f"摘要文件写入失败：{_summary_write_reason(error)}；下次启动将重试"
+            self.last_summary_error_detail = f"summary_path={self.summary_path!s}; {error!r}"
+        return state
 
     def refresh_summary(self) -> str:
         """Rebuild the user-facing Markdown from the authoritative JSON cache."""
@@ -469,6 +660,18 @@ class OwnScoreCacheStore:
         seed: int,
     ) -> dict[str, Any]:
         snapshot = validate_own_snapshot(own_snapshot)
+        grade_override = None
+        if self.path.is_file():
+            try:
+                existing = self._read_record()
+                if existing.get("schema_version") == CACHE_SCHEMA_VERSION:
+                    grade_override = _grade_value(
+                        existing.get("grade_override"),
+                        field="grade_override",
+                        allow_none=True,
+                    )
+            except (OwnScoreCacheError, _CacheSummaryError):
+                grade_override = None
         stages: list[dict[str, Any]] = []
         for stage in batch.stage_distributions:
             raw = stage.get("own_member_scores")
@@ -485,6 +688,7 @@ class OwnScoreCacheStore:
             )
         record = {
             "schema_version": CACHE_SCHEMA_VERSION,
+            "grade_override": grade_override,
             "upstream_commit": batch.upstream_commit,
             "season": snapshot["season"],
             "stageIds": snapshot["stageIds"],
@@ -540,12 +744,7 @@ class OwnScoreCacheStore:
             raise ValueError("expected_upstream_commit must be a lowercase 40-character SHA")
         if not self.path.is_file():
             return None
-        try:
-            record = json.loads(self.path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise OwnScoreCacheError("own-score cache is unreadable; use manual recalculation") from error
-        if not isinstance(record, Mapping) or record.get("schema_version") != CACHE_SCHEMA_VERSION:
-            raise OwnScoreCacheError("own-score cache schema changed; use manual recalculation")
+        record = self._read_record()
         if record.get("season") != season or record.get("stageIds") != list(stage_ids):
             return None
         if record.get("upstream_commit") != expected_upstream_commit:
@@ -588,7 +787,7 @@ class OwnScoreCacheStore:
                         "member_scores": sliced,
                     }
                 )
-        except (KeyError, TypeError) as error:
+        except (KeyError, TypeError, SnapshotValidationError) as error:
             raise OwnScoreCacheError("own-score cache contents are invalid; use manual recalculation") from error
         engine_cache = {
             "upstream_commit": expected_upstream_commit,
@@ -610,12 +809,7 @@ class OwnScoreCacheStore:
 
         if not self.path.is_file():
             return None
-        try:
-            record = json.loads(self.path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise OwnScoreCacheError("own-score cache is unreadable; use manual recalculation") from error
-        if not isinstance(record, Mapping) or record.get("schema_version") != CACHE_SCHEMA_VERSION:
-            raise OwnScoreCacheError("own-score cache schema changed; use manual recalculation")
+        record = self._read_record()
         if record.get("season") != season or record.get("stageIds") != list(stage_ids):
             return None
         try:

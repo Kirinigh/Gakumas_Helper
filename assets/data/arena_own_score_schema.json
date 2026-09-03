@@ -10,6 +10,7 @@
     "capture_id": { "type": "string", "minLength": 1 },
     "source": { "enum": ["frozen_replay", "live_screen"] },
     "season": { "type": "integer", "minimum": 1 },
+    "arena_grade": { "type": "integer", "minimum": 1, "maximum": 7 },
     "stageIds": {
       "type": "array",
       "minItems": 3,

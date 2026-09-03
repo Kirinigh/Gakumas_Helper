@@ -10,13 +10,17 @@ from __future__ import annotations
 import re
 import json
 import time
+import statistics
 import unicodedata
+from copy import deepcopy
 from typing import Any, Protocol, NamedTuple
 from pathlib import Path
 from threading import Lock
+from collections import Counter
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 
+from utils import logger
 from maa.context import Context
 from maa.pipeline import JClick, JActionType
 from arena_winrate import (
@@ -64,6 +68,8 @@ from p_item_recognition import (
     PItemReferenceDecision,
     PItemRenderedReferenceGallery,
     measure_p_item_content_generation,
+    p_item_content_generation_signatures,
+    measure_p_item_content_generation_from_signatures,
 )
 from card_selection.model import frame_identifier, isolate_card_candidates
 
@@ -109,6 +115,37 @@ CARD_COST_REFERENCE_ROOT = _resource_model_root(
 )
 P_ITEM_REFERENCE_ROOT = _resource_model_root("embedding", "p_item_reference")
 CARD_CONTENT_STABILITY_MAX_MEAN_ABS_ERROR = 0.75
+# The inner radius is at most twice the already accepted first-frame raster
+# jitter while retaining exact normalized width/height.  The outer radius is
+# rejection-only: a competing label inside it disables calibrated transfer.
+BADGE_GLYPH_CALIBRATED_INNER_L1_MAX = 240
+BADGE_GLYPH_CALIBRATED_INNER_MSE_MAX = 16.0
+BADGE_GLYPH_CALIBRATED_INNER_CHANGED_MAX = 16
+BADGE_GLYPH_CALIBRATED_INNER_XOR_MAX = 16
+BADGE_GLYPH_CALIBRATED_INNER_IOU_MIN = 0.90
+BADGE_GLYPH_CALIBRATED_OUTER_L1_MAX = 480
+BADGE_GLYPH_CALIBRATED_OUTER_MSE_MAX = 32.0
+BADGE_GLYPH_CALIBRATED_OUTER_CHANGED_MAX = 32
+BADGE_GLYPH_CALIBRATED_OUTER_XOR_MAX = 32
+BADGE_GLYPH_CALIBRATED_OUTER_IOU_MIN = 0.80
+# A three-frame descriptor need not be byte-identical before each frame is sent
+# through the independent OCR vote.  The live 96x96 plate raster can settle by
+# one foreground pixel per capture while the component box and semantic glyph
+# stay fixed.  This gate admits only one chronological, nested contour change;
+# it never creates or transfers an exemplar label.
+BADGE_GLYPH_RASTER_SETTLING_AREA_DELTA_MAX = 2
+BADGE_GLYPH_RASTER_SETTLING_L1_MAX = 120
+BADGE_GLYPH_RASTER_SETTLING_CHANGED_MAX = 12
+BADGE_GLYPH_RASTER_SETTLING_XOR_MAX = 3
+BADGE_GLYPH_RASTER_SETTLING_IOU_MIN = 0.98
+# The packaged OCR and current extractor have independent positive holdout
+# coverage for count 1 only.  The wider 1-9 recognition domain remains active
+# as a veto except for one audited preprocessing shape: both wider polarity
+# pairs agree on the validated winner while the narrowest pair contains that
+# winner plus exactly one digit outside both the detail and validated domains.
+# A readable competing legal or validated count still stops and can never be
+# hidden by the clicked card's legal-state filter.
+BADGE_GLYPH_OCR_VALIDATED_ACCEPTANCE_COUNTS = frozenset((1,))
 
 
 class _BadgeShortlistResult(NamedTuple):
@@ -116,6 +153,87 @@ class _BadgeShortlistResult(NamedTuple):
 
     decision: CustomizationBadgeDecision
     observations: tuple[dict[str, Any], ...]
+
+
+class _FullFrameOcrEvidence(NamedTuple):
+    """One immutable OCR observation bound to one frozen capture object."""
+
+    image: Any
+    kind: str
+    hit: bool
+    filtered_items: tuple[Any, ...]
+    all_items: tuple[Any, ...]
+
+
+class _TitleAnchorOcrEvidence(NamedTuple):
+    """One title-specific fallback bound to the same frozen capture object."""
+
+    image: Any
+    matches: tuple[Any, ...]
+    native_items: tuple[Any, ...]
+
+
+class _TrustedSkillCardTitleRowsEvidence(NamedTuple):
+    """One semantic title result bound to one frozen capture object."""
+
+    image: Any
+    rows: tuple[str, ...]
+
+
+class _DetailIdentityObservation(NamedTuple):
+    """One exact-title semantic observation from the active click transaction."""
+
+    transaction_token: int
+    transaction_started: float
+    source_card_box: tuple[int, int, int, int]
+    interaction_box: tuple[int, int, int, int]
+    contact_released_at: float
+    capture_started_at: float
+    detail_image: Any
+    source_guard_frames: Any
+    restoration_signatures: Any
+    identity_frames: Any
+    title: str
+    card_id: int
+    customizations: tuple[tuple[str, int], ...]
+    evidence_mode: str
+
+
+class _DetailIdentityProof(NamedTuple):
+    """Two fresh exact-title observations bound to one physical click."""
+
+    transaction_token: int
+    transaction_started: float
+    source_card_box: tuple[int, int, int, int]
+    interaction_box: tuple[int, int, int, int]
+    contact_released_at: float
+    capture_started_at: tuple[float, float]
+    detail_images: tuple[Any, Any]
+    source_guard_frames: Any
+    restoration_signatures: Any
+    identity_frames: Any
+    title: str
+    card_id: int
+    customizations: tuple[tuple[str, int], ...]
+    resolution_source: str
+    evidence_mode: str
+    detail_confirmation_reads: int
+
+
+class _TitleBoundEffectRoiText(str):
+    """Merged ROI text carrying how many non-empty OCR passes produced it."""
+
+    observation_count: int
+
+    def __new__(cls, value: str, observation_count: int) -> "_TitleBoundEffectRoiText":
+        instance = str.__new__(cls, value)
+        instance.observation_count = observation_count
+        return instance
+
+
+def _effect_roi_observation_count(value: str) -> int:
+    count = getattr(value, "observation_count", 1)
+    return count if type(count) is int and count > 0 else 1
 
 
 class PItemReader(Protocol):
@@ -356,15 +474,20 @@ class MaaArenaReaderBackend:
         *,
         p_item_reader: PItemReader | None = None,
         card_swipe_duration_ms: int = 100,
+        known_grade: int | None = None,
     ) -> None:
         if card_swipe_duration_ms not in (50, 100, 150, 200):
             raise ValueError("card_swipe_duration_ms must be 50, 100, 150, or 200")
+        if known_grade is not None and (
+            type(known_grade) is not int or not 1 <= known_grade <= 7
+        ):
+            raise ValueError("known_grade must be an integer from 1 to 7")
         self.context = context
         self.season = season
         self.catalog = ArenaEntityCatalog.from_bundle(bundle_dir)
         self.p_item_reader = p_item_reader
         self._card_swipe_duration_ms = card_swipe_duration_ms
-        self._grade: int | None = None
+        self._grade = known_grade
         self._member_boxes: dict[tuple[str, int], dict[int, tuple[int, int, int, int]]] = {}
         self._member_slot_observations: dict[
             tuple[str, int],
@@ -377,6 +500,29 @@ class MaaArenaReaderBackend:
         self._card_count_frames: dict[int, tuple[Any, Any, Any]] = {}
         self._card_identity_frames: dict[
             int, tuple[tuple[dict[str, Any], ...], ...]
+        ] = {}
+        self._card_source_ocr_counts: dict[int, dict[str, int]] = {}
+        # A capture is immutable evidence.  Full-frame OCR, authoritative title
+        # extraction and title-bound ROI geometry must therefore share the raw
+        # boxes from that exact capture rather than asking the OCR backend to
+        # interpret the same pixels repeatedly.  Identity, not image bytes, is
+        # the boundary: a fresh capture must always receive fresh recognition.
+        self._full_frame_ocr_evidence: dict[int, _FullFrameOcrEvidence] = {}
+        self._title_anchor_ocr_evidence: dict[
+            tuple[int, str], _TitleAnchorOcrEvidence
+        ] = {}
+        self._trusted_skill_card_title_rows_cache: dict[
+            tuple[
+                int,
+                tuple[int, ...],
+                tuple[int, int, int, int] | None,
+            ],
+            _TrustedSkillCardTitleRowsEvidence,
+        ] = {}
+        self._card_source_guard_frames: dict[int, tuple[Any, ...]] = {}
+        self._card_source_guard_signature_cache: dict[
+            tuple[tuple[int, ...], tuple[tuple[int, int, int, int], ...]],
+            tuple[tuple[Any, ...], ...],
         ] = {}
         self._card_restoration_signatures: dict[
             int,
@@ -391,6 +537,10 @@ class MaaArenaReaderBackend:
         self._detail_semantic_confirmations: dict[
             tuple[int, int], dict[str, Any]
         ] = {}
+        self._detail_identity_proofs: dict[
+            tuple[int, int], _DetailIdentityProof
+        ] = {}
+        self._detail_title_disambiguations: list[dict[str, Any]] = []
         self._badge_local_results: dict[int, tuple[Any, ...]] = {}
         self._badge_glyph_observations: dict[
             tuple[int, int], tuple[dict[str, Any], ...]
@@ -398,13 +548,34 @@ class MaaArenaReaderBackend:
         self._badge_glyph_count_diagnostics: dict[
             tuple[int, int], dict[str, Any]
         ] = {}
+        # Member-local glyph exemplars are learned only from independently
+        # confirmed detail semantics.  They deliberately do not outlive the
+        # frozen twelve-card layout: a window/layout change or a new member
+        # starts with an empty calibration set.
+        self._badge_glyph_exemplars: dict[
+            tuple[int, ...], dict[str, Any]
+        ] = {}
+        self._badge_glyph_polluted_descriptors: set[tuple[int, ...]] = set()
+        self._badge_glyph_runtime_labels: dict[tuple[int, ...], int] = {}
+        # Persist only the low-dimensional, image-free provenance needed to
+        # audit whether a member-local exemplar can transfer across cards.
+        # The active exemplar table itself is still cleared at member close.
+        self._runtime_badge_glyph_exemplar_diagnostics: list[
+            dict[str, Any]
+        ] = []
+        self._runtime_badge_glyph_exemplar_comparisons: list[
+            dict[str, Any]
+        ] = []
         self._inferred_clicked_cards: dict[tuple[int, int], ClickedSkillCard] = {}
         self._active_inferred_clicked_card: tuple[int, int] | None = None
         self._card_detail_texts: dict[tuple[int, int], str] = {}
         self._card_detail_images: dict[tuple[int, int], Any] = {}
+        self._card_detail_last_contact_released_at: dict[
+            tuple[int, int], float
+        ] = {}
+        self._card_detail_capture_started_at: dict[tuple[int, int], float] = {}
         self._p_item_diagnostics: tuple[dict[str, Any], ...] = ()
         self._p_item_generation_evidence: dict[str, Any] = {}
-        self._p_item_source_frames: tuple[Any, Any, Any] | None = None
         self._card_recognizers: dict[bool, tuple[EmbeddingCardRecognizer, float, float]] = {}
         self._card_recognizer_lock = Lock()
         self._card_reference_gallery: BadgeReferenceGallery | None = None
@@ -422,7 +593,18 @@ class MaaArenaReaderBackend:
         self._runtime_counts: dict[str, int] = {}
         self._runtime_duration_samples: dict[str, list[float]] = {}
         self._card_transaction_started: dict[tuple[int, int], float] = {}
+        self._card_transaction_serial = 0
+        self._card_transaction_tokens: dict[tuple[int, int], int] = {}
+        self._card_transaction_source_boxes: dict[
+            tuple[int, int], tuple[int, int, int, int]
+        ] = {}
+        self._card_transaction_interaction_boxes: dict[
+            tuple[int, int], tuple[int, int, int, int]
+        ] = {}
         self._card_transaction_kinds: dict[tuple[int, int], str] = {}
+        self._card_transaction_ocr_started: dict[
+            tuple[int, int], tuple[int, int]
+        ] = {}
         self._badge_candidate_detail_checks: list[dict[str, Any]] = []
         self._secondary_fixed_slot_fallback_enabled = False
         self._secondary_presence_diagnostics: tuple[dict[str, Any], ...] = ()
@@ -431,6 +613,7 @@ class MaaArenaReaderBackend:
         self._card_face_cost_optional_errors: dict[tuple[int, int], str] = {}
         self._cost_customization_fallbacks: dict[tuple[int, int], dict[str, Any]] = {}
         self._runtime_cost_customization_fallbacks: list[dict[str, Any]] = []
+        self._runtime_detail_title_disambiguations: list[dict[str, Any]] = []
         self._secondary_presence_cache: dict[
             int,
             tuple[Any, tuple[dict[str, Any], ...]],
@@ -441,6 +624,17 @@ class MaaArenaReaderBackend:
             dict[str, int],
         ] | None = None
         self._challenge_selection_committed = False
+        self._p_item_catalog_compatibility_checked = False
+        self._p_item_reference_gallery_ids: tuple[int, ...] = ()
+        self._p_item_reference_missing_arena_ids: tuple[int, ...] = ()
+        self._p_item_reference_unknown_catalog_ids: tuple[int, ...] = ()
+        self._p_item_reference_provisional_ids: tuple[int, ...] = ()
+
+    @property
+    def grade(self) -> int | None:
+        """Return the recognized or explicitly injected Grade for this session."""
+
+        return self._grade
 
     def _add_timing(self, name: str, elapsed: float) -> None:
         self._runtime_timing_seconds[name] = (
@@ -451,7 +645,11 @@ class MaaArenaReaderBackend:
         self._runtime_counts[name] = self._runtime_counts.get(name, 0) + 1
 
     def _record_duration_sample(self, name: str, elapsed: float) -> None:
-        self._runtime_duration_samples.setdefault(name, []).append(elapsed)
+        samples = getattr(self, "_runtime_duration_samples", None)
+        if samples is None:
+            samples = {}
+            self._runtime_duration_samples = samples
+        samples.setdefault(name, []).append(elapsed)
 
     @staticmethod
     def _percentile(values: Sequence[float], quantile: float) -> float:
@@ -466,6 +664,17 @@ class MaaArenaReaderBackend:
 
     def _finish_card_transaction(self, key: tuple[int, int]) -> None:
         started = self._card_transaction_started.pop(key, None)
+        getattr(self, "_detail_identity_proofs", {}).pop(key, None)
+        getattr(self, "_card_transaction_tokens", {}).pop(key, None)
+        getattr(self, "_card_transaction_source_boxes", {}).pop(key, None)
+        getattr(self, "_card_transaction_interaction_boxes", {}).pop(key, None)
+        getattr(self, "_card_detail_last_contact_released_at", {}).pop(key, None)
+        getattr(self, "_card_detail_capture_started_at", {}).pop(key, None)
+        ocr_started = getattr(
+            self,
+            "_card_transaction_ocr_started",
+            {},
+        ).pop(key, None)
         kind = self._card_transaction_kinds.pop(
             key,
             "necessary_skill_card_detail_transaction",
@@ -475,6 +684,28 @@ class MaaArenaReaderBackend:
         elapsed = time.perf_counter() - started
         self._record_duration_sample("skill_card_detail_transaction", elapsed)
         self._record_duration_sample(kind, elapsed)
+        if ocr_started is not None:
+            backend_started, cache_hits_started = ocr_started
+            self._record_duration_sample(
+                "skill_card_detail_capture_full_frame_ocr_backend_calls",
+                float(
+                    self._runtime_counts.get(
+                        "detail_capture_broad_ocr_backend_calls",
+                        0,
+                    )
+                    - backend_started
+                ),
+            )
+            self._record_duration_sample(
+                "skill_card_detail_capture_full_frame_ocr_cache_hits",
+                float(
+                    self._runtime_counts.get(
+                        "detail_capture_broad_ocr_cache_hits",
+                        0,
+                    )
+                    - cache_hits_started
+                ),
+            )
 
     def runtime_metrics(self) -> dict[str, Any]:
         selection = self._badge_worker_selection
@@ -515,6 +746,54 @@ class MaaArenaReaderBackend:
                     (),
                 )
             ],
+            "badge_glyph_exemplar_diagnostics": [
+                deepcopy(value)
+                for value in getattr(
+                    self,
+                    "_runtime_badge_glyph_exemplar_diagnostics",
+                    (),
+                )
+            ],
+            "badge_glyph_exemplar_comparisons": [
+                deepcopy(value)
+                for value in getattr(
+                    self,
+                    "_runtime_badge_glyph_exemplar_comparisons",
+                    (),
+                )
+            ],
+            "detail_title_disambiguations": [
+                deepcopy(value)
+                for value in getattr(
+                    self,
+                    "_runtime_detail_title_disambiguations",
+                    (),
+                )
+            ],
+        }
+
+    @staticmethod
+    def _member_read_metrics_event(
+        target: TeamTarget,
+        stage_number: int,
+        member_slot: int,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Keep production pace evidence low-dimensional and image-free."""
+
+        return {
+            "event": "arena_member_read_metrics",
+            "team_id": target.team_id,
+            "stage_number": stage_number,
+            "member_slot": member_slot,
+            "timing_seconds": evidence["timing_seconds"],
+            "counts": evidence["counts"],
+            "duration_samples_seconds": evidence["duration_samples_seconds"],
+            "detail_title_disambiguations": [
+                dict(value)
+                for value in evidence.get("detail_title_disambiguations", ())
+            ],
+            "screenshots_persisted": False,
         }
 
     def diagnostic_port(self) -> ArenaReaderDiagnosticPort:
@@ -629,7 +908,7 @@ class MaaArenaReaderBackend:
                     ],
                 }
             )
-        return {
+        evidence = {
             "stage_number": stage_number,
             "member_slot": member_slot,
             "p_items": [dict(value) for value in self._p_item_diagnostics],
@@ -661,8 +940,29 @@ class MaaArenaReaderBackend:
                 and value.get("stage_number") == stage_number
                 and value.get("member_slot") == member_slot
             ],
+            "detail_title_disambiguations": [
+                deepcopy(value)
+                for value in getattr(
+                    self,
+                    "_detail_title_disambiguations",
+                    (),
+                )
+            ],
             "screenshots_persisted": False,
         }
+        logger.info(
+            json.dumps(
+                self._member_read_metrics_event(
+                    target,
+                    stage_number,
+                    member_slot,
+                    evidence,
+                ),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return evidence
 
     def _card_references(self) -> BadgeReferenceGallery:
         if self._card_reference_gallery is not None:
@@ -882,12 +1182,18 @@ class MaaArenaReaderBackend:
         return self._badge_local_results[requested_group]
 
     @staticmethod
-    def _badge_glyph_ocr_canvases(descriptor: Any) -> tuple[Any, ...]:
-        """Render one centre-plate glyph mask for generic OCR.
+    def _badge_glyph_ocr_canvases(
+        descriptor: Any,
+    ) -> tuple[tuple[int, str, Any], ...]:
+        """Render one centre-plate glyph mask for recognition-only OCR.
 
         The input is the quantized mask cut from the sole centre-seeded green
         component. No card pixels, frame, green artwork, template asset, or
-        card identity participates in these canvases.
+        card identity participates in these canvases.  The recognizer needs a
+        much wider quiet zone than ordinary scene OCR: the former fixed
+        16-pixel border was only two cells at the 8x glyph scale and caused a
+        real ``1`` to be decoded as CJK strokes.  Three fixed quiet zones and
+        both polarities form six independent views of the same bounded glyph.
         """
 
         import cv2
@@ -904,7 +1210,7 @@ class MaaArenaReaderBackend:
                 "skill_card_badge_glyph_invalid",
                 "badge glyph descriptor must contain 216 integers in [0, 15]",
             )
-        mask = values.astype(np.uint8).reshape(18, 12) * 17
+        mask = (values.reshape(18, 12) > 0).astype(np.uint8) * 255
         active = mask > 0
         ys, xs = np.nonzero(active)
         if not len(xs):
@@ -913,39 +1219,1199 @@ class MaaArenaReaderBackend:
                 "badge glyph descriptor has no foreground",
             )
         crop = mask[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
-        canvases: list[Any] = []
-        for interpolation in (cv2.INTER_NEAREST, cv2.INTER_CUBIC):
-            enlarged = cv2.resize(
-                crop,
-                None,
-                fx=8.0,
-                fy=8.0,
-                interpolation=interpolation,
+        canvases: list[tuple[int, str, Any]] = []
+        for quiet_cells in (8, 16, 24):
+            padded = np.zeros(
+                (
+                    crop.shape[0] + 2 * quiet_cells,
+                    crop.shape[1] + 2 * quiet_cells,
+                ),
+                dtype=np.uint8,
             )
-            for invert in (False, True):
-                foreground = 255 - enlarged if invert else enlarged
-                background = 255 if invert else 0
-                canvas = np.full(
-                    (foreground.shape[0] + 32, foreground.shape[1] + 32),
-                    background,
-                    dtype=np.uint8,
+            padded[
+                quiet_cells : quiet_cells + crop.shape[0],
+                quiet_cells : quiet_cells + crop.shape[1],
+            ] = crop
+            target_width = max(
+                1,
+                int(round(padded.shape[1] * 48 / padded.shape[0])),
+            )
+            normal = cv2.resize(
+                padded,
+                (target_width, 48),
+                interpolation=cv2.INTER_CUBIC,
+            )
+            for polarity, canvas in (
+                ("normal", normal),
+                ("inverted", 255 - normal),
+            ):
+                canvases.append(
+                    (
+                        quiet_cells,
+                        polarity,
+                        cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR),
+                    )
                 )
-                canvas[16:-16, 16:-16] = foreground
-                canvases.append(cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR))
         return tuple(canvases)
 
-    def _auxiliary_badge_glyph_count(self, key: tuple[int, int]) -> int:
+    @staticmethod
+    def _stable_badge_glyph_exemplar_signature(
+        observations: Sequence[dict[str, Any]],
+    ) -> tuple[
+        tuple[int, ...],
+        tuple[int, int, int, int, int],
+        int,
+    ] | None:
+        """Return one exact tail-stable glyph plus its normalized geometry.
+
+        This is stricter than the generic OCR fallback.  An exemplar is valid
+        only when every frozen source frame contains exactly one component and
+        the final two chronological frames have byte-identical descriptors and
+        normalized geometry.  The first frame may be a narrowly bounded
+        contour-rasterization outlier with the same component box; an unordered
+        two-of-three vote is never accepted.  No frames are averaged and no
+        nearest-neighbour vote is used.  Position is omitted from the returned
+        signature: the member-local lifetime already fixes the window/layout
+        generation, while the same rendered digit may occupy another one of
+        the twelve card slots.
+        """
+
+        if len(observations) != 3:
+            return None
+        descriptors: list[tuple[int, ...]] = []
+        geometries: list[tuple[int, int, int, int, int]] = []
+        component_boxes: list[tuple[int, int, int, int]] = []
+        badge_centers: list[tuple[int, int]] = []
+        for observation in observations:
+            internal = observation.get("internal_features", {})
+            if not isinstance(internal, dict):
+                return None
+            descriptor = internal.get("glyph_descriptor_12x18_q4")
+            normalization_size = internal.get("normalization_size")
+            badge_center = internal.get("badge_center")
+            component_box = internal.get("glyph_component_box")
+            component_area = internal.get("glyph_component_area")
+            if (
+                internal.get("status") != "MEASURED"
+                or internal.get("seeded_plate_candidate") is not True
+                or internal.get("glyph_non_badge_art_candidate") is not False
+                or type(internal.get("glyph_component_count")) is not int
+                or internal.get("glyph_component_count") != 1
+                or not isinstance(descriptor, (list, tuple))
+                or len(descriptor) != 216
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or not 0 <= value <= 15
+                    for value in descriptor
+                )
+                or not isinstance(normalization_size, (list, tuple))
+                or len(normalization_size) != 2
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or value < 1
+                    for value in normalization_size
+                )
+                or not isinstance(badge_center, (list, tuple))
+                or len(badge_center) != 2
+                or any(
+                    isinstance(value, bool) or not isinstance(value, int)
+                    for value in badge_center
+                )
+                or not isinstance(component_box, (list, tuple))
+                or len(component_box) != 4
+                or any(
+                    isinstance(value, bool) or not isinstance(value, int)
+                    for value in component_box
+                )
+                or isinstance(component_area, bool)
+                or not isinstance(component_area, int)
+            ):
+                return None
+            x, y, width, height = component_box
+            badge_x, badge_y = badge_center
+            if (
+                x < 0
+                or y < 0
+                or width < 1
+                or height < 1
+                or component_area < 1
+                or component_area > width * height
+                or x + width > normalization_size[0]
+                or y + height > normalization_size[1]
+                or badge_x < 0
+                or badge_y < 0
+                or badge_x >= normalization_size[0]
+                or badge_y >= normalization_size[1]
+            ):
+                return None
+            descriptors.append(tuple(descriptor))
+            component_boxes.append((x, y, width, height))
+            badge_centers.append((badge_x, badge_y))
+            geometries.append(
+                (
+                    int(normalization_size[0]),
+                    int(normalization_size[1]),
+                    int(width),
+                    int(height),
+                    component_area,
+                )
+            )
+        signatures = list(zip(descriptors, geometries, strict=True))
+        if len(set(component_boxes)) != 1 or len(set(badge_centers)) != 1:
+            return None
+        tail_signature = signatures[1]
+        if signatures[2] != tail_signature:
+            return None
+        if signatures[0] == tail_signature:
+            descriptor, geometry = tail_signature
+            return descriptor, geometry, 3
+
+        first_descriptor, first_geometry = signatures[0]
+        tail_descriptor, tail_geometry = tail_signature
+        if (
+            first_geometry[:4] != tail_geometry[:4]
+            or abs(first_geometry[4] - tail_geometry[4]) > 2
+        ):
+            return None
+        differences = tuple(
+            abs(first - tail)
+            for first, tail in zip(
+                first_descriptor,
+                tail_descriptor,
+                strict=True,
+            )
+        )
+        first_foreground = tuple(value > 0 for value in first_descriptor)
+        tail_foreground = tuple(value > 0 for value in tail_descriptor)
+        foreground_intersection = sum(
+            first and tail
+            for first, tail in zip(
+                first_foreground,
+                tail_foreground,
+                strict=True,
+            )
+        )
+        foreground_union = sum(
+            first or tail
+            for first, tail in zip(
+                first_foreground,
+                tail_foreground,
+                strict=True,
+            )
+        )
+        first_subset_tail = all(
+            (not first) or tail
+            for first, tail in zip(
+                first_foreground,
+                tail_foreground,
+                strict=True,
+            )
+        )
+        tail_subset_first = all(
+            (not tail) or first
+            for first, tail in zip(
+                first_foreground,
+                tail_foreground,
+                strict=True,
+            )
+        )
+        area_delta = first_geometry[4] - tail_geometry[4]
+        area_direction_matches = (
+            (first_subset_tail and not tail_subset_first and area_delta < 0)
+            or (tail_subset_first and not first_subset_tail and area_delta > 0)
+            or (first_subset_tail and tail_subset_first and area_delta == 0)
+        )
+        if (
+            sum(value > 0 for value in differences) > 8
+            or sum(differences) > 120
+            or sum(
+                first != tail
+                for first, tail in zip(
+                    first_foreground,
+                    tail_foreground,
+                    strict=True,
+                )
+            )
+            > 8
+            or foreground_union < 1
+            or foreground_intersection * 100 < foreground_union * 94
+            or not (first_subset_tail or tail_subset_first)
+            or not area_direction_matches
+        ):
+            return None
+        return tail_descriptor, tail_geometry, 2
+
+    @classmethod
+    def _badge_glyph_frames_are_bounded_raster_settling(
+        cls,
+        observations: Sequence[dict[str, Any]],
+    ) -> bool:
+        """Allow independent OCR across one narrowly settling glyph contour.
+
+        This is deliberately weaker than an exemplar signature and therefore
+        returns only a boolean.  All three frames still go through multi-view
+        OCR and must independently choose the same validated digit.  An
+        unordered majority, averaged descriptor, nearest-neighbour label, or
+        changing component geometry remains ineligible.
+        """
+
+        if len(observations) != 3:
+            return False
+        descriptors: list[tuple[int, ...]] = []
+        normalization_sizes: list[tuple[int, int]] = []
+        badge_centers: list[tuple[int, int]] = []
+        component_boxes: list[tuple[int, int, int, int]] = []
+        component_areas: list[int] = []
+        for observation in observations:
+            internal = observation.get("internal_features", {})
+            if not isinstance(internal, dict):
+                return False
+            descriptor = internal.get("glyph_descriptor_12x18_q4")
+            normalization_size = internal.get("normalization_size")
+            badge_center = internal.get("badge_center")
+            component_box = internal.get("glyph_component_box")
+            component_area = internal.get("glyph_component_area")
+            if (
+                internal.get("status") != "MEASURED"
+                or internal.get("seeded_plate_candidate") is not True
+                or internal.get("glyph_non_badge_art_candidate") is not False
+                or type(internal.get("glyph_component_count")) is not int
+                or internal.get("glyph_component_count") != 1
+                or not isinstance(descriptor, (list, tuple))
+                or len(descriptor) != 216
+                or any(type(value) is not int or not 0 <= value <= 15 for value in descriptor)
+                or not isinstance(normalization_size, (list, tuple))
+                or len(normalization_size) != 2
+                or any(type(value) is not int or value < 1 for value in normalization_size)
+                or not isinstance(badge_center, (list, tuple))
+                or len(badge_center) != 2
+                or any(type(value) is not int for value in badge_center)
+                or not isinstance(component_box, (list, tuple))
+                or len(component_box) != 4
+                or any(type(value) is not int for value in component_box)
+                or type(component_area) is not int
+            ):
+                return False
+            x, y, width, height = component_box
+            badge_x, badge_y = badge_center
+            if (
+                x < 0
+                or y < 0
+                or width < 1
+                or height < 1
+                or component_area < 1
+                or component_area > width * height
+                or x + width > normalization_size[0]
+                or y + height > normalization_size[1]
+                or not 0 <= badge_x < normalization_size[0]
+                or not 0 <= badge_y < normalization_size[1]
+            ):
+                return False
+            descriptors.append(tuple(descriptor))
+            normalization_sizes.append(tuple(normalization_size))
+            badge_centers.append(tuple(badge_center))
+            component_boxes.append(tuple(component_box))
+            component_areas.append(component_area)
+
+        if (
+            len(set(normalization_sizes)) != 1
+            or len(set(badge_centers)) != 1
+            or len(set(component_boxes)) != 1
+            or max(component_areas) - min(component_areas)
+            > BADGE_GLYPH_RASTER_SETTLING_AREA_DELTA_MAX
+        ):
+            return False
+
+        foregrounds = tuple(
+            tuple(value > 0 for value in descriptor)
+            for descriptor in descriptors
+        )
+        contour_adds = all(
+            all((not before) or after for before, after in zip(left, right, strict=True))
+            for left, right in zip(foregrounds[:-1], foregrounds[1:], strict=True)
+        )
+        contour_removes = all(
+            all((not after) or before for before, after in zip(left, right, strict=True))
+            for left, right in zip(foregrounds[:-1], foregrounds[1:], strict=True)
+        )
+        area_increases = all(
+            left <= right
+            for left, right in zip(
+                component_areas[:-1],
+                component_areas[1:],
+                strict=True,
+            )
+        )
+        area_decreases = all(
+            left >= right
+            for left, right in zip(
+                component_areas[:-1],
+                component_areas[1:],
+                strict=True,
+            )
+        )
+        if not (
+            (contour_adds and area_increases)
+            or (contour_removes and area_decreases)
+        ):
+            return False
+
+        for left_index, right_index in ((0, 1), (1, 2), (0, 2)):
+            metrics = cls._badge_glyph_comparison_metrics(
+                descriptors[left_index],
+                descriptors[right_index],
+            )
+            if (
+                metrics["l1_sum"] > BADGE_GLYPH_RASTER_SETTLING_L1_MAX
+                or metrics["q4_changed_cells"]
+                > BADGE_GLYPH_RASTER_SETTLING_CHANGED_MAX
+                or metrics["binary_xor_cells"]
+                > BADGE_GLYPH_RASTER_SETTLING_XOR_MAX
+                or metrics["foreground_iou"]
+                < BADGE_GLYPH_RASTER_SETTLING_IOU_MIN
+            ):
+                return False
+        return True
+
+    def _maybe_register_badge_glyph_exemplar(
+        self,
+        key: tuple[int, int],
+        resolved: ClickedSkillCard,
+        *,
+        target: TeamTarget | None = None,
+        stage_number: int | None = None,
+        member_slot: int | None = None,
+    ) -> bool:
+        """Learn a count glyph only from fresh, detail-independent truth.
+
+        Badge-constrained, auxiliary-glyph, card-face cost and conservative
+        results are intentionally ineligible: allowing any of them to teach
+        this table would make the fallback self-authenticating.  The narrow
+        source/mode contract below currently admits only the unconstrained
+        positive detail result after its required fresh semantic confirmation.
+        """
+
+        source = resolved.resolution_source
+        reads = resolved.detail_confirmation_reads
+        count = sum(int(value) for value in resolved.customizations.values())
+        if (
+            resolved.detail_evidence_mode != "positive_unique"
+            or isinstance(reads, bool)
+            or not isinstance(reads, int)
+            or reads < 2
+            or not source.startswith("detail_unconstrained")
+            or "positive_confirmed" not in source
+            or any(
+                forbidden in source
+                for forbidden in (
+                    "auxiliary_badge_glyph",
+                    "badge_constrained",
+                    "generic_cost",
+                    "card_face",
+                )
+            )
+            or not 1 <= count <= 9
+        ):
+            return False
+        signature = self._stable_badge_glyph_exemplar_signature(
+            getattr(self, "_badge_glyph_observations", {}).get(key, ())
+        )
+        if signature is None:
+            return False
+        descriptor, geometry, support_frames = signature
+        exemplars = getattr(self, "_badge_glyph_exemplars", None)
+        if exemplars is None:
+            exemplars = {}
+            self._badge_glyph_exemplars = exemplars
+        polluted = getattr(self, "_badge_glyph_polluted_descriptors", None)
+        if polluted is None:
+            polluted = set()
+            self._badge_glyph_polluted_descriptors = polluted
+        runtime_diagnostics = getattr(
+            self,
+            "_runtime_badge_glyph_exemplar_diagnostics",
+            None,
+        )
+        if runtime_diagnostics is None:
+            runtime_diagnostics = []
+            self._runtime_badge_glyph_exemplar_diagnostics = runtime_diagnostics
+        diagnostic = {
+            "side": (
+                None
+                if target is None
+                else ("own" if target.is_own_team else "opponent")
+            ),
+            "team_id": None if target is None else target.team_id,
+            "opponent_position": (
+                None if target is None else target.opponent_position
+            ),
+            "stage_number": stage_number,
+            "member_slot": member_slot,
+            "group_index": key[0],
+            "card_slot": key[1],
+            "card_id": resolved.card_id,
+            "count": count,
+            "normalization_size": [geometry[0], geometry[1]],
+            "component_size": [geometry[2], geometry[3]],
+            "component_area": geometry[4],
+            "descriptor_support_frames": support_frames,
+            "descriptor_sha256": self._badge_glyph_descriptor_sha256(
+                descriptor
+            ),
+            "resolution_source": resolved.resolution_source,
+            "detail_evidence_mode": resolved.detail_evidence_mode,
+            "detail_confirmation_reads": resolved.detail_confirmation_reads,
+        }
+        if descriptor in polluted:
+            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_polluted",
+                f"{key!r} exact glyph descriptor was already mapped to multiple counts",
+            )
+        existing = exemplars.get(descriptor)
+        runtime_labels = getattr(self, "_badge_glyph_runtime_labels", None)
+        if runtime_labels is None:
+            runtime_labels = {}
+            self._badge_glyph_runtime_labels = runtime_labels
+        if existing is not None and existing.get("count") != count:
+            exemplars.pop(descriptor, None)
+            polluted.add(descriptor)
+            runtime_labels.pop(descriptor, None)
+            # A prior ambiguous card may already have consumed this exemplar
+            # and cached its count.  Invalidate every member-local glyph
+            # decision before aborting so no bounded retry can reuse the
+            # now-disproved label.
+            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+            self._increment("skill_card_badge_glyph_exemplar_collisions")
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_collision",
+                f"{key!r} authoritatively maps an already consumed exact glyph "
+                f"descriptor from count {existing.get('count')!r} to {count}",
+            )
+        self._validate_authoritative_badge_glyph_runtime_transition(
+            key,
+            descriptor,
+            count=count,
+        )
+        outlier_descriptor = self._validate_badge_glyph_tail_outlier(
+            key,
+            count=count,
+            support_frames=support_frames,
+        )
+        if existing is None:
+            runtime_labels.pop(descriptor, None)
+            runtime_diagnostics.append(diagnostic)
+            exemplars[descriptor] = {
+                "count": count,
+                "geometries": {geometry},
+                "prototypes": {(geometry, support_frames)},
+            }
+            self._increment("skill_card_badge_glyph_exemplars_registered")
+            self._record_badge_glyph_runtime_label(
+                key,
+                outlier_descriptor,
+                count=count,
+                evidence="bounded first-frame glyph",
+            )
+            return True
+        geometries = existing.get("geometries")
+        prototype_provenance = existing.get("prototypes")
+        if not isinstance(geometries, set) or not isinstance(
+            prototype_provenance,
+            set,
+        ):
+            exemplars.pop(descriptor, None)
+            polluted.add(descriptor)
+            runtime_labels.pop(descriptor, None)
+            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+            self._increment("skill_card_badge_glyph_exemplar_collisions")
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_invalid",
+                f"{key!r} exact glyph exemplar has invalid geometry provenance",
+            )
+        runtime_labels.pop(descriptor, None)
+        runtime_diagnostics.append(diagnostic)
+        geometries.add(geometry)
+        prototype_provenance.add((geometry, support_frames))
+        self._record_badge_glyph_runtime_label(
+            key,
+            outlier_descriptor,
+            count=count,
+            evidence="bounded first-frame glyph",
+        )
+        return True
+
+    @staticmethod
+    def _badge_glyph_descriptor_sha256(
+        descriptor: Sequence[int],
+    ) -> str:
+        """Return a stable identity without persisting the glyph grid."""
+
+        import hashlib
+
+        return hashlib.sha256(bytes(descriptor)).hexdigest()
+
+    def _validate_badge_glyph_tail_outlier(
+        self,
+        key: tuple[int, int],
+        *,
+        count: int,
+        support_frames: int,
+    ) -> tuple[int, ...] | None:
+        """Reject a bounded first-frame outlier with contrary member truth."""
+
+        if support_frames == 3:
+            return None
+        observations = getattr(self, "_badge_glyph_observations", {}).get(
+            key,
+            (),
+        )
+        first_internal = observations[0]["internal_features"]
+        first_descriptor = tuple(
+            first_internal["glyph_descriptor_12x18_q4"]
+        )
+        self._validate_badge_glyph_runtime_label(
+            key,
+            first_descriptor,
+            count=count,
+            evidence="bounded first-frame glyph",
+        )
+        return first_descriptor
+
+    def _validate_authoritative_badge_glyph_runtime_transition(
+        self,
+        key: tuple[int, int],
+        descriptor: tuple[int, ...],
+        *,
+        count: int,
+    ) -> None:
+        """Reject only prior runtime claims contradicted by fresh detail truth.
+
+        Authoritative detail may legitimately teach two nearby glyphs with
+        different counts.  That makes approximate reuse ineligible, but must
+        not invalidate either independently confirmed exemplar.  Polluted and
+        exemplar-neighbour checks therefore remain on runtime claims; this
+        direction checks only whether an earlier runtime claim would be
+        disproved by the new truth.
+        """
+
+        for runtime_descriptor, claimed_count in getattr(
+            self,
+            "_badge_glyph_runtime_labels",
+            {},
+        ).items():
+            if type(claimed_count) is not int or not 1 <= claimed_count <= 9:
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_exemplar_invalid",
+                    f"{key!r} authoritative glyph encountered an invalid "
+                    "runtime label",
+            )
+            if claimed_count == count:
+                continue
+            exact_conflict = runtime_descriptor == descriptor
+            if not exact_conflict:
+                metrics = self._badge_glyph_comparison_metrics(
+                    descriptor,
+                    runtime_descriptor,
+                )
+                if not self._badge_glyph_calibration_outer_near(metrics):
+                    continue
+            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+            self._increment(
+                "skill_card_badge_glyph_exemplar_transition_conflicts"
+            )
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_transition_conflict",
+                (
+                    f"{key!r} authoritative glyph maps to count {count}, "
+                    f"after a prior runtime label claimed count {claimed_count}"
+                    if exact_conflict
+                    else f"{key!r} authoritative glyph is not separated from "
+                    f"prior runtime count {claimed_count}"
+                ),
+            )
+
+    def _validate_badge_glyph_runtime_label(
+        self,
+        key: tuple[int, int],
+        descriptor: tuple[int, ...],
+        *,
+        count: int,
+        evidence: str,
+        check_exemplars: bool = True,
+    ) -> None:
+        """Cross-check any runtime glyph label against all member-local truth."""
+
+        polluted = getattr(self, "_badge_glyph_polluted_descriptors", set())
+        exemplar = getattr(self, "_badge_glyph_exemplars", {}).get(
+            descriptor
+        )
+        if descriptor in polluted:
+            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+            self._increment(
+                "skill_card_badge_glyph_exemplar_transition_conflicts"
+            )
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_transition_conflict",
+                f"{key!r} {evidence} is already polluted",
+            )
+        exemplar_count = None if exemplar is None else exemplar.get("count")
+        if exemplar is not None and (
+            type(exemplar_count) is not int or not 1 <= exemplar_count <= 9
+        ):
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_invalid",
+                f"{key!r} {evidence} has an invalid exemplar count",
+            )
+        runtime_count = getattr(
+            self,
+            "_badge_glyph_runtime_labels",
+            {},
+        ).get(descriptor)
+        conflicting_count = (
+            exemplar_count
+            if exemplar_count is not None and exemplar_count != count
+            else (
+                runtime_count
+                if runtime_count is not None and runtime_count != count
+                else None
+            )
+        )
+        if conflicting_count is not None:
+            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+            self._increment(
+                "skill_card_badge_glyph_exemplar_transition_conflicts"
+            )
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_transition_conflict",
+                f"{key!r} {evidence} maps to count {conflicting_count}, "
+                f"not count {count}",
+            )
+        for polluted_descriptor in polluted:
+            if polluted_descriptor == descriptor:
+                continue
+            metrics = self._badge_glyph_comparison_metrics(
+                descriptor,
+                polluted_descriptor,
+            )
+            if self._badge_glyph_calibration_outer_near(metrics):
+                getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+                self._increment(
+                    "skill_card_badge_glyph_exemplar_transition_conflicts"
+                )
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_exemplar_transition_conflict",
+                    f"{key!r} {evidence} is too close to a polluted member glyph",
+                )
+        if check_exemplars:
+            for exemplar_descriptor, candidate in getattr(
+                self,
+                "_badge_glyph_exemplars",
+                {},
+            ).items():
+                candidate_count = candidate.get("count")
+                if (
+                    type(candidate_count) is not int
+                    or not 1 <= candidate_count <= 9
+                ):
+                    raise ArenaReaderError(
+                        "skill_card_badge_glyph_exemplar_invalid",
+                        f"{key!r} {evidence} encountered an invalid exemplar count",
+                    )
+                if candidate_count == count or exemplar_descriptor == descriptor:
+                    continue
+                metrics = self._badge_glyph_comparison_metrics(
+                    descriptor,
+                    exemplar_descriptor,
+                )
+                if self._badge_glyph_calibration_outer_near(metrics):
+                    getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+                    self._increment(
+                        "skill_card_badge_glyph_exemplar_transition_conflicts"
+                    )
+                    raise ArenaReaderError(
+                        "skill_card_badge_glyph_exemplar_transition_conflict",
+                        f"{key!r} {evidence} is not separated from count "
+                        f"{candidate_count} member truth",
+                    )
+        for runtime_descriptor, candidate_count in getattr(
+            self,
+            "_badge_glyph_runtime_labels",
+            {},
+        ).items():
+            if (
+                type(candidate_count) is not int
+                or not 1 <= candidate_count <= 9
+            ):
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_exemplar_invalid",
+                    f"{key!r} {evidence} encountered an invalid runtime label",
+                )
+            if candidate_count == count or runtime_descriptor == descriptor:
+                continue
+            metrics = self._badge_glyph_comparison_metrics(
+                descriptor,
+                runtime_descriptor,
+            )
+            if self._badge_glyph_calibration_outer_near(metrics):
+                getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+                self._increment(
+                    "skill_card_badge_glyph_exemplar_transition_conflicts"
+                )
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_exemplar_transition_conflict",
+                    f"{key!r} {evidence} is not separated from prior runtime "
+                    f"count {candidate_count}",
+                )
+
+    def _record_badge_glyph_runtime_label(
+        self,
+        key: tuple[int, int],
+        descriptor: tuple[int, ...] | None,
+        *,
+        count: int,
+        evidence: str,
+    ) -> None:
+        if descriptor is None:
+            return
+        self._validate_badge_glyph_runtime_label(
+            key,
+            descriptor,
+            count=count,
+            evidence=evidence,
+        )
+        labels = getattr(self, "_badge_glyph_runtime_labels", None)
+        if labels is None:
+            labels = {}
+            self._badge_glyph_runtime_labels = labels
+        labels[descriptor] = count
+
+    @staticmethod
+    def _badge_glyph_comparison_metrics(
+        target: tuple[int, ...],
+        sample: tuple[int, ...],
+    ) -> dict[str, int | float]:
+        differences = tuple(
+            abs(target_value - sample_value)
+            for target_value, sample_value in zip(
+                target,
+                sample,
+                strict=True,
+            )
+        )
+        target_foreground = tuple(value > 0 for value in target)
+        sample_foreground = tuple(value > 0 for value in sample)
+        foreground_intersection = sum(
+            target_value and sample_value
+            for target_value, sample_value in zip(
+                target_foreground,
+                sample_foreground,
+                strict=True,
+            )
+        )
+        foreground_union = sum(
+            target_value or sample_value
+            for target_value, sample_value in zip(
+                target_foreground,
+                sample_foreground,
+                strict=True,
+            )
+        )
+        return {
+            "l1_sum": sum(differences),
+            "mse": round(
+                sum(value * value for value in differences)
+                / len(differences),
+                6,
+            ),
+            "q4_changed_cells": sum(value > 0 for value in differences),
+            "binary_xor_cells": sum(
+                target_value != sample_value
+                for target_value, sample_value in zip(
+                    target_foreground,
+                    sample_foreground,
+                    strict=True,
+                )
+            ),
+            "foreground_iou": round(
+                foreground_intersection / max(1, foreground_union),
+                6,
+            ),
+        }
+
+    @staticmethod
+    def _badge_glyph_calibration_outer_near(
+        metrics: dict[str, int | float],
+    ) -> bool:
+        """Return whether another label is too close for calibrated transfer."""
+
+        return (
+            metrics["l1_sum"] <= BADGE_GLYPH_CALIBRATED_OUTER_L1_MAX
+            or metrics["mse"] <= BADGE_GLYPH_CALIBRATED_OUTER_MSE_MAX
+            or metrics["q4_changed_cells"]
+            <= BADGE_GLYPH_CALIBRATED_OUTER_CHANGED_MAX
+            or metrics["binary_xor_cells"]
+            <= BADGE_GLYPH_CALIBRATED_OUTER_XOR_MAX
+            or metrics["foreground_iou"]
+            >= BADGE_GLYPH_CALIBRATED_OUTER_IOU_MIN
+        )
+
+    @staticmethod
+    def _badge_glyph_calibration_inner_match(
+        target_geometry: tuple[int, int, int, int, int],
+        sample_prototypes: set[
+            tuple[tuple[int, int, int, int, int], int]
+        ],
+        metrics: dict[str, int | float],
+    ) -> bool:
+        """Accept one prototype only inside the member-local inner radius."""
+
+        geometry_matches = any(
+            target_geometry[:4] == sample_geometry[:4]
+            and abs(target_geometry[4] - sample_geometry[4]) <= 2
+            and support_frames == 3
+            for sample_geometry, support_frames in sample_prototypes
+        )
+        return (
+            geometry_matches
+            and metrics["l1_sum"] <= BADGE_GLYPH_CALIBRATED_INNER_L1_MAX
+            and metrics["mse"] <= BADGE_GLYPH_CALIBRATED_INNER_MSE_MAX
+            and metrics["q4_changed_cells"]
+            <= BADGE_GLYPH_CALIBRATED_INNER_CHANGED_MAX
+            and metrics["binary_xor_cells"]
+            <= BADGE_GLYPH_CALIBRATED_INNER_XOR_MAX
+            and metrics["foreground_iou"]
+            >= BADGE_GLYPH_CALIBRATED_INNER_IOU_MIN
+        )
+
+    def _record_badge_glyph_exemplar_comparisons(
+        self,
+        key: tuple[int, int],
+        descriptor: tuple[int, ...],
+        geometry: tuple[int, int, int, int, int],
+        *,
+        maximum_count: int,
+    ) -> None:
+        """Persist only scalar distances from one target to active exemplars."""
+
+        comparisons: list[dict[str, Any]] = []
+        for exemplar_descriptor, exemplar in sorted(
+            getattr(self, "_badge_glyph_exemplars", {}).items(),
+            key=lambda item: (
+                int(item[1].get("count", 0)),
+                self._badge_glyph_descriptor_sha256(item[0]),
+            ),
+        ):
+            metrics = self._badge_glyph_comparison_metrics(
+                descriptor,
+                exemplar_descriptor,
+            )
+            comparisons.append(
+                {
+                    "count": exemplar.get("count"),
+                    "descriptor_sha256": self._badge_glyph_descriptor_sha256(
+                        exemplar_descriptor
+                    ),
+                    "geometries": [
+                        list(value)
+                        for value in sorted(exemplar.get("geometries", ()))
+                    ],
+                    **metrics,
+                }
+            )
+        if not comparisons:
+            return
+        record = {
+            "group_index": key[0],
+            "card_slot": key[1],
+            "maximum_count": maximum_count,
+            "target_descriptor_sha256": self._badge_glyph_descriptor_sha256(
+                descriptor
+            ),
+            "target_geometry": list(geometry),
+            "comparisons": comparisons,
+        }
+        runtime = getattr(
+            self,
+            "_runtime_badge_glyph_exemplar_comparisons",
+            None,
+        )
+        if runtime is None:
+            runtime = []
+            self._runtime_badge_glyph_exemplar_comparisons = runtime
+        if record not in runtime:
+            runtime.append(record)
+
+    @staticmethod
+    def _normalized_badge_glyph_domain(
+        maximum_count: int,
+        admissible_counts: Sequence[int] | None,
+    ) -> tuple[int, ...]:
+        values = (
+            tuple(range(1, maximum_count + 1))
+            if admissible_counts is None
+            else tuple(admissible_counts)
+        )
+        if (
+            not values
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 1 <= value <= maximum_count
+                for value in values
+            )
+        ):
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_domain_invalid",
+                "badge glyph admissible counts must be positive integers "
+                f"within 1..{maximum_count}: {values!r}",
+            )
+        return tuple(sorted(set(values)))
+
+    def _badge_glyph_member_calibrated_count(
+        self,
+        key: tuple[int, int],
+        descriptor: tuple[int, ...],
+        geometry: tuple[int, int, int, int, int],
+        *,
+        support_frames: int,
+        admissible_counts: tuple[int, ...],
+    ) -> int | None:
+        """Transfer a count only inside a fully covered member-local domain.
+
+        This is a bounded calibration, not a global nearest-neighbour model.
+        The target must be strictly stable in all three source frames, every
+        detail-compatible label must already have independent member truth,
+        one three-frame prototype must enter the inner radius, and every other
+        label must remain outside the wider rejection guard.
+        """
+
+        if support_frames != 3:
+            return None
+        exemplars = getattr(self, "_badge_glyph_exemplars", {})
+        if not exemplars:
+            return None
+        polluted = getattr(self, "_badge_glyph_polluted_descriptors", set())
+        for polluted_descriptor in polluted:
+            metrics = self._badge_glyph_comparison_metrics(
+                descriptor,
+                polluted_descriptor,
+            )
+            if self._badge_glyph_calibration_outer_near(metrics):
+                getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+                self._increment(
+                    "skill_card_badge_glyph_calibration_conflicts"
+                )
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_calibration_ambiguous",
+                    f"{key!r} calibrated glyph is too close to polluted member evidence",
+                )
+
+        candidates: list[dict[str, Any]] = []
+        covered_counts: set[int] = set()
+        for sample_descriptor, exemplar in exemplars.items():
+            count = exemplar.get("count")
+            geometries = exemplar.get("geometries")
+            sample_prototypes = exemplar.get("prototypes")
+            if (
+                type(count) is not int
+                or not 1 <= count <= 9
+                or not isinstance(geometries, set)
+                or not geometries
+                or not all(
+                    isinstance(value, tuple)
+                    and len(value) == 5
+                    and all(type(item) is int for item in value)
+                    for value in geometries
+                )
+                or not isinstance(sample_prototypes, set)
+                or not sample_prototypes
+                or not all(
+                    isinstance(value, tuple)
+                    and len(value) == 2
+                    and isinstance(value[0], tuple)
+                    and len(value[0]) == 5
+                    and all(type(item) is int for item in value[0])
+                    and value[0] in geometries
+                    and value[1] in {2, 3}
+                    for value in sample_prototypes
+                )
+            ):
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_exemplar_invalid",
+                    f"{key!r} calibrated glyph encountered invalid exemplar provenance",
+                )
+            metrics = self._badge_glyph_comparison_metrics(
+                descriptor,
+                sample_descriptor,
+            )
+            if count in admissible_counts:
+                covered_counts.add(count)
+            candidates.append(
+                {
+                    "count": count,
+                    "metrics": metrics,
+                    "inner": (
+                        count in admissible_counts
+                        and self._badge_glyph_calibration_inner_match(
+                            geometry,
+                            sample_prototypes,
+                            metrics,
+                        )
+                    ),
+                }
+            )
+        if covered_counts != set(admissible_counts):
+            return None
+
+        inner_counts = {
+            int(candidate["count"])
+            for candidate in candidates
+            if candidate["inner"]
+        }
+        if not inner_counts:
+            return None
+        if len(inner_counts) != 1:
+            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+            self._increment("skill_card_badge_glyph_calibration_conflicts")
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_calibration_ambiguous",
+                f"{key!r} enters member-local inner radii for multiple counts "
+                f"{sorted(inner_counts)!r}",
+            )
+        count = next(iter(inner_counts))
+        competing = tuple(
+            candidate
+            for candidate in candidates
+            if candidate["count"] != count
+            and self._badge_glyph_calibration_outer_near(
+                candidate["metrics"]
+            )
+        )
+        if competing:
+            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+            self._increment("skill_card_badge_glyph_calibration_conflicts")
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_calibration_ambiguous",
+                f"{key!r} has a competing member label inside the outer guard",
+            )
+        self._record_badge_glyph_runtime_label(
+            key,
+            descriptor,
+            count=count,
+            evidence="member-local calibrated glyph",
+        )
+        return count
+
+    def _badge_glyph_exemplar_count(
+        self,
+        key: tuple[int, int],
+        *,
+        maximum_count: int,
+        admissible_counts: Sequence[int] | None = None,
+    ) -> int | None:
+        """Resolve exact or safely calibrated member-local glyph evidence."""
+
+        signature = self._stable_badge_glyph_exemplar_signature(
+            getattr(self, "_badge_glyph_observations", {}).get(key, ())
+        )
+        if signature is None:
+            return None
+        descriptor, geometry, support_frames = signature
+        domain = self._normalized_badge_glyph_domain(
+            maximum_count,
+            admissible_counts,
+        )
+        polluted = getattr(self, "_badge_glyph_polluted_descriptors", set())
+        if descriptor in polluted:
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_polluted",
+                f"{key!r} exact glyph descriptor was authoritatively mapped to multiple counts",
+            )
+        self._record_badge_glyph_exemplar_comparisons(
+            key,
+            descriptor,
+            geometry,
+            maximum_count=maximum_count,
+        )
+        exemplar = getattr(self, "_badge_glyph_exemplars", {}).get(descriptor)
+        if exemplar is None or geometry not in exemplar.get("geometries", set()):
+            return self._badge_glyph_member_calibrated_count(
+                key,
+                descriptor,
+                geometry,
+                support_frames=support_frames,
+                admissible_counts=domain,
+            )
+        count = exemplar.get("count")
+        if type(count) is not int or not 1 <= count <= 9:
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_invalid",
+                f"{key!r} exact glyph exemplar has an invalid count",
+            )
+        if count not in domain:
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_exemplar_domain_conflict",
+                f"{key!r} exact glyph exemplar count {count} is outside "
+                f"the detail-compatible domain {domain!r}",
+            )
+        outlier_descriptor = self._validate_badge_glyph_tail_outlier(
+            key,
+            count=count,
+            support_frames=support_frames,
+        )
+        self._record_badge_glyph_runtime_label(
+            key,
+            outlier_descriptor,
+            count=count,
+            evidence="bounded first-frame glyph",
+        )
+        return count
+
+    def _auxiliary_badge_glyph_count(
+        self,
+        key: tuple[int, int],
+        *,
+        maximum_count: int,
+        admissible_counts: Sequence[int] | None = None,
+    ) -> int:
         """Use one stable count only after detail semantics remain non-unique.
 
         This never classifies badge presence. All three source frames must
         already be detail candidates, expose exactly one co-located glyph from
-        the same green-plate interior, and agree through generic OCR.
+        the same green-plate interior, and independently agree through the
+        fixed recognition-only multi-view vote.
         """
 
+        if (
+            isinstance(maximum_count, bool)
+            or not isinstance(maximum_count, int)
+            or not 1 <= maximum_count <= 9
+        ):
+            raise ArenaReaderError(
+                "skill_card_badge_glyph_domain_invalid",
+                f"{key!r} has an unsupported single-glyph badge-count maximum: "
+                f"{maximum_count!r}",
+            )
+        domain = self._normalized_badge_glyph_domain(
+            maximum_count,
+            admissible_counts,
+        )
         cached = self._badge_glyph_count_diagnostics.get(key)
+        if cached is not None and (
+            cached.get("maximum_count") != maximum_count
+            or tuple(cached.get("admissible_counts", ())) != domain
+        ):
+            # Detail identity is authoritative over a pre-click visual family.
+            # Re-evaluate the frozen plate glyph when the confirmed card changes
+            # the only legal OCR domain instead of keeping a stale rejection.
+            self._badge_glyph_count_diagnostics.pop(key, None)
+            cached = None
         if cached is not None:
             count = cached.get("resolved_count")
-            if type(count) is int and 0 <= count <= 3:
+            if type(count) is int and (count == 0 or count in domain):
                 return count
             raise ArenaReaderError(
                 "skill_card_badge_glyph_ambiguous",
@@ -963,67 +2429,464 @@ class MaaArenaReaderBackend:
         frame_digits: list[int] = []
         descriptor_digests: list[str] = []
         variant_texts: list[list[str]] = []
+        frame_vote_counts: list[dict[str, int]] = []
+        frame_view_diagnostics: list[list[dict[str, Any]]] = []
+        frame_paired_quiet_zones: list[list[int]] = []
+        frame_winners: list[int | None] = []
+        frame_resolution_modes: list[str] = []
+        frame_isolated_out_of_domain_conflicts: list[int | None] = []
+        stable_signature = None
+        bounded_raster_settling = False
         try:
             import hashlib
 
+            positive_descriptors: list[tuple[int, ...]] = []
             for observation in observations:
                 internal = observation.get("internal_features", {})
                 descriptor = internal.get("glyph_descriptor_12x18_q4")
                 component_count = internal.get("glyph_component_count")
                 if (
-                    component_count == 0
+                    type(component_count) is int
+                    and component_count == 1
+                    and isinstance(descriptor, (list, tuple))
+                    and len(descriptor) == 216
+                    and all(
+                        not isinstance(value, bool)
+                        and isinstance(value, int)
+                        and 0 <= value <= 15
+                        for value in descriptor
+                    )
+                ):
+                    positive_descriptors.append(tuple(descriptor))
+            stable_signature = self._stable_badge_glyph_exemplar_signature(
+                observations
+            )
+            bounded_raster_settling = (
+                stable_signature is None
+                and self._badge_glyph_frames_are_bounded_raster_settling(
+                    observations
+                )
+            )
+            if bounded_raster_settling:
+                self._increment("skill_card_badge_glyph_bounded_raster_settling")
+            exemplar_count = self._badge_glyph_exemplar_count(
+                key,
+                maximum_count=maximum_count,
+                admissible_counts=domain,
+            )
+            if exemplar_count is not None:
+                signature = self._stable_badge_glyph_exemplar_signature(
+                    observations
+                )
+                if signature is None:
+                    raise ArenaReaderError(
+                        "skill_card_badge_glyph_exemplar_invalid",
+                        f"{key!r} resolved without a stable exemplar signature",
+                    )
+                descriptor, _geometry, support_frames = signature
+                exact_exemplar = getattr(
+                    self,
+                    "_badge_glyph_exemplars",
+                    {},
+                ).get(descriptor)
+                exact_resolution = (
+                    exact_exemplar is not None
+                    and _geometry
+                    in exact_exemplar.get("geometries", set())
+                )
+                descriptor_digests = [
+                    hashlib.sha256(bytes(value)).hexdigest()
+                    for value in positive_descriptors
+                ]
+                frame_digits = [
+                    exemplar_count if value == descriptor else None
+                    for value in positive_descriptors
+                ]
+                variant_texts = [[], [], []]
+                self._badge_glyph_count_diagnostics[key] = {
+                    "group_index": key[0],
+                    "slot": key[1],
+                    "maximum_count": maximum_count,
+                    "admissible_counts": list(domain),
+                    "resolved_count": exemplar_count,
+                    "frame_digits": list(frame_digits),
+                    "descriptor_sha256": descriptor_digests,
+                    "ocr_texts": variant_texts,
+                    "exemplar_support_frames": support_frames,
+                    "mode": (
+                        "detail_ambiguity_same_member_exact_glyph_exemplar"
+                        if exact_resolution
+                        else "detail_ambiguity_same_member_calibrated_glyph"
+                    ),
+                }
+                self._increment(
+                    "skill_card_badge_glyph_exemplar_resolutions"
+                    if exact_resolution
+                    else "skill_card_badge_glyph_calibrated_resolutions"
+                )
+                return exemplar_count
+
+            if positive_descriptors and (
+                len(positive_descriptors) != 3
+                or (
+                    stable_signature is None
+                    and not bounded_raster_settling
+                )
+            ):
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_frame_disagreement",
+                    f"{key!r} badge glyph frames do not form one stable bounded signature",
+                )
+            strict_descriptor = (
+                positive_descriptors[0]
+                if len(positive_descriptors) == 3
+                and len(set(positive_descriptors)) == 1
+                else None
+            )
+            polluted_descriptors = getattr(
+                self,
+                "_badge_glyph_polluted_descriptors",
+                set(),
+            )
+            if any(
+                descriptor in polluted_descriptors
+                for descriptor in positive_descriptors
+            ):
+                getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+                self._increment(
+                    "skill_card_badge_glyph_exemplar_transition_conflicts"
+                )
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_exemplar_transition_conflict",
+                    f"{key!r} multi-view OCR glyph is already polluted",
+                )
+
+            descriptor_votes: dict[
+                tuple[int, ...],
+                tuple[
+                    int | None,
+                    list[str],
+                    dict[str, int],
+                    list[dict[str, Any]],
+                    list[int],
+                    str,
+                    int | None,
+                ],
+            ] = {}
+            for observation in observations:
+                internal = observation.get("internal_features", {})
+                descriptor = internal.get("glyph_descriptor_12x18_q4")
+                component_count = internal.get("glyph_component_count")
+                if (
+                    type(component_count) is int
+                    and component_count == 0
                     and descriptor is None
                     and internal.get("glyph_non_badge_art_candidate") is True
                 ):
                     frame_digits.append(0)
                     descriptor_digests.append("NON_BADGE_ART")
                     variant_texts.append([])
+                    frame_vote_counts.append({})
+                    frame_view_diagnostics.append([])
+                    frame_paired_quiet_zones.append([])
+                    frame_winners.append(0)
+                    frame_resolution_modes.append("non_badge_art_zero")
+                    frame_isolated_out_of_domain_conflicts.append(None)
                     continue
                 if (
                     type(component_count) is not int
-                    or component_count < 1
-                    or descriptor is None
+                    or component_count != 1
+                    or not isinstance(descriptor, (list, tuple))
+                    or len(descriptor) != 216
+                    or any(
+                        isinstance(value, bool)
+                        or not isinstance(value, int)
+                        or not 0 <= value <= 15
+                        for value in descriptor
+                    )
                 ):
                     raise ArenaReaderError(
-                        "skill_card_badge_glyph_ambiguous",
-                        f"{key!r} lacks one bounded co-located glyph state in every source frame",
+                        "skill_card_badge_glyph_invalid",
+                        f"{key!r} lacks one strictly typed bounded glyph in every source frame",
                     )
-                canvases = self._badge_glyph_ocr_canvases(descriptor)
+                if stable_signature is None and not bounded_raster_settling:
+                    raise ArenaReaderError(
+                        "skill_card_badge_glyph_frame_disagreement",
+                        f"{key!r} positive glyph frames lack one stable bounded signature",
+                    )
+                descriptor_tuple = tuple(descriptor)
                 descriptor_digests.append(
-                    hashlib.sha256(bytes(int(value) for value in descriptor)).hexdigest()
+                    hashlib.sha256(bytes(descriptor_tuple)).hexdigest()
                 )
-                texts: list[str] = []
-                digits: set[int] = set()
-                for canvas in canvases:
-                    for item in self._ocr(canvas, r"^[1-3]$"):
-                        value = _text(item).strip()
-                        texts.append(value)
-                        if value in {"1", "2", "3"}:
-                            digits.add(int(value))
-                variant_texts.append(texts)
-                if len(digits) != 1:
+                cached_vote = descriptor_votes.get(descriptor_tuple)
+                if cached_vote is None:
+                    texts: list[str] = []
+                    votes: Counter[int] = Counter()
+                    view_diagnostics: list[dict[str, Any]] = []
+                    pair_votes: dict[int, dict[str, int | None]] = {}
+                    observed_digits: set[int] = set()
+                    for quiet_cells, polarity, canvas in self._badge_glyph_ocr_canvases(
+                        descriptor_tuple
+                    ):
+                        # ``canvas`` is already one tightly bounded glyph, not
+                        # a scene that needs text detection.  Recognition must
+                        # cover the entire static glyph domain before the
+                        # clicked card's legal domain is consulted; otherwise
+                        # a stronger out-of-domain digit could be hidden by the
+                        # filter and a weaker in-domain vote accepted.
+                        observed = tuple(
+                            _text(item).strip()
+                            for item in self._ocr(
+                                canvas,
+                                r"^[1-9]$",
+                                only_rec=True,
+                            )
+                        )
+                        texts.extend(observed)
+                        legal = {
+                            int(value)
+                            for value in observed
+                            if re.fullmatch(r"[1-9]", value) is not None
+                        }
+                        observed_digits.update(legal)
+                        view_digit = next(iter(legal)) if len(legal) == 1 else None
+                        if view_digit is not None:
+                            votes[view_digit] += 1
+                        pair_votes.setdefault(quiet_cells, {})[polarity] = (
+                            view_digit
+                        )
+                        view_diagnostics.append(
+                            {
+                                "quiet_cells": quiet_cells,
+                                "polarity": polarity,
+                                "inverted": polarity == "inverted",
+                                "texts": list(observed),
+                                "digits": sorted(legal),
+                                "vote": view_digit,
+                            }
+                        )
+                    sole_digit = (
+                        next(iter(observed_digits))
+                        if len(observed_digits) == 1
+                        else None
+                    )
+                    paired_quiet_zones = [
+                        quiet_cells
+                        for quiet_cells, polarities in sorted(pair_votes.items())
+                        if sole_digit is not None
+                        and polarities.get("normal") == sole_digit
+                        and polarities.get("inverted") == sole_digit
+                    ]
+                    digit = (
+                        sole_digit
+                        if sole_digit is not None
+                        and len(paired_quiet_zones) >= 2
+                        else None
+                    )
+                    resolution_mode = (
+                        "conflict_free_pairs"
+                        if digit is not None
+                        else "unresolved"
+                    )
+                    isolated_out_of_domain_conflict = None
+                    if digit is None:
+                        # The narrowest canvas can add one polarity-specific
+                        # OCR artifact even when both wider canvases form
+                        # complete, matching polarity pairs.  Tolerate only
+                        # that exact 5:1 shape: the winner must already be in
+                        # the independently validated OCR acceptance domain,
+                        # while the single competing glyph is neither a
+                        # validated count nor compatible with the clicked
+                        # card's detail-derived domain.  The full OCR domain
+                        # remains visible above; the detail domain never
+                        # filters votes or chooses the winner.
+                        wide_pair_digits = [
+                            pair_votes.get(quiet_cells, {}).get("normal")
+                            for quiet_cells in (16, 24)
+                            if pair_votes.get(quiet_cells, {}).get("normal")
+                            is not None
+                            and pair_votes.get(quiet_cells, {}).get("normal")
+                            == pair_votes.get(quiet_cells, {}).get("inverted")
+                        ]
+                        narrow_normal = pair_votes.get(8, {}).get("normal")
+                        narrow_inverted = pair_votes.get(8, {}).get("inverted")
+                        wide_winner = (
+                            wide_pair_digits[0]
+                            if len(wide_pair_digits) == 2
+                            and len(set(wide_pair_digits)) == 1
+                            else None
+                        )
+                        narrow_digits = {
+                            value
+                            for value in (narrow_normal, narrow_inverted)
+                            if value is not None
+                        }
+                        conflicts = narrow_digits - {wide_winner}
+                        if (
+                            wide_winner
+                            in BADGE_GLYPH_OCR_VALIDATED_ACCEPTANCE_COUNTS
+                            and len(narrow_digits) == 2
+                            and wide_winner in narrow_digits
+                            and len(conflicts) == 1
+                            and observed_digits == narrow_digits
+                            and votes[wide_winner] == 5
+                        ):
+                            conflict = next(iter(conflicts))
+                            if (
+                                votes[conflict] == 1
+                                and conflict not in domain
+                                and conflict
+                                not in BADGE_GLYPH_OCR_VALIDATED_ACCEPTANCE_COUNTS
+                            ):
+                                digit = wide_winner
+                                paired_quiet_zones = [16, 24]
+                                resolution_mode = (
+                                    "isolated_out_of_domain_narrow_view_conflict"
+                                )
+                                isolated_out_of_domain_conflict = conflict
+                    cached_vote = (
+                        digit,
+                        texts,
+                        {str(value): count for value, count in sorted(votes.items())},
+                        view_diagnostics,
+                        paired_quiet_zones,
+                        resolution_mode,
+                        isolated_out_of_domain_conflict,
+                    )
+                    descriptor_votes[descriptor_tuple] = cached_vote
+                (
+                    digit,
+                    texts,
+                    vote_counts,
+                    view_diagnostics,
+                    paired_quiet_zones,
+                    resolution_mode,
+                    isolated_out_of_domain_conflict,
+                ) = cached_vote
+                variant_texts.append(list(texts))
+                frame_vote_counts.append(dict(vote_counts))
+                frame_view_diagnostics.append(
+                    [dict(value) for value in view_diagnostics]
+                )
+                frame_paired_quiet_zones.append(list(paired_quiet_zones))
+                frame_winners.append(digit)
+                frame_resolution_modes.append(resolution_mode)
+                frame_isolated_out_of_domain_conflicts.append(
+                    isolated_out_of_domain_conflict
+                )
+                if digit is None:
                     raise ArenaReaderError(
                         "skill_card_badge_glyph_ambiguous",
-                        f"{key!r} generic OCR did not produce one frame-local digit",
+                        f"{key!r} multi-view OCR did not produce one conflict-free "
+                        "digit in two complete polarity pairs or the exact "
+                        "validated isolated-conflict shape; "
+                        f"views={view_diagnostics!r}, paired={paired_quiet_zones!r}",
                     )
-                frame_digits.append(next(iter(digits)))
+                if digit not in domain:
+                    raise ArenaReaderError(
+                        "skill_card_badge_glyph_domain_conflict",
+                        f"{key!r} multi-view OCR digit {digit} is outside "
+                        f"the detail-compatible domain {domain!r}",
+                    )
+                frame_digits.append(digit)
             if len(set(frame_digits)) != 1:
                 raise ArenaReaderError(
                     "skill_card_badge_glyph_frame_disagreement",
                     f"{key!r} badge glyph OCR disagreed across source frames: {frame_digits!r}",
                 )
             count = frame_digits[0]
+            if (
+                count > 0
+                and count not in BADGE_GLYPH_OCR_VALIDATED_ACCEPTANCE_COUNTS
+            ):
+                # An unvalidated digit can never be accepted or recorded,
+                # but it must still be checked against already consumed
+                # member truth so a direct contradiction is not hidden
+                # behind the broader coverage stop.  Do this only after all
+                # three frame winners agree, preserving the stronger temporal
+                # disagreement diagnosis.
+                for descriptor in dict.fromkeys(positive_descriptors):
+                    self._validate_badge_glyph_runtime_label(
+                        key,
+                        descriptor,
+                        count=count,
+                        evidence="multi-view OCR glyph",
+                    )
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_unvalidated_count",
+                    f"{key!r} multi-view OCR digit {count} has no independent "
+                    "positive holdout coverage for this extractor",
+                )
+            if count > 0:
+                if stable_signature is not None:
+                    descriptor, _geometry, support_frames = stable_signature
+                    outlier_descriptor = self._validate_badge_glyph_tail_outlier(
+                        key,
+                        count=count,
+                        support_frames=support_frames,
+                    )
+                    self._record_badge_glyph_runtime_label(
+                        key,
+                        descriptor,
+                        count=count,
+                        evidence="multi-view OCR glyph",
+                    )
+                    self._record_badge_glyph_runtime_label(
+                        key,
+                        outlier_descriptor,
+                        count=count,
+                        evidence="multi-view OCR bounded first-frame glyph",
+                    )
+                elif strict_descriptor is not None:
+                    self._record_badge_glyph_runtime_label(
+                        key,
+                        strict_descriptor,
+                        count=count,
+                        evidence="strict three-frame multi-view OCR glyph",
+                    )
+            if any(
+                mode == "isolated_out_of_domain_narrow_view_conflict"
+                for mode in frame_resolution_modes
+            ):
+                self._increment(
+                    "skill_card_badge_glyph_isolated_out_of_domain_resolutions"
+                )
             self._badge_glyph_count_diagnostics[key] = {
                 "group_index": key[0],
                 "slot": key[1],
+                "maximum_count": maximum_count,
+                "admissible_counts": list(domain),
                 "resolved_count": count,
                 "frame_digits": list(frame_digits),
                 "descriptor_sha256": descriptor_digests,
                 "ocr_texts": variant_texts,
+                "ocr_vote_domain": list(range(1, 10)),
+                "ocr_validated_acceptance_domain": sorted(
+                    BADGE_GLYPH_OCR_VALIDATED_ACCEPTANCE_COUNTS
+                ),
+                "ocr_preprocess": (
+                    "q4-positive-binary/pad-8-16-24/cubic/h48/"
+                    "polarity-2/v2"
+                ),
+                "frame_vote_counts": frame_vote_counts,
+                "frame_views": frame_view_diagnostics,
+                "frame_paired_quiet_zones": frame_paired_quiet_zones,
+                "frame_winners": frame_winners,
+                "frame_resolution_modes": frame_resolution_modes,
+                "frame_isolated_out_of_domain_conflicts": (
+                    frame_isolated_out_of_domain_conflicts
+                ),
+                "temporal_signature_mode": (
+                    "bounded_monotone_raster_settling"
+                    if bounded_raster_settling
+                    else "stable_exemplar_signature"
+                    if stable_signature is not None
+                    else "none"
+                ),
                 "mode": (
                     "detail_ambiguity_same_plate_non_badge_art_zero"
                     if count == 0
-                    else "detail_ambiguity_auxiliary_same_plate_glyph_ocr"
+                    else "detail_ambiguity_auxiliary_multiview_glyph_ocr"
                 ),
             }
             self._increment("skill_card_badge_auxiliary_glyph_resolutions")
@@ -1034,10 +2897,35 @@ class MaaArenaReaderBackend:
             self._badge_glyph_count_diagnostics[key] = {
                 "group_index": key[0],
                 "slot": key[1],
+                "maximum_count": maximum_count,
+                "admissible_counts": list(domain),
                 "resolved_count": None,
                 "frame_digits": list(frame_digits),
                 "descriptor_sha256": descriptor_digests,
                 "ocr_texts": variant_texts,
+                "ocr_vote_domain": list(range(1, 10)),
+                "ocr_validated_acceptance_domain": sorted(
+                    BADGE_GLYPH_OCR_VALIDATED_ACCEPTANCE_COUNTS
+                ),
+                "ocr_preprocess": (
+                    "q4-positive-binary/pad-8-16-24/cubic/h48/"
+                    "polarity-2/v2"
+                ),
+                "frame_vote_counts": frame_vote_counts,
+                "frame_views": frame_view_diagnostics,
+                "frame_paired_quiet_zones": frame_paired_quiet_zones,
+                "frame_winners": frame_winners,
+                "frame_resolution_modes": frame_resolution_modes,
+                "frame_isolated_out_of_domain_conflicts": (
+                    frame_isolated_out_of_domain_conflicts
+                ),
+                "temporal_signature_mode": (
+                    "bounded_monotone_raster_settling"
+                    if bounded_raster_settling
+                    else "stable_exemplar_signature"
+                    if stable_signature is not None
+                    else "none"
+                ),
                 "mode": "fail_closed",
                 "error_code": error.code,
                 "error_detail": error.detail,
@@ -1143,38 +3031,41 @@ class MaaArenaReaderBackend:
         state = ArenaPageState.AMBIGUOUS
         counts = (0, 0, 0, 0, 0)
         grade_observations: tuple[Any, ...] = ()
-        grade: int | None = None
+        grade = self._grade
         grade_error: ArenaReaderError | None = None
         unavailable_reads = 0
         ambiguous_reads = 0
         for attempt in range(4):
             image = self._capture()
-            # Capture the Grade label and digit in one OCR generation before
-            # the page-state recognizers reuse the shared OCR entry with
-            # narrower filters. This avoids cross-override cache pollution and
-            # removes a second independent Grade OCR decision.
-            grade_observations = tuple(self._ocr(image, r".+"))
+            # A fresh own-team read resolves Grade once.  Cached/opponent reads
+            # inject that formal decision and must not repeat Grade OCR on each
+            # arena-main guard.  The page-state check still runs on every
+            # capture.  When Grade is unknown, keep the broad OCR first so the
+            # shared OCR entry cannot be polluted by narrower page filters.
+            if grade is None:
+                grade_observations = tuple(self._ocr(image, r".+"))
             state, counts = self._arena_page_state(image)
             if arena_page_allows_team_entry(
                 state,
                 require_opponents=require_opponents,
             ):
-                try:
-                    grade = self._read_grade(
-                        image,
-                        observations=grade_observations,
-                    )
-                except ArenaReaderError as error:
-                    if error.code not in {
-                        "arena_grade_label_ambiguous",
-                        "arena_grade_ambiguous",
-                    }:
+                if grade is None:
+                    try:
+                        grade = self._read_grade(
+                            image,
+                            observations=grade_observations,
+                        )
+                    except ArenaReaderError as error:
+                        if error.code not in {
+                            "arena_grade_label_ambiguous",
+                            "arena_grade_ambiguous",
+                        }:
+                            raise
+                        grade_error = error
+                        if attempt < 3:
+                            time.sleep(0.25)
+                            continue
                         raise
-                    grade_error = error
-                    if attempt < 3:
-                        time.sleep(0.25)
-                        continue
-                    raise
                 break
             if state is ArenaPageState.AMBIGUOUS:
                 ambiguous_reads += 1
@@ -1331,7 +3222,7 @@ class MaaArenaReaderBackend:
                 width,
                 avatar_top,
                 avatar_height,
-                slot_cap,
+                3,
                 group_center_ratio=(0.6430555556 if target.is_own_team else 0.7361111111),
             ),
             start=1,
@@ -1342,6 +3233,21 @@ class MaaArenaReaderBackend:
                 raise ArenaReaderError("member_slot_roi_invalid", f"member slot exceeds frame: {box}")
             state, metrics = classify_member_slot(crop)
             observations[slot] = (state, metrics, box)
+        for slot, (state, metrics, box) in observations.items():
+            if slot > slot_cap:
+                if state is MemberSlotState.OCCUPIED:
+                    raise ArenaReaderError(
+                        "member_slot_outside_grade_cap_occupied",
+                        f"{target.team_id}/stage-{stage_number}/slot-{slot} is occupied "
+                        f"outside Grade {self._grade} cap {slot_cap}: {metrics}",
+                    )
+                if state is MemberSlotState.AMBIGUOUS:
+                    raise ArenaReaderError(
+                        "member_slot_outside_grade_cap_ambiguous",
+                        f"{target.team_id}/stage-{stage_number}/slot-{slot} is not proven empty "
+                        f"outside Grade {self._grade} cap {slot_cap}: {metrics}",
+                    )
+                continue
             if state is MemberSlotState.OCCUPIED:
                 occupied[slot] = box
             elif state is MemberSlotState.AMBIGUOUS:
@@ -1652,6 +3558,11 @@ class MaaArenaReaderBackend:
         box: tuple[int, int, int, int],
         *,
         candidate_ids: Sequence[int],
+        global_title_scope: bool = False,
+        visual_tiebreak_ids: Sequence[int] = (),
+        unrepresented_ids: Sequence[int] = (),
+        source_images: Sequence[Any] = (),
+        source_boxes: Sequence[tuple[int, int, int, int]] = (),
     ) -> int:
         if not candidate_ids:
             raise ArenaReaderError(
@@ -1659,61 +3570,545 @@ class MaaArenaReaderBackend:
                 "P-item detail fallback requires fixed-reference candidates",
             )
         started = time.perf_counter()
-        interaction_box = self._p_item_interaction_box(box)
-        self._click(interaction_box, settle_seconds=0)
+
+        def match_title_rows(text: str) -> tuple[int, ...]:
+            matches: list[int] = []
+            for title_row in str(text or "").splitlines():
+                if not title_row.strip():
+                    continue
+                if global_title_scope:
+                    row_matches = self.catalog.clicked_p_item_global_detail_matches(
+                        title_row,
+                        candidate_p_item_ids=candidate_ids,
+                        visual_tiebreak_p_item_ids=visual_tiebreak_ids,
+                        unrepresented_p_item_ids=unrepresented_ids,
+                        allow_one_substitution=True,
+                    )
+                else:
+                    row_matches = self.catalog.clicked_p_item_candidate_matches(
+                        title_row,
+                        candidate_p_item_ids=candidate_ids,
+                    )
+                matches.extend(row_matches)
+            return tuple(dict.fromkeys(matches))
+
+        def match_title_rows_exact(text: str) -> tuple[int, ...]:
+            matches: list[int] = []
+            for title_row in str(text or "").splitlines():
+                if not title_row.strip():
+                    continue
+                matches.extend(
+                    self.catalog.clicked_p_item_global_detail_matches(
+                        title_row,
+                        candidate_p_item_ids=candidate_ids,
+                        visual_tiebreak_p_item_ids=visual_tiebreak_ids,
+                        unrepresented_p_item_ids=unrepresented_ids,
+                        allow_one_substitution=False,
+                    )
+                )
+            return tuple(dict.fromkeys(matches))
+
+        def normalize_title_row(text: str) -> str:
+            return re.sub(
+                r"\s+",
+                "",
+                unicodedata.normalize("NFKC", str(text or "")),
+            )
+
+        def title_rows(text: str) -> tuple[tuple[str, str], ...]:
+            rows: list[tuple[str, str]] = []
+            for raw_row in str(text or "").splitlines():
+                normalized = normalize_title_row(raw_row)
+                if normalized:
+                    rows.append((raw_row.strip(), normalized))
+            return tuple(rows)
+
+        def observe_p_item(image: Any) -> tuple[
+            str,
+            str,
+            bool,
+            tuple[
+                tuple[
+                    str,
+                    str,
+                    tuple[float, float, float, float],
+                    tuple[
+                        tuple[
+                            str,
+                            str,
+                            tuple[float, float, float, float],
+                        ],
+                        ...,
+                    ],
+                ],
+                ...,
+            ],
+        ]:
+            observation = self._p_item_ocr_observation(image)
+            if len(observation) == 4:
+                full_text, panel_text, anchors_visible, geometric_rows = observation
+                normalized_rows_list = []
+                for geometric_row in geometric_rows:
+                    if len(geometric_row) == 3:
+                        raw, row_box, components = geometric_row
+                    elif len(geometric_row) == 2:
+                        raw, row_box = geometric_row
+                        components = ((raw, row_box),)
+                    else:
+                        raise ArenaReaderError(
+                            "p_item_ocr_panel_row_invalid",
+                            "P-item OCR panel row has an unsupported shape",
+                        )
+                    normalized = normalize_title_row(raw)
+                    if not normalized:
+                        continue
+                    normalized_components = tuple(
+                        (
+                            str(component_raw).strip(),
+                            normalize_title_row(component_raw),
+                            tuple(float(value) for value in component_box),
+                        )
+                        for component_raw, component_box in components
+                        if normalize_title_row(component_raw)
+                    )
+                    normalized_rows_list.append(
+                        (
+                            str(raw).strip(),
+                            normalized,
+                            tuple(float(value) for value in row_box),
+                            normalized_components,
+                        )
+                    )
+                normalized_rows = tuple(normalized_rows_list)
+            elif len(observation) == 3:
+                # Isolated tests and injected diagnostic backends predate row
+                # geometry. Give their ordered rows stable synthetic positions;
+                # production always supplies normalized OCR boxes.
+                full_text, panel_text, anchors_visible = observation
+                normalized_rows = tuple(
+                    (
+                        raw,
+                        normalized,
+                        (18.0, 16.0 + index * 48.0, 320.0, 24.0),
+                        (
+                            (
+                                raw,
+                                normalized,
+                                (18.0, 16.0 + index * 48.0, 320.0, 24.0),
+                            ),
+                        ),
+                    )
+                    for index, (raw, normalized) in enumerate(
+                        title_rows(panel_text)
+                    )
+                )
+            else:
+                raise ArenaReaderError(
+                    "p_item_ocr_observation_invalid",
+                    "P-item OCR observation has an unsupported shape",
+                )
+            return (
+                str(full_text),
+                str(panel_text),
+                bool(anchors_visible),
+                normalized_rows,
+            )
+
+        def one_substitution(left: str, right: str) -> bool:
+            return (
+                len(left) >= 3
+                and len(left) == len(right)
+                and sum(a != b for a, b in zip(left, right)) == 1
+            )
+
+        def numeric_source_row_extension(
+            current_row: str,
+            source_row: str,
+        ) -> bool:
+            if current_row == source_row or source_row not in current_row:
+                return False
+            residue = current_row.replace(source_row, "", 1)
+            return bool(
+                residue
+                and any(character.isdigit() for character in residue)
+                and re.fullmatch(r"[0-9A-Za-z.,%+\-]+", residue)
+            )
+
+        def verified_numeric_source_row_extension(
+            components: tuple[
+                tuple[str, str, tuple[float, float, float, float]],
+                ...,
+            ],
+            source_row: str,
+            source_box: tuple[float, float, float, float],
+        ) -> bool:
+            source_components = tuple(
+                index
+                for index, (_, normalized, component_box) in enumerate(components)
+                if normalized == source_row
+                and same_source_position(component_box, source_box)
+            )
+            for source_component in source_components:
+                remaining = tuple(
+                    normalized
+                    for index, (_, normalized, _) in enumerate(components)
+                    if index != source_component
+                )
+                if remaining and all(
+                    any(character.isdigit() for character in value)
+                    and re.fullmatch(r"[0-9A-Za-z.,%+\-]+", value)
+                    for value in remaining
+                ):
+                    return True
+            return False
+
+        def same_source_position(
+            current_box: tuple[float, float, float, float],
+            source_box: tuple[float, float, float, float],
+        ) -> bool:
+            current_x, current_y, current_width, current_height = current_box
+            source_x, source_y, source_width, source_height = source_box
+            intersection_width = max(
+                0.0,
+                min(current_x + current_width, source_x + source_width)
+                - max(current_x, source_x),
+            )
+            intersection_height = max(
+                0.0,
+                min(current_y + current_height, source_y + source_height)
+                - max(current_y, source_y),
+            )
+            minimum_area = min(
+                current_width * current_height,
+                source_width * source_height,
+            )
+            if minimum_area <= 0:
+                return False
+            current_centre_y = current_y + current_height / 2.0
+            source_centre_y = source_y + source_height / 2.0
+            return (
+                intersection_width * intersection_height / minimum_area >= 0.50
+                and abs(current_centre_y - source_centre_y) <= 8.0
+            )
+
+        stable_source_title_signatures: frozenset[tuple[str, ...]] = frozenset()
+        stable_source_title_rows: tuple[
+            tuple[str, tuple[float, float, float, float]],
+            ...,
+        ] = ()
+        if source_images:
+            cache = getattr(self, "_p_item_source_ocr_cache", None)
+            if cache is None:
+                cache = {}
+                self._p_item_source_ocr_cache = cache
+            # ``read_p_item_ids`` clears this bounded cache once per member.
+            # The frozen frame objects stay alive for all four slot
+            # transactions, so their in-process identities are sufficient and
+            # avoid hashing three full captures again for every slot.
+            cache_key = tuple(id(image) for image in source_images)
+            source_observations = cache.get(cache_key)
+            if source_observations is None:
+                ocr_started = time.perf_counter()
+                try:
+                    source_observations = tuple(
+                        observe_p_item(source_image)
+                        for source_image in source_images
+                    )
+                    self._assert_p_item_source_generation_stable(
+                        source_images,
+                        source_boxes,
+                    )
+                except Exception as error:
+                    raise ArenaReaderError(
+                        "p_item_source_title_evidence_invalid",
+                        "P-item detail recovery could not freeze source-page "
+                        "catalog-title evidence before clicking",
+                    ) from error
+                self._add_timing(
+                    "p_item_source_title_ocr",
+                    time.perf_counter() - ocr_started,
+                )
+                cache[cache_key] = source_observations
+            signature_counts: dict[tuple[str, ...], int] = {}
+            for _, _, _, source_rows in source_observations:
+                signature = tuple(row[1] for row in source_rows)
+                if signature:
+                    signature_counts[signature] = signature_counts.get(signature, 0) + 1
+            strict_majority = len(source_observations) // 2 + 1
+            if len(source_observations) >= 2:
+                stable_source_title_signatures = frozenset(
+                    signature
+                    for signature, count in signature_counts.items()
+                    if count >= strict_majority
+                )
+                if stable_source_title_signatures:
+                    stable_signature = next(iter(stable_source_title_signatures))
+                    agreeing_rows = tuple(
+                        source_rows
+                        for _, _, _, source_rows in source_observations
+                        if tuple(row[1] for row in source_rows)
+                        == stable_signature
+                    )
+                    stable_source_title_rows = tuple(
+                        (
+                            normalized,
+                            tuple(
+                                statistics.median(
+                                    rows[index][2][coordinate]
+                                    for rows in agreeing_rows
+                                )
+                                for coordinate in range(4)
+                            ),
+                        )
+                        for index, normalized in enumerate(stable_signature)
+                    )
+                else:
+                    raise ArenaReaderError(
+                        "p_item_source_title_evidence_unstable",
+                        "P-item detail recovery could not establish a strict-"
+                        "majority spatial source-row signature before clicking",
+                    )
+        safe_region = self._p_item_interaction_box(box)
+        interaction_point = self._box_center_point(safe_region)
+        self._click(interaction_point, settle_seconds=0)
         self._increment("p_item_detail_clicks")
         self._increment("p_item_safe_region_clicks")
         transaction_states = ["SOURCE_STABLE", "CLICK_SENT"]
         deadline = time.monotonic() + 3.0
         last_text = ""
+        last_panel_text = ""
+        last_title_text = ""
         last_error = "P-item detail OCR did not run"
         resolved: int | None = None
         candidate_title_seen = False
         detail_confirmed = False
         consecutive_source_reads = 0
         consecutive_non_source_reads = 0
+        last_unique_match: int | None = None
+        consecutive_unique_matches = 0
+        unique_match_used_effect = False
         retried = False
         terminal_error: Exception | None = None
+        last_source_visual_errors: tuple[float, ...] = ()
+        last_source_match_route = "none"
+        last_source_row_uncertain = False
+        consecutive_source_transition_reads = 0
+        last_frame_may_have_overlay = False
         open_wait_started = time.perf_counter()
         while time.monotonic() < deadline:
             try:
                 image = self._capture()
                 ocr_started = time.perf_counter()
-                last_text = self._full_ocr_text(image)
+                (
+                    last_text,
+                    last_panel_text,
+                    member_anchors_visible,
+                    current_rows,
+                ) = observe_p_item(image)
                 self._add_timing(
                     "p_item_detail_ocr",
                     time.perf_counter() - ocr_started,
                 )
-                matches = self.catalog.clicked_p_item_candidate_matches(
-                    last_text,
-                    candidate_p_item_ids=candidate_ids,
+                current_title_signature = tuple(
+                    normalized for _, normalized, _, _ in current_rows
                 )
+                last_source_row_uncertain = False
+                used_source_rows: set[int] = set()
+                last_title_text = ""
+                for raw, normalized, row_box, components in current_rows:
+                    exact_sources = tuple(
+                        (index,)
+                        for index, (source_row, source_box) in enumerate(
+                            stable_source_title_rows
+                        )
+                        if index not in used_source_rows
+                        and normalized == source_row
+                        and same_source_position(row_box, source_box)
+                    )
+                    if exact_sources:
+                        (source_index,) = min(exact_sources)
+                        used_source_rows.add(source_index)
+                        continue
+                    extended_sources = tuple(
+                        (index,)
+                        for index, (source_row, source_box) in enumerate(
+                            stable_source_title_rows
+                        )
+                        if index not in used_source_rows
+                        and same_source_position(row_box, source_box)
+                        and numeric_source_row_extension(normalized, source_row)
+                    )
+                    verified_extended_sources = tuple(
+                        (index,)
+                        for (index,) in extended_sources
+                        if verified_numeric_source_row_extension(
+                            components,
+                            stable_source_title_rows[index][0],
+                            stable_source_title_rows[index][1],
+                        )
+                    )
+                    if verified_extended_sources:
+                        if match_title_rows_exact(raw):
+                            last_title_text = raw
+                            break
+                        # A numeric value can be misread as one Latin letter and
+                        # joined to an unchanged source label (for example,
+                        # ``総合力`` + ``15Z``). The independently positioned
+                        # source label still proves this is a source-row
+                        # extension, not the detail title.
+                        (source_index,) = min(verified_extended_sources)
+                        used_source_rows.add(source_index)
+                        continue
+                    if extended_sources:
+                        last_source_row_uncertain = True
+                        break
+                    approximate_source = any(
+                        index not in used_source_rows
+                        and same_source_position(row_box, source_box)
+                        and one_substitution(normalized, source_row)
+                        for index, (source_row, source_box) in enumerate(
+                            stable_source_title_rows
+                        )
+                    )
+                    if approximate_source:
+                        # A one-character difference at a frozen source
+                        # position is not removable evidence: doing so could
+                        # promote effect prose into the title slot.
+                        last_source_row_uncertain = True
+                        break
+                    last_title_text = raw
+                    break
+                # The first row newly introduced by the detail panel is the
+                # identity row. Later rows are effect prose and can contain
+                # other catalog titles, so they are never matching evidence.
+                raw_matches = match_title_rows(last_title_text)
+                matches = raw_matches
+                effect_disambiguated = False
+                if len(raw_matches) > 1:
+                    effect_matcher = getattr(
+                        self.catalog,
+                        "clicked_p_item_effect_detail_matches",
+                        None,
+                    )
+                    if callable(effect_matcher):
+                        effect_matches = effect_matcher(
+                            last_text,
+                            candidate_p_item_ids=raw_matches,
+                        )
+                        if (
+                            len(effect_matches) == 1
+                            and effect_matches[0] in raw_matches
+                        ):
+                            matches = effect_matches
+                            effect_disambiguated = True
             except Exception as error:
                 terminal_error = error
                 last_error = str(error)
+                raw_matches = ()
                 matches = ()
+                effect_disambiguated = False
                 image = None
+                current_title_signature = ()
+                last_source_row_uncertain = False
             source_visible = False
+            source_transition = False
             if terminal_error is not None:
                 break
             if image is not None:
+                last_frame_may_have_overlay = True
                 try:
-                    source_visible = (
-                        "体力" in last_text and "総合力" in last_text
-                    ) or bool(
-                        self._ocr(image, r"^体力$")
-                        and self._ocr(image, r"^総合力$")
-                    )
+                    if source_images and source_boxes:
+                        source_visible, last_source_visual_errors = (
+                            self._p_item_source_frame_matches(
+                            source_images,
+                            image,
+                            source_boxes,
+                            member_anchors_visible,
+                        )
+                        )
+                        if source_visible:
+                            last_source_match_route = "visual_frozen_generation"
+                        elif (
+                            member_anchors_visible
+                            and current_title_signature
+                            and current_title_signature
+                            in stable_source_title_signatures
+                        ):
+                            source_transition = True
+                            last_source_match_route = "semantic_source_transition"
+                        else:
+                            last_source_match_route = "none"
+                    else:
+                        source_visible = (
+                            "体力" in last_text and "総合力" in last_text
+                        ) or bool(
+                            self._ocr(image, r"^体力$")
+                            and self._ocr(image, r"^総合力$")
+                        )
                 except Exception as error:
                     terminal_error = error
                     last_error = str(error)
                     break
-            if len(matches) == 1:
+            if source_visible:
+                last_frame_may_have_overlay = False
+                last_unique_match = None
+                consecutive_unique_matches = 0
+                unique_match_used_effect = False
+                consecutive_source_reads += 1
+                consecutive_non_source_reads = 0
+                consecutive_source_transition_reads = 0
+                last_error = "the original member page remained stable after the click"
+            elif source_transition:
+                last_unique_match = None
+                consecutive_unique_matches = 0
+                unique_match_used_effect = False
+                consecutive_source_reads = 0
+                consecutive_non_source_reads = 0
+                consecutive_source_transition_reads += 1
+                self._increment("p_item_source_transition_frames")
+                last_error = (
+                    "the frozen source title generation remained visible while "
+                    "source pixels were transitioning"
+                )
+                if consecutive_source_transition_reads >= 8:
+                    detail_confirmed = True
+                    transaction_states.extend(
+                        ("SOURCE_TRANSITION_EXHAUSTED", "AMBIGUOUS")
+                    )
+                    break
+            elif len(matches) == 1:
+                consecutive_source_transition_reads = 0
+                current_match = matches[0]
+                if last_unique_match == current_match:
+                    consecutive_unique_matches += 1
+                    unique_match_used_effect = (
+                        unique_match_used_effect or effect_disambiguated
+                    )
+                else:
+                    consecutive_unique_matches = 1
+                    unique_match_used_effect = effect_disambiguated
+                last_unique_match = current_match
+                if consecutive_unique_matches < 2:
+                    candidate_title_seen = True
+                    detail_confirmed = True
+                    consecutive_source_reads = 0
+                    last_error = (
+                        "P-item title needs a second consecutive targeted OCR "
+                        f"confirmation for {current_match}"
+                    )
+                    time.sleep(0.12)
+                    continue
                 resolved = matches[0]
+                if unique_match_used_effect:
+                    self._increment("p_item_detail_effect_disambiguations")
                 detail_confirmed = True
                 transaction_states.extend(("DETAIL_CONFIRMED", "RESOLVED"))
                 break
-            if matches:
+            elif matches:
+                consecutive_source_transition_reads = 0
+                last_unique_match = None
+                consecutive_unique_matches = 0
+                unique_match_used_effect = False
                 candidate_title_seen = True
                 detail_confirmed = True
                 consecutive_source_reads = 0
@@ -1722,18 +4117,24 @@ class MaaArenaReaderBackend:
                     "P-item detail matched multiple candidate titles "
                     f"{matches!r}"
                 )
-            elif source_visible:
-                consecutive_source_reads += 1
-                consecutive_non_source_reads = 0
-                last_error = "the original member page remained stable after the click"
             else:
+                consecutive_source_transition_reads = 0
+                last_unique_match = None
+                consecutive_unique_matches = 0
+                unique_match_used_effect = False
                 consecutive_source_reads = 0
                 consecutive_non_source_reads += 1
                 if last_text:
-                    last_error = (
-                        "P-item detail exposed no fixed candidate title "
-                        f"within {tuple(candidate_ids)!r}"
-                    )
+                    if last_source_row_uncertain:
+                        last_error = (
+                            "P-item detail first changed row remained one OCR "
+                            "substitution from a frozen source row"
+                        )
+                    else:
+                        last_error = (
+                            "P-item detail exposed no fixed candidate title "
+                            f"within {tuple(candidate_ids)!r}"
+                        )
                 if consecutive_non_source_reads >= 2 and last_text:
                     detail_confirmed = True
                     transaction_states.extend(("DETAIL_CONFIRMED", "AMBIGUOUS"))
@@ -1743,7 +4144,7 @@ class MaaArenaReaderBackend:
                 and not detail_confirmed
                 and consecutive_source_reads >= 3
             ):
-                self._click(interaction_box, settle_seconds=0)
+                self._click(interaction_point, settle_seconds=0)
                 self._increment("p_item_detail_click_retries")
                 self._increment("p_item_safe_region_clicks")
                 retried = True
@@ -1759,10 +4160,20 @@ class MaaArenaReaderBackend:
         )
         recovery_started = time.perf_counter()
         try:
-            if detail_confirmed or terminal_error is not None:
+            if (
+                detail_confirmed
+                or terminal_error is not None
+                or last_frame_may_have_overlay
+            ):
                 self._dismiss_skill_card_detail()
                 transaction_states.append("DISMISS_SENT")
-            self._assert_member_detail()
+            if source_images and source_boxes:
+                self._assert_p_item_source_restored(
+                    source_images,
+                    source_boxes,
+                )
+            else:
+                self._assert_member_detail()
             transaction_states.append("SOURCE_RESTORED")
         except ArenaReaderError as recovery_error:
             elapsed = time.perf_counter() - started
@@ -1775,7 +4186,7 @@ class MaaArenaReaderBackend:
             raise ArenaReaderError(
                 "p_item_detail_recovery_failed",
                 "P-item detail transaction did not restore the original member page; "
-                f"states={transaction_states!r}",
+                f"states={transaction_states!r}; cause={recovery_error}",
             ) from recovery_error
         self._add_timing(
             "p_item_detail_close_restore",
@@ -1801,11 +4212,48 @@ class MaaArenaReaderBackend:
                 error_code,
                 f"P-item detail did not uniquely confirm {tuple(candidate_ids)!r}: "
                 f"{last_error}; states={transaction_states!r}; "
-                f"safe_box={interaction_box!r}; retried={retried}; "
-                f"OCR={last_text[:400]!r}",
+                f"safe_box={safe_region!r}; click_point={interaction_point!r}; "
+                f"retried={retried}; "
+                f"source_match_route={last_source_match_route!r}; "
+                f"source_row_uncertain={last_source_row_uncertain}; "
+                f"source_visual_errors="
+                f"{tuple(round(value, 6) for value in last_source_visual_errors)!r}; "
+                f"title_OCR={last_title_text[:160]!r}; "
+                f"panel_OCR={last_panel_text[:240]!r}; OCR={last_text[:400]!r}",
             )
         self._record_duration_sample("p_item_detail_transaction", elapsed)
         return resolved
+
+    def _assert_p_item_reference_catalog_compatibility(self) -> None:
+        """Bind fixed-gallery drift to a safe global-title confirmation route."""
+
+        if getattr(self, "_p_item_catalog_compatibility_checked", False):
+            return
+        gallery = getattr(self.p_item_reader, "gallery", None)
+        raw_gallery_ids = getattr(gallery, "p_item_ids", None)
+        if raw_gallery_ids is None:
+            # Explicit injected readers are used by isolated tests and
+            # diagnostics. Production Task085PItemReader always exposes its
+            # fixed gallery and therefore cannot bypass this compatibility gate.
+            return
+        gallery_ids = frozenset(int(value) for value in raw_gallery_ids)
+        catalog_ids = frozenset(self.catalog.p_item_business_ids())
+        required_ids = frozenset(
+            self.catalog.arena_p_item_reference_required_ids()
+        )
+        missing = tuple(sorted(required_ids - gallery_ids))
+        unknown = tuple(sorted(gallery_ids - catalog_ids))
+        self._p_item_reference_missing_arena_ids = missing
+        self._p_item_reference_unknown_catalog_ids = unknown
+        self._p_item_reference_provisional_ids = tuple(
+            sorted(
+                gallery_ids.intersection(
+                    getattr(gallery, "provisional_p_item_ids", ())
+                )
+            )
+        )
+        self._p_item_reference_gallery_ids = tuple(sorted(gallery_ids))
+        self._p_item_catalog_compatibility_checked = True
 
     @staticmethod
     def _p_item_interaction_box(
@@ -1920,9 +4368,11 @@ class MaaArenaReaderBackend:
         slot: int,
     ) -> Sequence[int]:
         del target, slot
-        self._p_item_source_frames = None
+        self._p_item_source_ocr_cache = {}
         if self.p_item_reader is None:
             self.p_item_reader = Task085PItemReader.from_model_root()
+        plan = self.season.stages[stage_number - 1].plan
+        self._assert_p_item_reference_catalog_compatibility()
         first = self._capture()
         height, width = first.shape[:2]
         icon = int(width * 0.09)
@@ -1930,7 +4380,6 @@ class MaaArenaReaderBackend:
             (int(width * x), int(height * 0.207), icon, icon)
             for x in (0.05, 0.147, 0.247, 0.34)
         )
-        plan = self.season.stages[stage_number - 1].plan
         decisions: tuple[PItemReferenceDecision, ...] = ()
         images: tuple[Any, ...] = ()
         generation_attempt = 0
@@ -2005,32 +4454,135 @@ class MaaArenaReaderBackend:
                     for index, decision in ambiguous
                 ),
             )
-        if len(detail_eligible) > self.p_item_reader.maximum_detail_fallbacks_per_member:
+        if getattr(self, "_p_item_catalog_compatibility_checked", False):
+            gallery_ids = frozenset(
+                getattr(self, "_p_item_reference_gallery_ids", ())
+            )
+            missing_reference_ids = tuple(
+                sorted(
+                    frozenset(
+                        self.catalog.arena_p_item_reference_required_ids(plan=plan)
+                    )
+                    - gallery_ids
+                )
+            )
+        else:
+            missing_reference_ids = tuple(
+                getattr(self, "_p_item_reference_missing_arena_ids", ())
+            )
+        unknown_catalog_ids = frozenset(
+            getattr(self, "_p_item_reference_unknown_catalog_ids", ())
+        )
+        provisional_reference_ids = frozenset(
+            getattr(self, "_p_item_reference_provisional_ids", ())
+        )
+        visual_tiebreak_blocked_ids = tuple(
+            sorted(
+                frozenset(missing_reference_ids).union(
+                    provisional_reference_ids
+                )
+            )
+        )
+        force_missing_reference_detail = bool(missing_reference_ids)
+        force_catalog_superset_detail = bool(unknown_catalog_ids)
+        force_global_detail = (
+            force_missing_reference_detail or force_catalog_superset_detail
+        )
+        provisional_plan_ids = frozenset(
+            provisional_reference_ids.intersection(
+                self.catalog.arena_p_item_reference_required_ids(plan=plan)
+            )
+            if provisional_reference_ids
+            else ()
+        )
+        detail_by_slot = dict(detail_eligible)
+        global_detail_slots: set[int] = set()
+        if force_global_detail:
+            detail_by_slot.update(
+                (index, decision)
+                for index, decision in enumerate(decisions, start=1)
+                if decision.status != "EMPTY"
+            )
+            global_detail_slots.update(detail_by_slot)
+        else:
+            # Plan reachability only says that a provisional ID may occur; it
+            # does not authorize opening unrelated, already accepted slots.
+            # Keep the provisional safety check local to the slot whose
+            # accepted ID or unresolved candidate set actually observed it.
+            for index, decision in enumerate(decisions, start=1):
+                observed_ids = (
+                    (decision.p_item_id,)
+                    if decision.accepted and decision.p_item_id is not None
+                    else decision.candidates
+                )
+                if provisional_reference_ids.intersection(observed_ids):
+                    detail_by_slot[index] = decision
+                    global_detail_slots.add(index)
+        detail_budget = self.p_item_reader.maximum_detail_fallbacks_per_member
+        budgeted_detail_slots = set(detail_by_slot) - global_detail_slots
+        if force_global_detail:
+            # Catalog drift is the one case that intentionally confirms every
+            # non-empty slot.  It is bounded by the four-slot page itself.
+            detail_budget = 4
+            budgeted_detail_slots = set(detail_by_slot)
+        if len(budgeted_detail_slots) > detail_budget:
             raise ArenaReaderError(
                 "p_item_detail_budget_exceeded",
-                f"P-item detail fallbacks {len(detail_eligible)} exceed the per-member budget "
-                f"{self.p_item_reader.maximum_detail_fallbacks_per_member}",
+                f"P-item bounded detail fallbacks {len(budgeted_detail_slots)} "
+                "exceed the per-member budget "
+                f"{detail_budget}",
             )
 
         screen_resolved_ids: list[int] = []
         screen_diagnostics: list[dict[str, Any]] = []
-        detail_by_slot = dict(detail_eligible)
+        global_detail_candidates = (
+            self.catalog.arena_p_item_reference_required_ids(plan=plan)
+            if global_detail_slots
+            else ()
+        )
         for screen_slot, (box, decision) in enumerate(
             zip(boxes, decisions, strict=True),
             start=1,
         ):
             engine_slot = p_item_screen_slot_to_engine_slot(screen_slot)
             if screen_slot in detail_by_slot:
+                use_global_detail = screen_slot in global_detail_slots
+                detail_candidates = (
+                    global_detail_candidates
+                    if use_global_detail
+                    else decision.candidates
+                )
+                decision_observed_ids = (
+                    (decision.p_item_id,)
+                    if decision.accepted and decision.p_item_id is not None
+                    else decision.candidates
+                )
+                visual_tiebreak_ids = (
+                    decision_observed_ids if decision.accepted else ()
+                )
                 resolved_id = self._confirm_p_item_detail(
                     box,
-                    candidate_ids=decision.candidates,
+                    candidate_ids=detail_candidates,
+                    global_title_scope=use_global_detail,
+                    visual_tiebreak_ids=visual_tiebreak_ids,
+                    unrepresented_ids=visual_tiebreak_blocked_ids,
+                    source_images=images,
+                    source_boxes=boxes,
                 )
                 screen_resolved_ids.append(resolved_id)
                 screen_diagnostics.append(
                     self._p_item_decision_evidence(
                         engine_slot,
                         decision,
-                        path="bounded_detail_confirmation",
+                        path=(
+                            "catalog_drift_global_detail_confirmation"
+                            if force_missing_reference_detail
+                            else "catalog_superset_global_detail_confirmation"
+                            if force_catalog_superset_detail
+                            else "provisional_reference_global_detail_confirmation"
+                            if use_global_detail
+                            else "bounded_detail_confirmation"
+                        ),
                         resolved_id=resolved_id,
                         screen_slot=screen_slot,
                     )
@@ -2085,65 +4637,33 @@ class MaaArenaReaderBackend:
             ),
             "screen_slot_to_engine_slot": [1, 4, 3, 2],
             "matching_seconds": round(matching_seconds, 6),
+            "missing_arena_reference_ids": list(missing_reference_ids),
+            "unknown_catalog_gallery_ids": sorted(unknown_catalog_ids),
+            "provisional_reference_ids": sorted(provisional_reference_ids),
+            "provisional_plan_ids": sorted(provisional_plan_ids),
+            "catalog_drift_global_detail_confirmations": (
+                len(global_detail_slots) if force_missing_reference_detail else 0
+            ),
+            "catalog_superset_global_detail_confirmations": (
+                len(global_detail_slots) if force_catalog_superset_detail else 0
+            ),
+            "provisional_reference_global_detail_confirmations": (
+                sum(
+                    bool(
+                        provisional_reference_ids.intersection(
+                            (decision.p_item_id,)
+                            if decision.accepted and decision.p_item_id is not None
+                            else decision.candidates
+                        )
+                    )
+                    for index, decision in enumerate(decisions, start=1)
+                    if index in global_detail_slots
+                )
+                if not force_global_detail
+                else 0
+            ),
         }
-        # With no P-item detail transaction, these three frames still belong
-        # to the untouched member page.  The pre-swipe upper-left safety guard
-        # may reuse them, but only after independently proving card-row
-        # geometry and that card's content generation.  Any P-item click makes
-        # the cache ineligible because a UI transaction occurred in between.
-        self._p_item_source_frames = (
-            (images[0], images[1], images[2])
-            if not detail_eligible and len(images) == 3
-            else None
-        )
-        if self._p_item_source_frames is not None:
-            self._increment("p_item_source_frame_generations_cached")
         return resolved_ids
-
-    def _reusable_preswipe_upper_first_generation(
-        self,
-    ) -> tuple[
-        tuple[Any, Any, Any],
-        tuple[tuple[tuple[int, int, int, int], ...], ...],
-    ] | None:
-        """Reuse untouched P-item frames only when upper-left evidence is stable."""
-
-        frames = getattr(self, "_p_item_source_frames", None)
-        self._p_item_source_frames = None
-        if frames is None:
-            return None
-        try:
-            rows = tuple(
-                self._validated_card_group_row(image, 0) for image in frames
-            )
-            signatures = tuple(
-                self._card_references().content_signature_with_identity(
-                    image,
-                    row[0],
-                )[:2]
-                for image, row in zip(frames, rows, strict=True)
-            )
-        except (ArenaReaderError, BadgeReferenceError):
-            self._increment("upper_first_preswipe_frame_reuse_rejected")
-            return None
-        if any(
-            self._card_rows_shifted(actual, expected)
-            for actual, expected in zip(rows[1:], rows[:-1], strict=True)
-        ) or any(
-            self._card_content_generation_shifted(
-                (actual,),
-                (expected,),
-            )
-            for actual, expected in zip(
-                signatures[1:],
-                signatures[:-1],
-                strict=True,
-            )
-        ):
-            self._increment("upper_first_preswipe_frame_reuse_rejected")
-            return None
-        self._increment("upper_first_preswipe_frame_reuses")
-        return frames, rows
 
     def prepare_skill_card_group(
         self,
@@ -2161,11 +4681,6 @@ class MaaArenaReaderBackend:
         ):
             return
         if group_index == 1:
-            self._pre_resolve_upper_first_card(
-                target,
-                stage_number,
-                member_slot,
-            )
             self._swipe(vertical="up")
         first_error: ArenaReaderError | None = None
         try:
@@ -2207,151 +4722,6 @@ class MaaArenaReaderBackend:
             allow_fixed_secondary=True,
         )
         self._secondary_fixed_slot_fallback_enabled = True
-
-    def _pre_resolve_upper_first_card(
-        self,
-        target: TeamTarget,
-        stage_number: int,
-        member_slot: int,
-    ) -> None:
-        """Protect the only card whose detail hitbox disappears after the swipe."""
-
-        started = time.perf_counter()
-        reused = self._reusable_preswipe_upper_first_generation()
-        source_generation_cached = reused is None
-        if reused is None:
-            self._capture_stable_card_groups(
-                (0,),
-                interval_seconds=0.04,
-            )
-            frames = self._card_count_frames[0]
-            frame_rows = tuple(
-                self._validated_card_group_row(image, 0) for image in frames
-            )
-        else:
-            frames, frame_rows = reused
-
-        def classify_upper_first() -> tuple[bool, Any]:
-            repeated_visual_features = tuple(
-                duplicate_marker_visual_features(
-                    image[
-                        row[0][1] : row[0][1] + row[0][3],
-                        row[0][0] : row[0][0] + row[0][2],
-                        :3,
-                    ]
-                )
-                for image, row in zip(frames, frame_rows, strict=True)
-            )
-            if is_duplicate_marker_visual_candidate(repeated_visual_features):
-                duplicate_observations, diagnostics = (
-                    self._targeted_duplicate_marker_observations(
-                        frames,
-                        frame_rows[0],
-                        (0,),
-                        phase="pre_swipe_upper_first",
-                    )
-                )
-                stable_duplicate = stable_excluded_duplicate_card_flags(
-                    duplicate_observations
-                )[0]
-                self._card_duplicate_marker_diagnostics[0] = tuple(diagnostics)
-                if stable_duplicate is None:
-                    raise ArenaReaderError(
-                        "skill_card_upper_first_duplicate_ambiguous",
-                        "upper group/slot 1 duplicate marker changed across pre-swipe frames",
-                    )
-                if stable_duplicate:
-                    return True, None
-            shortlist = self._local_badge_slot_decision(
-                frames,
-                frame_rows,
-                0,
-                0,
-            )
-            self._badge_glyph_observations[(0, 1)] = shortlist.observations
-            return False, shortlist
-
-        stable_duplicate, shortlist = classify_upper_first()
-        if stable_duplicate:
-            self._increment("upper_first_preswipe_excluded")
-            self._add_timing(
-                "upper_first_preswipe_guard",
-                time.perf_counter() - started,
-            )
-            return
-        decision = shortlist.decision
-        if (
-            decision.state is not CustomizationBadgeState.CONFIDENT_ZERO
-            and not source_generation_cached
-        ):
-            # A positive upper-left candidate will open a UI transaction.  The
-            # source-restoration gate therefore needs full six-slot signatures,
-            # not only the single-card proof used by the no-click fast path.
-            self._increment("upper_first_preswipe_frame_reuse_escalations")
-            self._capture_stable_card_groups(
-                (0,),
-                interval_seconds=0.04,
-            )
-            frames = self._card_count_frames[0]
-            frame_rows = tuple(
-                self._validated_card_group_row(image, 0) for image in frames
-            )
-            source_generation_cached = True
-            stable_duplicate, shortlist = classify_upper_first()
-            if stable_duplicate:
-                self._increment("upper_first_preswipe_excluded")
-                self._add_timing(
-                    "upper_first_preswipe_guard",
-                    time.perf_counter() - started,
-                )
-                return
-            decision = shortlist.decision
-        if decision.state is not CustomizationBadgeState.CONFIDENT_ZERO:
-            if not self._badge_detail_inferable(decision):
-                raise ArenaReaderError(
-                    "skill_card_upper_first_badge_ambiguous",
-                    f"upper group/slot 1 is ambiguous before swipe: {decision.reason}",
-                )
-            detail_check = self._record_badge_candidate_detail(
-                stage_number=stage_number,
-                member_slot=member_slot,
-                group_index=0,
-                card_slot=1,
-                phase="pre_swipe_upper_first",
-                reason=decision.reason,
-            )
-            inferred = self._infer_badge_card_from_detail(
-                target,
-                stage_number,
-                member_slot,
-                0,
-                1,
-                frames[0],
-                frame_rows[0][0],
-                None,
-                "badge_candidate_detail_transaction",
-                allow_zero_without_badge_count=True,
-            )
-            self._finish_badge_candidate_detail(detail_check, inferred)
-            inferred_count = sum(
-                int(value) for value in inferred.customizations.values()
-            )
-            self._increment(
-                "upper_first_preswipe_resolved"
-                if inferred_count > 0
-                else "upper_first_preswipe_zero"
-            )
-            self._add_timing(
-                "upper_first_preswipe_guard",
-                time.perf_counter() - started,
-            )
-            return
-        else:
-            self._increment("upper_first_preswipe_zero")
-        self._add_timing(
-            "upper_first_preswipe_guard",
-            time.perf_counter() - started,
-        )
 
     @staticmethod
     def _card_rows_shifted(
@@ -2490,6 +4860,177 @@ class MaaArenaReaderBackend:
         )
 
     @staticmethod
+    def _aligned_card_content_query(
+        image: Any,
+        box: tuple[int, int, int, int],
+        shift_x: int,
+        shift_y: int,
+        *,
+        current_side: bool,
+    ) -> Any:
+        """Return the existing 16x16 content query on one common overlap.
+
+        ``shift_x``/``shift_y`` describe where the current render moved relative
+        to the frozen source.  Both sides discard the non-overlapping outer
+        pixel before running the exact 96x96 -> 16x16 production resize.  This
+        is deliberately narrower than changing the global MAE threshold.
+        """
+
+        import cv2
+        import numpy as np
+
+        if shift_x not in {-1, 0, 1} or shift_y not in {-1, 0, 1}:
+            raise ArenaReaderError(
+                "skill_card_source_alignment_invalid",
+                f"source-card alignment is outside the fixed +/-1 domain: "
+                f"({shift_x}, {shift_y})",
+            )
+        array = np.asarray(image)
+        x, y, width, height = box
+        overlap_width = width - abs(shift_x)
+        overlap_height = height - abs(shift_y)
+        if (
+            array.ndim != 3
+            or array.shape[2] not in {3, 4}
+            or overlap_width < 8
+            or overlap_height < 8
+        ):
+            raise ArenaReaderError(
+                "skill_card_source_alignment_invalid",
+                f"source-card alignment ROI is invalid: box={box!r}",
+            )
+        offset_x = max(0, shift_x if current_side else -shift_x)
+        offset_y = max(0, shift_y if current_side else -shift_y)
+        crop_x = x + offset_x
+        crop_y = y + offset_y
+        crop = array[
+            crop_y : crop_y + overlap_height,
+            crop_x : crop_x + overlap_width,
+            :3,
+        ]
+        if crop.shape[:2] != (overlap_height, overlap_width):
+            raise ArenaReaderError(
+                "skill_card_source_alignment_invalid",
+                f"source-card alignment ROI is outside the frame: box={box!r}; "
+                f"shift=({shift_x}, {shift_y}); current_side={current_side}",
+            )
+        live = cv2.resize(
+            np.ascontiguousarray(crop),
+            (96, 96),
+            interpolation=cv2.INTER_AREA,
+        )
+        return cv2.resize(
+            live,
+            (16, 16),
+            interpolation=cv2.INTER_AREA,
+        ).astype(np.uint8)
+
+    @classmethod
+    def _fixed_slot_aligned_content_proof(
+        cls,
+        source_frames: Sequence[Any],
+        current_image: Any,
+        box: tuple[int, int, int, int],
+        visual_group: str,
+    ) -> dict[str, Any]:
+        """Prove one current raw slot matches 2/3 frozen frames at one shift.
+
+        A clean-reference family is only a routing hint here.  Acceptance uses
+        the existing production content query and unchanged 0.75 MAE gate.
+        Exactly one native-pixel alignment must reach quorum, which rejects
+        flat or repetitive content that cannot identify one physical render.
+        """
+
+        if len(source_frames) != 3 or not visual_group:
+            return {
+                "matched": False,
+                "reason": "source_generation_invalid",
+                "passing_shifts": [],
+            }
+        shift_diagnostics: list[dict[str, Any]] = []
+        passing_shifts: list[dict[str, Any]] = []
+        try:
+            for shift_y in (-1, 0, 1):
+                for shift_x in (-1, 0, 1):
+                    current_query = cls._aligned_card_content_query(
+                        current_image,
+                        box,
+                        shift_x,
+                        shift_y,
+                        current_side=True,
+                    )
+                    errors: list[float | None] = []
+                    support = 0
+                    for source_image in source_frames:
+                        source_query = cls._aligned_card_content_query(
+                            source_image,
+                            box,
+                            shift_x,
+                            shift_y,
+                            current_side=False,
+                        )
+                        delta = cls._card_content_generation_deltas(
+                            ((visual_group, current_query),),
+                            ((visual_group, source_query),),
+                        )[0]
+                        error = delta["mean_absolute_error"]
+                        errors.append(
+                            None if error is None else round(float(error), 6)
+                        )
+                        if not bool(delta["shifted"]):
+                            support += 1
+                    diagnostic = {
+                        "shift": [shift_x, shift_y],
+                        "source_support": support,
+                        "source_errors": errors,
+                    }
+                    shift_diagnostics.append(diagnostic)
+                    if support >= 2:
+                        passing_shifts.append(diagnostic)
+        except ArenaReaderError as error:
+            return {
+                "matched": False,
+                "reason": error.code,
+                "passing_shifts": [],
+            }
+        matched = len(passing_shifts) == 1
+        return {
+            "matched": matched,
+            "reason": (
+                "unique_alignment"
+                if matched
+                else (
+                    "no_alignment"
+                    if not passing_shifts
+                    else "alignment_not_unique"
+                )
+            ),
+            "shift": passing_shifts[0]["shift"] if matched else None,
+            "source_support": (
+                passing_shifts[0]["source_support"] if matched else 0
+            ),
+            "source_errors": (
+                passing_shifts[0]["source_errors"] if matched else []
+            ),
+            "passing_shifts": [
+                {
+                    "shift": list(value["shift"]),
+                    "source_support": value["source_support"],
+                }
+                for value in passing_shifts
+            ],
+            "best_source_error": min(
+                (
+                    error
+                    for value in shift_diagnostics
+                    for error in value["source_errors"]
+                    if error is not None
+                ),
+                default=None,
+            ),
+        }
+
+    @staticmethod
     def _reference_business_ids(identity: dict[str, Any]) -> tuple[int, ...]:
         """Return every high-confidence clean-reference ID in one observation."""
 
@@ -2513,6 +5054,101 @@ class MaaArenaReaderBackend:
             and int(candidate["reference_business_id"]) > 0
         }
         return tuple(sorted(candidate_ids))
+
+    @staticmethod
+    def _reference_visual_groups(identity: dict[str, Any]) -> tuple[str, ...]:
+        """Return every high-confidence visual family in one observation."""
+
+        raw_candidates: Sequence[dict[str, Any]]
+        if identity.get("status") == "MEASURED":
+            raw_candidates = (identity,)
+        elif identity.get("status") == "MEASURED_CANDIDATES":
+            raw_candidates = tuple(
+                candidate
+                for candidate in identity.get("candidates", ())
+                if isinstance(candidate, dict)
+            )
+        else:
+            return ()
+        groups = {
+            str(candidate["reference_visual_group"])
+            for candidate in raw_candidates
+            if candidate.get("identity_low_confidence") is not True
+            and isinstance(candidate.get("reference_visual_group"), str)
+            and str(candidate["reference_visual_group"]).strip()
+        }
+        return tuple(sorted(groups))
+
+    @classmethod
+    def _stable_reference_visual_group(
+        cls,
+        identities: Sequence[dict[str, Any]],
+    ) -> str | None:
+        """Return one visual family present without ambiguity in every frame."""
+
+        observed = tuple(cls._reference_visual_groups(value) for value in identities)
+        if not observed or any(len(groups) != 1 for groups in observed):
+            return None
+        stable = {groups[0] for groups in observed}
+        if len(stable) != 1:
+            return None
+        return stable.pop()
+
+    def _source_visual_group_matches_expected_card(
+        self,
+        source_visual_group: str,
+        expected_card_id: int | None,
+        source_business_ids: Sequence[int],
+    ) -> bool:
+        """Gate visual-only restore to the expected gallery family or a new ID."""
+
+        if expected_card_id is None:
+            return True
+        expected_groups = self._fixed_gallery_visual_groups_for_business_id(
+            expected_card_id
+        )
+        if expected_groups is None:
+            return expected_card_id in source_business_ids
+        if not expected_groups:
+            # The active RIS catalog may legitimately be newer than the fixed
+            # visual gallery. Exact title evidence is then the business-ID
+            # authority and the frozen source family remains the close guard.
+            return True
+        return expected_groups == (source_visual_group,)
+
+    def _fixed_gallery_visual_groups_for_business_id(
+        self,
+        business_id: int | None,
+    ) -> tuple[str, ...] | None:
+        """Return the fixed-gallery families for one ID, or ``None`` if unknown."""
+
+        if business_id is None:
+            return ()
+        gallery = self._card_references()
+        raw_business_ids = getattr(gallery, "business_ids", None)
+        raw_visual_groups = getattr(gallery, "visual_group_ids", None)
+        if raw_business_ids is None or raw_visual_groups is None:
+            return None
+        try:
+            business_ids = tuple(int(value) for value in raw_business_ids)
+            visual_groups = tuple(str(value) for value in raw_visual_groups)
+        except (TypeError, ValueError):
+            return None
+        if len(business_ids) != len(visual_groups):
+            return None
+        return tuple(
+            sorted(
+                {
+                    visual_group
+                    for candidate_id, visual_group in zip(
+                        business_ids,
+                        visual_groups,
+                        strict=True,
+                    )
+                    if candidate_id == business_id and visual_group.strip()
+                }
+            )
+        )
 
     @staticmethod
     def _unique_reference_business_id(identity: dict[str, Any]) -> int | None:
@@ -2776,9 +5412,32 @@ class MaaArenaReaderBackend:
                         self._card_rows[index] = rows_by_group[index][0]
                         self._card_images[index] = stable_frames[0]
                         self._card_count_frames[index] = stable_frames
+                        guard_store = getattr(
+                            self,
+                            "_card_source_guard_frames",
+                            None,
+                        )
+                        if guard_store is None:
+                            guard_store = {}
+                            self._card_source_guard_frames = guard_store
+                        guard_store[index] = stable_frames
+                        # A new accepted source generation invalidates every
+                        # cached source-side overlay signature.  Clearing here
+                        # also prevents Python object-ID reuse from ever
+                        # binding a later generation to stale signatures.
+                        getattr(
+                            self,
+                            "_card_source_guard_signature_cache",
+                            {},
+                        ).clear()
                         self._card_identity_frames[index] = tuple(
                             identity_by_group[index]
                         )
+                        getattr(
+                            self,
+                            "_card_source_ocr_counts",
+                            {},
+                        ).pop(index, None)
                         # Preserve the accepted three-frame generation itself.
                         # Detail dismissal may then prove that the original
                         # source card has returned without a fixed sleep.  All
@@ -3065,6 +5724,600 @@ class MaaArenaReaderBackend:
             )
         return frames
 
+    def _confirm_clicked_skill_card_id(
+        self,
+        detail_text: str,
+        candidate_ids: Sequence[int],
+        *,
+        expected_customization_count: int | None,
+        source_group_index: int | None = None,
+        detail_image: Any | None = None,
+        source_card_box: tuple[int, int, int, int] | None = None,
+    ) -> int:
+        """Bind a clicked detail to one business ID under bounded fallbacks.
+
+        A complete exact title line from a full member-detail frame may rebind
+        outside the visual family when the active RIS catalog is newer than
+        the fixed gallery.  Existing bounded title recovery remains available
+        for historical OCR cases; the positive-count fallback is never called
+        for an explicit zero.
+        """
+
+        candidate_ids = tuple(dict.fromkeys(candidate_ids))
+        if not candidate_ids or any(
+            isinstance(card_id, bool)
+            or not isinstance(card_id, int)
+            or card_id < 1
+            for card_id in candidate_ids
+        ):
+            raise ArenaCatalogError(
+                "visual identity contains no valid skill-card candidate IDs"
+            )
+
+        known_ids_resolver = getattr(
+            self.catalog,
+            "skill_card_business_ids",
+            None,
+        )
+        if known_ids_resolver is not None:
+            known_ids = frozenset(known_ids_resolver())
+            unknown_ids = tuple(
+                card_id for card_id in candidate_ids if card_id not in known_ids
+            )
+            if unknown_ids:
+                raise ArenaCatalogError(
+                    "visual identity references unknown skill-card IDs "
+                    f"{unknown_ids!r}"
+                )
+
+        title_text = self._authoritative_skill_card_title_text(
+            source_group_index,
+            detail_image,
+            candidate_card_ids=candidate_ids,
+            source_card_box=source_card_box,
+        )
+        # Production detail transactions always carry their frame. When that
+        # frame exists, every identity resolver is restricted to one dynamically
+        # proven title row. A missing or ambiguous title therefore fails closed
+        # instead of letting an effect row such as ``眠気`` masquerade as another
+        # card name.
+        identity_text = (
+            detail_text
+            if detail_image is None
+            else ""
+            if title_text is None
+            else title_text
+        )
+        exact_title_error: ArenaCatalogError | None = None
+        exact_resolver = getattr(
+            self.catalog,
+            "confirm_clicked_skill_card_by_exact_title",
+            None,
+        )
+        if exact_resolver is not None and title_text is not None:
+            try:
+                return exact_resolver(title_text)
+            except ArenaCatalogError as error:
+                exact_title_error = error
+
+        candidate_error: ArenaCatalogError | None = None
+        try:
+            return self.catalog.confirm_clicked_skill_card_candidates(
+                identity_text,
+                candidate_card_ids=candidate_ids,
+            )
+        except ArenaCatalogError as error:
+            candidate_error = error
+        try:
+            return self.catalog.confirm_clicked_customizable_skill_card_without_badge_count(
+                identity_text
+            )
+        except ArenaCatalogError:
+            if (
+                expected_customization_count is not None
+                and expected_customization_count > 0
+            ):
+                return self.catalog.confirm_clicked_customizable_skill_card(
+                    identity_text,
+                    expected_count=expected_customization_count,
+                )
+            if exact_title_error is not None:
+                raise exact_title_error
+            assert candidate_error is not None
+            raise candidate_error
+
+    def _normalized_skill_card_ocr_lines(self, text: str) -> tuple[str, ...]:
+        normalizer = getattr(
+            self.catalog,
+            "normalize_skill_card_title_text",
+            None,
+        )
+        return tuple(
+            normalized
+            for line in str(text or "").splitlines()
+            if (
+                normalized := (
+                    normalizer(line)
+                    if normalizer is not None
+                    else re.sub(r"\s+", "", line)
+                )
+            )
+        )
+
+    def _stable_skill_card_source_ocr_counts(
+        self,
+        group_index: int,
+    ) -> dict[str, int]:
+        cache = getattr(self, "_card_source_ocr_counts", None)
+        if cache is None:
+            cache = {}
+            self._card_source_ocr_counts = cache
+        cached = cache.get(group_index)
+        if cached is not None:
+            return dict(cached)
+        frames = getattr(self, "_card_count_frames", {}).get(group_index, ())
+        if len(frames) != 3:
+            raise ArenaCatalogError(
+                f"group {group_index} has no frozen three-frame OCR source"
+            )
+        started = time.perf_counter()
+        try:
+            frame_counts = tuple(
+                Counter(
+                    self._with_full_frame_ocr_kind(
+                        "skill_card_source",
+                        self._trusted_skill_card_title_rows,
+                        frame,
+                    )
+                )
+                for frame in frames
+            )
+        except Exception as error:
+            raise ArenaCatalogError(
+                f"group {group_index} source OCR could not be frozen"
+            ) from error
+        stable = {
+            line: max(counts[line] for counts in frame_counts)
+            for line in set().union(*(counts.keys() for counts in frame_counts))
+            if max(counts[line] for counts in frame_counts) > 0
+        }
+        cache[group_index] = stable
+        self._increment("skill_card_source_title_ocr_batches")
+        self._add_timing(
+            "skill_card_source_title_ocr",
+            time.perf_counter() - started,
+        )
+        return dict(stable)
+
+    def _cached_full_frame_ocr_evidence(
+        self,
+        image: Any,
+    ) -> _FullFrameOcrEvidence | None:
+        cache = getattr(self, "_full_frame_ocr_evidence", None)
+        if cache is None:
+            return None
+        evidence = cache.get(id(image))
+        if evidence is None or evidence.image is not image:
+            return None
+        return evidence
+
+    def _record_full_frame_ocr_cache_hit(
+        self,
+        evidence: _FullFrameOcrEvidence,
+    ) -> None:
+        if not hasattr(self, "_runtime_counts"):
+            return
+        self._increment("broad_ocr_cache_hits")
+        self._increment(f"{evidence.kind}_broad_ocr_cache_hits")
+
+    def _with_full_frame_ocr_kind(
+        self,
+        kind: str,
+        operation: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Tag one OCR call without changing the callable's public signature."""
+
+        had_previous = hasattr(self, "_full_frame_ocr_kind_hint")
+        previous = getattr(self, "_full_frame_ocr_kind_hint", None)
+        self._full_frame_ocr_kind_hint = kind
+        try:
+            return operation(*args, **kwargs)
+        finally:
+            if had_previous:
+                self._full_frame_ocr_kind_hint = previous
+            else:
+                del self._full_frame_ocr_kind_hint
+
+    def _full_frame_ocr_evidence_for(self, image: Any) -> _FullFrameOcrEvidence:
+        """Recognize a frozen frame once while keeping fresh frames isolated."""
+
+        cached = self._cached_full_frame_ocr_evidence(image)
+        if cached is not None:
+            self._record_full_frame_ocr_cache_hit(cached)
+            return cached
+
+        cache = getattr(self, "_full_frame_ocr_evidence", None)
+        if cache is None:
+            cache = {}
+            self._full_frame_ocr_evidence = cache
+        started = time.perf_counter()
+        detail = self.context.run_recognition(
+            "ArenaReaderOCR",
+            image,
+            pipeline_override={
+                "ArenaReaderOCR": {
+                    "recognition": "OCR",
+                    "expected": r".+",
+                    "order_by": "Vertical",
+                }
+            },
+        )
+        hit = bool(detail and detail.hit)
+        filtered_items = tuple(
+            detail.filtered_results or detail.all_results or ()
+        ) if hit else ()
+        all_items = tuple(
+            detail.all_results or detail.filtered_results or ()
+        ) if hit else ()
+        evidence = _FullFrameOcrEvidence(
+            image,
+            str(getattr(self, "_full_frame_ocr_kind_hint", "generic")),
+            hit,
+            filtered_items,
+            all_items,
+        )
+        cache[id(image)] = evidence
+        # Retain enough member-local entries for both accepted source groups,
+        # their detail confirmations and transformed ROI views without holding
+        # captures beyond the member transaction.
+        while len(cache) > 64:
+            oldest_key = next(iter(cache))
+            if oldest_key == id(image):
+                break
+            cache.pop(oldest_key, None)
+        if hasattr(self, "_runtime_counts"):
+            self._increment("broad_ocr_backend_calls")
+            self._increment(f"{evidence.kind}_broad_ocr_backend_calls")
+        if hasattr(self, "_runtime_timing_seconds"):
+            self._add_timing(
+                "broad_ocr_backend",
+                time.perf_counter() - started,
+            )
+        return evidence
+
+    @staticmethod
+    def _skill_card_title_row_has_neutral_ink(
+        image: Any,
+        box: tuple[int, int, int, int],
+    ) -> bool:
+        """Reject coloured effect links while retaining the neutral title ink."""
+
+        import numpy as np
+
+        values = np.asarray(image)
+        if values.ndim != 3 or values.shape[2] < 3:
+            raise ArenaReaderError(
+                "skill_card_detail_title_image_invalid",
+                "skill-card title evidence is not a colour image",
+            )
+        image_height, image_width = values.shape[:2]
+        left, top, width, height = box
+        right = left + width
+        bottom = top + height
+        if (
+            width < 1
+            or height < 1
+            or left < 0
+            or top < 0
+            or right > image_width
+            or bottom > image_height
+        ):
+            raise ArenaReaderError(
+                "skill_card_detail_title_box_invalid",
+                f"title OCR box is outside the capture: {box!r}",
+            )
+        crop = values[top:bottom, left:right, :3].astype(np.int16)
+        channel_min = np.min(crop, axis=2)
+        channel_max = np.max(crop, axis=2)
+        ink = channel_min < 235
+        ink_count = int(np.count_nonzero(ink))
+        minimum_ink = max(8, int(round(width * height * 0.004)))
+        if ink_count < minimum_ink:
+            return False
+        neutral = ink & ((channel_max - channel_min) <= 45)
+        dark_neutral = neutral & (channel_max <= 205)
+        return bool(
+            int(np.count_nonzero(neutral)) / ink_count >= 0.72
+            and int(np.count_nonzero(dark_neutral)) >= minimum_ink
+        )
+
+    def _trusted_skill_card_title_rows(
+        self,
+        image: Any,
+        *,
+        candidate_card_ids: Sequence[int] = (),
+        source_card_box: tuple[int, int, int, int] | None = None,
+    ) -> tuple[str, ...]:
+        """Return authoritative catalog titles at the popover's dynamic title anchor."""
+
+        candidate_ids = tuple(sorted(set(candidate_card_ids)))
+        normalized_source_card_box = (
+            None
+            if source_card_box is None
+            else tuple(int(value) for value in source_card_box)
+        )
+        if hasattr(self, "_runtime_counts"):
+            self._increment("skill_card_trusted_title_row_requests")
+        cache = getattr(self, "_trusted_skill_card_title_rows_cache", None)
+        if cache is None:
+            cache = {}
+            self._trusted_skill_card_title_rows_cache = cache
+        cache_key = (id(image), candidate_ids, normalized_source_card_box)
+        cached = cache.get(cache_key)
+        if cached is not None and cached.image is image:
+            if hasattr(self, "_runtime_counts"):
+                self._increment(
+                    "skill_card_trusted_title_row_object_cache_hits"
+                )
+            return cached.rows
+
+        height, width = image.shape[:2]
+        if width < 320 or height < 568:
+            raise ArenaReaderError(
+                "skill_card_detail_title_frame_invalid",
+                f"capture {width}x{height} is too small for title evidence",
+            )
+        exact_resolver = getattr(
+            self.catalog,
+            "confirm_clicked_skill_card_by_exact_title",
+            None,
+        )
+        if exact_resolver is None:
+            return ()
+        anchor_resolver = getattr(
+            self.catalog,
+            "skill_card_title_anchor_pattern",
+            None,
+        )
+
+        def title_row_is_authoritative(line: str) -> bool:
+            if hasattr(self, "_runtime_counts"):
+                self._increment("skill_card_exact_title_index_queries")
+            try:
+                exact_resolver(line)
+                return True
+            except ArenaCatalogError:
+                pass
+            if not candidate_ids or anchor_resolver is None:
+                return False
+            matches = []
+            for card_id in candidate_ids:
+                try:
+                    pattern = anchor_resolver(card_id)
+                except ArenaCatalogError:
+                    continue
+                if re.fullmatch(pattern, line) is not None:
+                    matches.append(card_id)
+            return len(matches) == 1
+
+        if hasattr(self, "_runtime_counts"):
+            self._increment("skill_card_trusted_title_row_parse_calls")
+        started = time.perf_counter()
+        try:
+            rows: list[tuple[int, int, str, tuple[int, int, int, int]]] = []
+            items = self._ocr(image, r".+")
+            candidates = tuple(
+                (_text(item).strip(), _box(item))
+                for item in items
+                if _text(item).strip()
+            ) + self._skill_card_title_ocr_segments(items)
+            seen_candidates: set[
+                tuple[str, tuple[int, int, int, int]]
+            ] = set()
+            for raw_text, box in candidates:
+                candidate_key = (raw_text, box)
+                if candidate_key in seen_candidates:
+                    continue
+                seen_candidates.add(candidate_key)
+                normalized = self._normalized_skill_card_ocr_lines(raw_text)
+                if len(normalized) != 1:
+                    continue
+                line = normalized[0]
+                left, top, row_width, row_height = box
+                in_legacy_title_band = top <= int(round(height * 0.36))
+                in_lower_popover_title_band = False
+                if normalized_source_card_box is not None:
+                    _, card_top, _, card_height = normalized_source_card_box
+                    card_bottom = card_top + card_height
+                    # The adaptive panel can flip below a bottom-row card.  Do
+                    # not widen the global title band: an effect row may itself
+                    # be an exact catalog card name.  Bind this extra band to
+                    # the clicked card and keep it inside the observed overlay
+                    # envelope so the first effect row remains out of domain.
+                    in_lower_popover_title_band = bool(
+                        card_height > 0
+                        and 0 <= card_top < card_bottom <= height
+                        and card_bottom + int(round(card_height * 0.25)) <= top
+                        <= card_bottom + int(round(card_height * 0.75))
+                        and top + row_height <= int(round(height * 0.48))
+                    )
+                if not (
+                    0 <= left < width
+                    and 0 <= top
+                    and (in_legacy_title_band or in_lower_popover_title_band)
+                    and row_width >= int(round(width * 0.04))
+                    and int(round(height * 0.012))
+                    <= row_height
+                    <= int(round(height * 0.05))
+                ):
+                    continue
+                if not title_row_is_authoritative(line):
+                    continue
+                if not self._skill_card_title_row_has_neutral_ink(image, box):
+                    continue
+                rows.append((top, left, line, box))
+            maximal_rows = tuple(
+                row
+                for row in rows
+                if not any(
+                    other is not row
+                    and len(other[2]) > len(row[2])
+                    and other[2].startswith(row[2])
+                    and other[3][0] <= row[3][0]
+                    and other[3][1] <= row[3][1]
+                    and other[3][0] + other[3][2]
+                    >= row[3][0] + row[3][2]
+                    and other[3][1] + other[3][3]
+                    >= row[3][1] + row[3][3]
+                    for other in rows
+                )
+            )
+            trusted_rows = tuple(
+                line for _, _, line, _ in sorted(maximal_rows)
+            )
+        finally:
+            if hasattr(self, "_runtime_timing_seconds"):
+                self._add_timing(
+                    "skill_card_trusted_title_row_resolution",
+                    time.perf_counter() - started,
+                )
+        cache[cache_key] = _TrustedSkillCardTitleRowsEvidence(
+            image,
+            trusted_rows,
+        )
+        return trusted_rows
+
+    @classmethod
+    def _skill_card_title_ocr_segments(
+        cls,
+        items: Sequence[Any],
+    ) -> tuple[tuple[str, tuple[int, int, int, int]], ...]:
+        """Split full-screen OCR rows at cross-column horizontal gaps."""
+
+        segments: list[tuple[str, tuple[int, int, int, int]]] = []
+        for _, _, components in cls._spatial_ocr_rows(items):
+            current: list[tuple[str, tuple[int, int, int, int]]] = []
+
+            def flush() -> None:
+                if not current:
+                    return
+                left = min(box[0] for _, box in current)
+                top = min(box[1] for _, box in current)
+                right = max(box[0] + box[2] for _, box in current)
+                bottom = max(box[1] + box[3] for _, box in current)
+                segments.append(
+                    (
+                        "".join(text for text, _ in current),
+                        (left, top, right - left, bottom - top),
+                    )
+                )
+                current.clear()
+
+            for text, box in components:
+                if current:
+                    previous_right = max(
+                        previous_box[0] + previous_box[2]
+                        for _, previous_box in current
+                    )
+                    previous_height = max(
+                        previous_box[3] for _, previous_box in current
+                    )
+                    gap = box[0] - previous_right
+                    maximum_inline_gap = max(
+                        12,
+                        int(round(max(previous_height, box[3]) * 1.5)),
+                    )
+                    if gap > maximum_inline_gap:
+                        flush()
+                current.append((text, box))
+            flush()
+        return tuple(segments)
+
+    @staticmethod
+    def _skill_card_detail_overlay_guard_boxes(
+        image: Any,
+    ) -> tuple[tuple[int, int, int, int], ...]:
+        """Cover every observed vertical placement of the adaptive detail panel."""
+
+        height, width = image.shape[:2]
+        if width < 320 or height < 568:
+            raise ArenaReaderError(
+                "skill_card_detail_overlay_guard_invalid",
+                f"capture {width}x{height} is too small for overlay evidence",
+            )
+        horizontal_bands = ((0.00, 0.62), (0.38, 1.00))
+        bands = ((0.00, 0.18), (0.14, 0.32), (0.28, 0.48))
+        return tuple(
+            (
+                int(round(width * left_ratio)),
+                int(round(height * top_ratio)),
+                int(round(width * (right_ratio - left_ratio))),
+                int(round(height * (bottom_ratio - top_ratio))),
+            )
+            for left_ratio, right_ratio in horizontal_bands
+            for top_ratio, bottom_ratio in bands
+        )
+
+    def _authoritative_skill_card_title_text(
+        self,
+        group_index: int | None,
+        detail_image: Any | None,
+        *,
+        candidate_card_ids: Sequence[int] = (),
+        source_card_box: tuple[int, int, int, int] | None = None,
+    ) -> str | None:
+        """Return exactly one new, structurally proven detail-title row."""
+
+        if group_index is None or detail_image is None:
+            return None
+        try:
+            remaining_source = self._stable_skill_card_source_ocr_counts(
+                group_index
+            )
+        except ArenaCatalogError:
+            if hasattr(self, "_runtime_counts"):
+                self._increment("skill_card_source_title_ocr_unavailable")
+            return None
+        try:
+            detail_title_rows = self._trusted_skill_card_title_rows(
+                detail_image,
+                candidate_card_ids=candidate_card_ids,
+                source_card_box=source_card_box,
+            )
+        except ArenaReaderError:
+            self._increment("skill_card_detail_title_ocr_unavailable")
+            return None
+        new_rows: list[str] = []
+        for line in detail_title_rows:
+            remaining = remaining_source.get(line, 0)
+            if remaining > 0:
+                remaining_source[line] = remaining - 1
+                continue
+            new_rows.append(line)
+        if len(new_rows) == 1:
+            return new_rows[0]
+        if new_rows:
+            self._increment("skill_card_detail_title_ambiguous")
+        else:
+            self._increment("skill_card_detail_title_missing")
+        return None
+
+    def _skill_card_source_box(
+        self,
+        key: tuple[int, int] | None,
+    ) -> tuple[int, int, int, int] | None:
+        """Return the frozen source-card geometry for one detail transaction."""
+
+        if key is None:
+            return None
+        group_index, card_slot = key
+        row = getattr(self, "_card_rows", {}).get(group_index, ())
+        if not 1 <= card_slot <= len(row):
+            return None
+        return row[card_slot - 1]
+
     def open_skill_card(
         self,
         target: TeamTarget,
@@ -3105,6 +6358,19 @@ class MaaArenaReaderBackend:
         last_text = ""
         last_error = ""
         transaction_started = time.perf_counter()
+        transaction_token = int(getattr(self, "_card_transaction_serial", 0)) + 1
+        self._card_transaction_serial = transaction_token
+        getattr(self, "_detail_identity_proofs", {}).pop(key, None)
+        transaction_ocr_started = (
+            self._runtime_counts.get(
+                "detail_capture_broad_ocr_backend_calls",
+                0,
+            ),
+            self._runtime_counts.get(
+                "detail_capture_broad_ocr_cache_hits",
+                0,
+            ),
+        )
         for attempt in range(2):
             click_box = primary_click_box if attempt == 0 else retry_click_box
             self._increment("skill_card_detail_clicks")
@@ -3116,9 +6382,11 @@ class MaaArenaReaderBackend:
                 self._short_press(click_box, duration_ms=80)
             else:
                 self._short_press(click_box, duration_ms=120)
+            last_contact_released_at = time.monotonic()
             deadline = time.monotonic() + 1.5
             while time.monotonic() < deadline:
                 try:
+                    detail_capture_started_at = time.monotonic()
                     detail_image = self._capture()
                     last_text = self._skill_card_detail_ocr_text(
                         detail_image,
@@ -3127,71 +6395,108 @@ class MaaArenaReaderBackend:
                 except ArenaReaderError:
                     last_text = ""
                 try:
-                    self.catalog.confirm_clicked_skill_card_candidates(
+                    self._confirm_clicked_skill_card_id(
                         last_text,
-                        candidate_card_ids=candidate_ids,
+                        candidate_ids,
+                        expected_customization_count=expected_customization_count,
+                        source_group_index=group_index,
+                        detail_image=detail_image,
+                        source_card_box=card_box,
                     )
                     self._card_detail_texts[key] = last_text
                     self._card_detail_images[key] = detail_image
+                    contact_times = getattr(
+                        self,
+                        "_card_detail_last_contact_released_at",
+                        None,
+                    )
+                    if contact_times is None:
+                        contact_times = {}
+                        self._card_detail_last_contact_released_at = contact_times
+                    contact_times[key] = last_contact_released_at
+                    capture_times = getattr(
+                        self,
+                        "_card_detail_capture_started_at",
+                        None,
+                    )
+                    if capture_times is None:
+                        capture_times = {}
+                        self._card_detail_capture_started_at = capture_times
+                    capture_times[key] = detail_capture_started_at
                     self._card_transaction_started[key] = transaction_started
+                    transaction_tokens = getattr(
+                        self,
+                        "_card_transaction_tokens",
+                        None,
+                    )
+                    if transaction_tokens is None:
+                        transaction_tokens = {}
+                        self._card_transaction_tokens = transaction_tokens
+                    transaction_tokens[key] = transaction_token
+                    source_boxes = getattr(
+                        self,
+                        "_card_transaction_source_boxes",
+                        None,
+                    )
+                    if source_boxes is None:
+                        source_boxes = {}
+                        self._card_transaction_source_boxes = source_boxes
+                    source_boxes[key] = tuple(card_box)
+                    interaction_boxes = getattr(
+                        self,
+                        "_card_transaction_interaction_boxes",
+                        None,
+                    )
+                    if interaction_boxes is None:
+                        interaction_boxes = {}
+                        self._card_transaction_interaction_boxes = interaction_boxes
+                    interaction_boxes[key] = tuple(click_box)
+                    ocr_started = getattr(
+                        self,
+                        "_card_transaction_ocr_started",
+                        None,
+                    )
+                    if ocr_started is None:
+                        ocr_started = {}
+                        self._card_transaction_ocr_started = ocr_started
+                    ocr_started[key] = transaction_ocr_started
                     self._card_transaction_kinds[key] = (
                         "necessary_skill_card_detail_transaction"
+                    )
+                    self._record_duration_sample(
+                        "skill_card_detail_open_phase",
+                        time.perf_counter() - transaction_started,
                     )
                     return
                 except ArenaCatalogError as error:
                     last_error = str(error)
-                try:
-                    self.catalog.confirm_clicked_customizable_skill_card_without_badge_count(
-                        last_text
-                    )
-                    self._card_detail_texts[key] = last_text
-                    self._card_detail_images[key] = detail_image
-                    self._card_transaction_started[key] = transaction_started
-                    self._card_transaction_kinds[key] = (
-                        "necessary_skill_card_detail_transaction"
-                    )
-                    return
-                except ArenaCatalogError as error:
-                    last_error = str(error)
-                    try:
-                        self.catalog.confirm_clicked_customizable_skill_card(
-                            last_text,
-                            expected_count=expected_customization_count,
-                        )
-                        self._card_detail_texts[key] = last_text
-                        self._card_detail_images[key] = detail_image
-                        self._card_transaction_started[key] = transaction_started
-                        self._card_transaction_kinds[key] = (
-                            "necessary_skill_card_detail_transaction"
-                        )
-                        return
-                    except ArenaCatalogError as constrained_error:
-                        last_error = str(constrained_error)
                 time.sleep(0.25)
-            if attempt == 0:
-                # Retry only when the unchanged member-detail card grid proves
-                # the first click never opened an overlay.  An unknown page or
-                # a wrong overlay remains fail-closed.
-                try:
-                    self._assert_card_group_visible(
-                        group_index,
-                        card_slot=card_slot,
-                    )
-                except ArenaReaderError:
-                    break
-        try:
-            self._assert_card_group_visible(
-                group_index,
-                card_slot=card_slot,
-            )
-        except ArenaReaderError:
-            terminal_code = "skill_card_detail_missing"
-        else:
-            # The game contract is binary on this page: ordinary cards open
-            # from their body, while an excluded duplicate is non-interactive.
-            # Only promote that functional evidence after one instantaneous
-            # click, one bounded contact retry, and a still-valid source grid.
-            terminal_code = "skill_card_detail_noninteractive"
+            # A failed OCR/identity read does not prove that the overlay stayed
+            # closed. The same card point is a toggle while a detail is open,
+            # so every retry first performs an inert backdrop dismissal and
+            # proves the original source generation has returned. This reset
+            # is safe when the first click was non-interactive as well.
+            try:
+                self._dismiss_skill_card_detail()
+                self._assert_card_group_visible(
+                    group_index,
+                    card_slot=card_slot,
+                )
+            except ArenaReaderError as restore_error:
+                raise ArenaReaderError(
+                    "skill_card_detail_missing",
+                    "clicked card detail could not be confirmed and the source "
+                    "page could not be restored before another contact: "
+                    f"identity_error={last_error}; "
+                    f"restore_error={restore_error}",
+                ) from restore_error
+            self._increment("skill_card_detail_source_resets")
+        # A restored source page proves only that this transaction was safely
+        # reset. It cannot distinguish a genuinely non-interactive duplicate
+        # from an ordinary card whose opened detail never yielded a title.
+        # Preserve that uncertainty so callers cannot silently mark the slot as
+        # an excluded duplicate.
+        terminal_code = "skill_card_detail_ambiguous"
         raise ArenaReaderError(
             terminal_code,
             f"clicked card did not confirm visual-family IDs {candidate_ids!r} "
@@ -3308,7 +6613,7 @@ class MaaArenaReaderBackend:
         finally:
             if overlay_opened:
                 self._dismiss_skill_card_detail()
-        self._assert_card_group_visible(
+        self._assert_inferred_card_group_visible_after_dismiss(
             group_index,
             card_slot=card_slot,
             expected_card_id=inferred.card_id,
@@ -3363,7 +6668,7 @@ class MaaArenaReaderBackend:
         finally:
             if overlay_opened:
                 self._dismiss_skill_card_detail()
-        self._assert_card_group_visible(
+        self._assert_inferred_card_group_visible_after_dismiss(
             group_index,
             card_slot=card_slot,
             expected_card_id=inferred.card_id,
@@ -3603,7 +6908,22 @@ class MaaArenaReaderBackend:
                         fy=3.0,
                         interpolation=cv2.INTER_CUBIC,
                     )
-                    texts = [_text(item) for item in self._ocr(enlarged, r".+")]
+                    if hasattr(self, "_runtime_counts"):
+                        self._increment("skill_card_duplicate_marker_ocr_requests")
+                        self._increment(
+                            "skill_card_duplicate_marker_ocr_backend_calls"
+                        )
+                    started = time.perf_counter()
+                    try:
+                        texts = [
+                            _text(item) for item in self._ocr(enlarged, r".+")
+                        ]
+                    finally:
+                        if hasattr(self, "_runtime_timing_seconds"):
+                            self._add_timing(
+                                "skill_card_duplicate_marker_ocr",
+                                time.perf_counter() - started,
+                            )
                     texts_by_variant["3x"] = texts
                     if any(
                         marker in text
@@ -3612,12 +6932,12 @@ class MaaArenaReaderBackend:
                     ):
                         flags[index] = True
                 frame_diagnostic = {
-                        "slot": index + 1,
-                        "crop_box": [left, top, right - left, bottom - top],
-                        "texts": texts_by_variant,
-                        "flag": flags[index],
-                        "visual_features": visual_features,
-                    }
+                    "slot": index + 1,
+                    "crop_box": [left, top, right - left, bottom - top],
+                    "texts": texts_by_variant,
+                    "flag": flags[index],
+                    "visual_features": visual_features,
+                }
                 frame_diagnostics.append(frame_diagnostic)
             observations.append(tuple(flags))
             diagnostics.append(
@@ -3954,15 +7274,15 @@ class MaaArenaReaderBackend:
                             else CustomizationBadgeState.CONFIDENT_ZERO.value
                         ),
                         "fallback_reason": (
-                            "preswipe_detail_unique_positive_count"
+                            "cached_detail_unique_positive_count"
                             if inferred_count > 0
                             else (
-                                "preswipe_generic_cost_conservative_zero"
+                                "cached_generic_cost_conservative_zero"
                                 if inferred.conservative_cost_assumption is not None
-                                else "preswipe_detail_confirmed_zero"
+                                else "cached_detail_confirmed_zero"
                             )
                         ),
-                        "fallback_mode": "preswipe_clicked_detail_cache",
+                        "fallback_mode": "clicked_detail_cache",
                         "inferred_card_id": inferred.card_id,
                         "inferred_customizations": dict(inferred.customizations),
                     }
@@ -4141,29 +7461,23 @@ class MaaArenaReaderBackend:
         allow_auxiliary_badge_glyph: bool = True,
         generic_cost_fallback_policy: str | None = None,
         allow_generic_cost_fallback: bool = False,
+        generic_cost_coverage_context: tuple[str, str, int] | None = None,
         key: tuple[int, int] | None = None,
     ) -> ClickedSkillCard:
         conservative_cost_assumption: dict[str, Any] | None = None
         try:
-            try:
-                card_id = self.catalog.confirm_clicked_skill_card_candidates(
-                    text,
-                    candidate_card_ids=candidate_ids,
-                )
-            except ArenaCatalogError:
-                try:
-                    card_id = (
-                        self.catalog.confirm_clicked_customizable_skill_card_without_badge_count(
-                            text
-                        )
-                    )
-                except ArenaCatalogError:
-                    if expected_customization_count is None:
-                        raise
-                    card_id = self.catalog.confirm_clicked_customizable_skill_card(
-                        text,
-                        expected_count=expected_customization_count,
-                    )
+            card_id = self._confirm_clicked_skill_card_id(
+                text,
+                candidate_ids,
+                expected_customization_count=expected_customization_count,
+                source_group_index=(None if key is None else key[0]),
+                detail_image=(
+                    None
+                    if key is None
+                    else getattr(self, "_card_detail_images", {}).get(key)
+                ),
+                source_card_box=self._skill_card_source_box(key),
+            )
             generic_cost_frame_values = (
                 self._measure_optional_card_face_generic_cost(key, card_id)
                 if key is not None
@@ -4202,10 +7516,22 @@ class MaaArenaReaderBackend:
                         "skill_card_cost_fallback_before_settle",
                         "generic-cost fallback is deferred until settled detail evidence",
                     )
+                coverage_kwargs: dict[str, Any] = {}
+                if generic_cost_coverage_context is not None:
+                    full_detail_text, effect_roi_text, observation_count = (
+                        generic_cost_coverage_context
+                    )
+                    coverage_kwargs = {
+                        "full_detail_text": full_detail_text,
+                        "effect_roi_text": effect_roi_text,
+                        "effect_roi_title_bound": True,
+                        "effect_roi_observation_count": observation_count,
+                    }
                 pair = self.catalog.resolve_generic_cost_ambiguity(
                     card_id,
                     text,
                     observed_badge_count=expected_customization_count,
+                    **coverage_kwargs,
                 )
                 unenhanced = dict(pair.unenhanced_customizations)
                 enhanced = dict(pair.enhanced_customizations)
@@ -4285,7 +7611,22 @@ class MaaArenaReaderBackend:
                             )
                             raise
                         try:
-                            auxiliary_count = self._auxiliary_badge_glyph_count(key)
+                            admissible_counts = (
+                                self.catalog.admissible_clicked_customization_counts(
+                                    card_id,
+                                    text,
+                                    generic_cost_frame_values=(
+                                        generic_cost_frame_values
+                                    ),
+                                )
+                            )
+                            auxiliary_count = self._auxiliary_badge_glyph_count(
+                                key,
+                                maximum_count=(
+                                    self.catalog.maximum_customization_count(card_id)
+                                ),
+                                admissible_counts=admissible_counts,
+                            )
                         except ArenaReaderError as error:
                             cost_error = getattr(
                                 self,
@@ -4569,6 +7910,293 @@ class MaaArenaReaderBackend:
             diagnostic["mode"] = mode
         return values
 
+    def _detail_identity_observation(
+        self,
+        key: tuple[int, int],
+        candidate_ids: Sequence[int],
+        resolved: ClickedSkillCard,
+    ) -> _DetailIdentityObservation | None:
+        """Return exact-title evidence bound to the current post-contact frame."""
+
+        if resolved.detail_evidence_mode != "positive_unique":
+            return None
+        transaction_started = getattr(self, "_card_transaction_started", {}).get(key)
+        transaction_token = getattr(self, "_card_transaction_tokens", {}).get(key)
+        source_card_box = getattr(
+            self,
+            "_card_transaction_source_boxes",
+            {},
+        ).get(key)
+        interaction_box = getattr(
+            self,
+            "_card_transaction_interaction_boxes",
+            {},
+        ).get(key)
+        contact_released_at = getattr(
+            self,
+            "_card_detail_last_contact_released_at",
+            {},
+        ).get(key)
+        capture_started_at = getattr(
+            self,
+            "_card_detail_capture_started_at",
+            {},
+        ).get(key)
+        detail_image = getattr(self, "_card_detail_images", {}).get(key)
+        if (
+            not isinstance(transaction_token, int)
+            or isinstance(transaction_token, bool)
+            or not isinstance(transaction_started, (int, float))
+            or isinstance(transaction_started, bool)
+            or source_card_box is None
+            or interaction_box is None
+            or not isinstance(contact_released_at, (int, float))
+            or isinstance(contact_released_at, bool)
+            or not isinstance(capture_started_at, (int, float))
+            or isinstance(capture_started_at, bool)
+            or capture_started_at <= contact_released_at
+            or detail_image is None
+            or tuple(source_card_box) != self._skill_card_source_box(key)
+        ):
+            return None
+        source_card_box = tuple(source_card_box)
+        interaction_box = tuple(interaction_box)
+        if len(source_card_box) != 4 or len(interaction_box) != 4:
+            return None
+        source_x, source_y, source_width, source_height = source_card_box
+        click_x, click_y, click_width, click_height = interaction_box
+        if not (
+            source_width > 0
+            and source_height > 0
+            and click_width > 0
+            and click_height > 0
+            and source_x <= click_x
+            and source_y <= click_y
+            and click_x + click_width <= source_x + source_width
+            and click_y + click_height <= source_y + source_height
+        ):
+            return None
+        source_guard_frames = getattr(self, "_card_source_guard_frames", {}).get(
+            key[0]
+        )
+        restoration_signatures = getattr(
+            self,
+            "_card_restoration_signatures",
+            {},
+        ).get(key[0])
+        identity_frames = getattr(self, "_card_identity_frames", {}).get(key[0])
+        if (
+            source_guard_frames is None
+            or restoration_signatures is None
+            or identity_frames is None
+        ):
+            return None
+        exact_resolver = getattr(
+            getattr(self, "catalog", None),
+            "confirm_clicked_skill_card_by_exact_title",
+            None,
+        )
+        if exact_resolver is None:
+            return None
+        title_text = self._authoritative_skill_card_title_text(
+            key[0],
+            detail_image,
+            candidate_card_ids=candidate_ids,
+            source_card_box=source_card_box,
+        )
+        if title_text is None:
+            return None
+        try:
+            exact_card_id = exact_resolver(title_text)
+        except ArenaCatalogError:
+            return None
+        if exact_card_id != resolved.card_id:
+            return None
+        return _DetailIdentityObservation(
+            transaction_token=transaction_token,
+            transaction_started=float(transaction_started),
+            source_card_box=source_card_box,
+            interaction_box=interaction_box,
+            contact_released_at=float(contact_released_at),
+            capture_started_at=float(capture_started_at),
+            detail_image=detail_image,
+            source_guard_frames=source_guard_frames,
+            restoration_signatures=restoration_signatures,
+            identity_frames=identity_frames,
+            title=title_text,
+            card_id=resolved.card_id,
+            customizations=tuple(
+                sorted(
+                    (str(customization_id), int(count))
+                    for customization_id, count in resolved.customizations.items()
+                )
+            ),
+            evidence_mode=resolved.detail_evidence_mode,
+        )
+
+    def _record_detail_identity_proof(
+        self,
+        key: tuple[int, int],
+        resolved: ClickedSkillCard,
+        observations: Sequence[_DetailIdentityObservation],
+    ) -> None:
+        """Certify two fresh exact-title frames from one physical transaction."""
+
+        proofs = getattr(self, "_detail_identity_proofs", None)
+        if proofs is None:
+            proofs = {}
+            self._detail_identity_proofs = proofs
+        proofs.pop(key, None)
+        if (
+            resolved.detail_evidence_mode != "positive_unique"
+            or not resolved.resolution_source.endswith("_positive_confirmed")
+            or resolved.detail_confirmation_reads < 2
+            or len(observations) < 2
+        ):
+            return
+        first, second = observations[-2:]
+        expected_customizations = tuple(
+            sorted(
+                (str(customization_id), int(count))
+                for customization_id, count in resolved.customizations.items()
+            )
+        )
+        shared_fields_match = bool(
+            first.transaction_token == second.transaction_token
+            and first.transaction_started == second.transaction_started
+            and first.source_card_box == second.source_card_box
+            and first.interaction_box == second.interaction_box
+            and first.contact_released_at == second.contact_released_at
+            and first.source_guard_frames is second.source_guard_frames
+            and first.restoration_signatures is second.restoration_signatures
+            and first.identity_frames is second.identity_frames
+            and first.title == second.title
+            and first.card_id == second.card_id == resolved.card_id
+            and first.customizations
+            == second.customizations
+            == expected_customizations
+            and first.evidence_mode == second.evidence_mode == "positive_unique"
+        )
+        if not (
+            shared_fields_match
+            and first.detail_image is not second.detail_image
+            and first.contact_released_at
+            < first.capture_started_at
+            < second.capture_started_at
+            and getattr(self, "_card_transaction_started", {}).get(key)
+            == second.transaction_started
+            and getattr(self, "_card_transaction_tokens", {}).get(key)
+            == second.transaction_token
+            and getattr(self, "_card_transaction_source_boxes", {}).get(key)
+            == second.source_card_box
+            and getattr(self, "_card_transaction_interaction_boxes", {}).get(key)
+            == second.interaction_box
+            and getattr(self, "_card_detail_last_contact_released_at", {}).get(key)
+            == second.contact_released_at
+            and getattr(self, "_card_detail_capture_started_at", {}).get(key)
+            == second.capture_started_at
+            and getattr(self, "_card_detail_images", {}).get(key)
+            is second.detail_image
+            and getattr(self, "_card_source_guard_frames", {}).get(key[0])
+            is second.source_guard_frames
+            and getattr(self, "_card_restoration_signatures", {}).get(key[0])
+            is second.restoration_signatures
+            and getattr(self, "_card_identity_frames", {}).get(key[0])
+            is second.identity_frames
+        ):
+            return
+        proofs[key] = _DetailIdentityProof(
+            transaction_token=second.transaction_token,
+            transaction_started=second.transaction_started,
+            source_card_box=second.source_card_box,
+            interaction_box=second.interaction_box,
+            contact_released_at=second.contact_released_at,
+            capture_started_at=(
+                first.capture_started_at,
+                second.capture_started_at,
+            ),
+            detail_images=(first.detail_image, second.detail_image),
+            source_guard_frames=second.source_guard_frames,
+            restoration_signatures=second.restoration_signatures,
+            identity_frames=second.identity_frames,
+            title=second.title,
+            card_id=second.card_id,
+            customizations=second.customizations,
+            resolution_source=resolved.resolution_source,
+            evidence_mode=resolved.detail_evidence_mode,
+            detail_confirmation_reads=resolved.detail_confirmation_reads,
+        )
+
+    def _detail_identity_proof_matches(
+        self,
+        key: tuple[int, int],
+        expected_card_id: int | None,
+        source_card_box: tuple[int, int, int, int] | None,
+    ) -> bool:
+        """Return whether an active transaction carries exact semantic identity."""
+
+        if (
+            expected_card_id is None
+            or source_card_box is None
+            or key not in getattr(self, "_card_transaction_started", {})
+        ):
+            return False
+        proof = getattr(self, "_detail_identity_proofs", {}).get(key)
+        if not isinstance(proof, _DetailIdentityProof):
+            return False
+        first_capture, second_capture = proof.capture_started_at
+        return bool(
+            proof.card_id == expected_card_id
+            and proof.source_card_box == tuple(source_card_box)
+            and proof.title.strip()
+            and proof.evidence_mode == "positive_unique"
+            and proof.resolution_source.endswith("_positive_confirmed")
+            and proof.detail_confirmation_reads >= 2
+            and proof.detail_images[0] is not proof.detail_images[1]
+            and proof.contact_released_at < first_capture < second_capture
+            and getattr(self, "_card_transaction_started", {}).get(key)
+            == proof.transaction_started
+            and getattr(self, "_card_transaction_tokens", {}).get(key)
+            == proof.transaction_token
+            and getattr(self, "_card_transaction_source_boxes", {}).get(key)
+            == proof.source_card_box
+            and getattr(self, "_card_transaction_interaction_boxes", {}).get(key)
+            == proof.interaction_box
+            and getattr(self, "_card_detail_last_contact_released_at", {}).get(key)
+            == proof.contact_released_at
+            and getattr(self, "_card_detail_capture_started_at", {}).get(key)
+            == second_capture
+            and getattr(self, "_card_detail_images", {}).get(key)
+            is proof.detail_images[1]
+            and getattr(self, "_card_source_guard_frames", {}).get(key[0])
+            is proof.source_guard_frames
+            and getattr(self, "_card_restoration_signatures", {}).get(key[0])
+            is proof.restoration_signatures
+            and getattr(self, "_card_identity_frames", {}).get(key[0])
+            is proof.identity_frames
+        )
+
+    @staticmethod
+    def _detail_identity_proof_diagnostic(
+        proof: _DetailIdentityProof,
+    ) -> dict[str, Any]:
+        """Return image-free provenance for one accepted conflict report."""
+
+        return {
+            "transaction_token": proof.transaction_token,
+            "transaction_started": proof.transaction_started,
+            "source_card_box": list(proof.source_card_box),
+            "interaction_box": list(proof.interaction_box),
+            "contact_released_at": proof.contact_released_at,
+            "capture_started_at": list(proof.capture_started_at),
+            "title": proof.title,
+            "card_id": proof.card_id,
+            "customizations": dict(proof.customizations),
+            "resolution_source": proof.resolution_source,
+            "evidence_mode": proof.evidence_mode,
+            "detail_confirmation_reads": proof.detail_confirmation_reads,
+        }
+
     def _read_resolved_card_detail(
         self,
         key: tuple[int, int],
@@ -4583,12 +8211,37 @@ class MaaArenaReaderBackend:
     ) -> ClickedSkillCard:
         """Resolve the accepted overlay text, rereading only while effects settle."""
 
+        resolution_started = time.perf_counter()
+        detail_identity_observations: list[_DetailIdentityObservation] = []
+
+        def finish_resolution(value: ClickedSkillCard) -> ClickedSkillCard:
+            self._record_detail_identity_proof(
+                key,
+                value,
+                detail_identity_observations,
+            )
+            self._record_duration_sample(
+                "skill_card_detail_resolution_phase",
+                time.perf_counter() - resolution_started,
+            )
+            return value
+
         deadline = time.monotonic() + timeout_seconds
-        transaction_started = getattr(self, "_card_transaction_started", {}).get(
-            key,
-            time.monotonic(),
+        last_contact_released_at = getattr(
+            self,
+            "_card_detail_last_contact_released_at",
+            {},
+        ).get(key)
+        frame_capture_started_at = getattr(
+            self,
+            "_card_detail_capture_started_at",
+            {},
+        ).get(key)
+        frame_is_settled = (
+            last_contact_released_at is not None
+            and frame_capture_started_at is not None
+            and frame_capture_started_at >= last_contact_released_at + 0.60
         )
-        zero_not_before = transaction_started + 0.60
         text = self._card_detail_texts.get(key, "")
         last_error = "accepted overlay text was not cached"
         confirmation_candidate: ClickedSkillCard | None = None
@@ -4604,11 +8257,13 @@ class MaaArenaReaderBackend:
         positive_candidate: ClickedSkillCard | None = None
         positive_confirmation_reads = 0
         positive_confirmation_extension_applied = False
+        positive_confirmation_started_at: float | None = None
         cost_fallback_candidate: ClickedSkillCard | None = None
         cost_fallback_confirmation_reads = 0
         cost_fallback_confirmation_extension_applied = False
         terminal_error: ArenaReaderError | None = None
         same_frame_effect_roi_attempted = False
+        same_frame_enhanced_effect_roi_attempted = False
         generic_cost_fallback_policy = (
             None
             if target is None
@@ -4621,11 +8276,9 @@ class MaaArenaReaderBackend:
             # otherwise ambiguous detail on the accepted frame itself; keep
             # that exact full/ROI pair so the structural-omission certifier can
             # consume it without a redundant OCR pass or a cross-frame join.
-            same_frame_effect_roi_context: tuple[str, str] | None = None
+            same_frame_effect_roi_context: tuple[str, str, int] | None = None
             if text:
-                auxiliary_badge_glyph_allowed = (
-                    time.monotonic() >= zero_not_before
-                )
+                auxiliary_badge_glyph_allowed = frame_is_settled
                 try:
                     try:
                         resolved = self._resolve_clicked_card_text(
@@ -4635,7 +8288,11 @@ class MaaArenaReaderBackend:
                             allow_zero_without_badge_count=(
                                 allow_zero_without_badge_count
                             ),
-                            allow_auxiliary_badge_glyph=(auxiliary_badge_glyph_allowed),
+                            # Full-detail semantics and the title-bound effect
+                            # panel both get first refusal. The fallible card-
+                            # face glyph is only a final disambiguator after the
+                            # same frame has exhausted those two text views.
+                            allow_auxiliary_badge_glyph=False,
                             generic_cost_fallback_policy=(generic_cost_fallback_policy),
                             allow_generic_cost_fallback=(auxiliary_badge_glyph_allowed),
                             key=key,
@@ -4643,6 +8300,15 @@ class MaaArenaReaderBackend:
                     except ArenaReaderError as initial_error:
                         if initial_error.code != "skill_card_detail_ambiguous":
                             raise
+                        if not frame_is_settled:
+                            self._increment(
+                                "skill_card_detail_render_incomplete_rereads"
+                            )
+                            raise ArenaReaderError(
+                                "skill_card_detail_render_incomplete",
+                                "the captured detail frame predates the semantic "
+                                "settle boundary and has no unique full-detail result",
+                            ) from initial_error
                         if same_frame_effect_roi_attempted:
                             raise
                         same_frame_effect_roi_attempted = True
@@ -4655,6 +8321,9 @@ class MaaArenaReaderBackend:
                             expected_customization_count=(
                                 expected_customization_count
                             ),
+                            source_group_index=key[0],
+                            detail_image=detail_image,
+                            source_card_box=self._skill_card_source_box(key),
                         )
                         roi_text = (
                             self._skill_card_title_anchored_effect_roi_text(
@@ -4662,20 +8331,142 @@ class MaaArenaReaderBackend:
                                 card_id,
                             )
                         )
-                        same_frame_effect_roi_context = (text, roi_text)
-                        combined_text = f"{text}\n{roi_text}"
-                        resolved = self._resolve_clicked_card_text(
-                            candidate_ids,
-                            combined_text,
-                            expected_customization_count=(expected_customization_count),
-                            allow_zero_without_badge_count=(
-                                allow_zero_without_badge_count
-                            ),
-                            allow_auxiliary_badge_glyph=(auxiliary_badge_glyph_allowed),
-                            generic_cost_fallback_policy=(generic_cost_fallback_policy),
-                            allow_generic_cost_fallback=(auxiliary_badge_glyph_allowed),
-                            key=key,
+                        same_frame_effect_roi_context = (
+                            text,
+                            roi_text,
+                            _effect_roi_observation_count(roi_text),
                         )
+                        combined_text = self._merge_skill_card_effect_detail_views(
+                            card_id,
+                            (text, roi_text),
+                        )
+                        try:
+                            resolved = self._resolve_clicked_card_text(
+                                candidate_ids,
+                                combined_text,
+                                expected_customization_count=(
+                                    expected_customization_count
+                                ),
+                                allow_zero_without_badge_count=(
+                                    allow_zero_without_badge_count
+                                ),
+                                allow_auxiliary_badge_glyph=False,
+                                generic_cost_fallback_policy=(
+                                    generic_cost_fallback_policy
+                                ),
+                                allow_generic_cost_fallback=(
+                                    auxiliary_badge_glyph_allowed
+                                ),
+                                generic_cost_coverage_context=(
+                                    same_frame_effect_roi_context
+                                ),
+                                key=key,
+                            )
+                        except ArenaReaderError as combined_error:
+                            if combined_error.code != "skill_card_detail_ambiguous":
+                                raise
+                            enhanced_resolved: ClickedSkillCard | None = None
+                            unresolved_error = combined_error
+                            if not same_frame_enhanced_effect_roi_attempted:
+                                same_frame_enhanced_effect_roi_attempted = True
+                                try:
+                                    enhanced_roi_text = (
+                                        self._skill_card_title_anchored_enhanced_effect_roi_text(
+                                            detail_image,
+                                            card_id,
+                                        )
+                                    )
+                                except ArenaReaderError as enhancement_error:
+                                    if enhancement_error.code not in {
+                                        "ocr_empty",
+                                        "skill_card_detail_effect_roi_empty",
+                                    }:
+                                        raise
+                                    self._increment(
+                                        "skill_card_detail_enhanced_effect_roi_empty"
+                                    )
+                                else:
+                                    roi_observation_count = (
+                                        _effect_roi_observation_count(roi_text)
+                                        + int(bool(enhanced_roi_text.strip()))
+                                    )
+                                    roi_text = _TitleBoundEffectRoiText(
+                                        self._merge_skill_card_effect_detail_views(
+                                            card_id,
+                                            (roi_text, enhanced_roi_text),
+                                        ),
+                                        roi_observation_count,
+                                    )
+                                    combined_text = (
+                                        self._merge_skill_card_effect_detail_views(
+                                            card_id,
+                                            (text, roi_text),
+                                        )
+                                    )
+                                    same_frame_effect_roi_context = (
+                                        text,
+                                        roi_text,
+                                        _effect_roi_observation_count(roi_text),
+                                    )
+                                    try:
+                                        enhanced_resolved = (
+                                            self._resolve_clicked_card_text(
+                                                candidate_ids,
+                                                combined_text,
+                                                expected_customization_count=(
+                                                    expected_customization_count
+                                                ),
+                                                allow_zero_without_badge_count=(
+                                                    allow_zero_without_badge_count
+                                                ),
+                                                allow_auxiliary_badge_glyph=False,
+                                                generic_cost_fallback_policy=(
+                                                    generic_cost_fallback_policy
+                                                ),
+                                                allow_generic_cost_fallback=(
+                                                    auxiliary_badge_glyph_allowed
+                                                ),
+                                                generic_cost_coverage_context=(
+                                                    same_frame_effect_roi_context
+                                                ),
+                                                key=key,
+                                            )
+                                        )
+                                    except ArenaReaderError as enhancement_error:
+                                        if (
+                                            enhancement_error.code
+                                            != "skill_card_detail_ambiguous"
+                                        ):
+                                            raise
+                                        unresolved_error = enhancement_error
+                                    else:
+                                        self._increment(
+                                            "skill_card_detail_enhanced_effect_roi_recoveries"
+                                        )
+                            if enhanced_resolved is not None:
+                                resolved = enhanced_resolved
+                            else:
+                                if not auxiliary_badge_glyph_allowed:
+                                    raise unresolved_error
+                                resolved = self._resolve_clicked_card_text(
+                                    candidate_ids,
+                                    combined_text,
+                                    expected_customization_count=(
+                                        expected_customization_count
+                                    ),
+                                    allow_zero_without_badge_count=(
+                                        allow_zero_without_badge_count
+                                    ),
+                                    allow_auxiliary_badge_glyph=True,
+                                    generic_cost_fallback_policy=(
+                                        generic_cost_fallback_policy
+                                    ),
+                                    allow_generic_cost_fallback=True,
+                                    generic_cost_coverage_context=(
+                                        same_frame_effect_roi_context
+                                    ),
+                                    key=key,
+                                )
                         text = combined_text
                         self._card_detail_texts[key] = combined_text
                         self._increment(
@@ -4700,8 +8491,15 @@ class MaaArenaReaderBackend:
                             detail_image,
                             resolved.card_id,
                         )
-                        same_frame_effect_roi_context = (text, roi_text)
-                        combined_text = f"{text}\n{roi_text}"
+                        same_frame_effect_roi_context = (
+                            text,
+                            roi_text,
+                            _effect_roi_observation_count(roi_text),
+                        )
+                        combined_text = self._merge_skill_card_effect_detail_views(
+                            resolved.card_id,
+                            (text, roi_text),
+                        )
                         combined_resolved = self._resolve_clicked_card_text(
                             candidate_ids,
                             combined_text,
@@ -4712,6 +8510,9 @@ class MaaArenaReaderBackend:
                             allow_auxiliary_badge_glyph=(auxiliary_badge_glyph_allowed),
                             generic_cost_fallback_policy=(generic_cost_fallback_policy),
                             allow_generic_cost_fallback=True,
+                            generic_cost_coverage_context=(
+                                same_frame_effect_roi_context
+                            ),
                             key=key,
                         )
                         if not self._same_clicked_card_resolution(
@@ -4812,8 +8613,7 @@ class MaaArenaReaderBackend:
                         # exposed it as a false zero.  Zero therefore crosses both a
                         # minimum render boundary and one fresh, semantically
                         # identical detail frame.
-                        now = time.monotonic()
-                        if now < zero_not_before:
+                        if not frame_is_settled:
                             if not zero_settle_wait_recorded:
                                 zero_settle_wait_recorded = True
                                 self._increment("skill_card_detail_zero_settle_waits")
@@ -4931,11 +8731,14 @@ class MaaArenaReaderBackend:
 
                     if resolved.detail_evidence_mode == "negative_dependent":
                         if same_frame_effect_roi_context is not None:
-                            full_detail_text, roi_text = (
+                            full_detail_text, roi_text, _ = (
                                 same_frame_effect_roi_context
                             )
                             effect_roi_title_bound = True
-                            combined_text = f"{full_detail_text}\n{roi_text}"
+                            combined_text = self._merge_skill_card_effect_detail_views(
+                                resolved.card_id,
+                                (full_detail_text, roi_text),
+                            )
                         else:
                             detail_image = self._card_detail_images.get(key)
                             if detail_image is None:
@@ -4960,27 +8763,62 @@ class MaaArenaReaderBackend:
                                 detail_image,
                                 resolved.card_id,
                             )
-                            combined_text = f"{text}\n{roi_text}"
-                            resolved = self._resolve_clicked_card_text(
-                                candidate_ids,
-                                combined_text,
-                                expected_customization_count=(
-                                    expected_customization_count
-                                ),
-                                allow_zero_without_badge_count=(
-                                    allow_zero_without_badge_count
-                                ),
-                                allow_auxiliary_badge_glyph=(
-                                    auxiliary_badge_glyph_allowed
-                                ),
-                                generic_cost_fallback_policy=(
-                                    generic_cost_fallback_policy
-                                ),
-                                allow_generic_cost_fallback=(
-                                    auxiliary_badge_glyph_allowed
-                                ),
-                                key=key,
+                            combined_text = self._merge_skill_card_effect_detail_views(
+                                resolved.card_id,
+                                (text, roi_text),
                             )
+                            try:
+                                resolved = self._resolve_clicked_card_text(
+                                    candidate_ids,
+                                    combined_text,
+                                    expected_customization_count=(
+                                        expected_customization_count
+                                    ),
+                                    allow_zero_without_badge_count=(
+                                        allow_zero_without_badge_count
+                                    ),
+                                    allow_auxiliary_badge_glyph=False,
+                                    generic_cost_fallback_policy=(
+                                        generic_cost_fallback_policy
+                                    ),
+                                    allow_generic_cost_fallback=(
+                                        auxiliary_badge_glyph_allowed
+                                    ),
+                                    generic_cost_coverage_context=(
+                                        full_detail_text,
+                                        roi_text,
+                                        _effect_roi_observation_count(roi_text),
+                                    ),
+                                    key=key,
+                                )
+                            except ArenaReaderError as combined_error:
+                                if (
+                                    combined_error.code
+                                    != "skill_card_detail_ambiguous"
+                                    or not auxiliary_badge_glyph_allowed
+                                ):
+                                    raise
+                                resolved = self._resolve_clicked_card_text(
+                                    candidate_ids,
+                                    combined_text,
+                                    expected_customization_count=(
+                                        expected_customization_count
+                                    ),
+                                    allow_zero_without_badge_count=(
+                                        allow_zero_without_badge_count
+                                    ),
+                                    allow_auxiliary_badge_glyph=True,
+                                    generic_cost_fallback_policy=(
+                                        generic_cost_fallback_policy
+                                    ),
+                                    allow_generic_cost_fallback=True,
+                                    generic_cost_coverage_context=(
+                                        full_detail_text,
+                                        roi_text,
+                                        _effect_roi_observation_count(roi_text),
+                                    ),
+                                    key=key,
+                                )
                         resolved_count = sum(
                             int(value) for value in resolved.customizations.values()
                         )
@@ -5096,14 +8934,31 @@ class MaaArenaReaderBackend:
                         # more from a fresh frame.  Structural-omission and
                         # card-face-cost modes already carry independent channels.
                         # This adds no navigation or broad retry.
+                        same_positive_resolution = self._same_clicked_card_resolution(
+                            positive_candidate,
+                            resolved,
+                        )
+                        if not same_positive_resolution:
+                            detail_identity_observations.clear()
+                        exact_identity_observation = (
+                            self._detail_identity_observation(
+                                key,
+                                candidate_ids,
+                                resolved,
+                            )
+                        )
+                        if exact_identity_observation is None:
+                            detail_identity_observations.clear()
+                        else:
+                            detail_identity_observations.append(
+                                exact_identity_observation
+                            )
+                            del detail_identity_observations[:-2]
                         positive_confirmation_reads += 1
                         self._increment(
                             "skill_card_detail_positive_confirmation_reads"
                         )
-                        if self._same_clicked_card_resolution(
-                            positive_candidate,
-                            resolved,
-                        ):
+                        if same_positive_resolution:
                             resolved = ClickedSkillCard(
                                 resolved.card_id,
                                 dict(resolved.customizations),
@@ -5121,12 +8976,22 @@ class MaaArenaReaderBackend:
                             self._increment(
                                 "skill_card_detail_positive_confirmations"
                             )
+                            if positive_confirmation_started_at is not None:
+                                self._record_duration_sample(
+                                    "skill_card_detail_positive_confirmation_phase",
+                                    time.perf_counter()
+                                    - positive_confirmation_started_at,
+                                )
                         else:
                             if positive_candidate is not None:
                                 self._increment(
                                     "skill_card_detail_positive_confirmation_conflicts"
                                 )
                             positive_candidate = resolved
+                            if positive_confirmation_started_at is None:
+                                positive_confirmation_started_at = (
+                                    time.perf_counter()
+                                )
                             if not positive_confirmation_extension_applied:
                                 deadline = max(
                                     deadline,
@@ -5161,7 +9026,14 @@ class MaaArenaReaderBackend:
                             stage_number=stage_number,
                             member_slot=member_slot,
                         )
-                        return resolved
+                        self._maybe_register_badge_glyph_exemplar(
+                            key,
+                            resolved,
+                            target=target,
+                            stage_number=stage_number,
+                            member_slot=member_slot,
+                        )
+                        return finish_resolution(resolved)
 
                     resolution_reads += 1
                     if not confirmation_started:
@@ -5203,7 +9075,14 @@ class MaaArenaReaderBackend:
                             stage_number=stage_number,
                             member_slot=member_slot,
                         )
-                        return confirmed
+                        self._maybe_register_badge_glyph_exemplar(
+                            key,
+                            confirmed,
+                            target=target,
+                            stage_number=stage_number,
+                            member_slot=member_slot,
+                        )
+                        return finish_resolution(confirmed)
                     if confirmation_candidate is not None:
                         resolution_conflicts += 1
                         self._increment("skill_card_detail_semantic_conflicts")
@@ -5224,6 +9103,7 @@ class MaaArenaReaderBackend:
                         "skill_card_cost_fallback_frame_conflict",
                         "skill_card_cost_fallback_location_missing",
                         "skill_card_cost_fallback_roi_conflict",
+                        "skill_card_detail_effect_view_conflict",
                     }:
                         terminal_error = error
                         break
@@ -5249,6 +9129,13 @@ class MaaArenaReaderBackend:
             time.sleep(0.08)
             self._increment("skill_card_detail_ocr_rereads")
             try:
+                previous_capture_started_at = frame_capture_started_at
+                detail_capture_started_at = time.monotonic()
+                if previous_capture_started_at is not None:
+                    self._record_duration_sample(
+                        "skill_card_detail_capture_start_span",
+                        detail_capture_started_at - previous_capture_started_at,
+                    )
                 detail_image = self._capture()
                 text = self._skill_card_detail_ocr_text(
                     detail_image,
@@ -5260,7 +9147,23 @@ class MaaArenaReaderBackend:
             else:
                 self._card_detail_texts[key] = text
                 self._card_detail_images[key] = detail_image
+                capture_times = getattr(
+                    self,
+                    "_card_detail_capture_started_at",
+                    None,
+                )
+                if capture_times is None:
+                    capture_times = {}
+                    self._card_detail_capture_started_at = capture_times
+                capture_times[key] = detail_capture_started_at
+                frame_capture_started_at = detail_capture_started_at
+                frame_is_settled = (
+                    last_contact_released_at is not None
+                    and frame_capture_started_at
+                    >= last_contact_released_at + 0.60
+                )
                 same_frame_effect_roi_attempted = False
+                same_frame_enhanced_effect_roi_attempted = False
         if terminal_error is not None:
             raise terminal_error
         raise ArenaReaderError(
@@ -5346,7 +9249,11 @@ class MaaArenaReaderBackend:
         )
         started = time.perf_counter()
         try:
-            return self._full_ocr_text(enlarged)
+            return self._with_full_frame_ocr_kind(
+                "derived_roi",
+                self._full_ocr_text,
+                enlarged,
+            )
         finally:
             self._increment("skill_card_detail_effect_roi_reads")
             self._add_timing(
@@ -5360,29 +9267,21 @@ class MaaArenaReaderBackend:
         candidate_ids: Sequence[int],
         *,
         expected_customization_count: int | None,
+        source_group_index: int | None = None,
+        detail_image: Any | None = None,
+        source_card_box: tuple[int, int, int, int] | None = None,
     ) -> int:
         """Resolve the already-open detail title under the existing bounded gates."""
 
         try:
-            try:
-                return self.catalog.confirm_clicked_skill_card_candidates(
-                    text,
-                    candidate_card_ids=candidate_ids,
-                )
-            except ArenaCatalogError:
-                try:
-                    return (
-                        self.catalog.confirm_clicked_customizable_skill_card_without_badge_count(
-                            text
-                        )
-                    )
-                except ArenaCatalogError:
-                    if expected_customization_count is None:
-                        raise
-                    return self.catalog.confirm_clicked_customizable_skill_card(
-                        text,
-                        expected_count=expected_customization_count,
-                    )
+            return self._confirm_clicked_skill_card_id(
+                text,
+                candidate_ids,
+                expected_customization_count=expected_customization_count,
+                source_group_index=source_group_index,
+                detail_image=detail_image,
+                source_card_box=source_card_box,
+            )
         except ArenaCatalogError as error:
             raise ArenaReaderError(
                 "skill_card_detail_ambiguous",
@@ -5398,7 +9297,11 @@ class MaaArenaReaderBackend:
             self._runtime_timing_seconds = {}
         started = time.perf_counter()
         try:
-            return self._full_ocr_text(image)
+            return self._with_full_frame_ocr_kind(
+                "detail_capture",
+                self._full_ocr_text,
+                image,
+            )
         finally:
             self._increment(f"skill_card_detail_{phase}_ocr_reads")
             self._add_timing(
@@ -5447,6 +9350,254 @@ class MaaArenaReaderBackend:
             )
         return left, top, right - left, bottom - top
 
+    @staticmethod
+    def _background_parameter_column_left(
+        frame_width: int,
+        frame_height: int,
+        title_box: tuple[int, int, int, int],
+        items: Sequence[Any],
+    ) -> int | None:
+        """Locate a proven member-stat column exposed beside a left popover.
+
+        The member detail's parameter labels live in one fixed right-hand
+        column.  A left-clamped skill-card popover can leave the lower labels
+        visible beside its effect text, so a deliberately wide title-bound ROI
+        may otherwise join a parameter value to the last effect token.  Treat
+        the column as background only when two distinct, exact parameter
+        labels each have their own aligned numeric value below them.  One
+        label or an unpaired number is intentionally insufficient because the
+        same words and digits may legitimately occur inside card effects.
+        """
+
+        title_x, title_y, title_width, _ = title_box
+        title_right = title_x + title_width
+        _, roi_top, _, roi_height = MaaArenaReaderBackend._title_anchored_effect_roi(
+            frame_width,
+            frame_height,
+            title_box,
+        )
+        roi_bottom = roi_top + roi_height
+        column_min_x = int(round(frame_width * 0.55))
+        column_max_x = int(round(frame_width * 0.72))
+        labels: list[tuple[str, tuple[int, int, int, int]]] = []
+        numbers: list[tuple[int, int, int, int]] = []
+        for item in items:
+            text = re.sub(
+                r"\s+",
+                "",
+                unicodedata.normalize("NFKC", _text(item)),
+            )
+            box = _box(item)
+            x, _, width, height = box
+            if width < 1 or height < 1:
+                continue
+            if (
+                text in {"ボーカル", "ダンス", "ビジュアル", "体力"}
+                and column_min_x <= x <= column_max_x
+            ):
+                labels.append((text, box))
+            elif (
+                re.fullmatch(r"[0-9]{1,6}", text) is not None
+                and column_min_x <= x <= column_max_x
+            ):
+                numbers.append(box)
+
+        pair_candidates: list[
+            tuple[
+                float,
+                float,
+                str,
+                tuple[int, int, int, int],
+                tuple[int, int, int, int],
+            ]
+        ] = []
+        for label, label_box in labels:
+            label_x, label_y, label_width, label_height = label_box
+            label_centre_x = label_x + label_width / 2.0
+            label_centre_y = label_y + label_height / 2.0
+            for number_box in numbers:
+                number_x, number_y, number_width, number_height = number_box
+                number_centre_x = number_x + number_width / 2.0
+                number_centre_y = number_y + number_height / 2.0
+                if (
+                    number_centre_y
+                    >= label_centre_y + max(4.0, label_height * 0.35)
+                    and number_y
+                    <= label_y + label_height + frame_height * 0.045
+                    and abs(number_centre_x - label_centre_x)
+                    <= frame_width * 0.04
+                    and abs(number_x - label_x) <= frame_width * 0.04
+                ):
+                    pair_candidates.append(
+                        (
+                            abs(number_centre_x - label_centre_x),
+                            number_centre_y - label_centre_y,
+                            label,
+                            label_box,
+                            number_box,
+                        )
+                    )
+
+        # Two different parameter rows in one narrow x lane prove the fixed
+        # background column.  Values are matched one-to-one; sharing one OCR
+        # number between two labels cannot manufacture the required proof.
+        unique_pairs: list[
+            tuple[str, tuple[int, int, int, int], tuple[int, int, int, int]]
+        ] = []
+        seen_labels: set[str] = set()
+        seen_numbers: set[tuple[int, int, int, int]] = set()
+        for _, _, label, label_box, number_box in sorted(pair_candidates):
+            if label in seen_labels or number_box in seen_numbers:
+                continue
+            seen_labels.add(label)
+            seen_numbers.add(number_box)
+            unique_pairs.append((label, label_box, number_box))
+        if len(unique_pairs) < 2:
+            return None
+        pair_top = min(
+            min(pair[1][1], pair[2][1]) for pair in unique_pairs
+        )
+        pair_bottom = max(
+            max(
+                pair[1][1] + pair[1][3],
+                pair[2][1] + pair[2][3],
+            )
+            for pair in unique_pairs
+        )
+        if pair_top >= roi_bottom or pair_bottom <= roi_top:
+            return None
+        # A title-bound ROI deliberately starts slightly above the title.  A
+        # background stat row can therefore touch only that top margin while
+        # the actual popover begins below it.  Such a row cannot justify
+        # clipping the entire right side: doing so would discard legitimate
+        # effect tokens rendered to the right of the condition text (for
+        # example ``好調状態の場合、集中``).  Require the proven background
+        # column to reach into the title/effect panel itself.
+        if pair_bottom <= title_y:
+            return None
+        label_order = {
+            "ボーカル": 0,
+            "ダンス": 1,
+            "ビジュアル": 2,
+            "体力": 3,
+        }
+        ordered_pairs = sorted(unique_pairs, key=lambda value: label_order[value[0]])
+        for earlier, later in zip(ordered_pairs, ordered_pairs[1:], strict=False):
+            earlier_index = label_order[earlier[0]]
+            later_index = label_order[later[0]]
+            earlier_y = earlier[1][1] + earlier[1][3] / 2.0
+            later_y = later[1][1] + later[1][3] / 2.0
+            index_gap = later_index - earlier_index
+            row_step = (later_y - earlier_y) / index_gap
+            if not frame_height * 0.02 <= row_step <= frame_height * 0.08:
+                return None
+        label_lefts = [pair[1][0] for pair in unique_pairs]
+        number_lefts = [pair[2][0] for pair in unique_pairs]
+        lane_tolerance = max(4, int(round(frame_width * 0.035)))
+        if (
+            max(label_lefts) - min(label_lefts) > lane_tolerance
+            or max(number_lefts) - min(number_lefts) > lane_tolerance
+        ):
+            return None
+        column_left = min((*label_lefts, *number_lefts))
+        boundary = column_left - max(2, int(round(frame_width * 0.008)))
+        if boundary <= title_right + max(4, int(round(frame_width * 0.02))):
+            return None
+        return boundary
+
+    def _title_anchored_effect_roi_without_background_parameters(
+        self,
+        frame_width: int,
+        frame_height: int,
+        title_box: tuple[int, int, int, int],
+        items: Sequence[Any],
+    ) -> tuple[int, int, int, int]:
+        """Clip only a geometrically proven right-side member-stat column."""
+
+        left, top, width, height = self._title_anchored_effect_roi(
+            frame_width,
+            frame_height,
+            title_box,
+        )
+        boundary = self._background_parameter_column_left(
+            frame_width,
+            frame_height,
+            title_box,
+            items,
+        )
+        if boundary is None or boundary >= left + width:
+            return left, top, width, height
+        clipped_width = boundary - left
+        if clipped_width < 32 or boundary < title_box[0] + title_box[2]:
+            return left, top, width, height
+        if hasattr(self, "_runtime_counts"):
+            self._increment(
+                "skill_card_detail_title_anchored_background_parameter_clips"
+            )
+        return left, top, clipped_width, height
+
+    def _skill_card_title_anchor_evidence(
+        self,
+        image: Any,
+        title_pattern: str,
+    ) -> tuple[list[Any], list[Any]]:
+        """Reuse raw boxes from the exact detail frame for title geometry.
+
+        The broad full-frame OCR is the authoritative observation for the
+        accepted capture.  A title-specific backend call remains a fail-safe
+        fallback only when those raw boxes do not produce one unique anchor;
+        this preserves the prior failure semantics for unusual OCR layouts.
+        """
+
+        evidence = self._cached_full_frame_ocr_evidence(image)
+        if evidence is not None and evidence.hit:
+            native_items = list(evidence.all_items)
+            matches = [
+                item
+                for item in native_items
+                if re.fullmatch(title_pattern, _text(item).strip()) is not None
+            ]
+            if len(matches) == 1:
+                if hasattr(self, "_runtime_counts"):
+                    self._record_full_frame_ocr_cache_hit(evidence)
+                    self._increment("skill_card_detail_title_anchor_cache_hits")
+                return matches, native_items
+        cache = getattr(self, "_title_anchor_ocr_evidence", None)
+        cache_key = (id(image), title_pattern)
+        cached = None if cache is None else cache.get(cache_key)
+        if cached is not None and cached.image is image:
+            if hasattr(self, "_runtime_counts"):
+                self._increment("skill_card_detail_title_anchor_cache_hits")
+            return list(cached.matches), list(cached.native_items)
+
+        if hasattr(self, "_runtime_counts"):
+            self._increment("skill_card_detail_title_anchor_backend_fallbacks")
+        detail = self._ocr_detail(image, title_pattern)
+        matches = (
+            []
+            if not detail or not detail.hit
+            else list(detail.filtered_results or detail.all_results or [])
+        )
+        native_items = (
+            []
+            if not detail or not detail.hit
+            else list(detail.all_results or detail.filtered_results or [])
+        )
+        if cache is None:
+            cache = {}
+            self._title_anchor_ocr_evidence = cache
+        cache[cache_key] = _TitleAnchorOcrEvidence(
+            image,
+            tuple(matches),
+            tuple(native_items),
+        )
+        while len(cache) > 16:
+            oldest_key = next(iter(cache))
+            if oldest_key == cache_key:
+                break
+            cache.pop(oldest_key, None)
+        return matches, native_items
+
     def _skill_card_title_anchored_effect_roi_text(
         self,
         image: Any,
@@ -5463,7 +9614,10 @@ class MaaArenaReaderBackend:
                 "skill_card_detail_title_catalog_missing",
                 str(error),
             ) from error
-        matches = self._ocr(image, title_pattern)
+        matches, native_items = self._skill_card_title_anchor_evidence(
+            image,
+            title_pattern,
+        )
         if len(matches) != 1:
             self._increment("skill_card_detail_title_anchor_transition_retries")
             raise ArenaReaderError(
@@ -5471,10 +9625,14 @@ class MaaArenaReaderBackend:
                 f"card {card_id} has {len(matches)} title anchors on the retry frame",
             )
         height, width = image.shape[:2]
-        left, top, roi_width, roi_height = self._title_anchored_effect_roi(
-            width,
-            height,
-            _box(matches[0]),
+        title_box = _box(matches[0])
+        left, top, roi_width, roi_height = (
+            self._title_anchored_effect_roi_without_background_parameters(
+                width,
+                height,
+                title_box,
+                native_items,
+            )
         )
         crop = image[top : top + roi_height, left : left + roi_width]
         if crop.size == 0:
@@ -5482,6 +9640,22 @@ class MaaArenaReaderBackend:
                 "skill_card_detail_effect_roi_invalid",
                 f"title-anchored detail effect ROI is empty for frame {width}x{height}",
             )
+        # Preserve the native full-frame OCR boxes from the same recognition
+        # that proved the title. The enlarged crop is valuable for small
+        # glyphs, but interpolation can also erase a small standalone value.
+        # Spatially rebuild both same-frame views and combine their evidence;
+        # catalog resolution remains fail-closed when the views conflict.
+        native_roi_items = []
+        for item in native_items:
+            item_x, item_y, item_width, item_height = _box(item)
+            centre_x = item_x + item_width / 2.0
+            centre_y = item_y + item_height / 2.0
+            if (
+                left <= centre_x <= left + roi_width
+                and top <= centre_y <= top + roi_height
+            ):
+                native_roi_items.append(item)
+        native_text = self._spatial_ocr_text(native_roi_items)
         enlarged = cv2.resize(
             crop,
             None,
@@ -5491,14 +9665,135 @@ class MaaArenaReaderBackend:
         )
         started = time.perf_counter()
         try:
-            return self._full_ocr_text(enlarged)
+            enlarged_text = self._with_full_frame_ocr_kind(
+                "derived_roi",
+                self._full_ocr_text,
+                enlarged,
+                spatial_reading_order=True,
+            )
+            observations = tuple(
+                value
+                for value in (native_text, enlarged_text)
+                if value.strip()
+            )
+            texts = tuple(
+                dict.fromkeys(
+                    observations
+                )
+            )
+            if not texts:
+                raise ArenaReaderError(
+                    "skill_card_detail_effect_roi_empty",
+                    "title-bound native and enlarged OCR views were both empty",
+                )
+            return _TitleBoundEffectRoiText(
+                self._merge_skill_card_effect_detail_views(card_id, texts),
+                len(observations),
+            )
         finally:
             self._increment("skill_card_detail_title_anchored_effect_roi_reads")
+            self._increment("skill_card_detail_title_anchored_native_spatial_reads")
+            self._increment("skill_card_detail_title_anchored_enlarged_spatial_reads")
             self._increment("skill_card_detail_effect_roi_reads")
             self._add_timing(
                 "skill_card_detail_effect_roi_ocr",
                 time.perf_counter() - started,
             )
+
+    def _skill_card_title_anchored_enhanced_effect_roi_text(
+        self,
+        image: Any,
+        card_id: int,
+    ) -> str:
+        """Contrast one title-bound effect panel on the already-captured frame."""
+
+        import cv2
+
+        self._increment("skill_card_detail_enhanced_effect_roi_attempts")
+        started = time.perf_counter()
+        try:
+            try:
+                title_pattern = self.catalog.skill_card_title_anchor_pattern(card_id)
+            except ArenaCatalogError as error:
+                raise ArenaReaderError(
+                    "skill_card_detail_title_catalog_missing",
+                    str(error),
+                ) from error
+            matches, native_items = self._skill_card_title_anchor_evidence(
+                image,
+                title_pattern,
+            )
+            if len(matches) != 1:
+                self._increment(
+                    "skill_card_detail_enhanced_effect_roi_title_ambiguous"
+                )
+                raise ArenaReaderError(
+                    "skill_card_detail_title_anchor_ambiguous",
+                    f"card {card_id} has {len(matches)} title anchors on the enhanced frame",
+                )
+            height, width = image.shape[:2]
+            left, top, roi_width, roi_height = (
+                self._title_anchored_effect_roi_without_background_parameters(
+                    width,
+                    height,
+                    _box(matches[0]),
+                    native_items,
+                )
+            )
+            crop = image[top : top + roi_height, left : left + roi_width]
+            if crop.size == 0:
+                raise ArenaReaderError(
+                    "skill_card_detail_effect_roi_invalid",
+                    f"enhanced title-bound effect ROI is empty for frame {width}x{height}",
+                )
+
+            # This is a catalog-agnostic recognition view: local contrast makes
+            # light effect labels legible without interpreting isolated digits.
+            # The active catalog's existing effect matchers merge and certify
+            # the result, so conflicting levels still fail closed.
+            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            contrasted = cv2.createCLAHE(
+                clipLimit=2.0,
+                tileGridSize=(8, 8),
+            ).apply(gray)
+            enlarged = cv2.resize(
+                contrasted,
+                None,
+                fx=2.0,
+                fy=2.0,
+                interpolation=cv2.INTER_LANCZOS4,
+            )
+            enhanced = cv2.cvtColor(enlarged, cv2.COLOR_GRAY2BGR)
+            return self._with_full_frame_ocr_kind(
+                "derived_roi",
+                self._full_ocr_text,
+                enhanced,
+                spatial_reading_order=True,
+            )
+        finally:
+            self._add_timing(
+                "skill_card_detail_enhanced_effect_roi_ocr",
+                time.perf_counter() - started,
+            )
+
+    def _merge_skill_card_effect_detail_views(
+        self,
+        card_id: int,
+        detail_texts: Sequence[str],
+    ) -> str:
+        """Apply the catalog-wide cross-view evidence gate before OCR fusion."""
+
+        try:
+            return self.catalog.merge_compatible_effect_detail_views(
+                card_id,
+                detail_texts,
+            )
+        except ArenaCatalogError as error:
+            self._increment("skill_card_detail_effect_view_conflicts")
+            raise ArenaReaderError(
+                "skill_card_detail_effect_view_conflict",
+                str(error),
+            ) from error
 
     def _record_detail_count_override(
         self,
@@ -5666,6 +9961,12 @@ class MaaArenaReaderBackend:
         self._card_images.clear()
         self._card_count_frames.clear()
         self._card_identity_frames.clear()
+        self._card_source_ocr_counts.clear()
+        getattr(self, "_full_frame_ocr_evidence", {}).clear()
+        getattr(self, "_title_anchor_ocr_evidence", {}).clear()
+        getattr(self, "_trusted_skill_card_title_rows_cache", {}).clear()
+        self._card_source_guard_frames.clear()
+        getattr(self, "_card_source_guard_signature_cache", {}).clear()
         self._card_restoration_signatures.clear()
         self._card_excluded_duplicate_flags.clear()
         self._card_empty_flags.clear()
@@ -5674,18 +9975,28 @@ class MaaArenaReaderBackend:
         self._badge_count_diagnostics.clear()
         self._detail_count_overrides.clear()
         self._detail_semantic_confirmations.clear()
+        self._detail_identity_proofs.clear()
+        self._detail_title_disambiguations.clear()
         self._badge_local_results.clear()
         self._badge_glyph_observations.clear()
         self._badge_glyph_count_diagnostics.clear()
+        getattr(self, "_badge_glyph_exemplars", {}).clear()
+        getattr(self, "_badge_glyph_polluted_descriptors", set()).clear()
+        getattr(self, "_badge_glyph_runtime_labels", {}).clear()
         self._inferred_clicked_cards.clear()
         self._active_inferred_clicked_card = None
         self._card_detail_texts.clear()
         self._card_detail_images.clear()
+        getattr(self, "_card_detail_last_contact_released_at", {}).clear()
+        getattr(self, "_card_detail_capture_started_at", {}).clear()
         self._p_item_diagnostics = ()
         self._p_item_generation_evidence.clear()
-        self._p_item_source_frames = None
         self._card_transaction_started.clear()
+        getattr(self, "_card_transaction_tokens", {}).clear()
+        getattr(self, "_card_transaction_source_boxes", {}).clear()
+        getattr(self, "_card_transaction_interaction_boxes", {}).clear()
         self._card_transaction_kinds.clear()
+        getattr(self, "_card_transaction_ocr_started", {}).clear()
         self._secondary_fixed_slot_fallback_enabled = False
         self._secondary_presence_diagnostics = ()
         self._secondary_presence_cache.clear()
@@ -5817,7 +10128,31 @@ class MaaArenaReaderBackend:
         expected: str,
         *,
         roi: tuple[int, int, int, int] | None = None,
+        only_rec: bool = False,
     ) -> list[Any]:
+        if expected == r".+" and roi is None and not only_rec:
+            evidence = self._full_frame_ocr_evidence_for(image)
+            return list(evidence.filtered_items) if evidence.hit else []
+        detail_kwargs: dict[str, Any] = {}
+        if roi is not None:
+            detail_kwargs["roi"] = roi
+        if only_rec:
+            detail_kwargs["only_rec"] = True
+        detail = self._ocr_detail(image, expected, **detail_kwargs)
+        if not detail or not detail.hit:
+            return []
+        return list(detail.filtered_results or detail.all_results or [])
+
+    def _ocr_detail(
+        self,
+        image: Any,
+        expected: str,
+        *,
+        roi: tuple[int, int, int, int] | None = None,
+        only_rec: bool = False,
+    ) -> Any:
+        """Return one OCR detail while preserving filtered and raw boxes."""
+
         override: dict[str, Any] = {
             "ArenaReaderOCR": {
                 "recognition": "OCR",
@@ -5827,12 +10162,321 @@ class MaaArenaReaderBackend:
         }
         if roi is not None:
             override["ArenaReaderOCR"]["roi"] = list(roi)
-        detail = self.context.run_recognition("ArenaReaderOCR", image, pipeline_override=override)
-        if not detail or not detail.hit:
-            return []
-        return list(detail.filtered_results or detail.all_results or [])
+        if only_rec:
+            override["ArenaReaderOCR"]["only_rec"] = True
+        return self.context.run_recognition(
+            "ArenaReaderOCR",
+            image,
+            pipeline_override=override,
+        )
 
-    def _full_ocr_text(self, image: Any) -> str:
+    @staticmethod
+    def _spatial_ocr_rows(
+        items: Sequence[Any],
+    ) -> tuple[
+        tuple[
+            str,
+            tuple[int, int, int, int],
+            tuple[tuple[str, tuple[int, int, int, int]], ...],
+        ],
+        ...,
+    ]:
+        """Rebuild visual reading rows with their union boxes.
+
+        Maa's vertical ordering compares top coordinates. Two tokens on one
+        visual line can therefore be reversed when the right token has a taller
+        box that begins a few pixels earlier. Cluster only strongly overlapping
+        vertical spans, then order members left-to-right and rows top-to-bottom.
+        """
+
+        entries: list[tuple[int, int, int, int, str]] = []
+        for item in items:
+            value = _text(item).strip()
+            if not value:
+                continue
+            x, y, width, height = _box(item)
+            if width < 1 or height < 1:
+                raise ArenaReaderError(
+                    "recognition_box_invalid",
+                    f"OCR result has an invalid box: {(x, y, width, height)!r}",
+                )
+            entries.append((x, y, width, height, value))
+
+        def median(values: Sequence[float]) -> float:
+            ordered = sorted(values)
+            middle = len(ordered) // 2
+            if len(ordered) % 2:
+                return ordered[middle]
+            return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+        rows: list[list[tuple[int, int, int, int, str]]] = []
+        for entry in sorted(
+            entries,
+            key=lambda value: (value[1] + value[3] / 2.0, value[0]),
+        ):
+            _, y, _, height, _ = entry
+            centre = y + height / 2.0
+            candidates: list[tuple[float, int]] = []
+            for row_index, row in enumerate(rows):
+                row_centres = [item[1] + item[3] / 2.0 for item in row]
+                row_heights = [float(item[3]) for item in row]
+                row_centre = median(row_centres)
+                row_height = median(row_heights)
+                height_ratio = max(height, row_height) / min(height, row_height)
+                overlap = min(
+                    y + height,
+                    row_centre + row_height / 2.0,
+                ) - max(
+                    y,
+                    row_centre - row_height / 2.0,
+                )
+                overlap_ratio = max(0.0, overlap) / min(height, row_height)
+                centre_gap = abs(centre - row_centre)
+                if (
+                    height_ratio <= 1.50
+                    and overlap_ratio >= 0.50
+                    and centre_gap <= 0.65 * max(height, row_height)
+                ):
+                    candidates.append((centre_gap, row_index))
+            if candidates:
+                _, row_index = min(candidates)
+                rows[row_index].append(entry)
+            else:
+                rows.append([entry])
+
+        rows.sort(
+            key=lambda row: (
+                median([item[1] + item[3] / 2.0 for item in row]),
+                min(item[0] for item in row),
+            )
+        )
+        spatial_rows: list[
+            tuple[
+                str,
+                tuple[int, int, int, int],
+                tuple[tuple[str, tuple[int, int, int, int]], ...],
+            ]
+        ] = []
+        for row in rows:
+            ordered_row = sorted(row, key=lambda value: (value[0], value[1]))
+            left = min(item[0] for item in ordered_row)
+            top = min(item[1] for item in ordered_row)
+            right = max(item[0] + item[2] for item in ordered_row)
+            bottom = max(item[1] + item[3] for item in ordered_row)
+            spatial_rows.append(
+                (
+                    "".join(item[4] for item in ordered_row),
+                    (left, top, right - left, bottom - top),
+                    tuple(
+                        (item[4], (item[0], item[1], item[2], item[3]))
+                        for item in ordered_row
+                    ),
+                )
+            )
+        return tuple(spatial_rows)
+
+    @staticmethod
+    def _spatial_ocr_text(items: Sequence[Any]) -> str:
+        """Flatten spatial OCR rows into newline-separated text."""
+
+        return "\n".join(
+            text
+            for text, _, _ in MaaArenaReaderBackend._spatial_ocr_rows(items)
+        )
+
+    def _full_ocr_text(
+        self,
+        image: Any,
+        *,
+        spatial_reading_order: bool = False,
+    ) -> str:
+        evidence = self._full_frame_ocr_evidence_for(image)
+        if not evidence.hit:
+            raise ArenaReaderError("ocr_empty", "full-screen OCR returned no text")
+        items = list(evidence.all_items)
+        if spatial_reading_order:
+            return self._spatial_ocr_text(items)
+        return "\n".join(_text(item) for item in items)
+
+    @staticmethod
+    def _p_item_detail_panel_rows(
+        image: Any,
+        items: Sequence[Any],
+    ) -> tuple[
+        tuple[
+            str,
+            tuple[float, float, float, float],
+            tuple[tuple[str, tuple[float, float, float, float]], ...],
+        ],
+        ...,
+    ]:
+        """Read spatial OCR rows and normalized boxes from the left panel.
+
+        P-item titles move vertically with source-page content, so geometry
+        identifies the panel rather than guessing a title band. The transaction
+        layer removes frozen source rows and treats only the first new row as
+        title evidence; later effect prose remains visible for diagnostics but
+        cannot participate in catalog matching.
+        """
+
+        height, width = image.shape[:2]
+        if width < 320 or height < 568:
+            raise ArenaReaderError(
+                "p_item_detail_title_roi_invalid",
+                f"capture {width}x{height} is too small for P-item title geometry",
+            )
+        scale_x = width / 720.0
+        scale_y = height / 1280.0
+        panel_items: list[Any] = []
+        for item in items:
+            x, y, item_width, item_height = _box(item)
+            normalized_x = x / scale_x
+            normalized_y = y / scale_y
+            normalized_width = item_width / scale_x
+            normalized_height = item_height / scale_y
+            normalized_text = re.sub(
+                r"\s+",
+                "",
+                unicodedata.normalize("NFKC", _text(item)),
+            )
+            if (
+                normalized_width < 16
+                or not 18 <= normalized_height <= 45
+                or not normalized_text
+                or not any(character.isalpha() for character in normalized_text)
+            ):
+                continue
+            in_left_panel = (
+                18 <= normalized_x
+                and normalized_x <= 360
+                and normalized_x + normalized_width <= 650
+                # The live top-panel title box can begin at y=15.  Reserve a
+                # +/-3 px detector-box tolerance without admitting rows above
+                # y=12; all horizontal, size, frozen-source and first-new-row
+                # identity gates remain intact.
+                and 12 <= normalized_y <= 270
+            )
+            if in_left_panel:
+                panel_items.append(item)
+        if not panel_items:
+            return ()
+
+        spatial_rows = MaaArenaReaderBackend._spatial_ocr_rows(panel_items)
+
+        def isolated_ascii_artwork_noise(
+            text: str,
+            row_box: tuple[int, int, int, int],
+            components: tuple[tuple[str, tuple[int, int, int, int]], ...],
+        ) -> bool:
+            normalized = re.sub(
+                r"\s+",
+                "",
+                unicodedata.normalize("NFKC", text),
+            )
+            if (
+                len(components) != 1
+                or re.fullmatch(r"[A-Za-z]", normalized) is None
+            ):
+                return False
+            row_x, row_y, row_width, row_height = row_box
+            normalized_row_box = (
+                row_x / scale_x,
+                row_y / scale_y,
+                row_width / scale_x,
+                row_height / scale_y,
+            )
+            if not (
+                normalized_row_box[0] <= 30
+                and normalized_row_box[1] <= 45
+                and normalized_row_box[2] <= 24
+                and normalized_row_box[3] <= 22
+            ):
+                # A low-confidence letter at the normal title position remains
+                # the first new row.  Removing it could promote effect prose to
+                # identity evidence, so geometry outside the observed artwork
+                # corner must continue to fail closed.
+                return False
+            component_text, component_box = components[0]
+            scores = tuple(
+                float(_value(item, "score", 1.0))
+                for item in panel_items
+                if _text(item).strip() == component_text
+                and _box(item) == component_box
+            )
+            # Full-screen OCR can expose one low-confidence Latin glyph from
+            # the P-item artwork above the real title.  Filter only a complete
+            # isolated row after spatial joining so split titles such as
+            # ``P`` + ``っち+`` retain their Latin component.
+            return bool(scores) and max(scores) < 0.50
+
+        return tuple(
+            (
+                text,
+                (
+                    x / scale_x,
+                    y / scale_y,
+                    row_width / scale_x,
+                    row_height / scale_y,
+                ),
+                tuple(
+                    (
+                        component_text,
+                        (
+                            component_x / scale_x,
+                            component_y / scale_y,
+                            component_width / scale_x,
+                            component_height / scale_y,
+                        ),
+                    )
+                    for component_text, (
+                        component_x,
+                        component_y,
+                        component_width,
+                        component_height,
+                    ) in components
+                ),
+            )
+            for text, (x, y, row_width, row_height), components in spatial_rows
+            if not isolated_ascii_artwork_noise(
+                text,
+                (x, y, row_width, row_height),
+                components,
+            )
+        )
+
+    @staticmethod
+    def _p_item_detail_title_text(
+        image: Any,
+        items: Sequence[Any],
+    ) -> str:
+        """Flatten normalized left-panel rows for diagnostics and tests."""
+
+        return "\n".join(
+            text
+            for text, _, _ in MaaArenaReaderBackend._p_item_detail_panel_rows(
+                image,
+                items,
+            )
+        )
+
+    def _p_item_ocr_observation(
+        self,
+        image: Any,
+    ) -> tuple[
+        str,
+        str,
+        bool,
+        tuple[
+            tuple[
+                str,
+                tuple[float, float, float, float],
+                tuple[tuple[str, tuple[float, float, float, float]], ...],
+            ],
+            ...,
+        ],
+    ]:
+        """OCR one frame once and retain full text, title geometry and anchors."""
+
         detail = self.context.run_recognition(
             "ArenaReaderOCR",
             image,
@@ -5846,7 +10490,13 @@ class MaaArenaReaderBackend:
         )
         if not detail or not detail.hit:
             raise ArenaReaderError("ocr_empty", "full-screen OCR returned no text")
-        return "\n".join(_text(item) for item in (detail.all_results or detail.filtered_results or []))
+        items = list(detail.all_results or detail.filtered_results or [])
+        full_text = "\n".join(_text(item) for item in items)
+        panel_rows = self._p_item_detail_panel_rows(image, items)
+        title_text = "\n".join(text for text, _, _ in panel_rows)
+        exact_ocr_rows = {_text(item).strip() for item in items}
+        member_anchors_visible = "体力" in exact_ocr_rows and "総合力" in exact_ocr_rows
+        return full_text, title_text, member_anchors_visible, panel_rows
 
     def _click(
         self,
@@ -6052,8 +10702,33 @@ class MaaArenaReaderBackend:
     def _dismiss_skill_card_detail(self) -> None:
         """Close a skill-card detail by tapping the inert upper-left backdrop."""
 
-        image = self._capture()
-        height, width = image.shape[:2]
+        # A successfully opened skill-card transaction already owns a fresh,
+        # accepted detail capture.  The dismissal point consumes only the
+        # normalized frame dimensions, never its pixels, so taking another
+        # screenshot here adds no state evidence.  Reuse is deliberately
+        # limited to the sole active transaction; failed opens, P-item flows,
+        # diagnostic calls, malformed frames, and inconsistent state retain
+        # the original capture fallback.
+        active_keys = tuple(
+            getattr(self, "_card_transaction_started", {})
+        )
+        dimensions: tuple[int, int] | None = None
+        detail_images = getattr(self, "_card_detail_images", {})
+        if len(active_keys) == 1 and active_keys[0] in detail_images:
+            detail_image = detail_images[active_keys[0]]
+            shape = getattr(detail_image, "shape", ())
+            if len(shape) >= 2:
+                height, width = int(shape[0]), int(shape[1])
+                if height > 0 and width > 0:
+                    dimensions = (height, width)
+                    self._increment(
+                        "skill_card_detail_dismiss_shape_reuses"
+                    )
+        if dimensions is None:
+            image = self._capture()
+            height, width = image.shape[:2]
+        else:
+            height, width = dimensions
         self._increment("skill_card_detail_event_driven_dismissals")
         self._click(
             (
@@ -6064,6 +10739,74 @@ class MaaArenaReaderBackend:
             ),
             settle_seconds=0,
         )
+
+    def _skill_card_detail_close_retry_proven(
+        self,
+        group_index: int,
+        expected_card_id: int,
+        source_card_box: tuple[int, int, int, int] | None = None,
+    ) -> bool:
+        """Prove on two fresh frames that the same detail overlay stayed open."""
+
+        exact_resolver = getattr(
+            self.catalog,
+            "confirm_clicked_skill_card_by_exact_title",
+            None,
+        )
+        if exact_resolver is None:
+            return False
+        for frame_index in range(2):
+            image = self._capture()
+            title_text = self._authoritative_skill_card_title_text(
+                group_index,
+                image,
+                candidate_card_ids=(expected_card_id,),
+                source_card_box=source_card_box,
+            )
+            if title_text is None:
+                return False
+            try:
+                confirmed_card_id = exact_resolver(title_text)
+            except ArenaCatalogError:
+                return False
+            if confirmed_card_id != expected_card_id:
+                return False
+            self._increment("skill_card_detail_close_retry_evidence_frames")
+            if frame_index == 0:
+                time.sleep(self._source_restore_poll_seconds)
+        return True
+
+    def _assert_inferred_card_group_visible_after_dismiss(
+        self,
+        group_index: int,
+        *,
+        card_slot: int,
+        expected_card_id: int,
+    ) -> None:
+        """Restore one inferred-card source, retrying one proven dropped dismiss."""
+
+        try:
+            self._assert_card_group_visible(
+                group_index,
+                card_slot=card_slot,
+                expected_card_id=expected_card_id,
+            )
+        except ArenaReaderError as error:
+            if error.code != "skill_card_close_failed":
+                raise
+            if not self._skill_card_detail_close_retry_proven(
+                group_index,
+                expected_card_id,
+                self._skill_card_source_box((group_index, card_slot)),
+            ):
+                raise
+            self._increment("skill_card_detail_close_retries")
+            self._dismiss_skill_card_detail()
+            self._assert_card_group_visible(
+                group_index,
+                card_slot=card_slot,
+                expected_card_id=expected_card_id,
+            )
 
     def _assert_stage_navigation(self) -> None:
         results = self._ocr(self._capture(), r"^ステージ\s*[123]$")
@@ -6180,7 +10923,7 @@ class MaaArenaReaderBackend:
         top = max(0, label_y - vertical_span)
         bottom = min(height, label_y)
         minimum_digit_height = max(1, round(label_width * 0.35))
-        roi = (
+        emblem_roi = (
             left,
             top,
             max(0, right - left),
@@ -6200,21 +10943,80 @@ class MaaArenaReaderBackend:
                 <= bottom
             )
         )
-        targeted: tuple[tuple[Any, int], ...] = ()
+        targeted_views: list[dict[str, Any]] = []
         if not matches:
             # Full-screen OCR can consistently omit the large stylised Grade
-            # digit while still resolving the surrounding small menu text.
-            # Reuse the same screenshot and label-derived ROI for one focused
-            # pass; never widen the ROI toward the notification badge on the
-            # right or the stage controls below this emblem.
-            targeted = tuple(
-                (item, grade_value)
-                for item in self._ocr(image, r"^[1-7]$", roi=roi)
-                if (grade_value := _grade_ocr_value(_text(item))) is not None
-                and _box(item)[3] >= minimum_digit_height
+            # digit while still resolving the surrounding small menu text. A
+            # crop that includes the whole emblem is not a valid fallback:
+            # its ornament and digit can merge into one CJK-shaped OCR line.
+            # Isolate only the fixed digit lane above the unique GRADE label,
+            # then require all non-empty detector/recognizer views to agree.
+            digit_left = max(0, round(label_x + label_width * 0.08))
+            digit_right = min(width, round(label_x + label_width * 0.92))
+            digit_top = max(0, round(label_y - label_width * 1.55))
+            digit_bottom = min(height, round(label_y - label_width * 0.60))
+            digit_roi = (
+                digit_left,
+                digit_top,
+                max(0, digit_right - digit_left),
+                max(0, digit_bottom - digit_top),
             )
-            if len(targeted) == 1:
-                return targeted[0][1]
+            accepted_values: list[int] = []
+            observed_values: set[int] = set()
+            for only_rec in (False, True):
+                detail = self._ocr_detail(
+                    image,
+                    r"^[1-7]$",
+                    roi=digit_roi,
+                    only_rec=only_rec,
+                )
+                raw_items = tuple(
+                    detail.all_results or () if detail is not None else ()
+                )
+                filtered_items = tuple(
+                    detail.filtered_results or ()
+                    if detail is not None and detail.hit
+                    else ()
+                )
+                raw_matches = tuple(
+                    (item, grade_value)
+                    for item in (*raw_items, *filtered_items)
+                    if (grade_value := _grade_ocr_value(_text(item))) is not None
+                    and _box(item)[3] >= minimum_digit_height
+                )
+                filtered_matches = tuple(
+                    (item, grade_value)
+                    for item in filtered_items
+                    if (grade_value := _grade_ocr_value(_text(item))) is not None
+                    and _box(item)[3] >= minimum_digit_height
+                )
+                raw_values = tuple(
+                    dict.fromkeys(value for _, value in raw_matches)
+                )
+                filtered_values = tuple(
+                    dict.fromkeys(value for _, value in filtered_matches)
+                )
+                targeted_views.append(
+                    {
+                        "only_rec": only_rec,
+                        "hit": bool(detail is not None and detail.hit),
+                        "raw": tuple((_text(item), _box(item)) for item in raw_items),
+                        "filtered": tuple(
+                            (_text(item), _box(item)) for item in filtered_items
+                        ),
+                        "raw_values": raw_values,
+                        "accepted_values": filtered_values,
+                    }
+                )
+                observed_values.update(raw_values)
+                if len(filtered_values) == 1:
+                    accepted_values.append(filtered_values[0])
+            if (
+                accepted_values
+                and len(set(accepted_values)) == 1
+                and observed_values == {accepted_values[0]}
+            ):
+                return accepted_values[0]
         if len(matches) != 1:
             nearby = tuple(
                 (_text(item), _box(item))
@@ -6231,8 +11033,8 @@ class MaaArenaReaderBackend:
             raise ArenaReaderError(
                 "arena_grade_ambiguous",
                 f"found {len(matches)} geometrically valid Grade digits above the "
-                f"GRADE anchor in {roi}; targeted_ocr="
-                f"{tuple((_text(item), _box(item)) for item, _ in targeted)!r}; "
+                f"GRADE anchor in {emblem_roi}; targeted_ocr="
+                f"{tuple(targeted_views)!r}; "
                 f"nearby_ocr={nearby!r}",
             )
         return matches[0][1]
@@ -6248,6 +11050,158 @@ class MaaArenaReaderBackend:
             "member_detail_anchor_missing",
             "体力/総合力 anchors did not become visible",
         )
+
+    def _assert_p_item_source_restored(
+        self,
+        source_images: Sequence[Any],
+        boxes: Sequence[tuple[int, int, int, int]],
+        timeout_seconds: float = 2.0,
+    ) -> None:
+        """Prove a P-item overlay closed before another slot can be clicked."""
+
+        if not boxes:
+            raise ArenaReaderError(
+                "p_item_source_restore_evidence_missing",
+                "P-item detail recovery requires the accepted source-row boxes",
+            )
+        threshold = self.p_item_reader.content_generation_max_mean_abs_error
+        deadline = time.monotonic() + timeout_seconds
+        consecutive = 0
+        last_errors: tuple[float, ...] = ()
+        while time.monotonic() < deadline:
+            image = self._capture()
+            matches_source, last_errors = self._p_item_source_frame_matches(
+                source_images,
+                image,
+                boxes,
+            )
+            if matches_source:
+                consecutive += 1
+                if consecutive >= 2:
+                    return
+            else:
+                consecutive = 0
+            time.sleep(0.12)
+        raise ArenaReaderError(
+            "p_item_source_restore_unproven",
+            "member anchors and two stable source-row generations did not return: "
+            f"errors={tuple(round(value, 6) for value in last_errors)!r}; "
+            f"threshold={threshold}",
+        )
+
+    @staticmethod
+    def _p_item_source_proof_boxes(
+        source_image: Any,
+        boxes: Sequence[tuple[int, int, int, int]],
+    ) -> tuple[tuple[int, int, int, int], ...]:
+        source_height, source_width = source_image.shape[:2]
+        if source_width < 320 or source_height < 568:
+            raise ArenaReaderError(
+                "p_item_source_restore_evidence_invalid",
+                "P-item source capture is too small for detail-panel restore evidence",
+            )
+        scale_x = source_width / 720.0
+        scale_y = source_height / 1280.0
+
+        def scaled_box(
+            box: tuple[int, int, int, int],
+        ) -> tuple[int, int, int, int]:
+            x, y, width, height = box
+            return (
+                int(round(x * scale_x)),
+                int(round(y * scale_y)),
+                max(8, int(round(width * scale_x))),
+                max(8, int(round(height * scale_y))),
+            )
+
+        panel_boxes = (
+            scaled_box((18, 16, 331, 45)),
+            scaled_box((100, 132, 320, 58)),
+        )
+        return (*boxes, *panel_boxes)
+
+    def _assert_p_item_source_generation_stable(
+        self,
+        source_images: Sequence[Any],
+        boxes: Sequence[tuple[int, int, int, int]],
+    ) -> None:
+        if len(source_images) < 2:
+            return
+        try:
+            proof_boxes = self._p_item_source_proof_boxes(source_images[0], boxes)
+            errors = measure_p_item_content_generation(source_images, proof_boxes)
+        except (PItemReferenceError, TypeError, ValueError) as error:
+            raise ArenaReaderError(
+                "p_item_source_restore_evidence_invalid",
+                "P-item frozen source-page evidence could not be measured",
+            ) from error
+        threshold = self.p_item_reader.content_generation_max_mean_abs_error
+        if any(value > threshold for value in errors):
+            raise ArenaReaderError(
+                "p_item_source_generation_unstable",
+                "P-item frozen source frames changed in an item or detail-panel "
+                f"guard region: errors={tuple(round(value, 6) for value in errors)!r}; "
+                f"threshold={threshold}",
+            )
+
+    def _p_item_source_frame_matches(
+        self,
+        source_images: Sequence[Any],
+        image: Any,
+        boxes: Sequence[tuple[int, int, int, int]],
+        member_anchors_visible: bool | None = None,
+    ) -> tuple[bool, tuple[float, ...]]:
+        """Prove one frame is the frozen member page, not a visible detail."""
+
+        if not boxes:
+            raise ArenaReaderError(
+                "p_item_source_restore_evidence_missing",
+                "P-item source-page evidence requires the accepted source-row boxes",
+            )
+        anchors_visible = (
+            bool(self._ocr(image, r"^体力$") and self._ocr(image, r"^総合力$"))
+            if member_anchors_visible is None
+            else member_anchors_visible
+        )
+        if not source_images:
+            raise ArenaReaderError(
+                "p_item_source_restore_evidence_missing",
+                "P-item source-page evidence requires frozen source frames",
+            )
+        source_height, source_width = source_images[0].shape[:2]
+        image_height, image_width = image.shape[:2]
+        if (image_height, image_width) != (source_height, source_width):
+            raise ArenaReaderError(
+                "p_item_source_restore_evidence_invalid",
+                "P-item source and current captures have different dimensions",
+            )
+        proof_boxes = self._p_item_source_proof_boxes(source_images[0], boxes)
+        threshold = self.p_item_reader.content_generation_max_mean_abs_error
+        best_errors: tuple[float, ...] = ()
+        try:
+            for source_image in source_images:
+                if source_image.shape[:2] != (source_height, source_width):
+                    raise ArenaReaderError(
+                        "p_item_source_restore_evidence_invalid",
+                        "P-item frozen source captures have different dimensions",
+                    )
+                errors = tuple(
+                    float(value)
+                    for value in measure_p_item_content_generation(
+                        (source_image, image),
+                        proof_boxes,
+                    )
+                )
+                if not best_errors or max(errors) < max(best_errors):
+                    best_errors = errors
+                if anchors_visible and all(value <= threshold for value in errors):
+                    return True, errors
+        except (PItemReferenceError, TypeError, ValueError) as error:
+            raise ArenaReaderError(
+                "p_item_source_restore_evidence_invalid",
+                "P-item source-row restore evidence could not be measured",
+            ) from error
+        return False, best_errors
 
     def _assert_card_group_visible(
         self,
@@ -6266,16 +11220,17 @@ class MaaArenaReaderBackend:
         generation. A semantically identical card can nevertheless acquire a
         different 16x16 signature after the overlay closes (for example from
         sub-pixel row-box jitter). In that case an already resolved detail ID
-        may authorize one stricter fallback: the same unique clean-reference
-        identity must remain a high-confidence candidate in three consecutive
-        source frames. The exact detail title has already resolved the business
-        ID, so a stable clean-reference shortlist may confirm that ID without
-        pretending the shortlist itself is unique. Pixel
-        stability is deliberately not reused here: the fallback exists because
-        the 16x16 content signature itself is unstable under sub-pixel row-box
-        jitter. This replaces the former unconditional 250 ms sleep without
-        accepting geometry alone; the timeout and failure semantics remain
-        bounded and fail closed.
+        may authorize one stricter fallback: the same clean-reference family
+        must remain stable in three consecutive source frames and each frame's
+        raw clicked-slot content must match 2/3 frozen source frames at one
+        unique +/-1 native-pixel alignment under the unchanged 0.75 MAE gate.
+        If the fixed gallery maps that family to another business ID, the
+        fallback remains available only to the active transaction whose exact
+        title and complete semantic detail already resolved the expected ID,
+        while the frozen page guard and six-slot geometry also match. The
+        conflict is then reported explicitly instead of letting the weaker
+        gallery hint override the clicked detail. Pixel thresholds and all
+        failure bounds remain unchanged.
         """
 
         if card_slot is not None and not 1 <= card_slot <= 6:
@@ -6284,6 +11239,9 @@ class MaaArenaReaderBackend:
                 f"source restoration slot is outside 1..6: {card_slot}",
             )
         restoration_signatures = None
+        source_guard_frames: tuple[Any, ...] | None = None
+        source_stable_business_ids: tuple[int, ...] = ()
+        source_stable_visual_group: str | None = None
         if card_slot is not None:
             restoration_signatures = getattr(
                 self,
@@ -6299,6 +11257,36 @@ class MaaArenaReaderBackend:
                     "skill_card_source_generation_missing",
                     f"group {group_index} has no accepted three-frame restoration generation",
                 )
+            guard_store = getattr(self, "_card_source_guard_frames", None)
+            if guard_store is not None:
+                source_guard_frames = tuple(guard_store.get(group_index, ()))
+                if len(source_guard_frames) != 3:
+                    raise ArenaReaderError(
+                        "skill_card_source_guard_missing",
+                        f"group {group_index} has no accepted three-frame overlay guard",
+                    )
+            identity_frames = getattr(
+                self,
+                "_card_identity_frames",
+                {},
+            ).get(group_index, ())
+            if len(identity_frames) == 3 and all(
+                len(frame) == 6 for frame in identity_frames
+            ):
+                source_identities = tuple(
+                    frame[card_slot - 1] for frame in identity_frames
+                )
+                try:
+                    source_stable_business_ids = (
+                        stable_reference_business_candidates(
+                            source_identities
+                        )
+                    )
+                except BadgeReferenceError:
+                    source_stable_business_ids = ()
+                source_stable_visual_group = (
+                    self._stable_reference_visual_group(source_identities)
+                )
         if expected_card_id is not None and (
             isinstance(expected_card_id, bool)
             or not isinstance(expected_card_id, int)
@@ -6308,17 +11296,71 @@ class MaaArenaReaderBackend:
                 "skill_card_source_identity_invalid",
                 f"expected source card ID is invalid: {expected_card_id!r}",
             )
+        accepted_row = tuple(
+            getattr(self, "_card_rows", {}).get(group_index, ())
+        )
+        expected_fixed_visual_groups = (
+            self._fixed_gallery_visual_groups_for_business_id(expected_card_id)
+            if expected_card_id is not None
+            else ()
+        )
+        expected_fixed_visual_group = (
+            expected_fixed_visual_groups[0]
+            if expected_fixed_visual_groups is not None
+            and len(expected_fixed_visual_groups) == 1
+            else None
+        )
+        source_visual_group_allowed = bool(
+            source_stable_visual_group is not None
+            and self._source_visual_group_matches_expected_card(
+                source_stable_visual_group,
+                expected_card_id,
+                source_stable_business_ids,
+            )
+        )
+        detail_title_override_candidate = bool(
+            card_slot is not None
+            and len(accepted_row) == 6
+            and source_guard_frames is not None
+            and source_stable_visual_group is not None
+            and expected_fixed_visual_group is not None
+            and source_stable_visual_group != expected_fixed_visual_group
+            and not source_visual_group_allowed
+            and self._detail_identity_proof_matches(
+                (group_index, card_slot),
+                expected_card_id,
+                accepted_row[card_slot - 1],
+            )
+        )
+        source_visual_group_authorized = bool(
+            source_visual_group_allowed or detail_title_override_candidate
+        )
         deadline = time.monotonic() + timeout_seconds
         started = time.perf_counter()
         last_error = ""
         reads = 0
+        previous_capture_started_at: float | None = None
         semantic_stable_frames = 0
         semantic_identity_frames: list[dict[str, Any]] = []
-        accepted_row = tuple(
-            getattr(self, "_card_rows", {}).get(group_index, ())
-        )
+        aligned_content_frames: list[dict[str, Any]] = []
+        source_guard_consecutive = 0
+
+        def reset_consecutive_evidence() -> None:
+            nonlocal semantic_stable_frames, source_guard_consecutive
+            semantic_stable_frames = 0
+            semantic_identity_frames.clear()
+            aligned_content_frames.clear()
+            source_guard_consecutive = 0
+
         while time.monotonic() < deadline:
             try:
+                capture_started_at = time.monotonic()
+                if previous_capture_started_at is not None:
+                    self._record_duration_sample(
+                        "skill_card_source_restore_capture_start_span",
+                        capture_started_at - previous_capture_started_at,
+                    )
+                previous_capture_started_at = capture_started_at
                 image = self._capture()
                 detected_row = self._validated_card_group_row(image, group_index)
                 row = detected_row
@@ -6346,6 +11388,90 @@ class MaaArenaReaderBackend:
                         )
                 reads += 1
                 self._increment("skill_card_source_restore_reads")
+                if source_guard_frames is not None:
+                    guard_started = time.perf_counter()
+                    try:
+                        guard_boxes = self._skill_card_detail_overlay_guard_boxes(
+                            image
+                        )
+                        signature_cache = getattr(
+                            self,
+                            "_card_source_guard_signature_cache",
+                            None,
+                        )
+                        if signature_cache is None:
+                            signature_cache = {}
+                            self._card_source_guard_signature_cache = signature_cache
+                        signature_cache_key = (
+                            tuple(id(frame) for frame in source_guard_frames),
+                            guard_boxes,
+                        )
+                        source_guard_signatures = signature_cache.get(
+                            signature_cache_key
+                        )
+                        if source_guard_signatures is None:
+                            source_guard_signatures = tuple(
+                                p_item_content_generation_signatures(
+                                    source_image,
+                                    guard_boxes,
+                                )
+                                for source_image in source_guard_frames
+                            )
+                            signature_cache[signature_cache_key] = (
+                                source_guard_signatures
+                            )
+                            self._increment(
+                                "skill_card_source_guard_signature_cache_builds"
+                            )
+                        else:
+                            self._increment(
+                                "skill_card_source_guard_signature_cache_hits"
+                            )
+                        current_guard_signatures = (
+                            p_item_content_generation_signatures(
+                                image,
+                                guard_boxes,
+                            )
+                        )
+                        guard_error_sets = tuple(
+                            measure_p_item_content_generation_from_signatures(
+                                source_signatures,
+                                current_guard_signatures,
+                            )
+                            for source_signatures in source_guard_signatures
+                        )
+                    except (PItemReferenceError, ArenaReaderError) as error:
+                        raise ArenaReaderError(
+                            "skill_card_source_guard_invalid",
+                            "source/detail overlay guard could not be measured",
+                        ) from error
+                    finally:
+                        self._add_timing(
+                            "skill_card_source_restore_overlay_guard",
+                            time.perf_counter() - guard_started,
+                        )
+                    guard_matches_source = any(
+                        errors
+                        and max(errors)
+                        <= CARD_CONTENT_STABILITY_MAX_MEAN_ABS_ERROR
+                        for errors in guard_error_sets
+                    )
+                    if not guard_matches_source:
+                        reset_consecutive_evidence()
+                        last_error = (
+                            "detail-overlay guard still differs from the frozen "
+                            "source page; errors="
+                            f"{tuple(tuple(round(value, 6) for value in errors) for errors in guard_error_sets)!r}"
+                        )
+                        self._increment(
+                            "skill_card_source_restore_overlay_guard_mismatches"
+                        )
+                        time.sleep(self._source_restore_poll_seconds)
+                        continue
+                    source_guard_consecutive += 1
+                    if source_guard_consecutive < 2:
+                        time.sleep(self._source_restore_poll_seconds)
+                        continue
                 if restoration_signatures is not None:
                     signature_started = time.perf_counter()
                     try:
@@ -6356,6 +11482,7 @@ class MaaArenaReaderBackend:
                             )
                         )
                     except BadgeReferenceError as error:
+                        reset_consecutive_evidence()
                         last_error = (
                             "source card signature was not measurable after detail close: "
                             f"{error}"
@@ -6379,18 +11506,85 @@ class MaaArenaReaderBackend:
                         for frame in restoration_signatures
                     )
                     if not source_matches:
+                        source_generation_deltas = tuple(
+                            self._card_content_generation_deltas(
+                                current,
+                                (frame[card_slot - 1],),
+                            )[0]
+                            for frame in restoration_signatures
+                        )
+                        best_source_delta = min(
+                            source_generation_deltas,
+                            key=lambda delta: (
+                                float("inf")
+                                if delta["mean_absolute_error"] is None
+                                else float(delta["mean_absolute_error"])
+                            ),
+                        )
+                    else:
+                        best_source_delta = None
+                    if not source_matches:
                         measured_business_ids = self._reference_business_ids(identity)
-                        semantic_identity_matches = bool(
+                        measured_visual_groups = self._reference_visual_groups(identity)
+                        expected_identity_matches = bool(
                             expected_card_id is not None
                             and expected_card_id in measured_business_ids
+                            and expected_fixed_visual_group is not None
+                            and measured_visual_groups
+                            == (expected_fixed_visual_group,)
+                        )
+                        source_visual_group_matches = bool(
+                            source_visual_group_authorized
+                            and measured_visual_groups
+                            == (source_stable_visual_group,)
+                        )
+                        aligned_content_proof: dict[str, Any] | None = None
+                        if (
+                            source_visual_group_matches
+                            and detail_title_override_candidate
+                            and source_guard_frames is not None
+                            and source_stable_visual_group is not None
+                        ):
+                            aligned_started = time.perf_counter()
+                            try:
+                                aligned_content_proof = (
+                                    self._fixed_slot_aligned_content_proof(
+                                        source_guard_frames,
+                                        image,
+                                        accepted_row[card_slot - 1],
+                                        source_stable_visual_group,
+                                    )
+                                )
+                            finally:
+                                self._add_timing(
+                                    "skill_card_source_restore_aligned_content",
+                                    time.perf_counter() - aligned_started,
+                                )
+                            self._increment(
+                                "skill_card_source_restore_aligned_content_checks"
+                            )
+                            if aligned_content_proof["matched"]:
+                                self._increment(
+                                    "skill_card_source_restore_aligned_content_matches"
+                                )
+                            else:
+                                self._increment(
+                                    "skill_card_source_restore_aligned_content_mismatches"
+                                )
+                                source_visual_group_matches = False
+                        semantic_identity_matches = bool(
+                            expected_identity_matches
+                            or source_visual_group_matches
                         )
                         if semantic_identity_matches:
                             semantic_stable_frames += 1
                             semantic_identity_frames.append(identity)
                             del semantic_identity_frames[:-3]
+                            if aligned_content_proof is not None:
+                                aligned_content_frames.append(aligned_content_proof)
+                                del aligned_content_frames[:-3]
                         else:
-                            semantic_stable_frames = 0
-                            semantic_identity_frames.clear()
+                            reset_consecutive_evidence()
                         stable_business_ids: tuple[int, ...] = ()
                         if len(semantic_identity_frames) == 3:
                             try:
@@ -6401,27 +11595,132 @@ class MaaArenaReaderBackend:
                                 )
                             except BadgeReferenceError:
                                 stable_business_ids = ()
+                        stable_visual_group = (
+                            self._stable_reference_visual_group(
+                                semantic_identity_frames
+                            )
+                            if len(semantic_identity_frames) == 3
+                            else None
+                        )
+                        source_visual_group_settled = bool(
+                            source_visual_group_authorized
+                            and stable_visual_group == source_stable_visual_group
+                        )
                         semantic_source_settled = bool(
-                            expected_card_id is not None
-                            and expected_card_id in stable_business_ids
+                            (
+                                expected_card_id is not None
+                                and expected_card_id in stable_business_ids
+                                and expected_fixed_visual_group is not None
+                                and stable_visual_group
+                                == expected_fixed_visual_group
+                            )
+                            or source_visual_group_settled
                         )
                         if semantic_source_settled:
                             self._increment(
                                 "skill_card_source_restore_semantic_settled_fallbacks"
                             )
+                            if source_visual_group_settled:
+                                self._increment(
+                                    "skill_card_source_restore_source_family_fallbacks"
+                                )
+                            if (
+                                source_visual_group_settled
+                                and detail_title_override_candidate
+                            ):
+                                disambiguation = {
+                                    "reason_code": (
+                                        "exact_detail_title_overrode_card_face"
+                                    ),
+                                    "status": "resolved",
+                                    "severity": "info",
+                                    "group_index": group_index,
+                                    "card_slot": card_slot,
+                                    "expected_card_id": expected_card_id,
+                                    "expected_fixed_visual_group": (
+                                        expected_fixed_visual_group
+                                    ),
+                                    "source_stable_card_ids": list(
+                                        source_stable_business_ids
+                                    ),
+                                    "source_stable_visual_group": (
+                                        source_stable_visual_group
+                                    ),
+                                    "measured_card_ids": list(
+                                        measured_business_ids
+                                    ),
+                                    "measured_visual_groups": list(
+                                        measured_visual_groups
+                                    ),
+                                    "semantic_consecutive_frames": (
+                                        semantic_stable_frames
+                                    ),
+                                    "aligned_content_frames": deepcopy(
+                                        aligned_content_frames
+                                    ),
+                                    "best_source_delta": dict(
+                                        best_source_delta
+                                    ),
+                                    "detail_identity_proof": (
+                                        self._detail_identity_proof_diagnostic(
+                                            self._detail_identity_proofs[
+                                                (group_index, card_slot)
+                                            ]
+                                        )
+                                    ),
+                                }
+                                runtime_disambiguations = getattr(
+                                    self,
+                                    "_runtime_detail_title_disambiguations",
+                                    None,
+                                )
+                                if runtime_disambiguations is None:
+                                    runtime_disambiguations = []
+                                    self._runtime_detail_title_disambiguations = (
+                                        runtime_disambiguations
+                                    )
+                                runtime_disambiguations.append(disambiguation)
+                                member_disambiguations = getattr(
+                                    self,
+                                    "_detail_title_disambiguations",
+                                    None,
+                                )
+                                if member_disambiguations is None:
+                                    member_disambiguations = []
+                                    self._detail_title_disambiguations = (
+                                        member_disambiguations
+                                    )
+                                member_disambiguations.append(
+                                    deepcopy(disambiguation)
+                                )
+                                self._increment(
+                                    "skill_card_source_restore_detail_title_disambiguations"
+                                )
                         else:
                             last_error = (
                                 f"group {group_index}/slot {card_slot} is visible but "
                                 "does not match the accepted source generation; "
                                 f"expected_card_id={expected_card_id!r}; "
+                                "source_stable_card_ids="
+                                f"{source_stable_business_ids!r}; "
+                                "source_stable_visual_group="
+                                f"{source_stable_visual_group!r}; "
                                 f"measured_card_ids={measured_business_ids!r}; "
+                                "measured_visual_groups="
+                                f"{measured_visual_groups!r}; "
                                 f"semantic_consecutive_frames={semantic_stable_frames}; "
                                 f"stable_card_ids={stable_business_ids!r}; "
-                                f"identity_status={identity.get('status')!r}"
+                                f"stable_visual_group={stable_visual_group!r}; "
+                                f"identity_status={identity.get('status')!r}; "
+                                "aligned_content_proof="
+                                f"{aligned_content_proof!r}; "
+                                f"best_source_delta={best_source_delta!r}"
                             )
                             self._increment(
                                 "skill_card_source_restore_generation_mismatches"
                             )
+                            if len(semantic_identity_frames) == 3:
+                                reset_consecutive_evidence()
                             time.sleep(self._source_restore_poll_seconds)
                             continue
                 self._card_rows[group_index] = row
@@ -6435,19 +11734,30 @@ class MaaArenaReaderBackend:
                     else:
                         self._card_rows[other_group] = other_row
                         self._card_images[other_group] = image
+                restore_elapsed = time.perf_counter() - started
                 self._add_timing(
                     "skill_card_source_restore_wait",
-                    time.perf_counter() - started,
+                    restore_elapsed,
+                )
+                self._record_duration_sample(
+                    "skill_card_source_restore_phase",
+                    restore_elapsed,
                 )
                 if card_slot is not None and reads == 1:
                     self._increment("skill_card_source_restore_first_read")
                 return
             except ArenaReaderError as error:
+                reset_consecutive_evidence()
                 last_error = str(error)
             time.sleep(self._source_restore_poll_seconds)
+        restore_elapsed = time.perf_counter() - started
         self._add_timing(
             "skill_card_source_restore_wait",
-            time.perf_counter() - started,
+            restore_elapsed,
+        )
+        self._record_duration_sample(
+            "skill_card_source_restore_phase",
+            restore_elapsed,
         )
         raise ArenaReaderError(
             "skill_card_close_failed",

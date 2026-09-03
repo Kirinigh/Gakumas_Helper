@@ -49,7 +49,123 @@ def natural_class_key(path: Path) -> tuple[int, int, str]:
     return int(prefix), int(suffix) if separator and suffix.isdigit() else -1, stem
 
 
-def discover_icons(root: Path) -> list[Path]:
+def _positive_business_ids(values: object, *, label: str) -> frozenset[int]:
+    if (
+        not isinstance(values, list)
+        or not values
+        or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in values
+        )
+        or len(values) != len(set(values))
+    ):
+        raise ValueError(f"{label} must contain unique positive integer business IDs")
+    return frozenset(values)
+
+
+def _business_ids_from_ranges(values: object, *, label: str) -> frozenset[int]:
+    if not isinstance(values, list) or not values:
+        raise ValueError(f"{label} must contain at least one business ID range")
+    business_ids: set[int] = set()
+    for item in values:
+        if (
+            not isinstance(item, list)
+            or len(item) != 2
+            or any(isinstance(value, bool) or not isinstance(value, int) for value in item)
+            or item[0] < 1
+            or item[1] < item[0]
+        ):
+            raise ValueError(f"{label} contains an invalid business ID range")
+        current = set(range(item[0], item[1] + 1))
+        if business_ids.intersection(current):
+            raise ValueError(f"{label} contains overlapping business ID ranges")
+        business_ids.update(current)
+    return frozenset(business_ids)
+
+
+def manifest_business_card_ids(manifest: dict[str, Any]) -> frozenset[int]:
+    scope = manifest.get("scope")
+    if not isinstance(scope, dict):
+        raise ValueError("authoritative dataset manifest has no valid business ID scope")
+
+    declarations: list[tuple[str, frozenset[int]]] = []
+    for key in ("business_card_ids", "business_ids"):
+        if key in scope:
+            declarations.append(
+                (key, _positive_business_ids(scope[key], label=f"dataset scope {key}"))
+            )
+    for key in ("business_card_id_ranges", "business_id_ranges"):
+        if key in scope:
+            declarations.append(
+                (key, _business_ids_from_ranges(scope[key], label=f"dataset scope {key}"))
+            )
+    for minimum_key, maximum_key in (
+        ("business_card_id_min", "business_card_id_max"),
+        ("business_id_min", "business_id_max"),
+    ):
+        minimum = scope.get(minimum_key)
+        maximum = scope.get(maximum_key)
+        if minimum is None and maximum is None:
+            continue
+        if (
+            isinstance(minimum, bool)
+            or isinstance(maximum, bool)
+            or not isinstance(minimum, int)
+            or not isinstance(maximum, int)
+            or minimum < 1
+            or maximum < minimum
+        ):
+            raise ValueError(
+                f"dataset scope {minimum_key}/{maximum_key} must be one valid inclusive range"
+            )
+        declarations.append(
+            (
+                f"{minimum_key}/{maximum_key}",
+                frozenset(range(minimum, maximum + 1)),
+            )
+        )
+    if not declarations:
+        raise ValueError("authoritative dataset manifest has no exact business ID set")
+
+    first_label, expected = declarations[0]
+    for label, declared in declarations[1:]:
+        if declared != expected:
+            raise ValueError(
+                f"dataset business ID declarations disagree: {first_label} versus {label}"
+            )
+    for source, key in (
+        (scope, "business_card_id_count"),
+        (manifest.get("validation", {}), "expected_business_id_count"),
+    ):
+        if not isinstance(source, dict) or key not in source:
+            continue
+        count = source[key]
+        if isinstance(count, bool) or not isinstance(count, int) or count != len(expected):
+            raise ValueError(f"dataset {key} disagrees with the exact business ID set")
+    return expected
+
+
+def business_id_manifest_fields(values: list[int]) -> dict[str, Any]:
+    business_ids = _positive_business_ids(values, label="trained model business_card_ids")
+    ordered = sorted(business_ids)
+    fields: dict[str, Any] = {
+        "business_card_ids": ordered,
+        "business_card_id_count": len(ordered),
+    }
+    if ordered == list(range(ordered[0], ordered[-1] + 1)):
+        fields.update(
+            {
+                "business_card_id_min": ordered[0],
+                "business_card_id_max": ordered[-1],
+            }
+        )
+    return fields
+
+
+def discover_icons(
+    root: Path,
+    expected_business_ids: set[int] | frozenset[int] | None = None,
+) -> list[Path]:
     icons = sorted(root.glob("*.webp"), key=natural_class_key)
     if not icons:
         raise FileNotFoundError(f"no WebP icons found under {root}")
@@ -57,26 +173,51 @@ def discover_icons(root: Path) -> list[Path]:
     if len(set(names)) != len(names):
         raise ValueError("duplicate class names in icon source")
     ids = {int(business_card_id(name)) for name in names}
-    expected = set(range(1, 857))
-    missing = sorted(expected - ids)
-    if missing:
-        raise ValueError(f"pinned source is missing business-card IDs: {missing}")
+    if expected_business_ids is not None and ids != set(expected_business_ids):
+        expected = set(expected_business_ids)
+        raise ValueError(
+            "pinned icon source business ID set differs; "
+            f"missing={sorted(expected - ids)}, surplus={sorted(ids - expected)}"
+        )
     return icons
 
 
 def verify_dataset_manifest(manifest_path: Path, icons_root: Path) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    validation = manifest.get("validation", {})
+    if not isinstance(manifest, dict):
+        raise ValueError("authoritative dataset manifest must be a JSON object")
+    validation = manifest.get("validation")
+    if not isinstance(validation, dict):
+        raise ValueError("authoritative dataset validation is missing; training is forbidden")
     if validation.get("status") != "CLEAR":
         raise ValueError(
             "authoritative dataset validation is not CLEAR; training is forbidden: "
             f"{validation.get('status', 'MISSING')}"
         )
-    records = manifest.get("icons", {}).get("images", [])
-    record_ids = {int(record["business_id"]) for record in records}
-    if record_ids != set(range(1, 857)):
-        raise ValueError("dataset manifest icon records do not cover exact business IDs 1..856")
-    if len(records) != int(manifest.get("icons", {}).get("count", -1)):
+    expected_ids = manifest_business_card_ids(manifest)
+    icons = manifest.get("icons")
+    if not isinstance(icons, dict) or not isinstance(icons.get("images"), list):
+        raise ValueError("dataset manifest icon inventory is missing")
+    records = icons["images"]
+    if any(not isinstance(record, dict) for record in records):
+        raise ValueError("dataset manifest icon records must be objects")
+    raw_record_ids = [record.get("business_id") for record in records]
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 1
+        for value in raw_record_ids
+    ):
+        raise ValueError("dataset manifest icon records contain an invalid business ID")
+    record_ids = set(raw_record_ids)
+    if record_ids != expected_ids:
+        raise ValueError(
+            "dataset manifest icon records do not cover the exact declared business ID set; "
+            f"missing={sorted(expected_ids - record_ids)}, "
+            f"surplus={sorted(record_ids - expected_ids)}"
+        )
+    declared_count = icons.get("count")
+    if isinstance(declared_count, bool) or not isinstance(declared_count, int) or len(
+        records
+    ) != declared_count:
         raise ValueError("dataset manifest icon record count is inconsistent")
     expected = {str(record["path"]): str(record["sha256"]).upper() for record in records}
     if len(expected) != len(records):
@@ -84,8 +225,6 @@ def verify_dataset_manifest(manifest_path: Path, icons_root: Path) -> dict[str, 
     actual = {path.name: sha256_file(path) for path in icons_root.glob("*.webp")}
     if actual != expected:
         raise ValueError("icon files or SHA-256 values differ from the authoritative dataset manifest")
-    if manifest.get("scope") != {"business_id_min": 1, "business_id_max": 856}:
-        raise ValueError("authoritative dataset manifest does not cover exact business IDs 1..856")
     return manifest
 
 
@@ -99,23 +238,70 @@ class TrainingSample:
 
 
 def discover_art_samples(manifest: dict[str, Any], art_root: Path) -> list[TrainingSample]:
+    expected_business_ids = manifest_business_card_ids(manifest)
     crosswalk_path = Path(manifest["mapping"]["crosswalk_path"])
     if not crosswalk_path.is_absolute():
         crosswalk_path = art_root.parent / crosswalk_path
     if sha256_file(crosswalk_path) != str(manifest["mapping"]["crosswalk_sha256"]).upper():
         raise ValueError("crosswalk SHA-256 differs from the authoritative dataset manifest")
     crosswalk = json.loads(crosswalk_path.read_text(encoding="utf-8"))
-    art_records = manifest.get("art", {}).get("images", [])
+    if not isinstance(crosswalk, list) or not crosswalk:
+        raise ValueError("authoritative crosswalk must be a non-empty list")
+    crosswalk_by_id: dict[str, dict[str, Any]] = {}
+    for row in crosswalk:
+        if not isinstance(row, dict):
+            raise ValueError("authoritative crosswalk rows must be objects")
+        value = row.get("business_id")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("authoritative crosswalk contains an invalid business ID")
+        card_id = str(value)
+        if card_id in crosswalk_by_id:
+            raise ValueError("authoritative crosswalk contains duplicate business IDs")
+        internal_id = row.get("internal_id")
+        variants = row.get("asset_variants")
+        if (
+            not isinstance(internal_id, str)
+            or not internal_id
+            or not isinstance(variants, list)
+            or not variants
+            or not all(isinstance(item, str) and item for item in variants)
+            or len(variants) != len(set(variants))
+        ):
+            raise ValueError("authoritative crosswalk identity mapping is invalid")
+        crosswalk_by_id[card_id] = row
+    crosswalk_ids = {int(value) for value in crosswalk_by_id}
+    if crosswalk_ids != expected_business_ids:
+        raise ValueError(
+            "authoritative crosswalk does not cover the exact declared business ID set; "
+            f"missing={sorted(expected_business_ids - crosswalk_ids)}, "
+            f"surplus={sorted(crosswalk_ids - expected_business_ids)}"
+        )
+
+    art = manifest.get("art")
+    if not isinstance(art, dict) or not isinstance(art.get("images"), list):
+        raise ValueError("authoritative art inventory is missing")
+    art_records = art["images"]
     expected_art = {str(record["path"]): str(record["sha256"]).upper() for record in art_records}
+    if len(expected_art) != len(art_records):
+        raise ValueError("authoritative art inventory contains duplicate paths")
     actual_art = {path.name: sha256_file(path) for path in art_root.glob("*.webp")}
     if not expected_art or actual_art != expected_art:
         raise ValueError("authoritative art files or SHA-256 values differ from the dataset manifest")
     april_fools_ids = {"789", "790", "791", "792", "793", "794"}
-    crosswalk_by_id = {str(row["business_id"]): row for row in crosswalk}
+    icons = manifest.get("icons")
+    if not isinstance(icons, dict) or not isinstance(icons.get("images"), list):
+        raise ValueError("dataset manifest icon inventory is missing")
     samples: list[TrainingSample] = []
-    for record in manifest["icons"]["images"]:
-        card_id = str(record["business_id"])
-        row = crosswalk_by_id[card_id]
+    for record in icons["images"]:
+        if not isinstance(record, dict):
+            raise ValueError("dataset manifest icon records must be objects")
+        value = record.get("business_id")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("dataset manifest icon record has an invalid business ID")
+        card_id = str(value)
+        row = crosswalk_by_id.get(card_id)
+        if row is None:
+            raise ValueError(f"icon record references unknown business ID: {card_id}")
         asset_variant = str(record["asset_variant"])
         if asset_variant not in row["asset_variants"]:
             raise ValueError(f"icon-to-art mapping differs from crosswalk: {record['class_name']}")
@@ -130,10 +316,13 @@ def discover_art_samples(manifest: dict[str, Any], art_root: Path) -> list[Train
             )
         )
     samples.sort(key=lambda sample: natural_class_key(Path(sample.class_name)))
-    if {int(sample.business_card_id) for sample in samples} != set(range(1, 857)):
-        raise ValueError("authoritative art samples do not cover exact business IDs 1..856")
-    if len({sample.visual_group_id for sample in samples}) != 439:
-        raise ValueError("authoritative art mapping must contain exactly 439 visual identities")
+    sample_ids = {int(sample.business_card_id) for sample in samples}
+    if sample_ids != expected_business_ids:
+        raise ValueError(
+            "authoritative art samples do not cover the exact declared business ID set; "
+            f"missing={sorted(expected_business_ids - sample_ids)}, "
+            f"surplus={sorted(sample_ids - expected_business_ids)}"
+        )
     return samples
 
 
@@ -777,9 +966,7 @@ def main() -> int:
             "upgrade_marker_source": str(icons_root),
             "image_class_count": len(class_names),
             "visual_identity_count": len(visual_groups),
-            "business_card_id_count": len({business_card_id(name) for name in class_names}),
-            "business_card_id_min": min(int(business_card_id(name)) for name in class_names),
-            "business_card_id_max": max(int(business_card_id(name)) for name in class_names),
+            **business_id_manifest_fields([int(value) for value in business_ids]),
             "known_visual_ambiguity_groups": [
                 sorted(group, key=int) for group in KNOWN_VISUAL_AMBIGUITY_GROUPS
             ],
@@ -796,7 +983,7 @@ def main() -> int:
             "torch_version": torch.__version__,
             "cuda_version": torch.version.cuda,
             "history": history,
-            "classification_target": "439_card_art_visual_identities",
+            "classification_target": f"{len(visual_groups)}_card_art_visual_identities",
             "arena_custom_overlay_probability": args.arena_custom_overlay_probability,
             "arena_custom_samples": arena_sample_evidence,
         },

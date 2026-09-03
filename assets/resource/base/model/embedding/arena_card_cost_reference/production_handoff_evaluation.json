@@ -1,0 +1,65 @@
+{
+  "artifact": {
+    "path": "card_cost_reference.npz",
+    "sha256": "5DC6BB337A2379567FC49C85B1DBD0469F7499006F8AF8BE8004817152636DA5"
+  },
+  "candidate_manifest_sha256": "33FA12F8AE646FEEEE1E36B3FF53026BF63E871A84201B108E1FBDD7C74A2451",
+  "component": "arena_cost_reference",
+  "privacy": "PUBLIC_SAFE_AGGREGATE_ONLY",
+  "promotion_evidence": {
+    "catalog_contract_sha256": "64B86C2AA43D57FC6F8BD06FF9441287334E757F8BE66EEBFD99FAF166BD81C6",
+    "catalog_file_set_sha256": "A7F1B4B1AB2A3F3ED4290067B01911BBC3DBF2FF0C8DCBA1AE600F240B2111F0",
+    "descriptor_fixture_set_sha256": "5740B066D36541962602D2D14DAB7C9618FCB565F7031635E673B0CBD1B416F7",
+    "descriptor_replay": {
+      "expanded_positive_cases": 98,
+      "family_count": 3,
+      "frame_count": 14,
+      "stable_family_card_cases": 21,
+      "zero_capable_business_ids": [
+        159,
+        161,
+        389,
+        393,
+        423,
+        587,
+        617
+      ]
+    },
+    "generic_card_count": 53,
+    "negative_perturbation": {
+      "fixed_two_rejection_cases": 77,
+      "invalid_topology_rejection_cases": 21,
+      "zero_fail_closed_cases": 14,
+      "zero_measured_acceptance_cases": 217,
+      "zero_total_cases": 231
+    }
+  },
+  "schema_version": 1,
+  "status": "PASS",
+  "tool_contract": "task095-static-reference-production-promotion-v1",
+  "validation": {
+    "array_count": 9,
+    "base_self_replay": {
+      "passed": 53,
+      "sample_count": 53
+    },
+    "blank_rejection": {
+      "passed": 53,
+      "sample_count": 53
+    },
+    "generic_card_count": 53,
+    "independent_live_holdout": "PENDING",
+    "nonzero_alternate_self_replay": {
+      "passed": 46,
+      "sample_count": 46
+    },
+    "rule_version": "arena-generic-cost-v8-id-independent-zero-topology",
+    "source_revision": "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6",
+    "source_set_sha256": "620DFC2F503182F2138BBF7853CC60877EEF5388E1D78A7313F09F8817C74A1C",
+    "sparse_rejection": {
+      "passed": 53,
+      "sample_count": 53
+    },
+    "template_count": 12
+  }
+}

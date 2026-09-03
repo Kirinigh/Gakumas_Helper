@@ -197,6 +197,45 @@ def _content_signature(image: Any, box: tuple[int, int, int, int]) -> np.ndarray
     return cv2.resize(crop, (24, 24), interpolation=cv2.INTER_AREA).astype(np.float32)
 
 
+def p_item_content_generation_signatures(
+    image: Any,
+    boxes: Sequence[tuple[int, int, int, int]],
+) -> tuple[np.ndarray, ...]:
+    """Return the exact fixed-slot signatures used by the generation metric."""
+
+    if not boxes:
+        raise PItemReferenceError("P-item content generation requires fixed slots")
+    return tuple(_content_signature(image, box) for box in boxes)
+
+
+def measure_p_item_content_generation_from_signatures(
+    source_signatures: Sequence[np.ndarray],
+    current_signatures: Sequence[np.ndarray],
+) -> tuple[float, ...]:
+    """Compare precomputed source/current signatures without changing the metric."""
+
+    if not source_signatures or len(source_signatures) != len(current_signatures):
+        raise PItemReferenceError(
+            "P-item content signatures require equal non-empty fixed slots"
+        )
+    errors: list[float] = []
+    for source_signature, current_signature in zip(
+        source_signatures,
+        current_signatures,
+        strict=True,
+    ):
+        if source_signature.shape != current_signature.shape:
+            raise PItemReferenceError(
+                "P-item content signatures must use the same fixed shape"
+            )
+        # Keep the subtraction order, float32 arrays, NumPy mean, and Python
+        # float conversion identical to ``measure_p_item_content_generation``.
+        errors.append(
+            float(np.mean(np.abs(current_signature - source_signature)))
+        )
+    return tuple(errors)
+
+
 def measure_p_item_content_generation(
     images: Sequence[Any],
     boxes: Sequence[tuple[int, int, int, int]],
@@ -269,6 +308,7 @@ class PItemRenderedReferenceGallery:
         *,
         runtime: PItemReferenceRuntime,
         gallery_sha256: str = "",
+        provisional_p_item_ids: Sequence[int] = (),
     ) -> None:
         ids = tuple(int(value) for value in p_item_ids)
         if not ids or len(ids) != len(set(ids)) or any(value < 1 for value in ids):
@@ -294,6 +334,12 @@ class PItemRenderedReferenceGallery:
         self.rendered_bgr = images
         self.runtime = runtime
         self.gallery_sha256 = gallery_sha256
+        provisional_ids = tuple(dict.fromkeys(int(value) for value in provisional_p_item_ids))
+        if any(value not in ids for value in provisional_ids):
+            raise PItemReferenceError(
+                "provisional P-item reference IDs must belong to the fixed gallery"
+            )
+        self.provisional_p_item_ids = provisional_ids
         self._id_to_index = {
             p_item_id: index for index, p_item_id in enumerate(self.p_item_ids)
         }
@@ -334,6 +380,17 @@ class PItemRenderedReferenceGallery:
                 else:
                     rendered_bgr = arrays["rendered_bgr"]
             runtime = PItemReferenceRuntime.from_manifest(manifest["runtime"])
+            declared_count = int(gallery["business_id_count"])
+            if declared_count != len(p_item_ids):
+                raise PItemReferenceError(
+                    "P-item reference manifest count does not match the gallery ID set"
+                )
+            source_count = manifest.get("source", {}).get("business_id_count")
+            if source_count is not None and int(source_count) != declared_count:
+                raise PItemReferenceError(
+                    "P-item reference source count does not match the gallery count"
+                )
+            provisional_ids = tuple(gallery.get("provisional_business_ids", ()))
         except (OSError, KeyError, TypeError, ValueError) as error:
             if isinstance(error, PItemReferenceError):
                 raise
@@ -345,6 +402,7 @@ class PItemRenderedReferenceGallery:
             rendered_bgr,
             runtime=runtime,
             gallery_sha256=expected_sha256,
+            provisional_p_item_ids=provisional_ids,
         )
 
     def _rank(

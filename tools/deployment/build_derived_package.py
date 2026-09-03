@@ -23,6 +23,72 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 UPSTREAM_REPOSITORY = "https://github.com/SuperWaterGod/MaaGakumasu"
+MFA_CORE_BUNDLE_SCHEMA_VERSION = 1
+MFA_CORE_COMPONENT = "mfaavalonia_core"
+MFA_CORE_STATUS = "READY"
+MFA_CORE_BUNDLE_PAYLOAD_PATH = "MFAAvalonia.Core.dll"
+MFA_CORE_INSTALL_PATH = "libs/MFAAvalonia.Core.dll"
+MFA_CORE_NOTICE_PATH = "THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE"
+MFA_CORE_PATCH_PATH = (
+    "tools/deployment/mfa/MFAAvalonia-v2.15.2-resource-update-github-fallback.patch"
+)
+MFA_CORE_UPSTREAM = {
+    "repository": "https://github.com/MaaXYZ/MFAAvalonia",
+    "tag": "v2.15.2",
+    "commit": "6065fe33798b72906c5079fa6f210646801d9a5c",
+    "source_archive": "MFAAvalonia-2.15.2.zip",
+    "source_archive_sha256": "76DD02AFE4B1529B1D4F6416B3442E1BD7E64F13B72D8A3B428F955B5E26F67A",
+    "version_checker_git_blob_sha1": "6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7",
+}
+MFA_CORE_SDK_VERSION_COMPONENTS = (10, 0, 400)
+MFA_CORE_SDK_VERSION = ".".join(str(part) for part in MFA_CORE_SDK_VERSION_COMPONENTS)
+MFA_CORE_BUILD = {
+    "sdk_version": MFA_CORE_SDK_VERSION,
+    "sdk_archive": f"dotnet-sdk-{MFA_CORE_SDK_VERSION}-win-x64.zip",
+    "sdk_archive_sha512": (
+        "9B8B88590E4DA131BFD0DA7AA089D0FC04D5418D5F8607EC13D55DC5A17B4399"
+        "AFD54D496C12657FA05C6C6546DC5EAB930F26AC6C50F2D3A7712C0FB378C366"
+    ),
+    "configuration": "Release",
+    "runtime": "win-x64",
+    "project": "MFAAvalonia/MFAAvalonia.csproj",
+    "source_revision_id": "6065fe33798b72906c5079fa6f210646801d9a5c",
+    "sentry_project_directory": "/_/MFAAvalonia/",
+    "compiler_path_map_target": "/_/MFAAvalonia/",
+    "project_directory_override_scope": "WriteSentryAttributes",
+    "continuous_integration_build": True,
+    "deterministic": True,
+    "incremental_build": False,
+    "max_cpu_count": 1,
+    "sentry_cli": False,
+}
+# Avoid serializing the SDK's dotted version in public project text, where the
+# privacy gate correctly treats dotted numeric tokens as possible private IPv4
+# data.  The exact archive remains bound by its SHA-512 and bundle-manifest hash.
+MFA_CORE_PACKAGED_BUILD = {
+    "sdk_version_components": list(MFA_CORE_SDK_VERSION_COMPONENTS),
+    **{
+        key: value
+        for key, value in MFA_CORE_BUILD.items()
+        if key not in {"sdk_version", "sdk_archive"}
+    },
+}
+MFA_CORE_INPUT = {
+    "baseline_dll_sha256": "2DF2226CE45FCE8AF0C4DF8022F399B0FA74E8378C9B23C4177BAC5EE6C295C8"
+}
+MFA_CORE_LICENSE = {
+    "spdx": "GPL-3.0-only",
+    "upstream_file": "LICENSE",
+    "sha256": "3972DC9744F6499F0F9B2DBF76696F2AE7AD8AF9B23DDE66D6AF86C9DFB36986",
+}
+MFA_CORE_PATCH_SCOPE = [
+    "resource_update_check",
+    "resource_update_apply",
+    "deterministic_build_path",
+]
+FORBIDDEN_DERIVED_UPDATE_KEYS = frozenset(
+    {"mirrorchyan_rid", "mirrorchyan_multiplatform"}
+)
 LOCAL_TRIAL_VERSION_PATTERN = re.compile(r"^v\d+\.\d+\.\d+\+gkh\.[0-9a-f]{7,40}$")
 PROJECT_RELEASE_VERSION_PATTERN = re.compile(
     r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$"
@@ -51,7 +117,14 @@ REPLACED_TREES = {
     "THIRD_PARTY_NOTICES": "THIRD_PARTY_NOTICES",
 }
 
-ROOT_FILES = ("README.md", "LICENSE", "logo.ico", "requirements.txt", "ASSET_PROVENANCE.md")
+ROOT_FILE_SOURCES = {
+    "README.md": "README.md",
+    "LICENSE": "LICENSE",
+    "logo.ico": "logo.ico",
+    "requirements.txt": "requirements.txt",
+    "ASSET_PROVENANCE.md": "tools/deployment/public/ASSET_PROVENANCE.md",
+}
+ROOT_FILES = tuple(ROOT_FILE_SOURCES)
 INSTALL_PAYLOAD_FILES = {
     "tools/deployment/Start-MaaGakumasu-Admin.cmd": "deployment/Start-MaaGakumasu-Admin.cmd",
     "tools/deployment/.Start-MaaGakumasu-Admin.ps1": "deployment/.Start-MaaGakumasu-Admin.ps1",
@@ -63,9 +136,12 @@ NON_RUNTIME_SITE_PACKAGE_DIRS = ("bin", "Scripts")
 
 REQUIRED_FILES = (
     "MaaGakumasu.exe",
+    MFA_CORE_INSTALL_PATH,
+    MFA_CORE_NOTICE_PATH,
     "interface.json",
     "ASSET_PROVENANCE.md",
     "agent/main.py",
+    "agent/arena_winrate/catalog.py",
     "agent/custom/action/arena_reader.py",
     "agent/arena_winrate/challenge_flow.py",
     "agent/arena_winrate/config_migration.py",
@@ -300,9 +376,13 @@ def _validate_input_tree(root: Path, *, label: str, reject_private_names: bool) 
 def _export_source_revision(source_root: Path, source_revision: str, destination: Path) -> None:
     """Export exactly one committed source tree, never the mutable worktree."""
     archive = destination.parent / "source-revision.zip"
+    # Keep Windows payload text and component-manifest hashes independent of
+    # the Git configuration inherited from the build host.
     completed = subprocess.run(
         (
             "git",
+            "-c",
+            "core.autocrlf=true",
             "-C",
             str(source_root),
             "archive",
@@ -356,6 +436,116 @@ def _validate_engine_bundle(bundle: Path) -> dict[str, Any]:
         missing = sorted(expected_files - actual_files)
         raise BuildError(f"arena engine file inventory mismatch: extra={extra}, missing={missing}")
     return manifest
+
+
+def _require_exact_object(value: object, keys: set[str], *, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != keys:
+        raise BuildError(f"{label} must contain exactly {sorted(keys)}")
+    return value
+
+
+def _validate_mfa_core_bundle(bundle: Path) -> dict[str, Any]:
+    _validate_input_tree(bundle, label="MFA Core", reject_private_names=True)
+    expected_entries = {"manifest.json", MFA_CORE_BUNDLE_PAYLOAD_PATH}
+    actual_entries = {
+        path.relative_to(bundle).as_posix()
+        for path in bundle.rglob("*")
+    }
+    if actual_entries != expected_entries:
+        raise BuildError(
+            "MFA Core bundle inventory mismatch: "
+            f"extra={sorted(actual_entries - expected_entries)}, "
+            f"missing={sorted(expected_entries - actual_entries)}"
+        )
+
+    manifest_path = bundle / "manifest.json"
+    manifest = _load_json(manifest_path)
+    _require_exact_object(
+        manifest,
+        {
+            "schema_version",
+            "component",
+            "status",
+            "upstream",
+            "patch",
+            "build",
+            "input",
+            "payload",
+            "license",
+        },
+        label="MFA Core manifest",
+    )
+    if (
+        manifest.get("schema_version") != MFA_CORE_BUNDLE_SCHEMA_VERSION
+        or manifest.get("component") != MFA_CORE_COMPONENT
+        or manifest.get("status") != MFA_CORE_STATUS
+    ):
+        raise BuildError("MFA Core manifest identity is invalid")
+
+    upstream = _require_exact_object(
+        manifest.get("upstream"), set(MFA_CORE_UPSTREAM), label="MFA Core upstream provenance"
+    )
+    if upstream != MFA_CORE_UPSTREAM:
+        raise BuildError("MFA Core upstream provenance is not the fixed official v2.15.2 source")
+
+    patch = _require_exact_object(
+        manifest.get("patch"), {"path", "sha256", "scope"}, label="MFA Core patch provenance"
+    )
+    patch_sha256 = patch.get("sha256")
+    if (
+        patch.get("path") != MFA_CORE_PATCH_PATH
+        or patch.get("scope") != MFA_CORE_PATCH_SCOPE
+        or not isinstance(patch_sha256, str)
+        or re.fullmatch(r"[0-9A-Fa-f]{64}", patch_sha256) is None
+    ):
+        raise BuildError("MFA Core patch provenance is invalid")
+
+    build = _require_exact_object(
+        manifest.get("build"), set(MFA_CORE_BUILD), label="MFA Core build provenance"
+    )
+    if build != MFA_CORE_BUILD:
+        raise BuildError("MFA Core build provenance is not the fixed v2.15.2 build")
+
+    input_provenance = _require_exact_object(
+        manifest.get("input"), set(MFA_CORE_INPUT), label="MFA Core input provenance"
+    )
+    if input_provenance != MFA_CORE_INPUT:
+        raise BuildError("MFA Core input provenance is invalid")
+
+    payload = _require_exact_object(
+        manifest.get("payload"), {"path", "sha256", "size"}, label="MFA Core payload"
+    )
+    payload_sha256 = payload.get("sha256")
+    payload_size = payload.get("size")
+    if (
+        payload.get("path") != MFA_CORE_BUNDLE_PAYLOAD_PATH
+        or not isinstance(payload_sha256, str)
+        or re.fullmatch(r"[0-9A-Fa-f]{64}", payload_sha256) is None
+        or type(payload_size) is not int
+        or payload_size <= 0
+    ):
+        raise BuildError("MFA Core payload declaration is invalid")
+    payload_path = bundle / MFA_CORE_BUNDLE_PAYLOAD_PATH
+    if payload_path.stat().st_size != payload_size:
+        raise BuildError("MFA Core payload size mismatch")
+    if sha256_file(payload_path).casefold() != payload_sha256.casefold():
+        raise BuildError("MFA Core payload SHA-256 mismatch")
+
+    license_provenance = _require_exact_object(
+        manifest.get("license"), set(MFA_CORE_LICENSE), label="MFA Core license provenance"
+    )
+    if license_provenance != MFA_CORE_LICENSE:
+        raise BuildError("MFA Core license provenance is invalid")
+    return manifest
+
+
+def _validate_mfa_core_patch_source(source_snapshot: Path, manifest: dict[str, Any]) -> None:
+    patch_path = source_snapshot / MFA_CORE_PATCH_PATH
+    if not patch_path.is_file() or _is_link_or_reparse(patch_path):
+        raise BuildError(f"MFA Core patch source is missing: {MFA_CORE_PATCH_PATH}")
+    expected_hash = manifest["patch"]["sha256"]
+    if sha256_file(patch_path).casefold() != expected_hash.casefold():
+        raise BuildError("MFA Core patch source SHA-256 mismatch")
 
 
 def _load_contest_stage_catalog(stages_path: Path) -> dict[int, dict[int, bool]]:
@@ -501,6 +691,15 @@ def _validate_candidate(root: Path, *, version: str, update_repository: str) -> 
         raise BuildError("candidate interface version mismatch")
     if interface.get("github") != update_repository:
         raise BuildError("candidate update repository mismatch")
+    forbidden_update_keys = sorted(FORBIDDEN_DERIVED_UPDATE_KEYS & interface.keys())
+    if forbidden_update_keys:
+        raise BuildError(
+            "candidate interface retains forbidden upstream update routes: "
+            + ", ".join(forbidden_update_keys)
+        )
+    notice_path = root / MFA_CORE_NOTICE_PATH
+    if sha256_file(notice_path).casefold() != MFA_CORE_LICENSE["sha256"].casefold():
+        raise BuildError("candidate MFAAvalonia license notice SHA-256 mismatch")
     agent = interface.get("agent")
     if not isinstance(agent, dict):
         raise BuildError("candidate Agent configuration is invalid")
@@ -630,6 +829,7 @@ def build_derived_package(
     upstream_tag: str,
     source_revision: str,
     engine_bundle: Path,
+    mfa_core_bundle: Path,
     python_site_packages: Path,
     output: Path,
     update_repository: str,
@@ -641,6 +841,7 @@ def build_derived_package(
     source_root = source_root.resolve()
     upstream_archive = upstream_archive.resolve()
     engine_bundle = engine_bundle.resolve()
+    mfa_core_bundle = mfa_core_bundle.resolve()
     python_site_packages = python_site_packages.resolve()
     output = output.resolve()
 
@@ -693,6 +894,7 @@ def build_derived_package(
         )
 
     engine_manifest = _validate_engine_bundle(engine_bundle)
+    mfa_core_manifest = _validate_mfa_core_bundle(mfa_core_bundle)
     _validate_input_tree(python_site_packages, label="embedded Python site-packages", reject_private_names=True)
     output.parent.mkdir(parents=True, exist_ok=True)
     # Keep the transient root short: Windows native-extension loading can fail
@@ -703,6 +905,7 @@ def build_derived_package(
     candidate = staging / "candidate"
     try:
         _export_source_revision(source_root, source_revision, source_snapshot)
+        _validate_mfa_core_patch_source(source_snapshot, mfa_core_manifest)
         extracted.mkdir()
         _safe_extract(upstream_archive, extracted)
         payload = _payload_root(extracted)
@@ -726,8 +929,8 @@ def build_derived_package(
         for source_relative, target_relative in REPLACED_TREES.items():
             _replace_tree(source_snapshot / source_relative, candidate / target_relative)
 
-        for file_name in ROOT_FILES:
-            source_file = source_snapshot / file_name
+        for file_name, source_relative in ROOT_FILE_SOURCES.items():
+            source_file = source_snapshot / source_relative
             if source_file.is_file():
                 shutil.copy2(source_file, candidate / file_name)
 
@@ -739,10 +942,22 @@ def build_derived_package(
             target_file.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_file, target_file)
 
+        mfa_core_target = candidate / MFA_CORE_INSTALL_PATH
+        if not mfa_core_target.is_file() or _is_link_or_reparse(mfa_core_target):
+            raise BuildError(
+                f"upstream package is missing the replaceable MFA Core payload: {MFA_CORE_INSTALL_PATH}"
+            )
+        shutil.copy2(
+            mfa_core_bundle / MFA_CORE_BUNDLE_PAYLOAD_PATH,
+            mfa_core_target,
+        )
+
         shutil.copy2(source_snapshot / "assets" / "interface.json", candidate / "interface.json")
         interface = _load_json(candidate / "interface.json")
         interface["version"] = derived_version
         interface["github"] = update_repository
+        for key in FORBIDDEN_DERIVED_UPDATE_KEYS:
+            interface.pop(key, None)
         agent = interface.get("agent")
         if not isinstance(agent, dict):
             raise BuildError("source interface Agent configuration is invalid")
@@ -802,6 +1017,23 @@ def build_derived_package(
                 "commit": engine_manifest["commit"],
                 "manifest_sha256": sha256_file(engine_bundle / "manifest.json"),
             },
+            "mfa_core": {
+                "schema_version": MFA_CORE_BUNDLE_SCHEMA_VERSION,
+                "component": MFA_CORE_COMPONENT,
+                "status": MFA_CORE_STATUS,
+                "bundle_manifest_sha256": sha256_file(mfa_core_bundle / "manifest.json"),
+                "upstream": mfa_core_manifest["upstream"],
+                "patch": mfa_core_manifest["patch"],
+                "build": MFA_CORE_PACKAGED_BUILD,
+                "input": mfa_core_manifest["input"],
+                "payload": {
+                    "bundle_path": MFA_CORE_BUNDLE_PAYLOAD_PATH,
+                    "install_path": MFA_CORE_INSTALL_PATH,
+                    "sha256": sha256_file(candidate / MFA_CORE_INSTALL_PATH),
+                    "size": (candidate / MFA_CORE_INSTALL_PATH).stat().st_size,
+                },
+                "license": mfa_core_manifest["license"],
+            },
             "python_packages": python_packages,
             "python_source_normalizations": python_source_normalizations,
             "update_contract": {
@@ -845,6 +1077,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--upstream-tag", required=True)
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--engine-bundle", type=Path, required=True)
+    parser.add_argument("--mfa-core-bundle", type=Path, required=True)
     parser.add_argument("--python-site-packages", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--update-repository", default=UPSTREAM_REPOSITORY)
@@ -863,6 +1096,7 @@ def main() -> int:
         upstream_tag=args.upstream_tag,
         source_revision=args.source_revision,
         engine_bundle=args.engine_bundle,
+        mfa_core_bundle=args.mfa_core_bundle,
         python_site_packages=args.python_site_packages,
         output=args.output,
         update_repository=args.update_repository,

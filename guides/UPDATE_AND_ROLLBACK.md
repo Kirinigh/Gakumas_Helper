@@ -10,10 +10,10 @@ Gakumas Helper 的普通客户端升级只使用 MFAAvalonia 内置 GitHub 资�
 | pip 更新 | pip 本身与 `requirements.txt` 中的 Python 依赖 | 沿用 Maa 现有启动逻辑；不更新模型、图库、引擎、数据或 UI |
 | RIS 竞技场组件更新 | 同一成功 production SHA 的 `gakumas-engine` + `gakumas-data` | 每个 Agent 进程首次需要竞技场模拟器时检查一次；失败保留旧组件 |
 | 独立识别资产热更新 | 单独更新模型、图库或规则数据 | 当前不提供；这些资产随完整包更新 |
-| MirrorChyan | 上游 Maa 的第三方分发入口 | 当前不是 Gakumas Helper 更新源，不要用它更新本派生版 |
+| MirrorChyan | 上游 Maa 的第三方分发入口 | Gakumas Helper 当前不声明派生版 RID，也不通过它分发完整包 |
 
 > [!WARNING]
-> 当前 GitHub 更新仓库指向本项目，但包内仍可能显示上游 `MaaGakumasu` 的 MirrorChyan 入口。它不是 Gakumas Helper 更新源，使用它可能切回上游资源并移除派生功能。
+> 当前 Gakumas Helper 完整包不会声明上游 `MaaGakumasu` 的 MirrorChyan 资源 ID。MFA 资源检查在 RID 为空时回落到 `interface.json.github` 指向的本项目 GitHub Releases；如果旧安装仍显示上游 MirrorChyan 身份，请不要从该安装执行更新，改为手动安装当前完整包。
 
 ## 内置完整包更新会做什么
 

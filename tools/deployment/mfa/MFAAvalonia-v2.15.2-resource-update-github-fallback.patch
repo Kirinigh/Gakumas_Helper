@@ -1,0 +1,62 @@
+diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionChecker.cs
+index 6e6d111..108ee8c 100644
+--- a/MFAAvalonia/Helper/VersionChecker.cs
++++ b/MFAAvalonia/Helper/VersionChecker.cs
+@@ -306,6 +306,16 @@ public static class VersionChecker
+         return Path.Combine(AppPaths.TempResourceDirectory, $"local_package_{pathHash}_extracted");
+     }
+ 
++    private static bool ResolveResourceUpdateSource(bool isGithub)
++    {
++        if (isGithub || !string.IsNullOrWhiteSpace(GetResourceID()))
++            return isGithub;
++
++        LoggerHelper.Info(
++            "当前资源未配置 MirrorChyan RID，资源更新改用 interface.json.github");
++        return true;
++    }
++
+     private static async Task UpdateResourceFromLocalPackageCoreAsync(string packagePath, string currentVersion)
+     {
+         var extractDirectory = GetLocalPackageExtractDirectory(packagePath);
+@@ -515,6 +525,7 @@ public static class VersionChecker
+         bool notifyWhenUpToDate = true,
+         bool notifyOnError = true)
+     {
++        isGithub = ResolveResourceUpdateSource(isGithub);
+         Instances.RootViewModel.SetUpdating(true);
+         var url = MaaProcessor.Interface?.Github ?? MaaProcessor.Interface?.Url ?? string.Empty;
+ 
+@@ -679,6 +690,8 @@ public static class VersionChecker
+         var dryRun = debugEnabled && IsEnvEnabled(ResourceUpdateDryRunEnv);
+         var keepArtifacts = debugEnabled || IsEnvEnabled(ResourceUpdateKeepArtifactsEnv);
+         var isLocalPackage = !string.IsNullOrWhiteSpace(localPackagePath);
++        if (!isLocalPackage)
++            isGithub = ResolveResourceUpdateSource(isGithub);
+         ProgressBar? progress = null;
+         TextBlock? textBlock = null;
+         TextBlock? downloadSpeedTextBlock = null;
+diff --git a/MFAAvalonia/Directory.Build.targets b/MFAAvalonia/Directory.Build.targets
+new file mode 100644
+index 0000000..894b751
+--- /dev/null
++++ b/MFAAvalonia/Directory.Build.targets
+@@ -0,0 +1,18 @@
++<Project>
++  <Target Name="GakumasHelperSetSentryProjectDirectory"
++          BeforeTargets="WriteSentryAttributes"
++          Condition="'$(MSBuildProjectName)' == 'MFAAvalonia'">
++    <PropertyGroup>
++      <GakumasHelperOriginalProjectDir>$(ProjectDir)</GakumasHelperOriginalProjectDir>
++      <ProjectDir>/_/MFAAvalonia/</ProjectDir>
++    </PropertyGroup>
++  </Target>
++
++  <Target Name="GakumasHelperRestoreProjectDirectory"
++          AfterTargets="WriteSentryAttributes"
++          Condition="'$(GakumasHelperOriginalProjectDir)' != ''">
++    <PropertyGroup>
++      <ProjectDir>$(GakumasHelperOriginalProjectDir)</ProjectDir>
++    </PropertyGroup>
++  </Target>
++</Project>

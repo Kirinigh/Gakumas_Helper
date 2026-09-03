@@ -52,7 +52,7 @@ GKH 版本独立于上游 Maa 标签。项目处于 `0.x` 时，`MINOR` 表示�
 
 内置 pip 入口只管理 pip 与 `requirements.txt` 中的 Python 依赖，不更新上述项目资产。竞技场 RIS engine/data 是严格窄例外：每个 Agent 进程首次需要模拟器时可按最新成功 production deployment 的不可变 SHA 成对更新，失败保留旧组件；它不更新客户端、Agent、UI、模型或图库。版本化目录、`current` 联接和本机安装器只服务开发部署与故障维护，不是普通客户端更新路径。
 
-当前只有 GitHub 更新仓库指向本项目；包内若显示上游 `MaaGakumasu` 的 MirrorChyan 入口，它不是 Gakumas Helper 更新通道，请勿用它更新本派生版。
+当前 Gakumas Helper 完整包不会声明上游 `MaaGakumasu` 的 MirrorChyan 资源 ID；MFA 资源检查在没有派生版 MirrorChyan RID 时回落到本项目 GitHub Releases。普通客户端更新仍只使用这一原生 GitHub 完整包入口。
 
 公开包不包含用户配置、日志、缓存、截图、对局记录、私有训练语料、凭据或本机路径。源码仓库使用独立的单提交公开快照，不包含内部开发仓库历史和任务管理记录。
 

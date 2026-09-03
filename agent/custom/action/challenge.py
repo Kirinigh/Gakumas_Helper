@@ -29,6 +29,7 @@ from arena_winrate import (
     reset_prepared_own_score_cache,
 )
 from maa.custom_action import CustomAction
+from arena_winrate.config import resolve_cached_arena_grade
 from maa.agent.agent_server import AgentServer
 from arena_winrate.user_messages import (
     ArenaUserStatus,
@@ -480,7 +481,7 @@ class ChallengeAuto(CustomAction):
             logger.info(
                 "竞技场胜率模式参数: "
                 f"赛季={config.season}, 门槛={config.threshold_percent}%, 模拟次数={config.simulations}, "
-                f"超时={config.timeout_seconds}s"
+                f"超时={config.timeout_seconds}s, Grade覆盖={config.grade_override}"
             )
             try:
                 logger.info("正在解析竞技场组件；默认目录在本进程首次使用时会检查 RIS 生产版本")
@@ -510,14 +511,18 @@ class ChallengeAuto(CustomAction):
                 )
             try:
                 contest_day = contest_day_key()
-                backend = MaaArenaReaderBackend(context, season, component.bundle_dir)
-                reader = ArenaLineupReader(backend, season)
                 adapter = SubprocessArenaAdapter.from_bundle(
                     component.bundle_dir,
                     timeout_seconds=config.timeout_seconds,
                 )
                 cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
                 if mode == "win_rate_recalculate_own":
+                    backend = MaaArenaReaderBackend(
+                        context,
+                        season,
+                        component.bundle_dir,
+                    )
+                    reader = ArenaLineupReader(backend, season)
                     own_evaluation = ArenaOwnScoreService(
                         adapter,
                         simulations=config.simulations,
@@ -547,10 +552,16 @@ class ChallengeAuto(CustomAction):
                         ),
                     )
 
+                class CachedOnlyOwnSnapshotProvider:
+                    def read_own(self) -> Mapping[str, object]:
+                        raise OwnScoreCacheError(
+                            "daily opponent read unexpectedly requested a fresh own-team capture"
+                        )
+
                 try:
                     own_cache_evaluation, cached = prepare_own_score_cache(
                         adapter,
-                        reader,
+                        CachedOnlyOwnSnapshotProvider(),
                         cache_store,
                         season=season.season,
                         stage_ids=season.stage_ids,
@@ -597,6 +608,22 @@ class ChallengeAuto(CustomAction):
                         "“自动重算己方数据”，或先手动运行“重算竞技场己方总分”"
                     )
                 own_snapshot, own_score_cache = cached
+                effective_grade, grade_state = resolve_cached_arena_grade(
+                    cache_store,
+                    config.grade_override,
+                )
+                logger.info(
+                    "竞技场 Grade 已从己方缓存复用: "
+                    f"有效值={effective_grade}, 来源={grade_state.source}, "
+                    f"识别值={grade_state.recognized_grade}, 覆盖值={grade_state.grade_override}"
+                )
+                backend = MaaArenaReaderBackend(
+                    context,
+                    season,
+                    component.bundle_dir,
+                    known_grade=effective_grade,
+                )
+                reader = ArenaLineupReader(backend, season)
 
                 class OpponentSnapshotProvider:
                     snapshot: dict[str, object] | None = None
@@ -637,6 +664,20 @@ class ChallengeAuto(CustomAction):
                 if provider.snapshot is not None
                 else ()
             )
+            opponent_read_summary = (
+                None
+                if provider.snapshot is None
+                else {
+                    "read_wall_seconds": provider.snapshot.get(
+                        "read_wall_seconds"
+                    ),
+                    "team_read_wall_seconds": [
+                        opponent.get("read_wall_seconds")
+                        for opponent in provider.snapshot["opponents"]
+                    ],
+                    **reader.last_read_metrics_summary(),
+                }
+            )
             logger.info(
                 json.dumps(
                     {
@@ -648,6 +689,8 @@ class ChallengeAuto(CustomAction):
                             else provider.snapshot.get("capture_id")
                         ),
                         "evaluation": asdict(evaluation),
+                        "provider_attempts": evaluation.attempts,
+                        "opponent_read_summary": opponent_read_summary,
                         "cost_customization_fallbacks": list(opponent_cost_fallbacks),
                     },
                     ensure_ascii=False,
@@ -700,6 +743,11 @@ class ChallengeAuto(CustomAction):
                         "decision_rule": evaluation.decision.decision_rule,
                         "threshold": evaluation.decision.threshold,
                         "estimate": selected_row,
+                        "estimates": [
+                            dict(row) for row in evaluation.decision.estimates
+                        ],
+                        "provider_attempts": evaluation.attempts,
+                        "opponent_read_summary": opponent_read_summary,
                         "cost_customization_fallbacks": list(opponent_cost_fallbacks),
                     }
                 )
