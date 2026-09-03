@@ -598,7 +598,7 @@ def _expected_arena_period_cases(
             "name": "latest" if selection == "latest" else f"season-{selection}",
             "label": "$竞技场目录最新" if selection == "latest" else f"第 {selection} 期",
             "pipeline_override": {
-                "ChallengeChoose": {"custom_action_param": {"season": selection}}
+                "ChallengeSeasonConfig": {"attach": {"season": selection}}
             },
         }
         if any(contest_stages[season].values()):

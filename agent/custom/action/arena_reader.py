@@ -138,6 +138,15 @@ BADGE_GLYPH_RASTER_SETTLING_L1_MAX = 120
 BADGE_GLYPH_RASTER_SETTLING_CHANGED_MAX = 12
 BADGE_GLYPH_RASTER_SETTLING_XOR_MAX = 3
 BADGE_GLYPH_RASTER_SETTLING_IOU_MIN = 0.98
+# A temporal disagreement may be a short-lived source-page raster transition.
+# Before the first detail click, permit one bounded fresh-capture attempt to
+# find a stable rolling three-frame window.  This is intentionally one fixed
+# wall-clock budget rather than an extendable settle loop.
+BADGE_GLYPH_FRESH_GROUP_TIMEOUT_SECONDS = 0.60
+BADGE_GLYPH_FRESH_GROUP_INTERVAL_SECONDS = 0.08
+# Capture starts can occur at 0.00 through 0.56 seconds; a ninth start at
+# 0.64 seconds would exceed the fixed deadline.
+BADGE_GLYPH_FRESH_GROUP_MAX_FRAMES = 8
 # The packaged OCR and current extractor have independent positive holdout
 # coverage for count 1 only.  The wider 1-9 recognition domain remains active
 # as a veto except for one audited preprocessing shape: both wider polarity
@@ -1100,6 +1109,244 @@ class MaaArenaReaderBackend:
             else "badge_candidate_zero_details"
         )
 
+    @classmethod
+    def _badge_glyph_observations_are_temporally_stable(
+        cls,
+        observations: Sequence[dict[str, Any]],
+    ) -> bool:
+        return bool(
+            cls._stable_badge_glyph_exemplar_signature(observations) is not None
+            or cls._badge_glyph_frames_are_bounded_raster_settling(observations)
+        )
+
+    @classmethod
+    def _badge_glyph_observations_need_fresh_group(
+        cls,
+        observations: Sequence[dict[str, Any]],
+    ) -> bool:
+        """Retry only three individually valid positive glyphs that disagree.
+
+        Repeating each observation through the strict signature gate reuses its
+        complete typed/geometry validation without turning a missing or
+        fragmented glyph into a new prerequisite for opening card detail.
+        """
+
+        if len(observations) != 3:
+            return False
+        if not all(
+            cls._stable_badge_glyph_exemplar_signature(
+                (observation, observation, observation)
+            )
+            is not None
+            for observation in observations
+        ):
+            return False
+        return not cls._badge_glyph_observations_are_temporally_stable(observations)
+
+    def _capture_one_fresh_badge_glyph_group(
+        self,
+        visible_groups: Sequence[int],
+        related_jobs: Sequence[tuple[int, int]],
+        *,
+        workers: int,
+    ) -> tuple[Any, ...] | None:
+        """Return one atomic stable fresh window, or preserve the original one.
+
+        The first eligible window is entirely separate from the initially
+        accepted card frames.  Every additional frame must still match the
+        frozen six-slot geometry and one complete source-generation signature
+        for every visible row.  Unstable-but-individually-valid windows slide
+        by one frame until the single deadline expires; the deadline is never
+        extended and slots are never combined across different windows.
+        """
+
+        groups = tuple(visible_groups)
+        jobs = tuple(related_jobs)
+        if not groups or not jobs:
+            return None
+        accepted_rows = {
+            group_index: tuple(self._card_rows.get(group_index, ()))
+            for group_index in groups
+        }
+        frozen_signatures = {
+            group_index: tuple(
+                getattr(self, "_card_restoration_signatures", {}).get(
+                    group_index,
+                    (),
+                )
+            )
+            for group_index in groups
+        }
+        initial_frame_ids = {
+            id(image)
+            for group_index in groups
+            for image in self._card_count_frames.get(group_index, ())
+        }
+        if any(
+            len(accepted_rows[group_index]) != 6
+            or len(frozen_signatures[group_index]) != 3
+            or any(len(frame) != 6 for frame in frozen_signatures[group_index])
+            for group_index in groups
+        ):
+            return None
+
+        self._increment("skill_card_badge_glyph_fresh_group_attempts")
+        monotonic_started = time.monotonic()
+        deadline = monotonic_started + BADGE_GLYPH_FRESH_GROUP_TIMEOUT_SECONDS
+        next_capture_not_before = monotonic_started
+        capture_times: list[float] = []
+        frames: list[Any] = []
+        frame_ids: set[int] = set()
+        rows_by_group: dict[
+            int,
+            list[tuple[tuple[int, int, int, int], ...]],
+        ] = {group_index: [] for group_index in groups}
+        timing_started = time.perf_counter()
+
+        def reject(reason: str) -> None:
+            self._increment("skill_card_badge_glyph_fresh_group_rejections")
+            self._increment(
+                f"skill_card_badge_glyph_fresh_group_{reason}_rejections"
+            )
+            return None
+
+        try:
+            for _ in range(BADGE_GLYPH_FRESH_GROUP_MAX_FRAMES):
+                remaining = next_capture_not_before - time.monotonic()
+                if remaining > 0:
+                    if time.monotonic() + remaining >= deadline:
+                        return reject("deadline")
+                    time.sleep(remaining)
+                if time.monotonic() >= deadline:
+                    return reject("deadline")
+                capture_started = time.monotonic()
+                next_capture_not_before = (
+                    capture_started + BADGE_GLYPH_FRESH_GROUP_INTERVAL_SECONDS
+                )
+                try:
+                    image = self._capture()
+                except ArenaReaderError:
+                    return reject("capture")
+                self._increment("skill_card_badge_glyph_fresh_group_reads")
+                if time.monotonic() >= deadline:
+                    return reject("deadline")
+                image_id = id(image)
+                if image_id in initial_frame_ids or image_id in frame_ids:
+                    return reject("duplicate")
+                frame_ids.add(image_id)
+                frames.append(image)
+                capture_times.append(capture_started)
+                try:
+                    observed = {
+                        group_index: self._validated_card_group_row(
+                            image,
+                            group_index,
+                        )
+                        for group_index in groups
+                    }
+                except ArenaReaderError:
+                    return reject("source")
+                if any(
+                    self._card_rows_shifted(
+                        observed[group_index],
+                        accepted_rows[group_index],
+                    )
+                    for group_index in groups
+                ):
+                    return reject("source")
+                if time.monotonic() >= deadline:
+                    return reject("deadline")
+                try:
+                    current_signatures, _ = self._card_content_generation_signatures(
+                        image,
+                        observed,
+                    )
+                except (ArenaReaderError, BadgeReferenceError):
+                    return reject("source")
+                if any(
+                    not any(
+                        not self._card_content_generation_shifted(
+                            current_signatures[group_index],
+                            frozen_frame,
+                        )
+                        for frozen_frame in frozen_signatures[group_index]
+                    )
+                    for group_index in groups
+                ):
+                    return reject("source")
+                if time.monotonic() >= deadline:
+                    return reject("deadline")
+                for group_index in groups:
+                    rows_by_group[group_index].append(observed[group_index])
+
+                if len(frames) < 3:
+                    continue
+                required_span = BADGE_GLYPH_FRESH_GROUP_INTERVAL_SECONDS * 2
+                if capture_times[-1] - capture_times[-3] + 1e-6 < required_span:
+                    return reject("deadline")
+                stable_frames = tuple(frames[-3:])
+                stable_rows_by_group = {
+                    group_index: tuple(rows_by_group[group_index][-3:])
+                    for group_index in groups
+                }
+
+                def operation(job: tuple[int, int]) -> Any:
+                    group_index, slot_index = job
+                    return self._local_badge_slot_decision(
+                        stable_frames,
+                        stable_rows_by_group[group_index],
+                        group_index,
+                        slot_index,
+                    )
+
+                try:
+                    fresh_results = self._parallel_badge_jobs(
+                        workers,
+                        jobs,
+                        operation,
+                    )
+                except (ArenaReaderError, ValueError):
+                    return reject("measurement")
+                if time.monotonic() >= deadline:
+                    return reject("deadline")
+                self._increment("skill_card_badge_glyph_fresh_group_windows")
+                if any(
+                    result.decision.state
+                    is not CustomizationBadgeState.DETAIL_CANDIDATE
+                    for result in fresh_results
+                ):
+                    return reject("temporal")
+                stable_results = tuple(
+                    self._badge_glyph_observations_are_temporally_stable(
+                        result.observations
+                    )
+                    for result in fresh_results
+                )
+                if all(stable_results):
+                    self._increment("skill_card_badge_glyph_fresh_group_acceptances")
+                    return fresh_results
+                if any(
+                    not stable
+                    and not self._badge_glyph_observations_need_fresh_group(
+                        result.observations
+                    )
+                    for stable, result in zip(
+                        stable_results,
+                        fresh_results,
+                        strict=True,
+                    )
+                ):
+                    return reject("temporal")
+                self._increment(
+                    "skill_card_badge_glyph_fresh_group_unstable_windows"
+                )
+            return reject("deadline")
+        finally:
+            self._add_timing(
+                "badge_glyph_fresh_group_wait",
+                time.perf_counter() - timing_started,
+            )
+
     def _batched_badge_local_results(
         self,
         requested_group: int,
@@ -1172,6 +1419,31 @@ class MaaArenaReaderBackend:
         }
         for (group_index, slot_index), result in zip(jobs, results, strict=True):
             grouped[group_index][slot_index] = result
+        related_jobs = tuple(
+            (group_index, slot_index)
+            for group_index, slot_index in jobs
+            if (
+                (result := grouped[group_index][slot_index]) is not None
+                and result.decision.state
+                is CustomizationBadgeState.DETAIL_CANDIDATE
+                and self._badge_glyph_observations_need_fresh_group(
+                    result.observations
+                )
+            )
+        )
+        if related_jobs:
+            fresh_results = self._capture_one_fresh_badge_glyph_group(
+                visible_groups,
+                related_jobs,
+                workers=workers,
+            )
+            if fresh_results is not None:
+                for (group_index, slot_index), result in zip(
+                    related_jobs,
+                    fresh_results,
+                    strict=True,
+                ):
+                    grouped[group_index][slot_index] = result
         for group_index, values in grouped.items():
             self._badge_local_results[group_index] = tuple(values)
             for slot_index, result in enumerate(values, start=1):

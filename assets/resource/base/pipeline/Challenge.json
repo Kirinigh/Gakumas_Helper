@@ -164,6 +164,50 @@
       "ChallengeStart"
     ]
   },
+  "ChallengeStrategyConfig": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "attach": {}
+  },
+  "ChallengeSeasonConfig": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "attach": {}
+  },
+  "ChallengeGradeConfig": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "attach": {}
+  },
+  "ChallengeAutoRecalculateConfig": {
+    "recognition": {
+      "type": "DirectHit",
+      "param": {}
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    },
+    "attach": {}
+  },
   "ChallengeWinRateStop": {
     "recognition": {
       "type": "DirectHit",

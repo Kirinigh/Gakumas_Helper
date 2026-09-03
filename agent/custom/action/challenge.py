@@ -47,6 +47,13 @@ from arena_winrate.maa_challenge_actions import (
 
 from .arena_reader import MaaArenaReaderBackend
 
+_CHALLENGE_CONFIG_CARRIERS = (
+    "ChallengeStrategyConfig",
+    "ChallengeSeasonConfig",
+    "ChallengeGradeConfig",
+    "ChallengeAutoRecalculateConfig",
+)
+
 
 def _administrator_process() -> bool:
     return bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -103,21 +110,49 @@ def _report_unexpected_errors(method: Callable[..., bool]) -> Callable[..., bool
 
 
 def _resolved_challenge_params(context: Context) -> dict[str, object]:
-    """Read the fully merged ChallengeChoose parameters for this task run."""
+    """Resolve base action parameters and independent UI configuration carriers."""
 
     node = context.get_node_data("ChallengeChoose")
     if not isinstance(node, Mapping):
         raise ValueError("ChallengeChoose node data is unavailable")
-    raw = (
-        node.get("action", {})
-        .get("param", {})
-        .get("custom_action_param", {})
+
+    action = node.get("action")
+    action_param = action.get("param") if isinstance(action, Mapping) else None
+    raw_base = (
+        action_param.get("custom_action_param")
+        if isinstance(action_param, Mapping)
+        else None
     )
-    if isinstance(raw, str):
-        raw = json.loads(raw)
-    if not isinstance(raw, Mapping):
+    if isinstance(raw_base, str):
+        raw_base = json.loads(raw_base)
+    if not isinstance(raw_base, Mapping):
         raise ValueError("ChallengeChoose custom_action_param must be an object")
-    return dict(raw)
+    if any(not isinstance(key, str) for key in raw_base):
+        raise ValueError("ChallengeChoose custom_action_param keys must be strings")
+
+    resolved = dict(raw_base)
+    carrier_by_key: dict[str, str] = {}
+    for carrier_name in _CHALLENGE_CONFIG_CARRIERS:
+        carrier = context.get_node_data(carrier_name)
+        if not isinstance(carrier, Mapping):
+            raise ValueError(f"{carrier_name} node data is unavailable")
+        attached = carrier.get("attach")
+        if isinstance(attached, str):
+            attached = json.loads(attached)
+        if not isinstance(attached, Mapping):
+            raise ValueError(f"{carrier_name} attach must be an object")
+        if any(not isinstance(key, str) for key in attached):
+            raise ValueError(f"{carrier_name} attach keys must be strings")
+        for key, value in attached.items():
+            previous_carrier = carrier_by_key.get(key)
+            if previous_carrier is not None:
+                raise ValueError(
+                    f"challenge parameter {key!r} is provided by both "
+                    f"{previous_carrier} and {carrier_name}"
+                )
+            carrier_by_key[key] = carrier_name
+            resolved[key] = value
+    return resolved
 
 
 def _log_own_score_evaluation(
@@ -249,7 +284,12 @@ class ChallengePrepareOwnScore(CustomAction):
 
         contest_day = contest_day_key()
         try:
-            backend = MaaArenaReaderBackend(context, season, component.bundle_dir)
+            backend = MaaArenaReaderBackend(
+                context,
+                season,
+                component.bundle_dir,
+                known_grade=config.grade_override,
+            )
             reader = ArenaLineupReader(backend, season)
             adapter = SubprocessArenaAdapter.from_bundle(
                 component.bundle_dir,
@@ -346,17 +386,16 @@ class ChallengeAuto(CustomAction):
 
         Args:
             context: MAA 任务上下文，提供控制器、识别和任务执行能力。
-            argv: 自定义动作运行参数，需包含 JSON 格式的 custom_action_param。
+            argv: Maa 自定义动作运行参数；配置从本次任务解析后的节点数据读取。
 
         Returns:
             True 表示动作执行完毕。
         """
+        del argv
         try:
-            params = json.loads(argv.custom_action_param)
-        except (TypeError, json.JSONDecodeError) as error:
-            return _stop_with_error(context, "竞技场任务参数不是有效 JSON，已安全停止", error)
-        if not isinstance(params, dict):
-            return _stop_with_error(context, "竞技场任务参数必须是 JSON 对象，已安全停止")
+            params = _resolved_challenge_params(context)
+        except (TypeError, ValueError) as error:
+            return _stop_with_error(context, "竞技场任务参数无效，已安全停止", error)
 
         mode_allowed = [
             "fixed",
@@ -521,6 +560,7 @@ class ChallengeAuto(CustomAction):
                         context,
                         season,
                         component.bundle_dir,
+                        known_grade=config.grade_override,
                     )
                     reader = ArenaLineupReader(backend, season)
                     own_evaluation = ArenaOwnScoreService(

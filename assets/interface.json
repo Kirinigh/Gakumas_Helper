@@ -1,7 +1,7 @@
 {
   "interface_version": 2,
   "name": "MaaGakumasu",
-  "version": "v0.2.0",
+  "version": "v0.2.1",
   "github": "https://github.com/Kirinigh/Gakumas_Helper",
   "contact": "QQ群: 799823681",
   "icon": "./logo.ico",
@@ -226,8 +226,8 @@
           "label": "$竞技场目录最新",
           "description": "$竞技场预览期说明",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": "latest"
               }
             }
@@ -237,8 +237,8 @@
           "name": "season-50",
           "label": "第 50 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 50
               }
             }
@@ -248,8 +248,8 @@
           "name": "season-49",
           "label": "第 49 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 49
               }
             }
@@ -259,8 +259,8 @@
           "name": "season-48",
           "label": "第 48 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 48
               }
             }
@@ -270,8 +270,8 @@
           "name": "season-47",
           "label": "第 47 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 47
               }
             }
@@ -281,8 +281,8 @@
           "name": "season-46",
           "label": "第 46 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 46
               }
             }
@@ -292,8 +292,8 @@
           "name": "season-45",
           "label": "第 45 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 45
               }
             }
@@ -303,8 +303,8 @@
           "name": "season-44",
           "label": "第 44 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 44
               }
             }
@@ -314,8 +314,8 @@
           "name": "season-43",
           "label": "第 43 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 43
               }
             }
@@ -325,8 +325,8 @@
           "name": "season-42",
           "label": "第 42 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 42
               }
             }
@@ -336,8 +336,8 @@
           "name": "season-41",
           "label": "第 41 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 41
               }
             }
@@ -347,8 +347,8 @@
           "name": "season-40",
           "label": "第 40 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 40
               }
             }
@@ -358,8 +358,8 @@
           "name": "season-39",
           "label": "第 39 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 39
               }
             }
@@ -369,8 +369,8 @@
           "name": "season-38",
           "label": "第 38 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 38
               }
             }
@@ -380,8 +380,8 @@
           "name": "season-37",
           "label": "第 37 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 37
               }
             }
@@ -391,8 +391,8 @@
           "name": "season-36",
           "label": "第 36 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 36
               }
             }
@@ -402,8 +402,8 @@
           "name": "season-35",
           "label": "第 35 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 35
               }
             }
@@ -413,8 +413,8 @@
           "name": "season-34",
           "label": "第 34 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 34
               }
             }
@@ -424,8 +424,8 @@
           "name": "season-33",
           "label": "第 33 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 33
               }
             }
@@ -435,8 +435,8 @@
           "name": "season-32",
           "label": "第 32 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 32
               }
             }
@@ -446,8 +446,8 @@
           "name": "season-31",
           "label": "第 31 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 31
               }
             }
@@ -457,8 +457,8 @@
           "name": "season-30",
           "label": "第 30 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 30
               }
             }
@@ -468,8 +468,8 @@
           "name": "season-29",
           "label": "第 29 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 29
               }
             }
@@ -479,8 +479,8 @@
           "name": "season-28",
           "label": "第 28 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 28
               }
             }
@@ -490,8 +490,8 @@
           "name": "season-27",
           "label": "第 27 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 27
               }
             }
@@ -501,8 +501,8 @@
           "name": "season-26",
           "label": "第 26 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 26
               }
             }
@@ -512,8 +512,8 @@
           "name": "season-25",
           "label": "第 25 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 25
               }
             }
@@ -523,8 +523,8 @@
           "name": "season-24",
           "label": "第 24 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 24
               }
             }
@@ -534,8 +534,8 @@
           "name": "season-23",
           "label": "第 23 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 23
               }
             }
@@ -545,8 +545,8 @@
           "name": "season-22",
           "label": "第 22 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 22
               }
             }
@@ -556,8 +556,8 @@
           "name": "season-21",
           "label": "第 21 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 21
               }
             }
@@ -567,8 +567,8 @@
           "name": "season-20",
           "label": "第 20 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 20
               }
             }
@@ -578,8 +578,8 @@
           "name": "season-19",
           "label": "第 19 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 19
               }
             }
@@ -589,8 +589,8 @@
           "name": "season-18",
           "label": "第 18 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 18
               }
             }
@@ -600,8 +600,8 @@
           "name": "season-17",
           "label": "第 17 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 17
               }
             }
@@ -611,8 +611,8 @@
           "name": "season-16",
           "label": "第 16 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 16
               }
             }
@@ -622,8 +622,8 @@
           "name": "season-15",
           "label": "第 15 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 15
               }
             }
@@ -633,8 +633,8 @@
           "name": "season-14",
           "label": "第 14 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 14
               }
             }
@@ -644,8 +644,8 @@
           "name": "season-13",
           "label": "第 13 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 13
               }
             }
@@ -655,8 +655,8 @@
           "name": "season-12",
           "label": "第 12 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 12
               }
             }
@@ -666,8 +666,8 @@
           "name": "season-11",
           "label": "第 11 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 11
               }
             }
@@ -677,8 +677,8 @@
           "name": "season-10",
           "label": "第 10 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 10
               }
             }
@@ -688,8 +688,8 @@
           "name": "season-9",
           "label": "第 9 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 9
               }
             }
@@ -699,8 +699,8 @@
           "name": "season-8",
           "label": "第 8 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 8
               }
             }
@@ -710,8 +710,8 @@
           "name": "season-7",
           "label": "第 7 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 7
               }
             }
@@ -721,8 +721,8 @@
           "name": "season-6",
           "label": "第 6 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 6
               }
             }
@@ -732,8 +732,8 @@
           "name": "season-5",
           "label": "第 5 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 5
               }
             }
@@ -743,8 +743,8 @@
           "name": "season-4",
           "label": "第 4 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 4
               }
             }
@@ -754,8 +754,8 @@
           "name": "season-3",
           "label": "第 3 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 3
               }
             }
@@ -765,8 +765,8 @@
           "name": "season-2",
           "label": "第 2 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 2
               }
             }
@@ -776,8 +776,8 @@
           "name": "season-1",
           "label": "第 1 期",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeSeasonConfig": {
+              "attach": {
                 "season": 1
               }
             }
@@ -809,8 +809,10 @@
         "ChallengeChoose": {
           "on_error": [
             "ChallengeWinRateStop"
-          ],
-          "custom_action_param": {
+          ]
+        },
+        "ChallengeStrategyConfig": {
+          "attach": {
             "mode": "win_rate_recalculate_own",
             "threshold_percent": 70,
             "simulations": "{arena_own_score_simulations}",
@@ -893,8 +895,10 @@
             "ChallengeChoose": {
               "on_error": [
                 "ChallengeWinRateStop"
-              ],
-              "custom_action_param": {
+              ]
+            },
+            "ChallengeStrategyConfig": {
+              "attach": {
                 "mode": "win_rate"
               }
             }
@@ -904,8 +908,8 @@
           "name": "自动",
           "label": "$自动",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeStrategyConfig": {
+              "attach": {
                 "mode": "auto"
               }
             }
@@ -915,8 +919,8 @@
           "name": "最大值",
           "label": "$最大值",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeStrategyConfig": {
+              "attach": {
                 "mode": "max"
               }
             }
@@ -926,8 +930,8 @@
           "name": "最小值",
           "label": "$最小值",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeStrategyConfig": {
+              "attach": {
                 "mode": "min"
               }
             }
@@ -937,8 +941,8 @@
           "name": "随机",
           "label": "$随机",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeStrategyConfig": {
+              "attach": {
                 "mode": "random"
               }
             }
@@ -948,8 +952,8 @@
           "name": "固定第一位",
           "label": "$固定第一位",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeStrategyConfig": {
+              "attach": {
                 "mode": "fixed",
                 "index": 0
               }
@@ -960,8 +964,8 @@
           "name": "固定第二位",
           "label": "$固定第二位",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeStrategyConfig": {
+              "attach": {
                 "mode": "fixed",
                 "index": 1
               }
@@ -972,8 +976,8 @@
           "name": "固定第三位",
           "label": "$固定第三位",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeStrategyConfig": {
+              "attach": {
                 "mode": "fixed",
                 "index": 2
               }
@@ -991,8 +995,8 @@
         {
           "name": "Yes",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeAutoRecalculateConfig": {
+              "attach": {
                 "auto_recalculate_own": true
               }
             }
@@ -1001,8 +1005,8 @@
         {
           "name": "No",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeAutoRecalculateConfig": {
+              "attach": {
                 "auto_recalculate_own": false
               }
             }
@@ -1021,8 +1025,8 @@
           "name": "未识别",
           "label": "$未识别",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeGradeConfig": {
+              "attach": {
                 "grade_override": null
               }
             }
@@ -1032,8 +1036,8 @@
           "name": "7",
           "label": "7",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeGradeConfig": {
+              "attach": {
                 "grade_override": 7
               }
             }
@@ -1043,8 +1047,8 @@
           "name": "6",
           "label": "6",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeGradeConfig": {
+              "attach": {
                 "grade_override": 6
               }
             }
@@ -1054,8 +1058,8 @@
           "name": "5",
           "label": "5",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeGradeConfig": {
+              "attach": {
                 "grade_override": 5
               }
             }
@@ -1065,8 +1069,8 @@
           "name": "4",
           "label": "4",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeGradeConfig": {
+              "attach": {
                 "grade_override": 4
               }
             }
@@ -1076,8 +1080,8 @@
           "name": "3",
           "label": "3",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeGradeConfig": {
+              "attach": {
                 "grade_override": 3
               }
             }
@@ -1087,8 +1091,8 @@
           "name": "2",
           "label": "2",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeGradeConfig": {
+              "attach": {
                 "grade_override": 2
               }
             }
@@ -1098,8 +1102,8 @@
           "name": "1",
           "label": "1",
           "pipeline_override": {
-            "ChallengeChoose": {
-              "custom_action_param": {
+            "ChallengeGradeConfig": {
+              "attach": {
                 "grade_override": 1
               }
             }
@@ -1141,8 +1145,10 @@
         "ChallengeChoose": {
           "on_error": [
             "ChallengeWinRateStop"
-          ],
-          "custom_action_param": {
+          ]
+        },
+        "ChallengeStrategyConfig": {
+          "attach": {
             "mode": "win_rate",
             "threshold_percent": "{arena_win_rate_threshold_percent}",
             "simulations": "{arena_win_rate_simulations}",
