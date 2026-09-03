@@ -105,7 +105,10 @@ class ArenaOwnScoreService:
         provider: OwnSnapshotProvider,
         *,
         before_cache_save: Callable[[], None] | None = None,
+        preserve_grade_override: bool = False,
     ) -> ArenaOwnScoreEvaluation:
+        if not isinstance(preserve_grade_override, bool):
+            raise ValueError("preserve_grade_override must be a boolean")
         snapshot: dict[str, Any] | None = None
         failure: Exception | None = None
         for attempt in range(1, 3):
@@ -160,6 +163,7 @@ class ArenaOwnScoreService:
                     batch,
                     simulations=self.simulations,
                     seed=self.seed,
+                    preserve_grade_override=preserve_grade_override,
                 )
             except OwnScoreCacheError as error:
                 return ArenaOwnScoreEvaluation(
@@ -188,6 +192,25 @@ def reset_prepared_own_score_cache(cache_store: OwnScoreCacheStore) -> None:
     """Invalidate any preparation marker left by an earlier Maa task run."""
 
     _PREPARED_CACHE_DAYS.pop(cache_store.path, None)
+
+
+def own_score_cache_prepared_for_current_task(
+    cache_store: OwnScoreCacheStore,
+) -> bool:
+    """Return whether this process marked the cache during the current Maa task.
+
+    The task entry action clears this marker.  This narrow predicate also drops
+    a marker after the 04:00 boundary; cache identity remains authoritative in
+    ``prepare_own_score_cache`` before any match can use the prepared capture.
+    """
+
+    prepared = _PREPARED_CACHE_DAYS.get(cache_store.path)
+    if prepared is None:
+        return False
+    if prepared[0] != contest_day_key():
+        _PREPARED_CACHE_DAYS.pop(cache_store.path, None)
+        return False
+    return True
 
 
 def prepare_own_score_cache(
@@ -271,6 +294,7 @@ def prepare_own_score_cache(
             ).calculate(
                 CachedOwnSnapshotProvider(),
                 before_cache_save=ensure_preparation_day,
+                preserve_grade_override=True,
             )
             if evaluation.status != "calculated":
                 return evaluation, None

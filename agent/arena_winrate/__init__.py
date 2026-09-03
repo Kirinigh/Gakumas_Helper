@@ -44,6 +44,7 @@ from .service import (
     ArenaOwnScoreEvaluation,
     prepare_own_score_cache,
     reset_prepared_own_score_cache,
+    own_score_cache_prepared_for_current_task,
 )
 from .decision import ArenaDecision, StageEstimate, OpponentEstimate, select_first_qualified
 from .geometry import (
@@ -120,6 +121,7 @@ __all__ = [
     "ArenaPageState",
     "ArenaOwnScoreEvaluation",
     "ArenaOwnScoreService",
+    "own_score_cache_prepared_for_current_task",
     "prepare_own_score_cache",
     "reset_prepared_own_score_cache",
     "ArenaCatalogError",

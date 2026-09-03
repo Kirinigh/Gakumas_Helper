@@ -2205,6 +2205,19 @@ class ArenaEntityCatalog:
         """Recognize positive rows without changing the legacy fallback surface."""
 
         definition = self._customizations[customization_id]
+        applied_score = self._good_condition_applied_score_descriptor(
+            card,
+            customization_id,
+        )
+        if applied_score is not None:
+            base_score, multiplier, coefficient = applied_score
+            return self._good_condition_applied_score_level_is_visible(
+                compact,
+                level,
+                base_score=base_score,
+                multiplier=multiplier,
+                coefficient=coefficient,
+            )
         direct_score_times = _direct_prestage_target_this_increment(
             definition.get("effects"),
             "scoreTimes",
@@ -3578,6 +3591,124 @@ class ArenaEntityCatalog:
             return None
         return rarity, int(card_count_text)
 
+    def _good_condition_applied_score_descriptor(
+        self,
+        card: Mapping[str, Any],
+        customization_id: int,
+    ) -> tuple[int, int, int] | None:
+        """Describe one exact ``@base do`` good-condition score replacement.
+
+        This customization family keeps the base score and proportional
+        good-condition score, but applies a visible multiplier annotation to
+        the base score row.  Bind every operand in both catalog actions so the
+        annotation can be positive evidence without relying on a card ID or
+        on the absence of a sibling row.
+        """
+
+        definition = self._customizations.get(customization_id)
+        if definition is None:
+            raise ArenaCatalogError(
+                f"customization {customization_id} is absent from the bundled catalog"
+            )
+        base = re.fullmatch(
+            r"@basescore\+=([1-9][0-9]*);"
+            r"score\+=goodConditionTurns\*([1-9][0-9]*);?",
+            _normalise_text(card.get("actions")),
+        )
+        replacement = re.fullmatch(
+            r"@basedo\{goodConditionTurnsMultiplier=([2-9][0-9]*);"
+            r"score\+=([1-9][0-9]*)\};"
+            r"do\{score\+=goodConditionTurns\*([1-9][0-9]*)\};?",
+            _normalise_text(definition.get("actions")),
+        )
+        extra_fields = tuple(
+            field
+            for field in (
+                "conditions",
+                "cost",
+                "effects",
+                "limit",
+                "forceInitialHand",
+            )
+            if (value := definition.get(field)) not in (None, "", False)
+        )
+        maximum = definition.get("max")
+        if (
+            definition.get("type") != "effect"
+            or isinstance(maximum, bool)
+            or not isinstance(maximum, int)
+            or maximum != 1
+            or base is None
+            or replacement is None
+            or extra_fields
+        ):
+            return None
+        base_score, base_coefficient = (int(value) for value in base.groups())
+        multiplier, replaced_score, replaced_coefficient = (
+            int(value) for value in replacement.groups()
+        )
+        if (
+            replaced_score != base_score
+            or replaced_coefficient != base_coefficient
+        ):
+            return None
+        return base_score, multiplier, base_coefficient
+
+    @staticmethod
+    def _good_condition_applied_score_level_is_visible(
+        compact: str,
+        level: int,
+        *,
+        base_score: int,
+        multiplier: int,
+        coefficient: int,
+    ) -> bool:
+        """Match one complete multiplier-annotated score view.
+
+        Independent OCR views may omit the parenthetical annotation. One
+        complete positive view therefore overrides a plain view, while the
+        score row and its proportional companion must still occur together
+        inside the same atomic view. Operands split across the protected view
+        boundary never manufacture positive evidence.
+        """
+
+        if level not in (0, 1):
+            return False
+        positive_row = re.compile(
+            rf"スコア\+{base_score}"
+            rf"\(好調効果を{multiplier}倍適用\)"
+        )
+        annotation_prefix = f"スコア+{base_score}(好調効果を"
+        proportional_row = f"好調の{coefficient * 100}%分スコア上昇"
+        complete_base_view_seen = False
+        positive_view_seen = False
+        conflicting_annotation_seen = False
+        for atomic_view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY):
+            base_visible = _contains_exact_integer_token(
+                atomic_view,
+                "スコア+",
+                base_score,
+            )
+            complete_base_view_seen = complete_base_view_seen or (
+                base_visible and proportional_row in atomic_view
+            )
+            positive_view_seen = positive_view_seen or (
+                base_visible
+                and proportional_row in atomic_view
+                and positive_row.search(atomic_view) is not None
+            )
+            conflicting_annotation_seen = conflicting_annotation_seen or (
+                annotation_prefix in atomic_view
+                and positive_row.search(atomic_view) is None
+            )
+        if level == 1:
+            return positive_view_seen
+        return (
+            complete_base_view_seen
+            and not positive_view_seen
+            and not conflicting_annotation_seen
+        )
+
     def _dynamic_full_power_score_times_descriptor(
         self,
         card: Mapping[str, Any],
@@ -3787,6 +3918,46 @@ class ArenaEntityCatalog:
                 return visible is (count > 0)
 
             return match_move_random_to_top
+
+        normalized_customization_actions = _normalise_text(
+            definition.get("actions")
+        )
+        good_condition_applied_score = (
+            self._good_condition_applied_score_descriptor(
+                card,
+                customization_id,
+            )
+        )
+        if good_condition_applied_score is not None:
+            base_score, multiplier, coefficient = good_condition_applied_score
+
+            def match_good_condition_applied_score(
+                compact: str,
+                count: int,
+                *,
+                base_score: int = base_score,
+                multiplier: int = multiplier,
+                coefficient: int = coefficient,
+            ) -> bool:
+                return self._good_condition_applied_score_level_is_visible(
+                    compact,
+                    count,
+                    base_score=base_score,
+                    multiplier=multiplier,
+                    coefficient=coefficient,
+                )
+
+            return match_good_condition_applied_score
+        if re.fullmatch(
+            r"@basedo\{goodConditionTurnsMultiplier=[2-9][0-9]*;"
+            r"score\+=[1-9][0-9]*\};"
+            r"do\{score\+=goodConditionTurns\*[1-9][0-9]*\};?",
+            normalized_customization_actions,
+        ):
+            # A complex replacement row must never fall through to the simple
+            # additive matcher merely because both DSLs contain ``score+=N``.
+            # Unsupported or impure variants remain explicitly fail-closed.
+            return None
 
         typed_cost = re.fullmatch(
             r"(concentration|cost|stamina|fullPowerCharge|goodConditionTurns|goodImpressionTurns|motivation|perfectConditionTurns)-=([0-9]+)",

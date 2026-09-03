@@ -1,6 +1,7 @@
 import json
 import ctypes
 import random
+from pathlib import Path
 from datetime import datetime, timezone
 from functools import wraps
 from dataclasses import asdict
@@ -21,12 +22,14 @@ from arena_winrate import (
     ArenaOwnScoreService,
     SubprocessArenaAdapter,
     ArenaChallengeFlowError,
+    ContestSeasonDefinition,
     ArenaChallengeRecordStore,
     contest_day_key,
     new_challenge_id,
     prepare_own_score_cache,
     resolve_arena_component,
     reset_prepared_own_score_cache,
+    own_score_cache_prepared_for_current_task,
 )
 from maa.custom_action import CustomAction
 from arena_winrate.config import resolve_cached_arena_grade
@@ -197,6 +200,71 @@ def _log_cost_customization_fallbacks(
     return records
 
 
+def _prepare_daily_own_score_cache(
+    context: Context,
+    *,
+    season: ContestSeasonDefinition,
+    bundle_dir: str | Path,
+    adapter: SubprocessArenaAdapter,
+    cache_store: OwnScoreCacheStore,
+    simulations: int,
+    trigger: str,
+) -> bool:
+    """Run the one fresh own read shared by both daily preparation entry points."""
+
+    preparation_day = contest_day_key()
+    backend = MaaArenaReaderBackend(context, season, bundle_dir)
+    reader = ArenaLineupReader(backend, season)
+    evaluation, cached = prepare_own_score_cache(
+        adapter,
+        reader,
+        cache_store,
+        season=season.season,
+        stage_ids=season.stage_ids,
+        simulations=simulations,
+        seed=400,
+        expected_upstream_commit=adapter.expected_upstream_commit,
+        force_recalculate=True,
+    )
+    if evaluation is None:
+        raise OwnScoreCacheError("automatic recalculation did not produce an evaluation")
+    own_cost_fallbacks = (
+        _log_cost_customization_fallbacks(reader, side="own")
+        if evaluation.status in {"calculated", "adapter_failure", "cache_failure"}
+        else ()
+    )
+    _log_own_score_evaluation(
+        evaluation,
+        trigger=trigger,
+        cost_customization_fallbacks=own_cost_fallbacks,
+    )
+    if evaluation.status != "calculated":
+        return _publish_status(
+            context,
+            own_score_user_status(evaluation, simulations=simulations),
+            log_detail=evaluation.error_detail or evaluation.error,
+        )
+    if cached is None:
+        return _stop_with_error(
+            context,
+            "每日挑战自动重算完成，但新缓存仍不可复用，已安全停止",
+        )
+    if contest_day_key() != preparation_day:
+        return _stop_with_error(
+            context,
+            "每日挑战自动重算跨过了每日 04:00 刷新边界，请重新运行任务",
+        )
+
+    status = own_score_user_status(evaluation, simulations=simulations)
+    getattr(logger, status.level)(f"每日挑战自动重算：{status.message}")
+    if evaluation.summary_error_detail:
+        logger.warning(
+            "每日挑战自动重算的缓存摘要技术细节："
+            f"{evaluation.summary_error_detail}"
+        )
+    return True
+
+
 def _select_challenge_index(
     context: Context,
     *,
@@ -282,64 +350,21 @@ class ChallengePrepareOwnScore(CustomAction):
                 error,
             )
 
-        contest_day = contest_day_key()
         try:
-            backend = MaaArenaReaderBackend(
-                context,
-                season,
-                component.bundle_dir,
-                known_grade=config.grade_override,
-            )
-            reader = ArenaLineupReader(backend, season)
             adapter = SubprocessArenaAdapter.from_bundle(
                 component.bundle_dir,
                 timeout_seconds=config.timeout_seconds,
             )
             cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
-            evaluation, cached = prepare_own_score_cache(
-                adapter,
-                reader,
-                cache_store,
-                season=season.season,
-                stage_ids=season.stage_ids,
+            return _prepare_daily_own_score_cache(
+                context,
+                season=season,
+                bundle_dir=component.bundle_dir,
+                adapter=adapter,
+                cache_store=cache_store,
                 simulations=config.simulations,
-                seed=400,
-                expected_upstream_commit=adapter.expected_upstream_commit,
-                force_recalculate=True,
-            )
-            if evaluation is None:
-                raise OwnScoreCacheError("automatic recalculation did not produce an evaluation")
-            own_cost_fallbacks = (
-                _log_cost_customization_fallbacks(reader, side="own")
-                if evaluation.status
-                in {"calculated", "adapter_failure", "cache_failure"}
-                else ()
-            )
-            _log_own_score_evaluation(
-                evaluation,
                 trigger="daily_option",
-                cost_customization_fallbacks=own_cost_fallbacks,
             )
-            if evaluation.status != "calculated":
-                return _publish_status(
-                    context,
-                    own_score_user_status(
-                        evaluation,
-                        simulations=config.simulations,
-                    ),
-                    log_detail=evaluation.error_detail or evaluation.error,
-                )
-
-            status = own_score_user_status(
-                evaluation,
-                simulations=config.simulations,
-            )
-            getattr(logger, status.level)(f"每日挑战自动重算：{status.message}")
-            if evaluation.summary_error_detail:
-                logger.warning(
-                    "每日挑战自动重算的缓存摘要技术细节："
-                    f"{evaluation.summary_error_detail}"
-                )
         except (
             ArenaReaderError,
             AdapterError,
@@ -353,17 +378,6 @@ class ChallengePrepareOwnScore(CustomAction):
                 "每日挑战自动重算己方数据失败，已安全停止",
                 error,
             )
-        if cached is None:
-            return _stop_with_error(
-                context,
-                "每日挑战自动重算完成，但新缓存仍不可复用，已安全停止",
-            )
-        if contest_day_key() != contest_day:
-            return _stop_with_error(
-                context,
-                "每日挑战自动重算跨过了每日 04:00 刷新边界，请重新运行任务",
-            )
-        return True
 
 
 @AgentServer.custom_action("ChallengeAuto")
@@ -556,12 +570,7 @@ class ChallengeAuto(CustomAction):
                 )
                 cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
                 if mode == "win_rate_recalculate_own":
-                    backend = MaaArenaReaderBackend(
-                        context,
-                        season,
-                        component.bundle_dir,
-                        known_grade=config.grade_override,
-                    )
+                    backend = MaaArenaReaderBackend(context, season, component.bundle_dir)
                     reader = ArenaLineupReader(backend, season)
                     own_evaluation = ArenaOwnScoreService(
                         adapter,
@@ -591,6 +600,25 @@ class ChallengeAuto(CustomAction):
                             else own_evaluation.summary_error_detail
                         ),
                     )
+
+                if (
+                    auto_recalculate_own
+                    and not own_score_cache_prepared_for_current_task(cache_store)
+                ):
+                    logger.info(
+                        "每日挑战自动重算前置未在页面稳定前命中；"
+                        "正在从已确认的竞技场主界面补做一次己方读取"
+                    )
+                    if not _prepare_daily_own_score_cache(
+                        context,
+                        season=season,
+                        bundle_dir=component.bundle_dir,
+                        adapter=adapter,
+                        cache_store=cache_store,
+                        simulations=config.simulations,
+                        trigger="daily_option_stable_entry_fallback",
+                    ):
+                        return False
 
                 class CachedOnlyOwnSnapshotProvider:
                     def read_own(self) -> Mapping[str, object]:
@@ -650,7 +678,7 @@ class ChallengeAuto(CustomAction):
                 own_snapshot, own_score_cache = cached
                 effective_grade, grade_state = resolve_cached_arena_grade(
                     cache_store,
-                    config.grade_override,
+                    None if auto_recalculate_own else config.grade_override,
                 )
                 logger.info(
                     "竞技场 Grade 已从己方缓存复用: "

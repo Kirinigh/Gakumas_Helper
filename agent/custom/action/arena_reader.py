@@ -1465,7 +1465,9 @@ class MaaArenaReaderBackend:
         much wider quiet zone than ordinary scene OCR: the former fixed
         16-pixel border was only two cells at the 8x glyph scale and caused a
         real ``1`` to be decoded as CJK strokes.  Three fixed quiet zones and
-        both polarities form six independent views of the same bounded glyph.
+        both polarities form six deterministic recognition views of the same
+        bounded glyph; they are robustness transforms, not independent source
+        observations.
         """
 
         import cv2
@@ -2949,6 +2951,12 @@ class MaaArenaReaderBackend:
                         and polarities.get("normal") == sole_digit
                         and polarities.get("inverted") == sole_digit
                     ]
+                    voting_quiet_zones = {
+                        quiet_cells
+                        for quiet_cells, polarities in pair_votes.items()
+                        if sole_digit is not None
+                        and sole_digit in polarities.values()
+                    }
                     digit = (
                         sole_digit
                         if sole_digit is not None
@@ -2960,6 +2968,27 @@ class MaaArenaReaderBackend:
                         if digit is not None
                         else "unresolved"
                     )
+                    if (
+                        digit is None
+                        and sole_digit == 1
+                        and stable_signature is not None
+                        and stable_signature[2] == 3
+                        and sole_digit
+                        in BADGE_GLYPH_OCR_VALIDATED_ACCEPTANCE_COUNTS
+                        and votes[sole_digit] >= 3
+                        and len(voting_quiet_zones) >= 2
+                        and len(paired_quiet_zones) >= 1
+                    ):
+                        # Empty OCR views are abstentions, not contradictory
+                        # digits.  Permit the narrow one-pair shape only when
+                        # all three independent source frames have byte-identical
+                        # descriptor and geometry, every numeric view agrees on
+                        # the sole independently validated count, and another
+                        # quiet-zone transform supplies a third vote.  Tail-only
+                        # or bounded-raster signatures retain the stricter
+                        # two-pair requirement.
+                        digit = sole_digit
+                        resolution_mode = "stable_exact_one_pair_consensus"
                     isolated_out_of_domain_conflict = None
                     if digit is None:
                         # The narrowest canvas can add one polarity-specific
@@ -3050,7 +3079,8 @@ class MaaArenaReaderBackend:
                     raise ArenaReaderError(
                         "skill_card_badge_glyph_ambiguous",
                         f"{key!r} multi-view OCR did not produce one conflict-free "
-                        "digit in two complete polarity pairs or the exact "
+                        "digit in two complete polarity pairs, the strict "
+                        "stable three-frame one-pair shape, or the exact "
                         "validated isolated-conflict shape; "
                         f"views={view_diagnostics!r}, paired={paired_quiet_zones!r}",
                     )
@@ -3123,6 +3153,13 @@ class MaaArenaReaderBackend:
                 self._increment(
                     "skill_card_badge_glyph_isolated_out_of_domain_resolutions"
                 )
+            if any(
+                mode == "stable_exact_one_pair_consensus"
+                for mode in frame_resolution_modes
+            ):
+                self._increment(
+                    "skill_card_badge_glyph_stable_exact_one_pair_consensus_resolutions"
+                )
             self._badge_glyph_count_diagnostics[key] = {
                 "group_index": key[0],
                 "slot": key[1],
@@ -3138,7 +3175,7 @@ class MaaArenaReaderBackend:
                 ),
                 "ocr_preprocess": (
                     "q4-positive-binary/pad-8-16-24/cubic/h48/"
-                    "polarity-2/v2"
+                    "polarity-2/v3"
                 ),
                 "frame_vote_counts": frame_vote_counts,
                 "frame_views": frame_view_diagnostics,
@@ -3181,7 +3218,7 @@ class MaaArenaReaderBackend:
                 ),
                 "ocr_preprocess": (
                     "q4-positive-binary/pad-8-16-24/cubic/h48/"
-                    "polarity-2/v2"
+                    "polarity-2/v3"
                 ),
                 "frame_vote_counts": frame_vote_counts,
                 "frame_views": frame_view_diagnostics,
@@ -3338,6 +3375,17 @@ class MaaArenaReaderBackend:
                             time.sleep(0.25)
                             continue
                         raise
+                    logger.info(
+                        json.dumps(
+                            {
+                                "event": "arena_grade_recognized",
+                                "grade": grade,
+                                "source": "live_screen",
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                    )
                 break
             if state is ArenaPageState.AMBIGUOUS:
                 ambiguous_reads += 1
