@@ -883,11 +883,11 @@ class ArenaLineupReader:
         active = False
         try:
             self.backend.ensure_arena_main(require_opponents=False)
+            arena_grade = self._require_backend_grade()
             active = True
             own_team = self._read_team(target)
             self.backend.leave_team(target)
             self.backend.ensure_arena_main(require_opponents=False)
-            arena_grade = self._require_backend_grade()
             active = False
         except Exception as error:
             try:

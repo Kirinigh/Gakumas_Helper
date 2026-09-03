@@ -658,10 +658,13 @@ class OwnScoreCacheStore:
         *,
         simulations: int,
         seed: int,
+        preserve_grade_override: bool = False,
     ) -> dict[str, Any]:
+        if not isinstance(preserve_grade_override, bool):
+            raise ValueError("preserve_grade_override must be a boolean")
         snapshot = validate_own_snapshot(own_snapshot)
         grade_override = None
-        if self.path.is_file():
+        if preserve_grade_override and self.path.is_file():
             try:
                 existing = self._read_record()
                 if existing.get("schema_version") == CACHE_SCHEMA_VERSION:

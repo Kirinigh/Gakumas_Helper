@@ -247,13 +247,19 @@ def _measure_customization_badge_internal(
             # A rendered one-digit count crosses the lower-centre lane of the
             # same green plate.  Merely lying somewhere inside the plate is
             # insufficient: live card art can leave a second white component
-            # near the lower-left edge.  Requiring geometric intersection with
-            # the centre lane keeps that art out without merging or selecting
-            # components by OCR outcome.
-            intersects_digit_lane = bool(
-                gx <= peak_x + 5
-                and gx + gw - 1 >= peak_x - 2
+            # near the lower-left edge.  A one-pixel boundary touch is still
+            # possible for that art in live frames, so require two columns of
+            # actual overlap with the centre lane.  This remains independent
+            # of OCR outcome and does not merge otherwise distinct components.
+            digit_lane_left = peak_x - 2
+            digit_lane_right = peak_x + 5
+            digit_lane_overlap_pixels = max(
+                0,
+                min(gx + gw - 1, digit_lane_right)
+                - max(gx, digit_lane_left)
+                + 1,
             )
+            intersects_digit_lane = digit_lane_overlap_pixels >= 2
             glyph_raw_components.append(
                 {
                     "box": [gx, gy, gw, gh],
@@ -263,6 +269,7 @@ def _measure_customization_badge_internal(
                         round(float(centroid_y), 6),
                     ],
                     "centroid_distance": round(centroid_distance, 6),
+                    "digit_lane_overlap_pixels": digit_lane_overlap_pixels,
                     "intersects_digit_lane": intersects_digit_lane,
                 }
             )
