@@ -1,47 +1,62 @@
 {
-  "schema_version": 1,
+  "build": {
+    "deterministic_output": "NPZ_AND_CANONICAL_LF_JSON",
+    "tool_contract": "task095-arena-card-cost-reference-v1"
+  },
   "component": "task410_arena_card_face_cost_reference",
-  "source": {
-    "repository": "https://github.com/surisuririsu/gakumas-tools",
-    "revision": "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6",
-    "license": "BSD-3-Clause",
-    "source_set_sha256": "620DFC2F503182F2138BBF7853CC60877EEF5388E1D78A7313F09F8817C74A1C"
+  "evaluation": {
+    "path": "production_handoff_evaluation.json",
+    "sha256": "D73220AB0034ED7FF566C60830CF64879A3C724906817B9413307FFFC4C1545D",
+    "status": "PASS",
+    "tool_contract": "task095-static-reference-production-promotion-v1"
   },
   "gallery": {
-    "path": "card_cost_reference.npz",
-    "sha256": "5DC6BB337A2379567FC49C85B1DBD0469F7499006F8AF8BE8004817152636DA5",
+    "carrier_shape": [
+      24,
+      24
+    ],
     "generic_card_count": 53,
-    "template_count": 12,
     "normalization_size": [
       96,
       96
     ],
+    "path": "card_cost_reference.npz",
     "roi": [
       64,
       62,
       32,
       34
     ],
-    "carrier_shape": [
-      24,
-      24
-    ],
+    "sha256": "5DC6BB337A2379567FC49C85B1DBD0469F7499006F8AF8BE8004817152636DA5",
     "symbol_shape": [
       2,
       24,
       24
-    ]
+    ],
+    "template_count": 12
+  },
+  "production_handoff": {
+    "reason": "deterministic source rebuild, container, and offline behavior gates passed; independent live holdout remains PENDING",
+    "status": "READY_WITH_REAL_SAMPLES_PENDING"
   },
   "runtime": {
-    "maximum_mask_error": 0.11,
-    "minimum_class_margin": 0.01,
-    "maximum_medium_error": 0.15,
-    "minimum_medium_margin": 0.04,
-    "maximum_high_error": 0.2,
     "maximum_cutout_error": 0.16,
-    "minimum_cutout_margin": 0.04,
     "maximum_digit_error": 0.18,
+    "maximum_high_error": 0.2,
+    "maximum_mask_error": 0.11,
+    "maximum_medium_error": 0.15,
+    "minimum_class_margin": 0.01,
+    "minimum_cutout_margin": 0.04,
     "minimum_digit_margin": 0.05,
+    "minimum_medium_margin": 0.04,
     "rule_version": "arena-generic-cost-v8-id-independent-zero-topology"
+  },
+  "schema_version": 1,
+  "source": {
+    "catalog_file_set_sha256": "A7F1B4B1AB2A3F3ED4290067B01911BBC3DBF2FF0C8DCBA1AE600F240B2111F0",
+    "license": "BSD-3-Clause",
+    "repository": "https://github.com/surisuririsu/gakumas-tools",
+    "revision": "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6",
+    "source_set_sha256": "620DFC2F503182F2138BBF7853CC60877EEF5388E1D78A7313F09F8817C74A1C"
   }
 }

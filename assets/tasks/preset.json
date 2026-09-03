@@ -38,6 +38,7 @@
           "option": {
             "挑战模式": "胜率选敌",
             "竞技场期数": "latest",
+            "竞技场 Grade": "未识别",
             "竞技场胜率参数": {
               "arena_win_rate_threshold_percent": "70",
               "arena_win_rate_simulations": "2000",

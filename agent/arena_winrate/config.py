@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -12,6 +12,8 @@ DEFAULT_THRESHOLD_PERCENT = 70
 DEFAULT_SIMULATIONS = 2000
 DEFAULT_TIMEOUT_SECONDS = 180
 DEFAULT_SEASON_SELECTION = "latest"
+MIN_ARENA_GRADE = 1
+MAX_ARENA_GRADE = 7
 
 
 def _integer(value: object, *, field: str) -> int:
@@ -33,9 +35,53 @@ def _season_selection(value: object) -> str | int:
     return season
 
 
+def _grade_override(value: object) -> int | None:
+    if value is None:
+        return None
+    grade = _integer(value, field="grade_override")
+    if not MIN_ARENA_GRADE <= grade <= MAX_ARENA_GRADE:
+        raise ValueError(
+            f"grade_override must be from {MIN_ARENA_GRADE} to {MAX_ARENA_GRADE}"
+        )
+    return grade
+
+
+class ArenaGradeState(Protocol):
+    recognized_grade: int | None
+    grade_override: int | None
+    effective_grade: int | None
+    source: str
+
+
+class ArenaGradeCache(Protocol):
+    def get_grade_state(self) -> ArenaGradeState: ...
+
+    def set_grade_override(self, value: int | None) -> ArenaGradeState: ...
+
+
+def resolve_cached_arena_grade(
+    cache_store: ArenaGradeCache,
+    grade_override: object,
+) -> tuple[int, ArenaGradeState]:
+    """Persist the selected override and require one effective cached Grade."""
+
+    normalized_override = _grade_override(grade_override)
+    state = cache_store.get_grade_state()
+    if state.grade_override != normalized_override:
+        state = cache_store.set_grade_override(normalized_override)
+    grade = state.effective_grade
+    if type(grade) is not int or not MIN_ARENA_GRADE <= grade <= MAX_ARENA_GRADE:
+        raise ValueError(
+            "cached arena Grade is unrecognized; recalculate the own lineup "
+            "or select a Grade override"
+        )
+    return grade, state
+
+
 @dataclass(frozen=True)
 class ArenaRuntimeConfig:
     season: str | int = DEFAULT_SEASON_SELECTION
+    grade_override: int | None = None
     threshold_percent: int = DEFAULT_THRESHOLD_PERCENT
     simulations: int = DEFAULT_SIMULATIONS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
@@ -48,6 +94,7 @@ class ArenaRuntimeConfig:
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "ArenaRuntimeConfig":
         season = _season_selection(value.get("season", DEFAULT_SEASON_SELECTION))
+        grade_override = _grade_override(value.get("grade_override"))
         threshold_percent = _integer(
             value.get("threshold_percent", DEFAULT_THRESHOLD_PERCENT),
             field="threshold_percent",
@@ -72,6 +119,7 @@ class ArenaRuntimeConfig:
             bundle_dir = PROJECT_ROOT / bundle_dir
         return cls(
             season=season,
+            grade_override=grade_override,
             threshold_percent=threshold_percent,
             simulations=simulations,
             timeout_seconds=timeout_seconds,

@@ -25,6 +25,20 @@ except ImportError:
     logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
     logger = logging
 
+from utils.win32_input_gate import enforce_maapicli_win32_input_gate
+
+
+def _start_agent_server(agent_server, socket_id: str) -> None:
+    evidence = enforce_maapicli_win32_input_gate()
+    if evidence is not None:
+        logger.info(
+            "MaaPiCli Win32 输入权限屏障通过: "
+            f"python_pid={evidence.python_pid}, maapicli_pid={evidence.maapicli_pid}, "
+            f"game_pid={evidence.game_pid}, game_hwnd={evidence.game_window_handle}, "
+            f"integrity_rid=0x{evidence.integrity_rid:04x}"
+        )
+    agent_server.start_up(socket_id)
+
 
 def read_pip_config() -> dict:
     """
@@ -260,7 +274,7 @@ def agent():
 
         socket_id = sys.argv[-1]
 
-        AgentServer.start_up(socket_id)
+        _start_agent_server(AgentServer, socket_id)
         logger.info("AgentServer 启动")
         AgentServer.join()
         AgentServer.shut_down()

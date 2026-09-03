@@ -12,15 +12,16 @@ import shutil
 import hashlib
 import argparse
 import unicodedata
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from pathlib import Path
 from collections import defaultdict
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
-import requests
 from PIL import Image
-from playwright.sync_api import Page, Locator, sync_playwright
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page, Locator
 
 CATALOG_REPOSITORY = "https://github.com/surisuririsu/gakumas-tools"
 CATALOG_COMMIT = "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6"
@@ -32,7 +33,6 @@ WEBDATA_URL = "https://gkms-webdata.idolism.org/api/pcard"
 RENDERER_URL = "https://gkms.idolism.org/pcard"
 RENDERER_REPOSITORY = "https://github.com/vertesan/hatsuboshi-library"
 RENDERER_COMMIT = "686ae0e07e2564ff0a7beec17db13acbeb0d779d"
-EXPECTED_IDS = set(range(1, 857))
 TARGET_GROUPS = ((757, 758), (789, 791, 793), (790, 792, 794))
 KNOWN_VISUAL_AMBIGUITIES = {
     (789, 791, 793): {"sense": 789, "logic": 791, "anomaly": 793},
@@ -89,10 +89,41 @@ class CardMapping:
 
 def load_catalog(raw: bytes) -> list[dict[str, str]]:
     rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
-    ids = [int(row["id"]) for row in rows]
-    if len(rows) != 856 or set(ids) != EXPECTED_IDS or len(ids) != len(set(ids)):
-        raise ValueError("the pinned catalog must contain every ID from 1 through 856 exactly once")
-    return rows
+    try:
+        ids = [int(row["id"]) for row in rows]
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("the pinned catalog contains an invalid business ID") from error
+    if not ids or any(value < 1 for value in ids) or len(ids) != len(set(ids)):
+        raise ValueError("the pinned catalog must contain unique positive business IDs")
+    return sorted(rows, key=lambda row: int(row["id"]))
+
+
+def catalog_business_ids(catalog: list[dict[str, str]]) -> set[int]:
+    try:
+        ids = [int(row["id"]) for row in catalog]
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("the pinned catalog contains an invalid business ID") from error
+    if not ids or any(value < 1 for value in ids) or len(ids) != len(set(ids)):
+        raise ValueError("the pinned catalog must contain unique positive business IDs")
+    return set(ids)
+
+
+def business_id_scope(business_ids: set[int]) -> dict[str, Any]:
+    if not business_ids or any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 1
+        for value in business_ids
+    ):
+        raise ValueError("dataset scope requires positive business IDs")
+    ordered = sorted(business_ids)
+    scope: dict[str, Any] = {"business_ids": ordered}
+    if ordered == list(range(ordered[0], ordered[-1] + 1)):
+        scope.update(
+            {
+                "business_id_min": ordered[0],
+                "business_id_max": ordered[-1],
+            }
+        )
+    return scope
 
 
 def manifest_asset_names(manifest: dict[str, Any]) -> set[str]:
@@ -104,6 +135,9 @@ def build_crosswalk(
     api_cards: list[dict[str, Any]],
     official_asset_names: set[str],
 ) -> list[CardMapping]:
+    expected_ids = catalog_business_ids(catalog)
+    if len(api_cards) != len(expected_ids):
+        raise ValueError("catalog/webdata record counts differ")
     api_index: dict[str, dict[str, Any]] = {}
     for card in api_cards:
         key = normalized_name(str(card["name"]))
@@ -152,7 +186,12 @@ def build_crosswalk(
             )
         )
 
-    if len(mappings) != 856 or len(used_internal_keys) != 856 or len(api_cards) != 856:
+    mapped_ids = {mapping.business_id for mapping in mappings}
+    if (
+        mapped_ids != expected_ids
+        or len(mappings) != len(expected_ids)
+        or len(used_internal_keys) != len(expected_ids)
+    ):
         raise ValueError("catalog/webdata join is not a complete one-to-one mapping")
     return sorted(mappings, key=lambda item: item.business_id)
 
@@ -175,6 +214,7 @@ def download_art(
     deobfuscator_type: type,
 ) -> dict[str, Any]:
     import UnityPy
+    import requests
 
     url = url_format.replace("{o}", str(manifest_record["objectName"]))
     last_error: Exception | None = None
@@ -332,6 +372,8 @@ def render_icons(
     icons_root: Path,
     edge_path: Path,
 ) -> list[dict[str, Any]]:
+    from playwright.sync_api import sync_playwright
+
     icons_root.mkdir(parents=True, exist_ok=True)
     by_render_key = {
         (mapping.internal_id, normalized_name(mapping.api_name)): mapping for mapping in mappings
@@ -430,14 +472,20 @@ def render_icons(
                 )
         browser.close()
 
-    if rendered_business_ids != EXPECTED_IDS:
-        raise ValueError(f"renderer omitted IDs: {sorted(EXPECTED_IDS - rendered_business_ids)}")
+    expected_ids = {mapping.business_id for mapping in mappings}
+    if rendered_business_ids != expected_ids:
+        raise ValueError(
+            "renderer business ID set mismatch; "
+            f"missing={sorted(expected_ids - rendered_business_ids)}, "
+            f"surplus={sorted(rendered_business_ids - expected_ids)}"
+        )
     return sorted(image_records, key=lambda item: item["class_name"])
 
 
 def validate_rendered_dataset(
     mappings: list[CardMapping], image_records: list[dict[str, Any]], icons_root: Path
 ) -> dict[str, Any]:
+    expected_business_ids = {mapping.business_id for mapping in mappings}
     expected_names = {
         class_name(mapping, variant)
         for mapping in mappings
@@ -530,7 +578,7 @@ def validate_rendered_dataset(
 
     return {
         "status": status,
-        "expected_business_id_count": 856,
+        "expected_business_id_count": len(expected_business_ids),
         "rendered_image_count": len(image_records),
         "missing_ids": [],
         "surplus_classes": [],
@@ -553,6 +601,8 @@ def validate_rendered_dataset(
 
 
 def main() -> int:
+    import requests
+
     parser = argparse.ArgumentParser(description="Build the authoritative skill-card dataset")
     parser.add_argument("--official-manifest", type=Path, required=True)
     parser.add_argument("--official-manifest-label", required=True)
@@ -592,6 +642,7 @@ def main() -> int:
     catalog_response.raise_for_status()
     catalog_raw = catalog_response.content
     catalog = load_catalog(catalog_raw)
+    expected_business_ids = catalog_business_ids(catalog)
     (sources_root / "skill_cards.csv").write_bytes(catalog_raw)
 
     api_response = requests.get(
@@ -650,7 +701,7 @@ def main() -> int:
         "schema_version": 1,
         "dataset_id": f"task075-authoritative-{args.official_manifest_label}",
         "dataset_revision": args.official_manifest_label,
-        "scope": {"business_id_min": 1, "business_id_max": 856},
+        "scope": business_id_scope(expected_business_ids),
         "sources": {
             "catalog": {
                 "repository": CATALOG_REPOSITORY,

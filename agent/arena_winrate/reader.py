@@ -349,6 +349,9 @@ class MemberObservation:
 class ArenaReaderBackend(Protocol):
     """Administrator-Maa screen operations required by :class:`ArenaLineupReader`."""
 
+    @property
+    def grade(self) -> int | None: ...
+
     def ensure_arena_main(self, *, require_opponents: bool = True) -> None: ...
 
     def enter_team(self, target: TeamTarget) -> None: ...
@@ -492,6 +495,174 @@ class ArenaLineupReader:
         """Expose low-dimensional reports from the latest public read operation."""
 
         return tuple(observation.to_card_report() for observation in self._last_observations)
+
+    def last_read_metrics_summary(self) -> dict[str, Any]:
+        """Aggregate one public read into a compact, machine-owned pace report."""
+
+        timings: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        samples: dict[str, list[float]] = {}
+        detail_title_disambiguations: list[dict[str, Any]] = []
+        for observation in self._last_observations:
+            evidence = observation.evidence
+            raw_timings = evidence.get("timing_seconds", {})
+            raw_counts = evidence.get("counts", {})
+            raw_samples = evidence.get("duration_samples_seconds", {})
+            if not isinstance(raw_timings, Mapping):
+                raw_timings = {}
+            if not isinstance(raw_counts, Mapping):
+                raw_counts = {}
+            if not isinstance(raw_samples, Mapping):
+                raw_samples = {}
+            for name, value in raw_timings.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    timings[str(name)] = timings.get(str(name), 0.0) + float(value)
+            for name, value in raw_counts.items():
+                if isinstance(value, int) and not isinstance(value, bool):
+                    counts[str(name)] = counts.get(str(name), 0) + value
+            for name, values in raw_samples.items():
+                if not isinstance(values, (list, tuple)):
+                    continue
+                accepted = [
+                    float(value)
+                    for value in values
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                ]
+                if accepted:
+                    samples.setdefault(str(name), []).extend(accepted)
+            raw_detail_title_disambiguations = evidence.get(
+                "detail_title_disambiguations",
+                (),
+            )
+            if isinstance(raw_detail_title_disambiguations, (list, tuple)):
+                for value in raw_detail_title_disambiguations:
+                    if not isinstance(value, Mapping):
+                        continue
+                    detail_title_disambiguations.append(
+                        {
+                            "team_id": observation.team_id,
+                            "stage_number": observation.stage_number,
+                            "member_slot": observation.member_slot,
+                            **dict(value),
+                        }
+                    )
+
+        def percentile(values: Sequence[float], quantile: float) -> float:
+            ordered = sorted(values)
+            if len(ordered) == 1:
+                return ordered[0]
+            position = (len(ordered) - 1) * quantile
+            lower = int(position)
+            upper = min(len(ordered) - 1, lower + 1)
+            fraction = position - lower
+            return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
+
+        duration_percentiles = {
+            name: {
+                "count": len(values),
+                "p50": round(percentile(values, 0.50), 6),
+                "p95": round(percentile(values, 0.95), 6),
+                "max": round(max(values), 6),
+            }
+            for name, values in sorted(samples.items())
+            if values
+        }
+        evidence_route_names = (
+            "skill_card_detail_same_frame_effect_roi_recoveries",
+            "skill_card_detail_enhanced_effect_roi_recoveries",
+            "skill_card_detail_effect_roi_retries",
+            "skill_card_source_restore_semantic_settled_fallbacks",
+            "skill_card_source_restore_source_family_fallbacks",
+            "skill_card_source_restore_detail_title_disambiguations",
+            "p_item_detail_effect_disambiguations",
+            "p_item_generation_resamples",
+        )
+        retry_names = (
+            "skill_card_detail_click_retries",
+            "skill_card_detail_contact_retries",
+            "skill_card_detail_source_resets",
+            "skill_card_detail_close_retries",
+        )
+        return {
+            "member_count": len(self._last_observations),
+            "timing_seconds": {
+                name: round(value, 6) for name, value in sorted(timings.items())
+            },
+            "counts": dict(sorted(counts.items())),
+            "duration_percentile_method": "linear_interpolation_(n-1)q",
+            "duration_percentiles_seconds": duration_percentiles,
+            "assumptive_cost_fallbacks": [
+                dict(value)
+                for value in self.last_cost_customization_fallbacks()
+            ],
+            "detail_title_disambiguations": sorted(
+                detail_title_disambiguations,
+                key=lambda value: (
+                    str(value.get("team_id", "")),
+                    int(value.get("stage_number", 0)),
+                    int(value.get("member_slot", 0)),
+                    int(value.get("group_index", 0)),
+                    int(value.get("card_slot", 0)),
+                ),
+            ),
+            "recognition_evidence_routes": {
+                name: counts[name]
+                for name in evidence_route_names
+                if counts.get(name, 0) > 0
+            },
+            "ui_action_retries": {
+                name: counts[name]
+                for name in retry_names
+                if counts.get(name, 0) > 0
+            },
+            # Source-family restoration and title disambiguation are subsets of
+            # semantic-settled proofs; consumers must not add the counters as
+            # independent events or report successful disambiguation as an error.
+            "counter_relationships": {
+                "skill_card_source_restore_source_family_fallbacks": (
+                    "subset_of_skill_card_source_restore_semantic_settled_fallbacks"
+                ),
+                "skill_card_source_restore_detail_title_disambiguations": (
+                    "subset_of_skill_card_source_restore_source_family_fallbacks"
+                ),
+            },
+            "duration_relationships": {
+                "skill_card_detail_positive_confirmation_phase": (
+                    "subset_of_skill_card_detail_resolution_phase"
+                ),
+                "skill_card_detail_open_phase": (
+                    "component_of_skill_card_detail_transaction"
+                ),
+                "skill_card_detail_resolution_phase": (
+                    "component_of_skill_card_detail_transaction"
+                ),
+                "skill_card_source_restore_phase": (
+                    "component_of_skill_card_detail_transaction; may repeat after a "
+                    "proven close retry"
+                ),
+                "skill_card_detail_capture_start_span": (
+                    "diagnostic_only; does_not_change_fresh_frame_decision"
+                ),
+                "skill_card_source_restore_capture_start_span": (
+                    "diagnostic_only; does_not_change_two_frame_restore_decision"
+                ),
+            },
+            "screenshots_persisted": False,
+        }
+
+    def _require_backend_grade(self) -> int:
+        grade = getattr(self.backend, "grade", None)
+        if grade is None:
+            raise ArenaReaderError(
+                "arena_grade_missing",
+                "the arena backend has no recognized or injected Grade",
+            )
+        if type(grade) is not int or not 1 <= grade <= 7:
+            raise ArenaReaderError(
+                "arena_grade_invalid",
+                f"the arena backend Grade is outside 1..7: {grade!r}",
+            )
+        return grade
 
     def last_cost_customization_fallbacks(
         self,
@@ -679,6 +850,7 @@ class ArenaLineupReader:
                 self.backend.leave_team(target)
                 self.backend.ensure_arena_main(require_opponents=True)
                 active_target = None
+            arena_grade = self._require_backend_grade()
         except Exception as error:
             try:
                 self.backend.recover_to_arena_main(require_opponents=True)
@@ -696,6 +868,7 @@ class ArenaLineupReader:
             "capture_id": self.capture_id_factory(),
             "source": "live_screen",
             "season": self.season.season,
+            "arena_grade": arena_grade,
             "stageIds": list(self.season.stage_ids),
             "own_team": teams[0],
             "opponents": teams[1:],
@@ -714,6 +887,7 @@ class ArenaLineupReader:
             own_team = self._read_team(target)
             self.backend.leave_team(target)
             self.backend.ensure_arena_main(require_opponents=False)
+            arena_grade = self._require_backend_grade()
             active = False
         except Exception as error:
             try:
@@ -732,6 +906,7 @@ class ArenaLineupReader:
             "capture_id": self.capture_id_factory(),
             "source": "live_screen",
             "season": self.season.season,
+            "arena_grade": arena_grade,
             "stageIds": list(self.season.stage_ids),
             "own_team": own_team,
         }
@@ -746,6 +921,7 @@ class ArenaLineupReader:
         """
 
         self._last_observations.clear()
+        read_started = time.perf_counter()
         cached = validate_own_snapshot(own_snapshot)
         expected_stage_ids = list(self.season.stage_ids)
         if cached["season"] != self.season.season or cached["stageIds"] != expected_stage_ids:
@@ -753,6 +929,7 @@ class ArenaLineupReader:
                 "own_snapshot_season_mismatch",
                 "cached own lineup does not match the selected contest season and stage IDs",
             )
+        effective_grade = self._require_backend_grade()
 
         targets = tuple(TeamTarget(f"opponent-{position}", position) for position in range(3))
         opponents: list[dict[str, Any]] = []
@@ -782,10 +959,12 @@ class ArenaLineupReader:
             "capture_id": self.capture_id_factory(),
             "source": "live_screen",
             "season": self.season.season,
+            "arena_grade": effective_grade,
             "stageIds": expected_stage_ids,
             "own_capture_id": cached["capture_id"],
             "own_team": cached["own_team"],
             "opponents": opponents,
+            "read_wall_seconds": round(time.perf_counter() - read_started, 6),
         }
         return validate_snapshot(snapshot)
 
@@ -880,9 +1059,9 @@ class ArenaLineupReader:
         empty_groups: list[list[bool]] = [[], []]
         clicked_cost_fallback_slots: set[tuple[int, int]] = set()
         group_order = (1, 0)
-        # Establish one post-swipe page generation before any authoritative
-        # slot classification.  The pre-swipe upper-left guard is only an
-        # interaction safety gate and must not replace this shared generation.
+        # Request the lower row first so one upward swipe establishes the
+        # shared post-swipe generation for both physical rows.  The subsequent
+        # upper-row request reuses that same frozen twelve-card generation.
         for group_index in group_order:
             self.backend.prepare_skill_card_group(target, stage_number, member_slot, group_index)
 

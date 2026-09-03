@@ -47,6 +47,16 @@ class OwnScoreAdapter(Protocol):
 
 
 @dataclass(frozen=True)
+class ArenaProviderAttemptFailure:
+    """Image-free diagnostic for one rejected snapshot-provider attempt."""
+
+    attempt: int
+    error_type: str
+    code: str | None
+    detail: str
+
+
+@dataclass(frozen=True)
 class ArenaEvaluation:
     status: str
     attempts: int
@@ -54,6 +64,7 @@ class ArenaEvaluation:
     decision: ArenaDecision | None = None
     distribution_summary: dict[str, object] | None = None
     error: str | None = None
+    provider_attempt_failures: tuple[ArenaProviderAttemptFailure, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -355,11 +366,22 @@ class ArenaWinRateService:
         snapshot: dict[str, Any] | None = None
         validation_error: SnapshotValidationError | None = None
         observation_error: Exception | None = None
+        provider_attempt_failures: list[ArenaProviderAttemptFailure] = []
         for attempt in range(1, 3):
             try:
                 observation = provider.read()
             except Exception as error:
                 observation_error = error
+                raw_code = getattr(error, "code", None)
+                raw_detail = getattr(error, "detail", error)
+                provider_attempt_failures.append(
+                    ArenaProviderAttemptFailure(
+                        attempt=attempt,
+                        error_type=type(error).__name__,
+                        code=None if raw_code is None else str(raw_code),
+                        detail=str(raw_detail),
+                    )
+                )
                 continue
             observation_error = None
             try:
@@ -374,12 +396,14 @@ class ArenaWinRateService:
                     attempts=2,
                     safe_to_click=False,
                     error=f"snapshot provider failed: {observation_error}",
+                    provider_attempt_failures=tuple(provider_attempt_failures),
                 )
             return ArenaEvaluation(
                 status="incomplete_input",
                 attempts=2,
                 safe_to_click=False,
                 error=str(validation_error),
+                provider_attempt_failures=tuple(provider_attempt_failures),
             )
 
         request = {
@@ -409,6 +433,7 @@ class ArenaWinRateService:
                 attempts=attempt,
                 safe_to_click=False,
                 error=str(error),
+                provider_attempt_failures=tuple(provider_attempt_failures),
             )
 
         decision = select_first_qualified(
@@ -430,6 +455,7 @@ class ArenaWinRateService:
                 safe_to_click=False,
                 decision=decision,
                 distribution_summary=distribution_summary,
+                provider_attempt_failures=tuple(provider_attempt_failures),
             )
         return ArenaEvaluation(
             status="selected" if allow_click else "dry_run_selected",
@@ -437,4 +463,5 @@ class ArenaWinRateService:
             safe_to_click=allow_click,
             decision=decision,
             distribution_summary=distribution_summary,
+            provider_attempt_failures=tuple(provider_attempt_failures),
         )

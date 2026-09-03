@@ -54,6 +54,7 @@ PREPARE
 
 - 当前状态的全部门未通过时，不得进入下一状态。
 - 任何输入、版本、源码提交或资产字节变化都会使后续状态失效，必须从受影响的最早状态重新执行。
+- 每次本地尝试使用独立 `<UTC>-<sourceSHA7>-aNN` build/run ID 目录；输出一经生成不得覆盖，但本地失败不消耗目标 SemVer，也不得为此重复复制未变化的大型输入。
 - 不得从已运行或被更新器混写的安装目录构建候选。
 - 不得从含未提交改动的共享工作树构建公开包。
 
@@ -61,7 +62,7 @@ PREPARE
 
 1. 批次必须分别固定 GKH 版本、上游 Maa 标签和上一通道版本，并把后者传给 `--previous-channel-version`；上游标签只能写入独立 provenance／manifest 字段。
 2. GKH 版本只允许 `vMAJOR.MINOR.PATCH`。项目处于 `0.x` 时，`MINOR` 表示基础大更新，`PATCH` 表示该基础上的内部迭代；只有项目正式完工才把 `MAJOR` 升至 `1`。
-3. 已进入独立命名空间后，新版本必须按 SemVer 严格高于上一通道版本；已生成不可变候选、已安装、已发布，或验证失败后已封存的版本号均视为已消耗，不得复用、覆盖或移动，修复必须递增 `PATCH`。
+3. 已进入独立命名空间后，目标版本必须按 SemVer 严格高于上一公开通道版本。仅本地生成的快照、候选、资产或冒烟失败不消耗版本，同一目标 SemVer 在新 build/run ID 目录重建；旧输出不得覆盖或复用。版本首次进入规范安装目录，或远端 `main`／tag、draft／Release、任一版本化资产或分发副本首次写到隔离区之外时才视为已消耗，后续修复必须递增 `PATCH`。
 4. 旧 `vMAJOR.MINOR.PATCH+gkh.*` 组合版本到独立 GKH SemVer 只允许一次人工安装迁移。构建清单必须把这次迁移标记为 `requires_manual_bootstrap=true`；此后不得回退到旧命名空间。
 5. README、指南和 Issue 示例使用 `vXXX` 或结构占位符，不冻结当前精确版本；`interface.json`、构建清单、Release Notes、来源／散列证据和历史任务记录必须保留实际版本。
 6. `update_contract.requires_manual_bootstrap=true` 时发布说明必须要求手动安装；否则说明应引导用户使用 MFAAvalonia 内置 GitHub 资源更新，不得再用自定义“全故障矩阵未完成”阻止正常升级。
@@ -76,7 +77,9 @@ PREPARE
 - 上一公开通道版本和本次派生版本；
 - 公开仓库 URL；
 - 本地开发基线提交和隔离工作树；
+- 本地 build/run ID；它只进入 `.local` 目录名和任务证据，不进入产品版本、`interface.json` 或公开 manifest；
 - 竞技场引擎、Python 依赖、模型、图库和数据的固定 revision/schema；
+- MFAAvalonia Core 正式 bundle、固定上游 `v2.15.2` 来源、manifest/DLL 散列及许可证通知；
 - 许可证、再分发状态和所需人工复核；
 - 本批次允许的联网、远端写入、发布和本机安装边界。
 
@@ -88,6 +91,7 @@ PREPARE
 $ReleaseWorktree = (Resolve-Path -LiteralPath '<VERIFIED_RELEASE_WORKTREE>').Path
 $Python = (Resolve-Path -LiteralPath '<VERIFIED_PYTHON_EXE>').Path
 $DevelopmentWorktree = (Resolve-Path -LiteralPath '<DEVELOPMENT_WORKTREE>').Path
+$MfaCoreBundle = (Resolve-Path -LiteralPath '<VERIFIED_MFA_CORE_BUNDLE>').Path
 $Repository = 'https://github.com/Kirinigh/Gakumas_Helper'
 $Version = '<VERSION>'
 $PreviousVersion = '<PREVIOUS_MFA_CHANNEL_VERSION>'
@@ -188,6 +192,7 @@ finally {
   --upstream-sha256 $UpstreamSha256 `
   --upstream-tag $UpstreamTag `
   --engine-bundle $EngineBundle `
+  --mfa-core-bundle $MfaCoreBundle `
   --python-site-packages $PythonSitePackages `
   --output $CandidateDirectory `
   --update-repository $Repository `
@@ -199,6 +204,8 @@ finally {
 
 - `GAKUMAS_HELPER_BUILD.json`、`interface.json` 和关键文件散列；
 - 上游标签/ZIP、公开源码 SHA、引擎、Python 包和更新契约；
+- MFA Core bundle 仅含 `manifest.json` 与 `MFAAvalonia.Core.dll`，固定来源、补丁、稳定 Sentry／编译器路径映射、构建输入、DLL 和 `THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE` 均与候选清单及实算散列一致；
+- 候选 `interface.json` 不含 `mirrorchyan_rid` 或 `mirrorchyan_multiplatform`；pip 依赖更新及 RIS engine/data 独立组件更新契约保持不变；
 - 构建器的内嵌 Python 冒烟使用隔离工作目录，且候选完整文件树在运行前后无新增、删除或内容变化；
 - 内嵌 Python 与生产模块可导入；
 - 正式候选不得直接用于图形界面启动冒烟；本阶段如需验证窗口行为，只能启动候选的可丢弃完整副本，完成后再次确认原候选文件树散列未变化；
@@ -284,6 +291,7 @@ git -C $PublicSnapshotDirectory push --atomic `
 - 若远端不支持 `--atomic`，命令必须失败，不得自动降级为部分写入；
 - push 返回非零或连接中断后，先重新查询远端引用，再决定是否重试；不得根据“看起来已上传”猜测结果；
 - 成功后立即确认远端 `main` 与新 tag 都等于 `<PUBLIC_SHA>`。
+- 原子 push 首次成功即为本流程的版本消费点；此后即使 draft 或资产阶段失败，同一版本也不得复用。
 
 旧版本 tag 和 Release 不移动、不删除。线性规则启用后创建的新 tag 必须指向 `main` 上对应的公开提交；迁移前已存在且不在 `main` 祖先链上的不可变 tag/Release 作为历史例外保留，不得为对齐新规则而重写。
 
@@ -343,7 +351,7 @@ gh release edit $Version `
 
 | 失败位置 | 必须采取的动作 |
 | --- | --- |
-| 源码、快照、候选或资产验证失败 | 停留在本地隔离目录；不得写远端，不得切换安装 |
+| 源码、快照、候选或资产验证失败 | 仅当全部输出仍停留在当前 build/run ID 的本地隔离目录时，目标 SemVer 不消耗；不得覆盖该输出、写远端、复制到分发位置或切换安装，修复后以新 run ID 重建 |
 | 远端预检发现 SHA 漂移、tag/Release 已存在 | 停止并重新审计，不覆盖现有状态 |
 | 原子 push 失败或连接中断 | 查询远端两个引用；在状态明确前不得重试或进入 Release |
 | 引用已对齐但创建/上传草稿失败 | 不公开；保留现场并选择继续草稿或经单独授权回退引用，不自动删除/强推 |

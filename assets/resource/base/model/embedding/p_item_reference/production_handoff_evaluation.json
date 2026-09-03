@@ -1,0 +1,39 @@
+{
+  "artifact": {
+    "path": "p_item_rendered_reference_gallery.npz",
+    "sha256": "6ABA5C63BBFE91D06F782C8DCD88B1A915CCCC396E11C5160B8DA5BE26405A9A"
+  },
+  "candidate_manifest_sha256": "7A26B84008D9E100DEFF7E4FA77E2421C99AC83EF493B9723A8DC15B0F63D9E1",
+  "component": "p_item_reference",
+  "privacy": "PUBLIC_SAFE_AGGREGATE_ONLY",
+  "promotion_evidence": {
+    "base_gallery_sha256": "B65D4686D368665AEA229AA4C09AF35FD1FFA04BC4119BD29571A889CD455D9E",
+    "catalog_git_blob_sha1": "A05AEB88DD69998B713C1EC8076B31B0CC4CD4C7",
+    "catalog_sha256": "FB13629F06837C852B0887E7D50B2ADAF67573E444109DEFE173C1F825DB005B",
+    "official_reference_count": 2,
+    "production_source_evidence_sha256": "8398CF4041FEED83AEC4EA356351E5F69E8E33101852738070B7CDFB17A20463",
+    "source_icon_count": 426,
+    "source_icons_sha256": "936912459DDF7D7FC3A7D4FC66C2CE579DB399D6C257E8C8EEDB7C6F467C43E1",
+    "source_pixel_match_count": 426
+  },
+  "schema_version": 1,
+  "status": "PASS",
+  "tool_contract": "task095-static-reference-production-promotion-v1",
+  "validation": {
+    "array_count": 3,
+    "base_gallery_sha256": "B65D4686D368665AEA229AA4C09AF35FD1FFA04BC4119BD29571A889CD455D9E",
+    "business_id_count": 426,
+    "changed_business_ids": [
+      475,
+      476
+    ],
+    "decoded_png_count": 426,
+    "independent_live_holdout": "PENDING",
+    "metadata_free_png_count": 426,
+    "self_ranking": {
+      "minimum_top1_margin": 0.040822,
+      "passed": 2,
+      "sample_count": 2
+    }
+  }
+}

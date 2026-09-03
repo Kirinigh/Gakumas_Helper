@@ -287,8 +287,8 @@ if ([string]$manifest.update_contract.mode -eq 'derived_release_channel') {
     }
 }
 
-if (Get-Process -Name 'MaaGakumasu', 'MFAAvalonia' -ErrorAction SilentlyContinue) {
-    throw 'MaaGakumasu/MFAAvalonia is running; the install root was not changed.'
+if (Get-Process -Name 'MaaGakumasu', 'MFAAvalonia', 'MaaPiCli' -ErrorAction SilentlyContinue) {
+    throw 'MaaGakumasu/MFAAvalonia/MaaPiCli is running; the install root was not changed.'
 }
 
 Assert-Manifest -Root $candidateRoot -Manifest $manifest

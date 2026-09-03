@@ -17,6 +17,8 @@ from .reference import (
     PItemReferenceAccelerationProfile,
     measure_p_item_completeness,
     measure_p_item_content_generation,
+    p_item_content_generation_signatures,
+    measure_p_item_content_generation_from_signatures,
 )
 from .preprocess import (
     P_ITEM_ART_BOX,
@@ -46,5 +48,7 @@ __all__ = [
     "PItemReferenceRuntime",
     "PItemRenderedReferenceGallery",
     "measure_p_item_content_generation",
+    "measure_p_item_content_generation_from_signatures",
     "measure_p_item_completeness",
+    "p_item_content_generation_signatures",
 ]

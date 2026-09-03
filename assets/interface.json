@@ -1,9 +1,7 @@
 {
   "interface_version": 2,
   "name": "MaaGakumasu",
-  "version": "v0.1.1",
-  "mirrorchyan_rid": "MaaGakumasu",
-  "mirrorchyan_multiplatform": true,
+  "version": "v0.2.0",
   "github": "https://github.com/Kirinigh/Gakumas_Helper",
   "contact": "QQ群: 799823681",
   "icon": "./logo.ico",
@@ -142,6 +140,7 @@
       ],
       "default_check": true,
       "doc": "$每日挑战说明",
+      "description": ".local/arena-win-rate/own-score-cache-summary.md",
       "label": "$每日挑战"
     },
     {
@@ -150,8 +149,14 @@
       "option": [
         "竞技场期数",
         "竞技场胜率参数",
+        "每日挑战自动重算己方数据",
         "每日挑战本地画面采集"
       ],
+      "pipeline_override": {
+        "ChallengeVerifyRefresh": {
+          "next": []
+        }
+      },
       "default_check": false,
       "doc": "$竞技场胜率独立挑战说明",
       "label": "$竞技场胜率独立挑战"
@@ -880,6 +885,7 @@
           "description": "$胜率选敌说明",
           "option": [
             "竞技场期数",
+            "竞技场 Grade",
             "竞技场胜率参数",
             "每日挑战自动重算己方数据"
           ],
@@ -1004,6 +1010,102 @@
         }
       ],
       "label": "$每日挑战自动重算己方数据"
+    },
+    "竞技场 Grade": {
+      "type": "select",
+      "default_case": "未识别",
+      "label": "$竞技场 Grade",
+      "description": "$竞技场 Grade 说明",
+      "cases": [
+        {
+          "name": "未识别",
+          "label": "$未识别",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "grade_override": null
+              }
+            }
+          }
+        },
+        {
+          "name": "7",
+          "label": "7",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "grade_override": 7
+              }
+            }
+          }
+        },
+        {
+          "name": "6",
+          "label": "6",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "grade_override": 6
+              }
+            }
+          }
+        },
+        {
+          "name": "5",
+          "label": "5",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "grade_override": 5
+              }
+            }
+          }
+        },
+        {
+          "name": "4",
+          "label": "4",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "grade_override": 4
+              }
+            }
+          }
+        },
+        {
+          "name": "3",
+          "label": "3",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "grade_override": 3
+              }
+            }
+          }
+        },
+        {
+          "name": "2",
+          "label": "2",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "grade_override": 2
+              }
+            }
+          }
+        },
+        {
+          "name": "1",
+          "label": "1",
+          "pipeline_override": {
+            "ChallengeChoose": {
+              "custom_action_param": {
+                "grade_override": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "竞技场胜率参数": {
       "type": "input",

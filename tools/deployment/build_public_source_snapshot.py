@@ -155,6 +155,12 @@ WINDOWS_RESERVED_PATH_STEMS = {
     *(f"com{suffix}" for suffix in (*range(1, 10), "¹", "²", "³")),
     *(f"lpt{suffix}" for suffix in (*range(1, 10), "¹", "²", "³")),
 }
+CURRENT_INTERFACE_FORBIDDEN_FIELDS = (
+    "mirrorchyan_rid",
+    "mirrorchyan_multiplatform",
+)
+RELEASE_NOTES_METADATA_HEADING = "### 可复核信息"
+RELEASE_NOTES_PLACEHOLDER_PATTERN = re.compile(r"@[A-Z][A-Z0-9_]*@")
 
 
 class PublicSnapshotError(RuntimeError):
@@ -584,6 +590,29 @@ def _release_version_from_message(message: str) -> str | None:
     return None
 
 
+def _render_release_changelog(
+    template: str,
+    *,
+    version: str,
+    repository: str,
+) -> str:
+    marker = f"\n{RELEASE_NOTES_METADATA_HEADING}\n"
+    if template.count(marker) != 1:
+        raise PublicSnapshotError(
+            "release notes must contain exactly one verifiable-information heading"
+        )
+    body, _marker, _metadata = template.partition(marker)
+    if "@VERSION@" not in body:
+        raise PublicSnapshotError("release notes body must contain @VERSION@")
+    rendered = body.replace("@VERSION@", version).replace("@REPOSITORY@", repository)
+    unresolved = sorted(set(RELEASE_NOTES_PLACEHOLDER_PATTERN.findall(rendered)))
+    if unresolved:
+        raise PublicSnapshotError(
+            "release notes body contains unresolved placeholders: " + ", ".join(unresolved)
+        )
+    return rendered.rstrip() + "\n"
+
+
 def _validate_snapshot(output: Path) -> dict[str, int]:
     for path in output.rglob("*"):
         relative = path.relative_to(output)
@@ -972,6 +1001,17 @@ def build_public_snapshot(
             shutil.copy2(public_gitignore, output / ".gitignore")
             public_provenance = output / "tools" / "deployment" / "public" / "ASSET_PROVENANCE.md"
             shutil.copy2(public_provenance, output / "ASSET_PROVENANCE.md")
+            release_notes_path = output / "tools" / "deployment" / "public" / "RELEASE_NOTES.md"
+            release_notes_template = release_notes_path.read_text(encoding="utf-8")
+            changelog_path = output / "assets" / "resource" / "Changelog.md"
+            changelog_path.write_text(
+                _render_release_changelog(
+                    release_notes_template,
+                    version=version,
+                    repository=repository,
+                ),
+                encoding="utf-8",
+            )
             interface_path = output / "assets" / "interface.json"
             interface = json.loads(interface_path.read_text(encoding="utf-8"))
             upstream_version = interface.get("version")
@@ -980,6 +1020,14 @@ def build_public_snapshot(
             ) is None:
                 raise PublicSnapshotError(
                     "source interface must record a separate upstream Maa vMAJOR.MINOR.PATCH tag"
+                )
+            forbidden_interface_fields = sorted(
+                field for field in CURRENT_INTERFACE_FORBIDDEN_FIELDS if field in interface
+            )
+            if forbidden_interface_fields:
+                raise PublicSnapshotError(
+                    "current GKH interface must not declare upstream MirrorChyan fields: "
+                    + ", ".join(forbidden_interface_fields)
                 )
             interface["version"] = version
             interface["github"] = repository

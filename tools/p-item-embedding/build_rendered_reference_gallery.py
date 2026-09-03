@@ -17,13 +17,30 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--expected-count", type=int, default=420)
+    parser.add_argument("--expected-count", type=int, required=True)
+    parser.add_argument(
+        "--provisional-business-id",
+        type=int,
+        action="append",
+        default=[],
+        help="Business ID requiring runtime detail confirmation; repeat as needed",
+    )
     parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--source-scope", required=True)
+    parser.add_argument(
+        "--source-provenance",
+        type=Path,
+        help="Optional auditable extension-provenance JSON embedded in the manifest",
+    )
     parser.add_argument("--evidence-id", default="task410-owner-pitem-r88")
     parser.add_argument("--jjc-reference-identity", default="CURRENT_VISIBLE_SUBSET")
     parser.add_argument(
         "--coarse-fine-validation",
         default="TOP2_DECISION_EQUIVALENT_100_OF_100_CANDIDATE24_GUARD12",
+    )
+    parser.add_argument(
+        "--upgraded-marker-validation",
+        default="PENDING_REAL_UPGRADED_SAMPLE",
     )
     return parser.parse_args()
 
@@ -52,6 +69,10 @@ def _encoded_digest(ids: list[int], encoded_images: list[bytes]) -> str:
     return digest.hexdigest().upper()
 
 
+def _canonical_json_bytes(value: object) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
 def _sanitized_png_bytes(path: Path) -> bytes:
     original = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if original is None or original.ndim != 3 or original.shape[2] != 3:
@@ -73,8 +94,27 @@ def _sanitized_png_bytes(path: Path) -> bytes:
     return encoded
 
 
+def _validated_provisional_ids(
+    provisional_ids: list[int], gallery_ids: list[int]
+) -> list[int]:
+    if (
+        len(provisional_ids) != len(set(provisional_ids))
+        or any(value < 1 for value in provisional_ids)
+        or not set(provisional_ids).issubset(gallery_ids)
+    ):
+        raise RuntimeError("provisional P-item IDs must be unique members of the gallery")
+    return sorted(provisional_ids)
+
+
 def main() -> int:
     args = _parse_args()
+    extension_provenance = None
+    if args.source_provenance is not None:
+        extension_provenance = json.loads(
+            args.source_provenance.read_text(encoding="utf-8")
+        )
+        if not isinstance(extension_provenance, dict):
+            raise RuntimeError("source provenance must be a JSON object")
     paths = sorted(
         (path for path in args.source.glob("*.png") if path.stem.isdigit()),
         key=lambda path: int(path.stem),
@@ -95,6 +135,7 @@ def main() -> int:
         image_shapes.append(tuple(int(value) for value in image.shape))
     if len(ids) != len(set(ids)):
         raise RuntimeError("rendered P-item reference IDs are not unique")
+    provisional_ids = _validated_provisional_ids(args.provisional_business_id, ids)
 
     args.output.mkdir(parents=True, exist_ok=True)
     gallery_path = args.output / "p_item_rendered_reference_gallery.npz"
@@ -112,7 +153,7 @@ def main() -> int:
         "recognizer": "p_item_rendered_reference_v1",
         "source": {
             "revision": args.source_revision,
-            "scope": "sourceType != produce",
+            "scope": args.source_scope,
             "business_id_count": len(ids),
             "source_icons_sha256": _source_digest(paths),
             "sanitized_icons_sha256": _encoded_digest(ids, encoded_images),
@@ -131,6 +172,7 @@ def main() -> int:
             "image_shape_count": len(set(image_shapes)),
             "color_order": "BGR",
             "business_id_count": len(ids),
+            "provisional_business_ids": provisional_ids,
         },
         "runtime": {
             "source_color_order": "BGR",
@@ -159,13 +201,20 @@ def main() -> int:
             "jjc_reference_identity": args.jjc_reference_identity,
             "embedding_acceptance_calibration": "REJECTED_FOR_CURRENT_JJC_DOMAIN",
             "coarse_fine_720_calibration": args.coarse_fine_validation,
-            "upgraded_marker_calibration": "PENDING_REAL_UPGRADED_SAMPLE",
+            "upgraded_marker_calibration": args.upgraded_marker_validation,
+        },
+        "build": {
+            "deterministic_output": "NPZ_AND_CANONICAL_LF_JSON",
+            "tool_contract": "task095-p-item-rendered-reference-gallery-v1",
+        },
+        "production_handoff": {
+            "reason": ("fixed rendered-reference candidate requires lineage, container, and ranking evaluation before promotion"),
+            "status": "PENDING_VALIDATION",
         },
     }
-    (args.output / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    if extension_provenance is not None:
+        manifest["source"]["extension_provenance"] = extension_provenance
+    (args.output / "manifest.json").write_bytes(_canonical_json_bytes(manifest))
     return 0
 
 

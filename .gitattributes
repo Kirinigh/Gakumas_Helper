@@ -4,5 +4,12 @@ assets/resource/base/model/classify/card_embedding/*.npz -text
 assets/resource/base/model/embedding/arena_card/*.onnx -text
 assets/resource/base/model/embedding/arena_card/*.npz -text
 assets/resource/base/model/embedding/arena_badge_reference/*.npz -text
+assets/resource/base/model/embedding/arena_badge_reference/*.json -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/arena_card_cost_reference/*.npz -text
+assets/resource/base/model/embedding/arena_card_cost_reference/*.json -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/p_item_reference/*.npz -text
+assets/resource/base/model/embedding/p_item_reference/*.json -text whitespace=cr-at-eol
+tools/p-item-embedding/evidence/*.json -text whitespace=cr-at-eol
+# Preserve the reviewed MFAAvalonia source patch and redistributed GPL text byte-for-byte.
+tools/deployment/mfa/*.patch -text whitespace=-blank-at-eol
+THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE -text
