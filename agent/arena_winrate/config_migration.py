@@ -11,11 +11,33 @@ from dataclasses import field, dataclass
 from collections.abc import Mapping, MutableMapping, MutableSequence
 
 PERIOD_OPTION_NAME = "竞技场期数"
+PERIOD_CONFIG_NODE = "ChallengeSeasonConfig"
 LEGACY_SEASON_FIELDS = ("arena_win_rate_season", "arena_own_score_season")
 
 
 class ArenaPeriodMigrationError(RuntimeError):
     """Raised when an instance cannot be migrated without guessing."""
+
+
+def _period_case_selection(case: Mapping[str, Any]) -> object:
+    pipeline_override = case.get("pipeline_override")
+    if not isinstance(pipeline_override, Mapping):
+        raise ArenaPeriodMigrationError("fixed arena period case has no pipeline override")
+
+    selections: list[object] = []
+    for node_name, parameter_name in (
+        (PERIOD_CONFIG_NODE, "attach"),
+        ("ChallengeChoose", "custom_action_param"),
+    ):
+        node = pipeline_override.get(node_name)
+        parameters = node.get(parameter_name) if isinstance(node, Mapping) else None
+        if isinstance(parameters, Mapping) and "season" in parameters:
+            selections.append(parameters["season"])
+    if not selections:
+        raise ArenaPeriodMigrationError("fixed arena period case has no season value")
+    if any(selection != selections[0] for selection in selections[1:]):
+        raise ArenaPeriodMigrationError("fixed arena period case has conflicting season values")
+    return selections[0]
 
 
 @dataclass(frozen=True)
@@ -44,10 +66,7 @@ class ArenaPeriodSelectionCatalog:
                 raise ArenaPeriodMigrationError("fixed arena period case is invalid")
             if case.get("name") == default_case:
                 default_index = index
-            try:
-                selection = case["pipeline_override"]["ChallengeChoose"]["custom_action_param"]["season"]
-            except (KeyError, TypeError) as error:
-                raise ArenaPeriodMigrationError("fixed arena period case has no season value") from error
+            selection = _period_case_selection(case)
             if (
                 selection != "latest"
                 and (isinstance(selection, bool) or not isinstance(selection, int) or selection < 1)
