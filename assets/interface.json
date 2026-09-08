@@ -1,7 +1,7 @@
 {
   "interface_version": 2,
   "name": "MaaGakumasu",
-  "version": "v0.2.2",
+  "version": "v0.3.0",
   "github": "https://github.com/Kirinigh/Gakumas_Helper",
   "contact": "QQ群: 799823681",
   "icon": "./logo.ico",
@@ -163,7 +163,7 @@
     },
     {
       "name": "arena_recalculate_own_score",
-      "entry": "Challenge",
+      "entry": "ArenaOwnScore",
       "option": [
         "竞技场期数",
         "arena_recalculate_own_score_parameters"
@@ -806,15 +806,8 @@
         }
       ],
       "pipeline_override": {
-        "ChallengeChoose": {
-          "on_error": [
-            "ChallengeWinRateStop"
-          ]
-        },
-        "ChallengeStrategyConfig": {
+        "ArenaOwnScoreRun": {
           "attach": {
-            "mode": "win_rate_recalculate_own",
-            "threshold_percent": 70,
             "simulations": "{arena_own_score_simulations}",
             "timeout_seconds": "{arena_own_score_timeout_seconds}"
           }
@@ -1158,8 +1151,7 @@
         "ChallengeSkip": {
           "next": [
             "ChallengeResultRecord",
-            "ChallengeSkip",
-            "[JumpBack]ClickCenter"
+            "ChallengeSkip"
           ]
         }
       }

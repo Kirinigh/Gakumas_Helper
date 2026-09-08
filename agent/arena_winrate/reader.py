@@ -9,9 +9,11 @@ contains or exposes a challenge-start operation.
 from __future__ import annotations
 
 import time
+import logging
 from enum import Enum
 from uuid import uuid4
 from typing import Any, Protocol
+from functools import wraps
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable, Sequence
 
@@ -26,6 +28,85 @@ class ArenaReaderError(RuntimeError):
         self.code = code
         self.detail = detail
         super().__init__(f"{code}: {detail}")
+
+
+def _record_lineup_attempt(side: str):
+    """Record each non-nested public read without adding a runtime dependency."""
+
+    def decorate(operation):
+        @wraps(operation)
+        def recorded(self, *args, **kwargs):
+            started = time.perf_counter()
+            failure: BaseException | None = None
+            succeeded = False
+            sample_cursor = None
+            count_cursor = None
+            cursor_reader = getattr(self.backend, "runtime_sample_cursor", None)
+            count_reader = getattr(self.backend, "runtime_counts_cursor", None)
+            try:
+                if callable(cursor_reader):
+                    sample_cursor = cursor_reader()
+                if callable(count_reader):
+                    count_cursor = count_reader()
+            except Exception:
+                logging.getLogger(__name__).exception("Could not begin %s read diagnostics", side)
+            try:
+                result = operation(self, *args, **kwargs)
+                succeeded = True
+                return result
+            except BaseException as error:
+                failure = error
+                raise
+            finally:
+                elapsed = time.perf_counter() - started
+                recorder = getattr(self.backend, "record_lineup_read_attempt", None)
+                if callable(recorder):
+                    try:
+                        samples_reader = getattr(self.backend, "runtime_samples_since", None)
+                        samples = (
+                            dict(samples_reader(sample_cursor))
+                            if sample_cursor is not None and callable(samples_reader)
+                            else {}
+                        )
+                        counts = None
+                        count_resets = []
+                        if count_cursor is not None and callable(count_reader):
+                            current_counts = count_reader()
+                            count_resets = sorted(
+                                key for key, value in count_cursor.items()
+                                if current_counts.get(key, 0) < value
+                            )
+                            counts = {
+                                key: value - count_cursor.get(key, 0)
+                                if key not in count_resets else value
+                                for key, value in current_counts.items()
+                            }
+                        sample_resets = []
+                        if sample_cursor is not None and callable(cursor_reader):
+                            current_samples = cursor_reader()
+                            sample_resets = sorted(
+                                key for key, value in sample_cursor.items()
+                                if current_samples.get(key, 0) < value
+                            )
+                        recorder({
+                            **samples,
+                            "event": "arena_lineup_read_attempt",
+                            "side": side,
+                            "method": operation.__name__,
+                            "wall_seconds": elapsed,
+                            "succeeded": succeeded,
+                            "error_type": None if failure is None else type(failure).__name__,
+                            "error_code": None if failure is None else getattr(failure, "code", None),
+                            "error_detail": None if failure is None else str(failure),
+                            "counts": counts,
+                            "counter_reset_fields": count_resets,
+                            "sample_reset_fields": sample_resets,
+                            "raw_samples_available": sample_cursor is not None and callable(samples_reader),
+                        })
+                    except Exception:
+                        logging.getLogger(__name__).exception("Could not record %s read attempt", side)
+        return recorded
+    return decorate
 
 
 class ArenaPageState(str, Enum):
@@ -362,6 +443,18 @@ class ArenaReaderBackend(Protocol):
 
     def open_member(self, target: TeamTarget, stage_number: int, slot: int) -> None: ...
 
+    def recover_member_preview(
+        self, target: TeamTarget, stage_number: int, member_slot: int,
+        *, error_code: str,
+    ) -> None: ...
+
+    def record_member_read_attempt(
+        self, target: TeamTarget, stage_number: int, member_slot: int,
+        *, wall_seconds: float, succeeded: bool,
+        error_code: str | None, reopened: bool,
+        sample_cursor: Mapping[str, int] | None = None,
+    ) -> None: ...
+
     def read_support_bonus(self, target: TeamTarget) -> float: ...
 
     def read_params(
@@ -490,6 +583,10 @@ class ArenaLineupReader:
         self.season = season
         self.capture_id_factory = capture_id_factory
         self._last_observations: list[MemberObservation] = []
+        # One UI recovery belongs to this reader instance, including both
+        # provider attempts. Member/page resets must not replenish it.
+        self._member_reopen_used = False
+        self._member_attempt_closing = False
 
     def last_observation_reports(self) -> tuple[dict[str, Any], ...]:
         """Expose low-dimensional reports from the latest public read operation."""
@@ -832,6 +929,7 @@ class ArenaLineupReader:
             records.append(record)
         return tuple(records)
 
+    @_record_lineup_attempt("combined")
     def read(self) -> dict[str, Any]:
         self._last_observations.clear()
         targets = (
@@ -875,6 +973,7 @@ class ArenaLineupReader:
         }
         return validate_snapshot(snapshot)
 
+    @_record_lineup_attempt("own")
     def read_own(self) -> dict[str, Any]:
         """Read and return only the player's reusable three-stage lineup."""
 
@@ -912,6 +1011,7 @@ class ArenaLineupReader:
         }
         return validate_own_snapshot(snapshot)
 
+    @_record_lineup_attempt("opponent")
     def read_opponents(self, own_snapshot: Mapping[str, Any]) -> dict[str, Any]:
         """Read only the three opponents and combine them with a validated own capture.
 
@@ -1023,6 +1123,127 @@ class ArenaLineupReader:
         include_support_bonus: bool = False,
     ) -> MemberObservation:
         """Open, observe and close one member through the shared state machine."""
+
+        for reopened in (False, True):
+            started = time.perf_counter()
+            succeeded = False
+            failure: Exception | None = None
+            sample_cursor = None
+            cursor_reader = getattr(self.backend, "runtime_sample_cursor", None)
+            if callable(cursor_reader):
+                try:
+                    sample_cursor = cursor_reader()
+                except Exception:
+                    logging.getLogger(__name__).exception("Could not begin member read diagnostics")
+            self._member_attempt_closing = False
+            try:
+                observation = self._read_member_observation_once(
+                    target,
+                    stage_number,
+                    member_slot,
+                    scope=scope,
+                    include_support_bonus=include_support_bonus,
+                )
+                succeeded = True
+                return observation
+            except Exception as error:
+                failure = error
+                recovery_code = self._member_reopen_error_code(
+                    error, during_close=self._member_attempt_closing,
+                )
+                recover = getattr(self.backend, "recover_member_preview", None)
+                if (
+                    self._member_reopen_used
+                    or recovery_code is None
+                    or not callable(recover)
+                ):
+                    raise
+                self._member_reopen_used = True
+                try:
+                    recover(
+                        target, stage_number, member_slot,
+                        error_code=recovery_code,
+                    )
+                except Exception as recovery_error:
+                    raise ArenaReaderError(
+                        "member_reopen_recovery_failed",
+                        f"member read failed: {error}; returning to its team "
+                        f"preview also failed: {recovery_error}",
+                    ) from recovery_error
+                # No partial observation escaped the failed invocation. The
+                # next invocation reopens and rereads this member completely.
+            finally:
+                elapsed = time.perf_counter() - started
+                recorder = getattr(self.backend, "record_member_read_attempt", None)
+                if callable(recorder):
+                    try:
+                        cursor_argument = (
+                            {} if sample_cursor is None
+                            else {"sample_cursor": sample_cursor}
+                        )
+                        recorder(
+                            target, stage_number, member_slot,
+                            wall_seconds=elapsed,
+                            succeeded=succeeded,
+                            error_code=(
+                                None if failure is None
+                                else getattr(failure, "code", type(failure).__name__)
+                            ),
+                            reopened=reopened,
+                            **cursor_argument,
+                        )
+                    except Exception:
+                        logging.getLogger(__name__).exception(
+                            "Could not record member read attempt for %s/stage-%s/member-%s",
+                            target.team_id, stage_number, member_slot,
+                        )
+        raise AssertionError("member reopen budget exhausted without a result")
+
+    @staticmethod
+    def _member_reopen_error_code(
+        error: Exception, *, during_close: bool,
+    ) -> str | None:
+        """Follow explicit UI causes without treating OCR ambiguity as UI proof."""
+
+        current: BaseException | None = error
+        seen: set[int] = set()
+        p_item_restore = False
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if not isinstance(current, ArenaReaderError):
+                return None
+            if current.code in {
+                "skill_card_close_failed",
+                "skill_card_close_left_member",
+                "skill_card_detail_disappeared",
+                "p_item_source_restore_unproven",
+            }:
+                return current.code
+            if current.code == "member_detail_anchor_missing" and (
+                during_close or p_item_restore
+            ):
+                return current.code
+            if during_close and current.code == "stage_member_list_timeout":
+                return current.code
+            if current.code == "p_item_detail_recovery_failed":
+                # This production wrapper is emitted only around source-page
+                # restoration, including its fallback member-anchor check.
+                p_item_restore = True
+            elif current.code != "skill_card_badge_detail_inference_ambiguous":
+                return None
+            current = current.__cause__
+        return None
+
+    def _read_member_observation_once(
+        self,
+        target: TeamTarget,
+        stage_number: int,
+        member_slot: int,
+        *,
+        scope: MemberObservationScope,
+        include_support_bonus: bool,
+    ) -> MemberObservation:
+        """Build one observation locally; a failed invocation publishes nothing."""
 
         if not isinstance(scope, MemberObservationScope):
             raise ArenaReaderError(
@@ -1335,7 +1556,9 @@ class ArenaLineupReader:
             if callable(evidence_reader)
             else {}
         )
+        self._member_attempt_closing = True
         self.backend.close_member(target, stage_number)
+        self._member_attempt_closing = False
         evidence = {
             **backend_evidence,
             "page_generation": observation_id,

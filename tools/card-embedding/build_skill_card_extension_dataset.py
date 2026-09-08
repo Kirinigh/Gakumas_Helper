@@ -660,6 +660,8 @@ def build_extension_dataset(
     output_dir: Path,
     dataset_revision: str,
     catalog_revision: str,
+    fixed_icon_provenance_path: Path | None = None,
+    published_ui_original_root: Path | None = None,
 ) -> ExtensionDatasetResult:
     """Build a deterministic extension dataset using frozen local inputs only."""
 
@@ -667,6 +669,8 @@ def build_extension_dataset(
         raise ExtensionDatasetError("dataset revision must be a non-empty single line")
     if re.fullmatch(r"[0-9a-fA-F]{40}", catalog_revision) is None:
         raise ExtensionDatasetError("catalog revision must be one immutable 40-hex Git commit")
+    if (fixed_icon_provenance_path is None) != (published_ui_original_root is None):
+        raise ExtensionDatasetError("fixed-icon provenance and published-UI original root must be supplied together")
     catalog_revision = catalog_revision.lower()
     output_dir = output_dir.resolve()
     if output_dir.exists():
@@ -709,6 +713,35 @@ def build_extension_dataset(
     _compare_base_identity(base_rows, current_by_id)
     extension_mappings = tuple(current_by_id[value] for value in extension_ids)
 
+    fixed_icon_source = {
+        "repository": CATALOG_REPOSITORY,
+        "commit": catalog_revision,
+        "license": CATALOG_LICENSE,
+    }
+    if fixed_icon_provenance_path is not None:
+        project_root = Path(__file__).resolve().parents[2]
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        from tools.published_ui_reference import (
+            PublishedUiReferenceError,
+            validate_published_ui_source_manifest,
+        )
+
+        try:
+            fixed_icon_source = validate_published_ui_source_manifest(
+                fixed_icon_provenance_path,
+                original_root=published_ui_original_root,
+                output_root=fixed_icon_root,
+                catalog_rows={
+                    card.business_id: {"name": card.name, "upgraded": card.upgraded}
+                    for card in catalog
+                },
+                component="skill_card",
+                expected_ids=extension_ids,
+            )
+        except PublishedUiReferenceError as error:
+            raise ExtensionDatasetError(f"fixed-icon provenance: {error}") from error
+
     raw_inventory = _load_object(raw_art_inventory_path, label="raw-art inventory")
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_dir.parent / f".{output_dir.name}.tmp-{uuid.uuid4().hex}"
@@ -735,6 +768,8 @@ def build_extension_dataset(
             "base_gallery_manifest_sha256": sha256_file(base_gallery_manifest_path),
             "base_dataset_manifest_sha256s": [sha256_file(path) for path in base_dataset_manifest_paths],
         }
+        if fixed_icon_provenance_path is not None:
+            input_hashes["fixed_icon_provenance_sha256"] = sha256_file(fixed_icon_provenance_path)
         manifest = {
             "schema_version": 1,
             "dataset_id": f"task095-skill-card-extension-{dataset_revision}",
@@ -755,11 +790,7 @@ def build_extension_dataset(
                     "commit": catalog_revision,
                     "license": CATALOG_LICENSE,
                 },
-                "fixed_icons": {
-                    "repository": CATALOG_REPOSITORY,
-                    "commit": catalog_revision,
-                    "license": CATALOG_LICENSE,
-                },
+                "fixed_icons": fixed_icon_source,
                 "catalog_record_count": len(catalog),
                 "decoded_pcard_record_count": len(mappings),
                 "official_manifest_revision": official_manifest.get("revision"),
@@ -826,6 +857,8 @@ def main() -> int:
     parser.add_argument("--raw-art-inventory", type=Path, required=True)
     parser.add_argument("--raw-art-root", type=Path, required=True)
     parser.add_argument("--fixed-icon-root", type=Path, required=True)
+    parser.add_argument("--fixed-icon-provenance", type=Path)
+    parser.add_argument("--published-ui-original-root", type=Path)
     parser.add_argument("--base-gallery-manifest", type=Path, required=True)
     parser.add_argument(
         "--base-dataset-manifest",
@@ -850,6 +883,8 @@ def main() -> int:
             output_dir=args.output_dir,
             dataset_revision=args.dataset_revision,
             catalog_revision=args.catalog_revision,
+            fixed_icon_provenance_path=args.fixed_icon_provenance,
+            published_ui_original_root=args.published_ui_original_root,
         )
     except ExtensionDatasetError as error:
         parser.error(str(error))

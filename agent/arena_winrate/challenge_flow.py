@@ -128,6 +128,104 @@ def _stage_component_scores(
     return by_side[0], by_side[1]
 
 
+def _leading_comma_score_candidate(
+    rows: Sequence[Mapping[str, Any]],
+    score_rows: Sequence[Mapping[str, Any]],
+    *,
+    frame_width: int,
+    frame_height: int,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Prove one truncated Pt total from its own complete component rows."""
+
+    candidates = [
+        row for row in rows
+        if re.fullmatch(r",[0-9]{3}(?:,[0-9]{3})*\s*(?:PT|Pt|pt|P|p)", row["text"])
+    ]
+    if len(score_rows) != 5 or len(candidates) != 1:
+        return None
+    candidate = candidates[0]
+    box = candidate["box"]
+    midpoint = frame_width / 2
+    left_side = box[0] + box[2] / 2 < midpoint
+    if box[0] < midpoint < box[0] + box[2]:
+        return None
+    center_y = box[1] + box[3] / 2
+    peers = [
+        row for row in score_rows
+        if abs(row["box"][1] + row["box"][3] / 2 - center_y)
+        <= max(8.0, frame_height * 0.025)
+    ]
+    if len(peers) != 1:
+        return None
+    peer = peers[0]["box"]
+    if (
+        (peer[0] + peer[2] / 2 < midpoint) == left_side
+        or not peer[3] * 0.65 <= box[3] <= peer[3] * 1.5
+    ):
+        return None
+    stage_y = (center_y + peer[1] + peer[3] / 2) / 2
+    side = 0 if left_side else 1
+    components = _stage_component_scores_by_side(
+        rows, stage_y=stage_y, frame_width=frame_width, frame_height=frame_height,
+    )[side]
+    if components is None:
+        return None
+
+    # This exceptional proof cannot use partial tokens such as ``127,`` or
+    # a row spanning both teams, even though ordinary parsing is unchanged.
+    integer = r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)"
+    member_rows: list[dict[str, Any]] = []
+    bonus_rows: list[dict[str, Any]] = []
+    for row in rows:
+        row_box = row["box"]
+        row_y = row_box[1] + row_box[3] / 2
+        if not stage_y + frame_height * 0.015 <= row_y <= stage_y + frame_height * 0.075:
+            continue
+        text = str(row["text"])
+        if not re.search(r"[0-9]", text):
+            continue
+        if row_box[0] < midpoint < row_box[0] + row_box[2]:
+            return None
+        if (row_box[0] + row_box[2] / 2 < midpoint) != left_side:
+            continue
+        source = {"text": text, "box": list(row_box)}
+        if text.startswith("+"):
+            if re.fullmatch(rf"\+{integer}", text) is None:
+                return None
+            bonus_rows.append(source)
+        else:
+            if re.fullmatch(rf"{integer}(?:\s+{integer})*", text) is None:
+                return None
+            member_rows.append(source)
+    if len(bonus_rows) != 1:
+        return None
+    members, bonus = components
+    displayed = int(re.match(r",([0-9,]+)", candidate["text"])[1].replace(",", ""))
+    total = sum(members) + bonus
+    if (
+        len(str(total)) != len(str(displayed)) + 1
+        or not str(total).endswith(str(displayed))
+        or _reconcile_displayed_score(displayed, members, bonus) != total
+    ):
+        return None
+    number = {"value": total, "text": candidate["text"], "box": list(box)}
+    proof = {
+        "side": "own" if left_side else "opponent",
+        "observed_score": displayed,
+        "resolved_score": total,
+        "observed_text": candidate["text"],
+        "source_box": list(box),
+        "rule": "displayed_total_missing_one_leading_digit_after_comma",
+        "evidence": "same_frame_same_side_three_member_scores_plus_unique_bonus",
+        "member_scores": list(members),
+        "member_observations": member_rows,
+        "bonus": bonus,
+        "bonus_observation": bonus_rows[0],
+        "equation": " + ".join(map(str, (*members, bonus))) + f" = {total}",
+    }
+    return number, proof
+
+
 class ArenaChallengeFlowError(RuntimeError):
     """Raised before a new challenge whenever prior state is unresolved."""
 
@@ -153,10 +251,10 @@ def contest_day_key(now: datetime | None = None) -> str:
     return (current - timedelta(hours=4)).date().isoformat()
 
 
-def serialise_result_observations(
+def _result_observation_data(
     observations: Sequence[Any],
-) -> dict[str, Any]:
-    """Keep OCR text/geometry only; never persist the source screenshot."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[int, str]]]:
+    """Normalise the existing OCR frame once for winner and score readers."""
 
     rows: list[dict[str, Any]] = []
     numbers: list[dict[str, Any]] = []
@@ -194,16 +292,34 @@ def serialise_result_observations(
             text,
         )
         if numeric:
+            try:
+                value = int(numeric.group(1).replace(",", "").replace(".", ""))
+            except ValueError:
+                # Optional numbers must not prevent the frame's winner rows
+                # from reaching the result reader. The raw row is retained.
+                continue
             numbers.append(
                 {
-                    "value": int(
-                        numeric.group(1).replace(",", "").replace(".", "")
-                    ),
+                    "value": value,
                     "text": text,
                     "box": box,
                 }
             )
 
+    return rows, numbers, outcome_rows
+
+
+def _serialise_result_score_observations(observations: Sequence[Any]) -> dict[str, Any]:
+    """Collect optional score diagnostics; these cannot decide completion."""
+
+    return _result_score_diagnostics(*_result_observation_data(observations))
+
+
+def _result_score_diagnostics(
+    rows: list[dict[str, Any]],
+    numbers: list[dict[str, Any]],
+    outcome_rows: list[tuple[int, str]],
+) -> dict[str, Any]:
     score_rows = [
         row
         for row in numbers
@@ -215,11 +331,20 @@ def serialise_result_observations(
     recovered_score_row_ids: set[int] = set()
     dual_score_recovery = False
     dual_stage_win_rows: list[dict[str, Any]] = []
+    leading_comma_recovery: tuple[dict[str, Any], dict[str, Any]] | None = None
     frame_height = 0
     if len(score_rows) >= 4 and rows:
         frame_width = max(row["box"][0] + row["box"][2] for row in rows)
         frame_height = max(row["box"][1] + row["box"][3] for row in rows)
         midpoint = frame_width / 2
+        if len(score_rows) == 5:
+            leading_comma_recovery = _leading_comma_score_candidate(
+                rows, score_rows, frame_width=frame_width, frame_height=frame_height,
+            )
+            if leading_comma_recovery is not None:
+                # Only this independently proved total joins the score pairs.
+                # Original OCR/numeric observations and all other paths stay raw.
+                score_rows.append(leading_comma_recovery[0])
 
         def cluster_scores(tolerance: float) -> list[list[dict[str, Any]]]:
             clusters: list[list[dict[str, Any]]] = []
@@ -493,6 +618,13 @@ def serialise_result_observations(
             win_rows = [row for row in rows if row["text"].upper().strip() == "WIN"]
             for stage_number, cluster in enumerate(score_clusters, start=1):
                 ordered = sorted(cluster, key=lambda item: item["box"][0])
+                if leading_comma_recovery is not None and any(
+                    row is leading_comma_recovery[0] for row in cluster
+                ):
+                    score_repairs.append({
+                        "stage_number": stage_number,
+                        **leading_comma_recovery[1],
+                    })
                 recovered_suffix = any(
                     id(row) in recovered_score_row_ids for row in cluster
                 )
@@ -660,6 +792,178 @@ def serialise_result_observations(
     }
 
 
+def _result_winner_rows(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[str, list[Mapping[str, Any]], Mapping[str, Any] | None]:
+    """Read the result banner and three side WIN marks without using scores."""
+
+    outcome_names = {
+        "WIN": "WIN", "VICTORY": "WIN", "勝利": "WIN", "勝ち": "WIN",
+        "LOSE": "LOSS", "LOSS": "LOSS", "DEFEAT": "LOSS",
+        "敗北": "LOSS", "負け": "LOSS",
+    }
+    marks = [
+        row for row in rows
+        if str(row["text"]).upper().replace(" ", "") in outcome_names
+        and row["box"][2] > 0 and row["box"][3] > 0
+    ]
+    if not marks:
+        return "UNKNOWN", [], None
+    marks.sort(key=lambda row: row["box"][1] + row["box"][3] / 2)
+    banner, *wins = marks
+    outcome = outcome_names[str(banner["text"]).upper().replace(" ", "")]
+    banner_box = banner["box"]
+    midpoint = banner_box[0] + banner_box[2] / 2
+    # The centered overall banner is larger than the three side marks. Its
+    # center also supplies the left/right divider when all scores are absent.
+    if any(
+        banner_box[2] < row["box"][2] * 1.5
+        or banner_box[3] < row["box"][3] * 1.5
+        for row in wins
+    ):
+        return "UNKNOWN", [], None
+    if len(wins) != 3 or any(str(row["text"]).upper().replace(" ", "") != "WIN" for row in wins):
+        return outcome, [], banner
+    if any(
+        not (row["box"][0] + row["box"][2] < midpoint or row["box"][0] > midpoint)
+        for row in wins
+    ):
+        return outcome, [], banner
+    centers = [row["box"][1] + row["box"][3] / 2 for row in wins]
+    gaps = [right - left for left, right in zip(centers, centers[1:])]
+    if min(gaps) <= max(row["box"][3] for row in wins) or max(gaps) > min(gaps) * 1.5:
+        return outcome, [], banner
+
+    # Visible stage labels must agree with the top-to-bottom order. Missing
+    # label OCR does not erase three otherwise unique, evenly spaced WIN marks.
+    seen_labels: set[int] = set()
+    for row in rows:
+        label = re.fullmatch(r"ステージ\s*([123１２３])", str(row["text"]))
+        if label is None:
+            continue
+        index = int(label[1]) - 1
+        box = row["box"]
+        if (
+            index in seen_labels
+            or abs(box[1] + box[3] / 2 - centers[index])
+            > max(box[3], wins[index]["box"][3]) / 2
+        ):
+            return outcome, [], banner
+        seen_labels.add(index)
+    own_wins = sum(row["box"][0] + row["box"][2] / 2 < midpoint for row in wins)
+    if (outcome == "WIN") != (own_wins >= 2):
+        return outcome, [], banner
+    return outcome, wins, banner
+
+
+def battle_outcome_tap_box(
+    observations: Sequence[Any], *, frame_size: tuple[int, int] = (720, 1280),
+) -> tuple[int, int, int, int] | None:
+    """Locate the three-stage outcome animation's TAP, never infer a result.
+
+    The final result has an overall banner plus three smaller side marks.
+    This earlier animation instead has exactly three large centered marks
+    and a separate bottom-center TAP. Scores and blurred background buttons
+    provide no evidence for this action.
+    """
+    width, height = frame_size
+    if width <= 0 or height <= 0:
+        return None
+    labels = {"WIN", "LOSE", "LOSS", "VICTORY", "DEFEAT", "勝利", "勝ち", "敗北", "負け"}
+    marks: list[tuple[int, int, int, int]] = []
+    taps: list[tuple[int, int, int, int]] = []
+    for item in observations:
+        raw = item.get("text", "") if isinstance(item, Mapping) else getattr(item, "text", "")
+        text = str(raw).upper().replace(" ", "").strip()
+        if text in {"通信エラー", "通信エラ", "通信中にエラーが発生しました", "リトライ", "タイトルへ"}:
+            return None
+        if text not in labels and text != "TAP":
+            continue
+        value = item.get("box") if isinstance(item, Mapping) else getattr(item, "box", None)
+        try:
+            box = tuple(int(round(component)) for component in value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if len(box) != 4 or min(box[2:]) <= 0:
+            return None
+        x, y, w, h = box
+        if x < 0 or y < 0 or x + w > width or y + h > height:
+            return None
+        (taps if text == "TAP" else marks).append(box)
+    if len(taps) != 1 or len(marks) != 3:
+        return None
+    tap = taps[0]
+    if not (
+        abs(tap[0] + tap[2] / 2 - width / 2) <= width * .12
+        and tap[1] >= height * .85
+        and tap[2] <= width * .35 and tap[3] <= height * .07
+    ):
+        return None
+    marks.sort(key=lambda box: box[1] + box[3] / 2)
+    if any(not (
+        width * .22 <= box[2] <= width * .70
+        and height * .055 <= box[3] <= height * .14
+        and abs(box[0] + box[2] / 2 - width / 2) <= width * .12
+        and height * .045 <= box[1] + box[3] / 2 <= height * .78
+    ) for box in marks):
+        return None
+    centers = [box[1] + box[3] / 2 for box in marks]
+    x_centers = [box[0] + box[2] / 2 for box in marks]
+    gaps = [right - left for left, right in zip(centers, centers[1:])]
+    if (
+        min(gaps) < max(box[3] for box in marks) * 1.5
+        or max(gaps) > min(gaps) * 1.5
+        or centers[-1] - centers[0] < height * .35
+        or max(x_centers) - min(x_centers) > width * .08
+        or marks[-1][1] + marks[-1][3] > tap[1] - height * .08
+    ):
+        return None
+    return tap
+
+
+def serialise_result_observations(observations: Sequence[Any]) -> dict[str, Any]:
+    """Record three winners and the total outcome; scores are optional data."""
+
+    rows, numbers, outcome_rows = _result_observation_data(observations)
+    outcome, wins, banner = _result_winner_rows(rows)
+    result: dict[str, Any] = {
+        "outcome": outcome,
+        "stage_results": [],
+        "score_repairs": [],
+        "ocr_observations": rows,
+        "numeric_observations": numbers,
+        "screenshots_persisted": False,
+    }
+    if len(wins) != 3 or banner is None:
+        return result
+    try:
+        diagnostics = _result_score_diagnostics(rows, numbers, outcome_rows)
+    except (ArithmeticError, ValueError, TypeError, IndexError, KeyError) as error:
+        # Optional score parsing must not erase already established winners.
+        diagnostics = {}
+        result["score_diagnostic_error"] = type(error).__name__
+    optional_scores = diagnostics.get("stage_results", [])
+    result["score_repairs"] = diagnostics.get("score_repairs", [])
+    midpoint = banner["box"][0] + banner["box"][2] / 2
+    for index, win in enumerate(wins, start=1):
+        scores = optional_scores[index - 1] if len(optional_scores) == 3 else {}
+        winner = "OWN" if win["box"][0] < midpoint else "OPPONENT"
+        if scores.get("winner") != winner:
+            scores = {}
+        result["stage_results"].append({
+            "stage_number": index,
+            "own_score": scores.get("own_score"),
+            "opponent_score": scores.get("opponent_score"),
+            "winner": winner,
+        })
+    result["winner_evidence"] = {
+        "source": "same_frame_result_banner_and_stage_win_marks",
+        "overall": dict(banner),
+        "stages": [dict(row) for row in wins],
+    }
+    return result
+
+
 def result_observations_complete(result: Mapping[str, Any]) -> bool:
     """Return whether a result can release the next challenge gate."""
 
@@ -672,12 +976,6 @@ def result_observations_complete(result: Mapping[str, Any]) -> bool:
             isinstance(stage, Mapping)
             and stage.get("stage_number") == index
             and stage.get("winner") in {"OWN", "OPPONENT", "TIE"}
-            and isinstance(stage.get("own_score"), int)
-            and not isinstance(stage.get("own_score"), bool)
-            and isinstance(stage.get("opponent_score"), int)
-            and not isinstance(stage.get("opponent_score"), bool)
-            and stage["own_score"] >= 0
-            and stage["opponent_score"] >= 0
             for index, stage in enumerate(stages, start=1)
         )
     )
@@ -788,9 +1086,9 @@ class ArenaChallengeRecordStore:
             return
         if pending.get("capture_id") != capture_id:
             raise ArenaChallengeFlowError("pending challenge capture_id changed")
-        if pending.get("lifecycle_state") != CHALLENGE_LIFECYCLE_INTENT:
+        if pending.get("battle_started") or pending.get("lifecycle_state") != CHALLENGE_LIFECYCLE_INTENT:
             raise ArenaChallengeFlowError(
-                "challenge intent cannot be aborted after its result was recorded"
+                "challenge intent cannot be aborted after start was reserved or its result was recorded"
             )
         if (self.results_root / f"{capture_id}.json").is_file():
             raise ArenaChallengeFlowError(
@@ -853,6 +1151,319 @@ class ArenaChallengeRecordStore:
         pending["result_recorded_at"] = lifecycle["updated_at"]
         self._write_atomic(self.pending_path, pending)
         return destination
+
+    def recorded_result_path(self, capture_id: str) -> Path | None:
+        """Reuse only a complete result bound to this still-pending round."""
+
+        self._pending_for_capture(capture_id)
+        path = self.results_root / f"{capture_id}.json"
+        if not path.is_file():
+            return None
+        record = self._load_result(path)
+        self._require_result_capture_id(record, capture_id)
+        result = record.get("result")
+        lifecycle = record.get("lifecycle", {})
+        if (
+            not isinstance(result, Mapping)
+            or not result_observations_complete(result)
+            or not isinstance(lifecycle, Mapping)
+            or lifecycle.get("state") not in {
+                CHALLENGE_LIFECYCLE_RESULT_RECORDED,
+                CHALLENGE_LIFECYCLE_RETURN_UNVERIFIED,
+                CHALLENGE_LIFECYCLE_FINISHED,
+                CHALLENGE_LIFECYCLE_RECOVERED_FINISHED,
+            }
+        ):
+            raise ArenaChallengeFlowError("stored challenge result is not complete")
+        return path
+
+    def complete_idempotent(self, capture_id: str, result: Mapping[str, Any]) -> Path:
+        """Never replace an already valid result, even after an interrupted write."""
+
+        existing = self.recorded_result_path(capture_id)
+        if existing is not None:
+            return existing
+        if not result_observations_complete(result):
+            raise ArenaChallengeFlowError("challenge result has incomplete winners")
+        return self.complete(result)
+
+    @staticmethod
+    def _recovery_budget(pending: Mapping[str, Any]) -> dict[str, Any]:
+        raw = pending.get("result_recovery", {})
+        if not isinstance(raw, Mapping):
+            raise ArenaChallengeFlowError("challenge recovery budget is unreadable")
+        budget = dict(raw)
+        defaults = {
+            "capture_attempts": 1 if "incomplete_result" in pending else 0,
+            "save_attempts": 0,
+            "communication_retries": 0,
+            "outcome_taps": 0,
+        }
+        for key, default in defaults.items():
+            value = budget.setdefault(key, default)
+            if type(value) is not int or value < 0:
+                raise ArenaChallengeFlowError("challenge recovery counter is invalid")
+        return budget
+
+    @staticmethod
+    def _remaining_winner_seconds(pending: Mapping[str, Any], now: datetime) -> float | None:
+        """Inspect the old winner budget without reserving or refunding a frame."""
+        budget = ArenaChallengeRecordStore._recovery_budget(pending)
+        if budget["capture_attempts"] >= 3:
+            return 0.0
+        if budget["capture_attempts"] == 0:
+            return None
+        deadline_text = budget.get("retry_deadline")
+        try:
+            if deadline_text is None:
+                origin = budget.get("first_capture_reserved_at")
+                started = datetime.fromisoformat(origin) if origin else now
+                deadline = started + timedelta(seconds=2)
+            else:
+                deadline = datetime.fromisoformat(str(deadline_text))
+            return max(0.0, min(2.0, (deadline - now).total_seconds()))
+        except (ValueError, TypeError) as error:
+            raise ArenaChallengeFlowError("result retry deadline is invalid") from error
+
+    def begin_result_page_wait(self, capture_id: str, *, now: datetime | None = None) -> dict[str, Any]:
+        """One persistent 60-second page wait, separate from winner observations."""
+        pending = self._pending_for_capture(capture_id)
+        if pending.get("lifecycle_state") != CHALLENGE_LIFECYCLE_INTENT:
+            raise ArenaChallengeFlowError("result page wait has no unresolved challenge")
+        now = datetime.now(timezone.utc) if now is None else now
+        winner_seconds = self._remaining_winner_seconds(pending, now)
+        if winner_seconds == 0:
+            raise ArenaChallengeFlowError("result winner recovery budget exhausted")
+        budget = self._recovery_budget(pending)
+        wait = budget.get("page_wait")
+        if wait is None:
+            duration = 60.0 if winner_seconds is None else min(60.0, winner_seconds)
+            wait = {
+                "started_at": now.isoformat(),
+                "deadline": (now + timedelta(seconds=duration)).isoformat(),
+                "resume_probes": 0,
+            }
+            budget["page_wait"] = wait
+            pending["result_recovery"] = budget
+            self._write_atomic(self.pending_path, pending)
+        if not isinstance(wait, Mapping) or type(wait.get("resume_probes")) is not int or not 0 <= wait["resume_probes"] <= 1:
+            raise ArenaChallengeFlowError("result page wait budget is invalid")
+        try:
+            remaining = (datetime.fromisoformat(wait["deadline"]) - now).total_seconds()
+        except (KeyError, ValueError, TypeError) as error:
+            raise ArenaChallengeFlowError("result page wait deadline is invalid") from error
+        remaining = max(0.0, min(60.0, remaining))
+        if winner_seconds is not None:
+            remaining = min(remaining, winner_seconds)
+        return {**wait, "remaining_seconds": remaining}
+
+    def reserve_result_page_probe(self, capture_id: str) -> bool:
+        """Allow one entry diagnostic frame; it is not a result observation."""
+        wait = self.begin_result_page_wait(capture_id)
+        if wait["remaining_seconds"] <= 0 or wait["resume_probes"] >= 1:
+            return False
+        pending = self._pending_for_capture(capture_id)
+        pending["result_recovery"]["page_wait"]["resume_probes"] += 1
+        self._write_atomic(self.pending_path, pending)
+        return True
+
+    def note_result_page_probe(self, capture_id: str, observation: Mapping[str, Any]) -> None:
+        pending = self._pending_for_capture(capture_id)
+        wait = pending.get("result_recovery", {}).get("page_wait", {})
+        if wait.get("resume_probes") != 1 or "observation" in wait:
+            raise ArenaChallengeFlowError("result page probe is not reserved or already retained")
+        wait["observation"] = dict(observation)
+        self._write_atomic(self.pending_path, pending)
+
+    def reserve_outcome_tap(self, capture_id: str) -> bool:
+        pending = self._pending_for_capture(capture_id)
+        if not pending.get("battle_started"):
+            raise ArenaChallengeFlowError("outcome TAP has no challenge start")
+        if (self.results_root / f"{capture_id}.json").is_file():
+            raise ArenaChallengeFlowError("recorded challenge cannot advance an outcome animation")
+        wait = self.begin_result_page_wait(capture_id)
+        if wait["remaining_seconds"] <= 0:
+            return False
+        pending = self._pending_for_capture(capture_id)
+        budget = self._recovery_budget(pending)
+        if budget["outcome_taps"] >= 1:
+            return False
+        budget["outcome_taps"] += 1
+        pending["result_recovery"] = budget
+        self._write_atomic(self.pending_path, pending)
+        return True
+
+    def reserve_result_frame(self, capture_id: str, *, now: datetime | None = None) -> bool:
+        """Reserve before capture: one normal frame plus two within one retry window."""
+
+        pending = self._pending_for_capture(capture_id)
+        budget = self._recovery_budget(pending)
+        now = datetime.now(timezone.utc) if now is None else now
+        count = budget["capture_attempts"]
+        if count >= 3:
+            return False
+        if count:
+            deadline_text = budget.get("retry_deadline")
+            if deadline_text is None:
+                # Legacy pending records have no window. A reserved but lost
+                # first frame uses its original timestamp rather than reentry.
+                origin = budget.get("first_capture_reserved_at")
+                origin = datetime.fromisoformat(origin) if origin else now
+                deadline_text = (origin + timedelta(seconds=2)).isoformat()
+                budget["retry_deadline"] = deadline_text
+            try:
+                deadline = datetime.fromisoformat(str(deadline_text))
+                expired = now >= deadline
+            except (ValueError, TypeError) as error:
+                raise ArenaChallengeFlowError("result retry deadline is invalid") from error
+            if expired:
+                return False
+        else:
+            budget["first_capture_reserved_at"] = now.isoformat()
+        budget["capture_attempts"] = count + 1
+        pending["result_recovery"] = budget
+        self._write_atomic(self.pending_path, pending)
+        return True
+
+    def reserve_result_save(
+        self, capture_id: str, result: Mapping[str, Any], *, unrecorded_failures: int = 0,
+    ) -> bool:
+        """Keep the same parsed frame for at most one additional save attempt."""
+
+        pending = self._pending_for_capture(capture_id)
+        if not result_observations_complete(result):
+            raise ArenaChallengeFlowError("cannot save an unresolved result candidate")
+        budget = self._recovery_budget(pending)
+        if type(unrecorded_failures) is not int or not 0 <= unrecorded_failures <= 1:
+            raise ArenaChallengeFlowError("invalid unrecorded save failure count")
+        if budget["save_attempts"] + unrecorded_failures >= 2:
+            return False
+        budget["save_attempts"] += 1 + unrecorded_failures
+        budget["candidate"] = dict(result)
+        pending["result_recovery"] = budget
+        self._write_atomic(self.pending_path, pending)
+        return True
+
+    def recoverable_pending_result(self, capture_id: str) -> dict[str, Any] | None:
+        """Reparse each retained frame separately; never merge winners across frames."""
+
+        pending = self._pending_for_capture(capture_id)
+        budget = self._recovery_budget(pending)
+        candidate = budget.get("candidate")
+        if isinstance(candidate, Mapping) and result_observations_complete(candidate):
+            return dict(candidate)
+        observations = budget.get("observations", [])
+        if not isinstance(observations, list):
+            raise ArenaChallengeFlowError("retained result observations are invalid")
+        for previous in [pending.get("incomplete_result"), *observations]:
+            if not isinstance(previous, Mapping):
+                continue
+            rows = previous.get("ocr_observations")
+            if not isinstance(rows, list):
+                continue
+            try:
+                result = serialise_result_observations(rows)
+            except (ValueError, TypeError, ArithmeticError):
+                continue
+            if result_observations_complete(result):
+                result["contest_day"] = pending.get("contest_day", contest_day_key())
+                result["recorded_at"] = previous.get("recorded_at")
+                result["recovery_source"] = "pending_ocr_observations"
+                return result
+        return None
+
+    def mark_battle_started(self, capture_id: str) -> None:
+        """Reserve the original start click; this is not proof of ticket consumption."""
+
+        pending = self._pending_for_capture(capture_id)
+        if (
+            pending.get("battle_started")
+            or pending.get("lifecycle_state") != CHALLENGE_LIFECYCLE_INTENT
+            or (self.results_root / f"{capture_id}.json").is_file()
+        ):
+            raise ArenaChallengeFlowError("challenge start was already sent or recorded")
+        pending["battle_started"] = {
+            "reserved_at": datetime.now(timezone.utc).isoformat(),
+            "ticket_consumption_verified": False,
+        }
+        self._write_atomic(self.pending_path, pending)
+
+    def reserve_communication_retry(self, capture_id: str) -> bool:
+        pending = self._pending_for_capture(capture_id)
+        if not pending.get("battle_started"):
+            raise ArenaChallengeFlowError("communication retry has no challenge start")
+        result_path = self.results_root / f"{capture_id}.json"
+        if result_path.is_file():
+            record = self._load_result(result_path)
+            self._require_result_capture_id(record, capture_id)
+            if record.get("lifecycle", {}).get("state") in {
+                CHALLENGE_LIFECYCLE_FINISHED, CHALLENGE_LIFECYCLE_RECOVERED_FINISHED,
+            }:
+                raise ArenaChallengeFlowError("finished challenge cannot retry communication")
+        budget = self._recovery_budget(pending)
+        if budget["communication_retries"] >= 1:
+            return False
+        budget["communication_retries"] += 1
+        pending["result_recovery"] = budget
+        self._write_atomic(self.pending_path, pending)
+        return True
+
+    def begin_return_recovery(self, capture_id: str, *, now: datetime | None = None) -> dict[str, Any]:
+        """Keep the existing 20-second/3-close/1-finish allowance across reentry."""
+
+        pending = self._pending_for_capture(capture_id)
+        if self.recorded_result_path(capture_id) is None:
+            raise ArenaChallengeFlowError("challenge result must be saved before return")
+        now = datetime.now(timezone.utc) if now is None else now
+        budget = pending.get("return_recovery")
+        if budget is None:
+            verification = pending.get("return_verification", {})
+            evidence = verification.get("evidence", {}) if isinstance(verification, Mapping) else {}
+            evidence = evidence if isinstance(evidence, Mapping) else {}
+            elapsed = evidence.get("wall_seconds", 0.0)
+            if not isinstance(elapsed, (int, float)) or isinstance(elapsed, bool) or not 0 <= elapsed < float("inf"):
+                raise ArenaChallengeFlowError("previous return duration is invalid")
+            budget = {
+                "started_at": now.isoformat(),
+                "deadline": (now + timedelta(seconds=max(0.0, 20.0 - elapsed))).isoformat(),
+                "reward_close_clicks": evidence.get("reward_close_clicks", 0),
+                "finish_resend_clicks": evidence.get("finish_resend_clicks", 0),
+            }
+            pending["return_recovery"] = budget
+            self._validate_return_budget(budget)
+            self._write_atomic(self.pending_path, pending)
+        self._validate_return_budget(budget)
+        try:
+            remaining = (datetime.fromisoformat(budget["deadline"]) - now).total_seconds()
+        except (ValueError, TypeError) as error:
+            raise ArenaChallengeFlowError("return recovery deadline is invalid") from error
+        return {**budget, "remaining_seconds": max(0.0, min(20.0, remaining))}
+
+    @staticmethod
+    def _validate_return_budget(budget: Any) -> None:
+        if not isinstance(budget, Mapping):
+            raise ArenaChallengeFlowError("return recovery budget is invalid")
+        for key in ("reward_close_clicks", "finish_resend_clicks"):
+            if type(budget.get(key)) is not int or budget[key] < 0:
+                raise ArenaChallengeFlowError("return recovery counter is invalid")
+        if not isinstance(budget.get("deadline"), str):
+            raise ArenaChallengeFlowError("return recovery deadline is missing")
+
+    def reserve_return_click(self, capture_id: str, kind: str) -> bool:
+        """Recheck the saved result and reserve each return click before input."""
+
+        limits = {"reward_close_clicks": 3, "finish_resend_clicks": 1}
+        if kind not in limits:
+            raise ArenaChallengeFlowError("unknown return click kind")
+        budget = self.begin_return_recovery(capture_id)
+        if budget["remaining_seconds"] <= 0 or budget[kind] >= limits[kind]:
+            return False
+        pending = self._pending_for_capture(capture_id)
+        budget.pop("remaining_seconds")
+        budget[kind] += 1
+        pending["return_recovery"] = budget
+        self._write_atomic(self.pending_path, pending)
+        return True
 
     def note_return_unverified(
         self,
@@ -946,6 +1557,10 @@ class ArenaChallengeRecordStore:
             else CHALLENGE_LIFECYCLE_FINISHED
         )
         now = datetime.now(timezone.utc).isoformat()
+        if "result_recovery" in pending:
+            record["intent"]["result_recovery"] = self._recovery_budget(pending)
+        if "return_recovery" in pending:
+            record["intent"]["return_recovery"] = dict(pending["return_recovery"])
         record["lifecycle"] = {"state": terminal_state, "updated_at": now}
         record["return_verification"] = {
             "status": "verified",
@@ -958,12 +1573,16 @@ class ArenaChallengeRecordStore:
         self._unlink_pending()
         return result_path
 
-    def note_incomplete_result(self, result: Mapping[str, Any]) -> Path:
+    def note_incomplete_result(
+        self, result: Mapping[str, Any], *, capture_id: str | None = None,
+    ) -> Path:
         """Attach low-dimensional OCR evidence to the unresolved intent."""
 
         pending = self.load_pending()
         if pending is None:
             raise ArenaChallengeFlowError("incomplete result has no pending challenge intent")
+        if capture_id is not None and pending.get("capture_id") != capture_id:
+            raise ArenaChallengeFlowError("pending challenge capture_id changed")
         if pending.get("lifecycle_state") != CHALLENGE_LIFECYCLE_INTENT:
             raise ArenaChallengeFlowError(
                 "challenge result was already recorded; refusing incomplete overwrite"
@@ -973,7 +1592,21 @@ class ArenaChallengeRecordStore:
             raise ArenaChallengeFlowError(
                 "challenge result file already exists; refusing incomplete overwrite"
             )
-        updated = {**pending, "incomplete_result": dict(result)}
+        budget = self._recovery_budget(pending)
+        budget["capture_attempts"] = max(1, budget["capture_attempts"])
+        observations = list(budget.get("observations", []))
+        if len(observations) < 3:
+            observations.append(dict(result))
+        budget["observations"] = observations
+        budget.setdefault(
+            "retry_deadline",
+            (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat(),
+        )
+        updated = {
+            **pending,
+            "incomplete_result": pending.get("incomplete_result", dict(result)),
+            "result_recovery": budget,
+        }
         self._write_atomic(self.pending_path, updated)
         return self.pending_path
 

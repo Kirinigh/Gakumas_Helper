@@ -214,6 +214,15 @@ def main() -> int:
     }
     if extension_provenance is not None:
         manifest["source"]["extension_provenance"] = extension_provenance
+        if extension_provenance.get("schema_version") in {3, 4, 5}:
+            manifest["source"]["business_ids"] = ids
+        if extension_provenance.get("schema_version") == 5:
+            manifest["validation"] = {
+                "jjc_reference_identity": "SCOPED_CALIBRATION_REQUIRES_PROMOTER_REPLAY",
+                "embedding_acceptance_calibration": "REJECTED_FOR_CURRENT_JJC_DOMAIN",
+                "coarse_fine_720_calibration": "SCOPED_CALIBRATION_REQUIRES_PROMOTER_REPLAY",
+                "upgraded_marker_calibration": "GLOBAL_REAL_SAMPLE_CALIBRATION_PENDING",
+            }
     (args.output / "manifest.json").write_bytes(_canonical_json_bytes(manifest))
     return 0
 

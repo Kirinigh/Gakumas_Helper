@@ -1,6 +1,7 @@
 """Administrator-Maa backend for the read-only arena lineup reader.
 
-All screenshots stay in memory.  The backend performs only ordinary navigation,
+Normal screenshots stay in memory; failed details retain at most six cached frames.
+The backend performs only ordinary navigation,
 long-press, detail-card clicks, scrolling and back/close actions.  It deliberately
 has no operation capable of starting a contest match.
 """
@@ -13,11 +14,12 @@ import time
 import statistics
 import unicodedata
 from copy import deepcopy
+from uuid import uuid4
 from typing import Any, Protocol, NamedTuple
 from pathlib import Path
 from threading import Lock
-from collections import Counter
-from collections.abc import Sequence
+from collections import Counter, deque
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 from utils import logger
@@ -72,6 +74,11 @@ from p_item_recognition import (
     measure_p_item_content_generation_from_signatures,
 )
 from card_selection.model import frame_identifier, isolate_card_candidates
+from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
+from arena_winrate._detail_text_layout import (
+    recover_distant_number_text,
+    recover_wrapped_signed_text,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -174,6 +181,30 @@ class _FullFrameOcrEvidence(NamedTuple):
     all_items: tuple[Any, ...]
 
 
+_PItemPanelRow = tuple[
+    str,
+    tuple[float, float, float, float],
+    tuple[tuple[str, tuple[float, float, float, float]], ...],
+]
+_NormalizedPItemRow = tuple[
+    str,
+    str,
+    tuple[float, float, float, float],
+    tuple[tuple[str, str, tuple[float, float, float, float]], ...],
+]
+
+
+class _PItemOcrObservation(NamedTuple):
+    """One OCR call, with separate title and size-excluded source evidence."""
+
+    full_text: str
+    panel_text: str
+    anchors_visible: bool
+    panel_rows: tuple[_PItemPanelRow, ...]
+    background_rows: tuple[_PItemPanelRow, ...] = ()
+    all_items: tuple[Any, ...] = ()
+
+
 class _TitleAnchorOcrEvidence(NamedTuple):
     """One title-specific fallback bound to the same frozen capture object."""
 
@@ -209,15 +240,15 @@ class _DetailIdentityObservation(NamedTuple):
 
 
 class _DetailIdentityProof(NamedTuple):
-    """Two fresh exact-title observations bound to one physical click."""
+    """Exact-title observations bound to one physical click transaction."""
 
     transaction_token: int
     transaction_started: float
     source_card_box: tuple[int, int, int, int]
     interaction_box: tuple[int, int, int, int]
     contact_released_at: float
-    capture_started_at: tuple[float, float]
-    detail_images: tuple[Any, Any]
+    capture_started_at: tuple[float, ...]
+    detail_images: tuple[Any, ...]
     source_guard_frames: Any
     restoration_signatures: Any
     identity_frames: Any
@@ -638,6 +669,9 @@ class MaaArenaReaderBackend:
         self._p_item_reference_missing_arena_ids: tuple[int, ...] = ()
         self._p_item_reference_unknown_catalog_ids: tuple[int, ...] = ()
         self._p_item_reference_provisional_ids: tuple[int, ...] = ()
+        self._skill_card_catalog_compatibility_checked = False
+        self._skill_card_reference_gallery_ids: tuple[int, ...] = ()
+        self._skill_card_reference_missing_catalog_ids: tuple[int, ...] = ()
 
     @property
     def grade(self) -> int | None:
@@ -660,6 +694,124 @@ class MaaArenaReaderBackend:
             self._runtime_duration_samples = samples
         samples.setdefault(name, []).append(elapsed)
 
+    def runtime_sample_cursor(self) -> dict[str, int]:
+        return {
+            name: len(values)
+            for name, values in self._runtime_duration_samples.items()
+        }
+
+    def runtime_counts_cursor(self) -> dict[str, int]:
+        return dict(self._runtime_counts)
+
+    def record_lineup_read_attempt(self, record: dict[str, Any]) -> None:
+        logger.info(json.dumps(record, ensure_ascii=False, sort_keys=True))
+
+    def _begin_detail_diagnostics(self, *, source: Any = None, **position: Any) -> None:
+        target = position.pop("target", None)
+        if target is not None:
+            position.update(team_id=getattr(target, "team_id", None), opponent_position=getattr(target, "opponent_position", None))
+        self._detail_failure_frames = {
+            "position": position, "source": source,
+            "frames": deque(maxlen=5), "actions": deque(maxlen=16),
+            "started": time.perf_counter(),
+        }
+
+    def _record_detail_action(self, kind: str, box: Sequence[int], *, succeeded: bool) -> None:
+        diagnostic = getattr(self, "_detail_failure_frames", None)
+        if diagnostic is not None:
+            diagnostic["actions"].append({
+                "kind": kind, "box": list(box), "succeeded": succeeded,
+                "seconds": round(time.perf_counter() - diagnostic["started"], 6),
+            })
+
+    def _persist_detail_failure(self, error: str) -> None:
+        """Save at most six already captured frames; never capture for logging."""
+        diagnostic = getattr(self, "_detail_failure_frames", None)
+        self._detail_failure_frames = None
+        if diagnostic is None:
+            return
+        save_started = time.perf_counter()
+        try:
+            import cv2
+
+            folder = DEFAULT_CHALLENGE_RECORD_ROOT / "reader-failures" / uuid4().hex
+            folder.mkdir(parents=True)
+            frames = []
+            if diagnostic["source"] is not None:
+                frames.append((diagnostic["started"], diagnostic["source"]))
+            confirmed_open = diagnostic.get("confirmed_open")
+            if confirmed_open is not None:
+                frames.append(confirmed_open)
+                recent = [
+                    frame for frame in diagnostic["frames"]
+                    if frame[1] is not confirmed_open[1]
+                ]
+                frames.extend(recent[-(6 - len(frames)):])
+            else:
+                frames.extend(diagnostic["frames"])
+            saved = []
+            for index, (captured_at, image) in enumerate(frames[:6]):
+                name = f"{index:02d}.png"
+                # imencode + write_bytes supports Windows non-ASCII paths.
+                ok, encoded = cv2.imencode(".png", image)
+                if ok:
+                    (folder / name).write_bytes(encoded.tobytes())
+                    saved.append({"file": name, "seconds": round(captured_at - diagnostic["started"], 6)})
+                    if confirmed_open is not None and image is confirmed_open[1]:
+                        saved[-1]["role"] = "title_confirmed_open"
+            evidence = {
+                "event": "arena_detail_failure", **diagnostic["position"],
+                "error": error, "actions": list(diagnostic["actions"]),
+                "frames": saved, "folder": str(folder),
+            }
+            if diagnostic.get("p_item_text") is not None:
+                evidence["p_item_text"] = diagnostic["p_item_text"]
+            (folder / "evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.warning(json.dumps(evidence, ensure_ascii=False, sort_keys=True))
+        except Exception as diagnostic_error:
+            logger.warning(f"arena failure evidence could not be saved: {diagnostic_error}")
+        finally:
+            self._record_duration_sample("detail_failure_evidence_save", time.perf_counter() - save_started)
+
+    def runtime_samples_since(self, cursor: Mapping[str, int]) -> dict[str, Any]:
+        """Export failed and successful samples without another observation."""
+        return {
+            "duration_samples_seconds": {
+                name: [round(value, 6) for value in values[cursor.get(name, 0):]]
+                for name, values in self._runtime_duration_samples.items()
+                if len(values) > cursor.get(name, 0)
+            },
+            "unfinished_detail_transactions": [list(key) for key in self._card_transaction_started],
+        }
+
+    def record_member_read_attempt(
+        self, target: TeamTarget, stage_number: int, member_slot: int, *,
+        wall_seconds: float, succeeded: bool, error_code: str | None,
+        reopened: bool,
+        sample_cursor: Mapping[str, int] | None = None,
+    ) -> None:
+        self._record_duration_sample("member_read_attempt", wall_seconds)
+        if not succeeded:
+            self._record_duration_sample("member_read_failed_attempt", wall_seconds)
+            # Finish only real accepted transactions. Open failures use a
+            # separate diagnostic timer and never create an active identity.
+            for key in tuple(self._card_transaction_started):
+                self._finish_card_transaction(key, failed=True)
+        baseline = self._member_metric_baseline
+        cursor = sample_cursor if sample_cursor is not None else baseline[2] if baseline is not None else self.runtime_sample_cursor()
+        logger.info(json.dumps({
+            "event": "arena_member_read_attempt",
+            "team_id": target.team_id,
+            "opponent_position": target.opponent_position,
+            "stage_number": stage_number,
+            "member_slot": member_slot,
+            "wall_seconds": round(wall_seconds, 6),
+            "succeeded": succeeded,
+            "error_code": error_code,
+            "reopened": reopened,
+            **self.runtime_samples_since(cursor),
+        }, ensure_ascii=False, sort_keys=True))
+
     @staticmethod
     def _percentile(values: Sequence[float], quantile: float) -> float:
         ordered = sorted(values)
@@ -671,10 +823,13 @@ class MaaArenaReaderBackend:
         fraction = position - lower
         return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
 
-    def _finish_card_transaction(self, key: tuple[int, int]) -> None:
+    def _finish_card_transaction(
+        self, key: tuple[int, int], *, failed: bool = False, error: str | None = None,
+    ) -> None:
         started = self._card_transaction_started.pop(key, None)
         getattr(self, "_detail_identity_proofs", {}).pop(key, None)
         getattr(self, "_card_transaction_tokens", {}).pop(key, None)
+        getattr(self, "_card_transaction_contact_counts", {}).pop(key, None)
         getattr(self, "_card_transaction_source_boxes", {}).pop(key, None)
         getattr(self, "_card_transaction_interaction_boxes", {}).pop(key, None)
         getattr(self, "_card_detail_last_contact_released_at", {}).pop(key, None)
@@ -693,6 +848,15 @@ class MaaArenaReaderBackend:
         elapsed = time.perf_counter() - started
         self._record_duration_sample("skill_card_detail_transaction", elapsed)
         self._record_duration_sample(kind, elapsed)
+        if failed:
+            self._record_duration_sample("skill_card_detail_failed_transaction", elapsed)
+            self._increment("skill_card_detail_failed_transactions")
+            phase = getattr(self, "_detail_failure_frames", None)
+            if phase is not None:
+                self._record_duration_sample(f"skill_card_detail_{phase['position'].get('phase', 'body')}_failed", elapsed)
+            self._persist_detail_failure(error or "skill_card_transaction_failed")
+        else:
+            self._detail_failure_frames = None
         if ocr_started is not None:
             backend_started, cache_hits_started = ocr_started
             self._record_duration_sample(
@@ -2650,6 +2814,7 @@ class MaaArenaReaderBackend:
         *,
         maximum_count: int,
         admissible_counts: Sequence[int] | None = None,
+        allow_ocr: bool = True,
     ) -> int:
         """Use one stable count only after detail semantics remain non-unique.
 
@@ -2681,7 +2846,8 @@ class MaaArenaReaderBackend:
             # Detail identity is authoritative over a pre-click visual family.
             # Re-evaluate the frozen plate glyph when the confirmed card changes
             # the only legal OCR domain instead of keeping a stale rejection.
-            self._badge_glyph_count_diagnostics.pop(key, None)
+            if allow_ocr:
+                self._badge_glyph_count_diagnostics.pop(key, None)
             cached = None
         if cached is not None:
             count = cached.get("resolved_count")
@@ -2833,6 +2999,13 @@ class MaaArenaReaderBackend:
                 raise ArenaReaderError(
                     "skill_card_badge_glyph_exemplar_transition_conflict",
                     f"{key!r} multi-view OCR glyph is already polluted",
+                )
+
+            if not allow_ocr:
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_cached_evidence_missing",
+                    "error-only text recovery has no existing badge evidence; "
+                    "additional glyph OCR is outside its budget",
                 )
 
             descriptor_votes: dict[
@@ -3203,6 +3376,10 @@ class MaaArenaReaderBackend:
                 self._increment("skill_card_badge_auxiliary_glyph_ocr")
             return count
         except ArenaReaderError as error:
+            if not allow_ocr:
+                # A budget-limited cache probe is not a failed recognition.
+                # Leave the original retry's glyph evidence untouched.
+                raise
             self._badge_glyph_count_diagnostics[key] = {
                 "group_index": key[0],
                 "slot": key[1],
@@ -3617,7 +3794,6 @@ class MaaArenaReaderBackend:
             self._assert_member_detail()
 
     def read_support_bonus(self, target: TeamTarget) -> float:
-        del target
         image = self._capture()
         height, width = image.shape[:2]
         info_box = (
@@ -3632,22 +3808,68 @@ class MaaArenaReaderBackend:
         value: float | None = None
         last_text = ""
         last_close_count = 0
-        while time.monotonic() < deadline:
+        recent_member_frames: list[bool] = []
+
+        def read_overlay(*, reuse_close_label: bool = False) -> float | None:
+            nonlocal last_text, last_close_count
             overlay = self._capture()
+            items = self._ocr(overlay, r".+")
             try:
                 last_text = self._full_ocr_text(overlay)
             except ArenaReaderError:
                 last_text = ""
-            last_close_count = len(self._ocr(overlay, r"^閉じる$"))
-            value = self._support_bonus_from_overlay(
-                last_text,
-                close_count=last_close_count,
+            # Preserve the original normal two-query cadence. Recovery reuses
+            # the full frame so its three-read allowance stays three OCR calls.
+            last_close_count = len(
+                self._matching_ocr_items(items, r"^閉じる$")
+                if reuse_close_label else self._ocr(overlay, r"^閉じる$")
             )
+            communication_dialog = self._retry_transient_communication_items(items)
+            recent_member_frames.append(
+                bool(self._matching_ocr_items(items, r"^体力$"))
+                and bool(self._matching_ocr_items(items, r"^総合力$"))
+                and "サポートボーナス" not in last_text
+                and last_close_count == 0
+                and not communication_dialog
+            )
+            del recent_member_frames[:-2]
             self._increment("support_bonus_overlay_reads")
+            result = self._support_bonus_from_overlay(last_text, close_count=last_close_count)
+            return None if communication_dialog else result
+
+        while time.monotonic() < deadline:
+            value = read_overlay()
             if value is not None:
                 break
             time.sleep(0.08)
         self._add_timing("support_bonus_open_wait", time.perf_counter() - started)
+        retries = getattr(self, "_support_bonus_retried_teams", None)
+        if retries is None:
+            retries = set()
+            self._support_bonus_retried_teams = retries
+        if value is None and recent_member_frames == [True, True] and target.team_id not in retries:
+            # This allowance belongs to the reader/backend, not member state;
+            # a whole-provider retry cannot rearm it for the same team.
+            retries.add(target.team_id)
+            recovery_started = time.perf_counter()
+            recovery_deadline = time.monotonic() + 2.0
+            self._increment("support_bonus_open_retries")
+            self._click(info_box, settle_seconds=0)
+            reads = 0
+            while reads < 3 and time.monotonic() < recovery_deadline:
+                reads += 1
+                value = read_overlay(reuse_close_label=True)
+                if value is not None:
+                    break
+                if reads < 3 and time.monotonic() + 0.08 < recovery_deadline:
+                    time.sleep(0.08)
+            elapsed = time.perf_counter() - recovery_started
+            self._record_duration_sample("support_bonus_recovery", elapsed)
+            logger.info(json.dumps({
+                "event": "arena_reader_recovery", "team_id": target.team_id,
+                "action": "support_bonus_reclick", "succeeded": value is not None,
+                "extra_ocr": reads, "extra_clicks": 1, "wall_seconds": round(elapsed, 6),
+            }, ensure_ascii=False, sort_keys=True))
         if value is None:
             bonuses = re.findall(
                 r"(?<![0-9])\+([0-9]+(?:\.[0-9]+)?)%",
@@ -3874,6 +4096,32 @@ class MaaArenaReaderBackend:
         return evidence
 
     def _confirm_p_item_detail(
+        self, box: tuple[int, int, int, int], *, candidate_ids: Sequence[int],
+        global_title_scope: bool = False, visual_tiebreak_ids: Sequence[int] = (),
+        unrepresented_ids: Sequence[int] = (), source_images: Sequence[Any] = (),
+        source_boxes: Sequence[tuple[int, int, int, int]] = (),
+        plan: str | None = None,
+    ) -> int:
+        started = time.perf_counter()
+        failed_before = len(getattr(self, "_runtime_duration_samples", {}).get("p_item_detail_failed_transaction", ()))
+        if getattr(self, "_detail_failure_frames", None) is None:
+            self._begin_detail_diagnostics(kind="p_item", box=list(box), source=source_images[0] if source_images else None)
+        try:
+            result = self._confirm_p_item_detail_once(
+                box, candidate_ids=candidate_ids, global_title_scope=global_title_scope,
+                visual_tiebreak_ids=visual_tiebreak_ids, unrepresented_ids=unrepresented_ids,
+                source_images=source_images, source_boxes=source_boxes,
+                plan=plan,
+            )
+        except Exception as error:
+            if len(getattr(self, "_runtime_duration_samples", {}).get("p_item_detail_failed_transaction", ())) == failed_before:
+                self._record_duration_sample("p_item_detail_failed_transaction", time.perf_counter() - started)
+            self._persist_detail_failure(str(error))
+            raise
+        self._detail_failure_frames = None
+        return result
+
+    def _confirm_p_item_detail_once(
         self,
         box: tuple[int, int, int, int],
         *,
@@ -3883,6 +4131,7 @@ class MaaArenaReaderBackend:
         unrepresented_ids: Sequence[int] = (),
         source_images: Sequence[Any] = (),
         source_boxes: Sequence[tuple[int, int, int, int]] = (),
+        plan: str | None = None,
     ) -> int:
         if not candidate_ids:
             raise ArenaReaderError(
@@ -3896,7 +4145,22 @@ class MaaArenaReaderBackend:
             for title_row in str(text or "").splitlines():
                 if not title_row.strip():
                     continue
-                if global_title_scope:
+                family_matcher = getattr(self.catalog, "p_item_detail_title_family_ids", None)
+                if callable(family_matcher):
+                    row_matches = family_matcher(title_row, plan=plan)
+                    if not row_matches:
+                        recovered = family_matcher(
+                            title_row, plan=plan, allow_one_substitution=True,
+                        )
+                        # Preserve the existing visual boundary only for a
+                        # one-character OCR repair. An exact complete title
+                        # always searches its full catalog family.
+                        old_matches = self.catalog.clicked_p_item_candidate_matches(
+                            title_row, candidate_p_item_ids=candidate_ids,
+                        ) if recovered else ()
+                        if set(recovered).intersection(old_matches):
+                            row_matches = recovered
+                elif global_title_scope:
                     row_matches = self.catalog.clicked_p_item_global_detail_matches(
                         title_row,
                         candidate_p_item_ids=candidate_ids,
@@ -3917,15 +4181,17 @@ class MaaArenaReaderBackend:
             for title_row in str(text or "").splitlines():
                 if not title_row.strip():
                     continue
-                matches.extend(
-                    self.catalog.clicked_p_item_global_detail_matches(
+                family_matcher = getattr(self.catalog, "p_item_detail_title_family_ids", None)
+                if callable(family_matcher):
+                    matches.extend(family_matcher(title_row, plan=plan))
+                else:
+                    matches.extend(self.catalog.clicked_p_item_global_detail_matches(
                         title_row,
                         candidate_p_item_ids=candidate_ids,
                         visual_tiebreak_p_item_ids=visual_tiebreak_ids,
                         unrepresented_p_item_ids=unrepresented_ids,
                         allow_one_substitution=False,
-                    )
-                )
+                    ))
             return tuple(dict.fromkeys(matches))
 
         def normalize_title_row(text: str) -> str:
@@ -3947,26 +4213,15 @@ class MaaArenaReaderBackend:
             str,
             str,
             bool,
-            tuple[
-                tuple[
-                    str,
-                    str,
-                    tuple[float, float, float, float],
-                    tuple[
-                        tuple[
-                            str,
-                            str,
-                            tuple[float, float, float, float],
-                        ],
-                        ...,
-                    ],
-                ],
-                ...,
-            ],
+            tuple[_NormalizedPItemRow, ...],
+            tuple[_NormalizedPItemRow, ...],
+            tuple[dict[str, Any], ...],
         ]:
             observation = self._p_item_ocr_observation(image)
-            if len(observation) == 4:
-                full_text, panel_text, anchors_visible, geometric_rows = observation
+
+            def normalize_rows(geometric_rows: Sequence[Any]) -> tuple[
+                _NormalizedPItemRow, ...
+            ]:
                 normalized_rows_list = []
                 for geometric_row in geometric_rows:
                     if len(geometric_row) == 3:
@@ -3999,7 +4254,35 @@ class MaaArenaReaderBackend:
                             normalized_components,
                         )
                     )
-                normalized_rows = tuple(normalized_rows_list)
+                return tuple(normalized_rows_list)
+
+            background_rows: tuple[_NormalizedPItemRow, ...] = ()
+            atoms: tuple[dict[str, Any], ...] = ()
+            if isinstance(observation, _PItemOcrObservation):
+                full_text = observation.full_text
+                panel_text = observation.panel_text
+                anchors_visible = observation.anchors_visible
+                normalized_rows = normalize_rows(observation.panel_rows)
+                background_rows = normalize_rows(observation.background_rows)
+                if observation.all_items:
+                    height, width = image.shape[:2]
+                    atoms = tuple(
+                        {
+                            "text": _text(item),
+                            "box": tuple(
+                                value / scale
+                                for value, scale in zip(
+                                    _box(item),
+                                    (width / 720.0, height / 1280.0) * 2,
+                                    strict=True,
+                                )
+                            ),
+                        }
+                        for item in observation.all_items
+                    )
+            elif len(observation) == 4:
+                full_text, panel_text, anchors_visible, geometric_rows = observation
+                normalized_rows = normalize_rows(geometric_rows)
             elif len(observation) == 3:
                 # Isolated tests and injected diagnostic backends predate row
                 # geometry. Give their ordered rows stable synthetic positions;
@@ -4032,6 +4315,8 @@ class MaaArenaReaderBackend:
                 str(panel_text),
                 bool(anchors_visible),
                 normalized_rows,
+                background_rows,
+                atoms,
             )
 
         def one_substitution(left: str, right: str) -> bool:
@@ -4040,6 +4325,16 @@ class MaaArenaReaderBackend:
                 and len(left) == len(right)
                 and sum(a != b for a, b in zip(left, right)) == 1
             )
+
+        def one_insertion_or_deletion(left: str, right: str) -> bool:
+            if abs(len(left) - len(right)) != 1:
+                return False
+            shorter, longer = sorted((left, right), key=len)
+            first_difference = next(
+                (index for index, value in enumerate(shorter) if value != longer[index]),
+                len(shorter),
+            )
+            return shorter[first_difference:] == longer[first_difference + 1 :]
 
         def numeric_source_row_extension(
             current_row: str,
@@ -4116,6 +4411,72 @@ class MaaArenaReaderBackend:
             tuple[str, tuple[float, float, float, float]],
             ...,
         ] = ()
+        stable_source_row_frames: tuple[
+            tuple[Any, tuple[tuple[float, float, float, float], ...]],
+            ...,
+        ] = ()
+        stable_source_background_frames: tuple[
+            tuple[int, tuple[_NormalizedPItemRow, ...]], ...
+        ] = ()
+        background_majority_required = 2
+
+        def source_row_pixels_unchanged(
+            current_image: Any,
+            current_box: tuple[float, float, float, float],
+            source_index: int,
+        ) -> bool:
+            import math
+
+            import numpy as np
+
+            comparison_started = time.perf_counter()
+            try:
+                if (
+                    not isinstance(current_image, np.ndarray)
+                    or current_image.ndim != 3
+                    or current_image.shape[2] != 3
+                ):
+                    return False
+                height, width = current_image.shape[:2]
+                for source_image, source_row_boxes in stable_source_row_frames:
+                    if (
+                        not isinstance(source_image, np.ndarray)
+                        or source_image.shape != current_image.shape
+                        or source_image.dtype != current_image.dtype
+                    ):
+                        continue
+                    source_box = source_row_boxes[source_index]
+                    if not same_source_position(current_box, source_box):
+                        continue
+                    current_x, current_y, current_width, current_height = current_box
+                    source_x, source_y, source_width, source_height = source_box
+                    left = math.floor(min(current_x, source_x) * width / 720.0)
+                    top = math.floor(min(current_y, source_y) * height / 1280.0)
+                    right = math.ceil(
+                        max(current_x + current_width, source_x + source_width)
+                        * width / 720.0
+                    )
+                    bottom = math.ceil(
+                        max(current_y + current_height, source_y + source_height)
+                        * height / 1280.0
+                    )
+                    # Compare the complete union at its original coordinates;
+                    # clipping, resizing or mixing pixels from several source
+                    # frames would no longer prove this source row unchanged.
+                    if not (0 <= left < right <= width and 0 <= top < bottom <= height):
+                        continue
+                    if np.array_equal(
+                        current_image[top:bottom, left:right],
+                        source_image[top:bottom, left:right],
+                    ):
+                        return True
+                return False
+            finally:
+                self._add_timing(
+                    "p_item_source_row_pixel_identity",
+                    time.perf_counter() - comparison_started,
+                )
+
         if source_images:
             cache = getattr(self, "_p_item_source_ocr_cache", None)
             if cache is None:
@@ -4150,11 +4511,12 @@ class MaaArenaReaderBackend:
                 )
                 cache[cache_key] = source_observations
             signature_counts: dict[tuple[str, ...], int] = {}
-            for _, _, _, source_rows in source_observations:
+            for _, _, _, source_rows, _, _ in source_observations:
                 signature = tuple(row[1] for row in source_rows)
                 if signature:
                     signature_counts[signature] = signature_counts.get(signature, 0) + 1
             strict_majority = len(source_observations) // 2 + 1
+            background_majority_required = max(2, strict_majority)
             if len(source_observations) >= 2:
                 stable_source_title_signatures = frozenset(
                     signature
@@ -4165,9 +4527,16 @@ class MaaArenaReaderBackend:
                     stable_signature = next(iter(stable_source_title_signatures))
                     agreeing_rows = tuple(
                         source_rows
-                        for _, _, _, source_rows in source_observations
+                        for _, _, _, source_rows, _, _ in source_observations
                         if tuple(row[1] for row in source_rows)
                         == stable_signature
+                    )
+                    stable_source_row_frames = tuple(
+                        (source_image, tuple(row[2] for row in source_rows))
+                        for source_image, (_, _, _, source_rows, _, _) in zip(
+                            source_images, source_observations, strict=True,
+                        )
+                        if tuple(row[1] for row in source_rows) == stable_signature
                     )
                     stable_source_title_rows = tuple(
                         (
@@ -4181,6 +4550,15 @@ class MaaArenaReaderBackend:
                             ),
                         )
                         for index, normalized in enumerate(stable_signature)
+                    )
+                    # Extra rows never alter the old source signature or its
+                    # pixel-row indexes. Only its agreeing source frames may
+                    # contribute exact background evidence.
+                    stable_source_background_frames = tuple(
+                        (id(source_image), background_rows)
+                        for source_image, (_, _, _, source_rows, background_rows, _)
+                        in zip(source_images, source_observations, strict=True)
+                        if tuple(row[1] for row in source_rows) == stable_signature
                     )
                 else:
                     raise ArenaReaderError(
@@ -4199,6 +4577,7 @@ class MaaArenaReaderBackend:
         last_panel_text = ""
         last_title_text = ""
         last_error = "P-item detail OCR did not run"
+        last_text_resolution = ""
         resolved: int | None = None
         candidate_title_seen = False
         detail_confirmed = False
@@ -4216,6 +4595,10 @@ class MaaArenaReaderBackend:
         last_frame_may_have_overlay = False
         open_wait_started = time.perf_counter()
         while time.monotonic() < deadline:
+            last_text_resolution = ""
+            diagnostic = getattr(self, "_detail_failure_frames", None)
+            if diagnostic is not None:
+                diagnostic.pop("p_item_text", None)
             try:
                 image = self._capture()
                 ocr_started = time.perf_counter()
@@ -4224,6 +4607,8 @@ class MaaArenaReaderBackend:
                     last_panel_text,
                     member_anchors_visible,
                     current_rows,
+                    _,
+                    current_atoms,
                 ) = observe_p_item(image)
                 self._add_timing(
                     "p_item_detail_ocr",
@@ -4234,6 +4619,7 @@ class MaaArenaReaderBackend:
                 )
                 last_source_row_uncertain = False
                 used_source_rows: set[int] = set()
+                used_background_rows: set[tuple[int, int]] = set()
                 last_title_text = ""
                 for raw, normalized, row_box, components in current_rows:
                     exact_sources = tuple(
@@ -4282,6 +4668,32 @@ class MaaArenaReaderBackend:
                     if extended_sources:
                         last_source_row_uncertain = True
                         break
+                    edited_sources = tuple(
+                        index
+                        for index, (source_row, source_box) in enumerate(
+                            stable_source_title_rows
+                        )
+                        if index not in used_source_rows
+                        and same_source_position(row_box, source_box)
+                        and one_insertion_or_deletion(normalized, source_row)
+                    )
+                    if edited_sources:
+                        # A genuine catalog title (including a new '+') wins
+                        # over source-row reuse, even with identical pixels.
+                        if match_title_rows_exact(raw):
+                            last_title_text = raw
+                            break
+                        unchanged_source = next(
+                            (
+                                index for index in edited_sources
+                                if source_row_pixels_unchanged(image, row_box, index)
+                            ),
+                            None,
+                        )
+                        if unchanged_source is not None:
+                            used_source_rows.add(unchanged_source)
+                            self._increment("p_item_source_row_pixel_identity_reuses")
+                            continue
                     approximate_source = any(
                         index not in used_source_rows
                         and same_source_position(row_box, source_box)
@@ -4296,6 +4708,47 @@ class MaaArenaReaderBackend:
                         # promote effect prose into the title slot.
                         last_source_row_uncertain = True
                         break
+                    extra_sources: set[tuple[int, int]] = set()
+                    for frame_id, background_rows in stable_source_background_frames:
+                        candidates = tuple(
+                            index
+                            for index, (_, source_row, source_box, _) in enumerate(
+                                background_rows
+                            )
+                            if normalized == source_row
+                            and same_source_position(row_box, source_box)
+                        )
+                        if len(candidates) != 1:
+                            continue
+                        source_index = candidates[0]
+                        source_key = (frame_id, source_index)
+                        source_box = background_rows[source_index][2]
+                        if (
+                            source_key in used_background_rows
+                            or sum(
+                                current_normalized == normalized
+                                and same_source_position(current_box, source_box)
+                                for _, current_normalized, current_box, _ in current_rows
+                            ) != 1
+                            or any(
+                                index in used_source_rows
+                                and source_row == normalized
+                                and same_source_position(source_box, old_box)
+                                for index, (source_row, old_box) in enumerate(
+                                    stable_source_title_rows
+                                )
+                            )
+                        ):
+                            continue
+                        extra_sources.add(source_key)
+                    if (
+                        len({frame_id for frame_id, _ in extra_sources})
+                        >= background_majority_required
+                        and not match_title_rows_exact(raw)
+                    ):
+                        used_background_rows.update(extra_sources)
+                        self._increment("p_item_source_background_row_reuses")
+                        continue
                     last_title_text = raw
                     break
                 # The first row newly introduced by the detail panel is the
@@ -4304,7 +4757,44 @@ class MaaArenaReaderBackend:
                 raw_matches = match_title_rows(last_title_text)
                 matches = raw_matches
                 effect_disambiguated = False
-                if len(raw_matches) > 1:
+                text_resolver = getattr(self.catalog, "resolve_clicked_p_item_text", None)
+                if callable(text_resolver) and last_title_text and raw_matches:
+                    # The first new row was fixed above without consulting
+                    # effect prose. Merge only its original title components;
+                    # every other same-frame OCR atom retains its own boundary.
+                    title_components = {(value, tuple(box)) for value, _, box in components}
+                    text_atoms = [
+                        atom for atom in current_atoms
+                        if (str(atom["text"]).strip(), tuple(atom["box"])) not in title_components
+                    ]
+                    title_index = len(text_atoms)
+                    if current_atoms:
+                        text_atoms.append({"text": last_title_text, "box": row_box})
+                    text_started = time.perf_counter()
+                    text_result = text_resolver(
+                        text_atoms, title_index=title_index,
+                        source_frames=tuple(value[5] for value in source_observations)
+                        if source_images else (),
+                        plan=plan, candidate_p_item_ids=candidate_ids,
+                        visual_tiebreak_p_item_ids=visual_tiebreak_ids,
+                        title_text=last_title_text, detail_text=last_text,
+                        allow_one_substitution=not bool(match_title_rows_exact(last_title_text)),
+                    )
+                    self._add_timing("p_item_detail_text", time.perf_counter() - text_started)
+                    self._increment(f"p_item_detail_text_{text_result.status}")
+                    last_text_resolution = f"{text_result.status}: {text_result.reason}"
+                    if diagnostic is not None:
+                        diagnostic["p_item_text"] = {
+                            "status": text_result.status, "reason": text_result.reason,
+                            "ids": text_result.ids, **text_result.diagnostics,
+                        }
+                    matches = text_result.ids if text_result.status == "unique" else raw_matches
+                    if text_result.status != "unique" and len(matches) == 1:
+                        matches = ()
+                    effect_disambiguated = text_result.status == "unique" and (
+                        len(raw_matches) != 1 or text_result.ids != raw_matches
+                    )
+                elif len(raw_matches) > 1:
                     effect_matcher = getattr(
                         self.catalog,
                         "clicked_p_item_effect_detail_matches",
@@ -4532,6 +5022,7 @@ class MaaArenaReaderBackend:
                 error_code,
                 f"P-item detail did not uniquely confirm {tuple(candidate_ids)!r}: "
                 f"{last_error}; states={transaction_states!r}; "
+                f"text_resolution={last_text_resolution!r}; "
                 f"safe_box={safe_region!r}; click_point={interaction_point!r}; "
                 f"retried={retried}; "
                 f"source_match_route={last_source_match_route!r}; "
@@ -4574,6 +5065,134 @@ class MaaArenaReaderBackend:
         )
         self._p_item_reference_gallery_ids = tuple(sorted(gallery_ids))
         self._p_item_catalog_compatibility_checked = True
+
+    def _assert_skill_card_reference_catalog_compatibility(self) -> None:
+        """Record forward RIS drift without treating the fixed gallery as a gate."""
+
+        if getattr(self, "_skill_card_catalog_compatibility_checked", False):
+            return
+        if not hasattr(self, "_card_reference_gallery"):
+            # Minimal object.__new__ test doubles do not represent a packaged
+            # runtime and intentionally omit the gallery cache slot.
+            return
+        gallery = self._card_references()
+        raw_gallery_ids = getattr(gallery, "business_ids", None)
+        catalog_ids_resolver = getattr(
+            self.catalog,
+            "skill_card_business_ids",
+            None,
+        )
+        if raw_gallery_ids is None or catalog_ids_resolver is None:
+            # Isolated test doubles may not expose an inventory. Production
+            # BadgeReferenceGallery always does, so this cannot bypass the
+            # forward-drift route in a packaged runtime.
+            return
+        try:
+            gallery_ids = frozenset(int(value) for value in raw_gallery_ids)
+            catalog_ids = frozenset(catalog_ids_resolver())
+        except (TypeError, ValueError) as error:
+            raise ArenaReaderError(
+                "skill_card_reference_catalog_invalid",
+                "skill-card reference or active RIS catalog contains an invalid ID",
+            ) from error
+        self._skill_card_reference_gallery_ids = tuple(sorted(gallery_ids))
+        self._skill_card_reference_missing_catalog_ids = tuple(
+            sorted(catalog_ids - gallery_ids)
+        )
+        self._skill_card_catalog_compatibility_checked = True
+
+    def _skill_card_forward_drift_for_plan(self, plan: str) -> tuple[int, ...]:
+        """Return active-plan IDs added after the fixed card gallery."""
+
+        self._assert_skill_card_reference_catalog_compatibility()
+        missing = tuple(
+            getattr(self, "_skill_card_reference_missing_catalog_ids", ())
+        )
+        if not missing:
+            return ()
+        try:
+            return self.catalog.skill_card_candidates_for_plan(
+                missing,
+                plan=plan,
+            )
+        except ArenaCatalogError as error:
+            raise ArenaReaderError(
+                "skill_card_reference_catalog_invalid",
+                "active RIS skill-card drift could not be restricted to the stage plan",
+            ) from error
+
+    def _skill_card_catalog_candidates_for_plan(self, plan: str) -> tuple[int, ...]:
+        """Return the complete active-plan title scope for drift-only recovery."""
+
+        try:
+            candidate_ids = self.catalog.skill_card_candidates_for_plan(
+                self.catalog.skill_card_business_ids(),
+                plan=plan,
+            )
+        except ArenaCatalogError as error:
+            raise ArenaReaderError(
+                "skill_card_reference_catalog_invalid",
+                "active RIS skill-card catalog could not provide a title scope",
+            ) from error
+        if not candidate_ids:
+            raise ArenaReaderError(
+                "skill_card_reference_catalog_invalid",
+                "active RIS skill-card catalog provided an empty title scope",
+            )
+        return candidate_ids
+
+    def _skill_card_forward_drift_slot_indices(
+        self,
+        missing_card_ids: Sequence[int],
+    ) -> tuple[int, ...]:
+        """Map forward catalog drift to the game's fixed deck-order positions.
+
+        Every six-card row starts with the P-idol's intrinsic card at index 0.
+        A support-provided card, when present, is fixed at index 1.  Ordinary
+        cards can occupy later positions and are deliberately outside this
+        narrow compatibility route: that larger update requires a matching
+        gallery instead of silently widening every member's click surface.
+        """
+
+        if not missing_card_ids:
+            return ()
+        source_type_resolver = getattr(
+            self.catalog,
+            "skill_card_source_type",
+            None,
+        )
+        if source_type_resolver is None:
+            raise ArenaReaderError(
+                "skill_card_reference_catalog_invalid",
+                "active RIS skill-card drift has no source-type resolver",
+            )
+        try:
+            source_types = {
+                str(source_type_resolver(int(card_id)))
+                for card_id in missing_card_ids
+            }
+        except (ArenaCatalogError, TypeError, ValueError) as error:
+            raise ArenaReaderError(
+                "skill_card_reference_catalog_invalid",
+                "active RIS skill-card drift has no reliable source-type mapping",
+            ) from error
+        unsupported_source_types = tuple(
+            sorted(source_types - {"pIdol", "support"})
+        )
+        if not source_types or unsupported_source_types:
+            raise ArenaReaderError(
+                "skill_card_reference_gallery_update_required",
+                "active RIS added ordinary or unknown skill-card sources that "
+                "require a matching gallery: "
+                f"ids={tuple(missing_card_ids)!r}; "
+                f"source_types={unsupported_source_types!r}",
+            )
+        slots = []
+        if "pIdol" in source_types:
+            slots.append(0)
+        if "support" in source_types:
+            slots.append(1)
+        return tuple(slots)
 
     @staticmethod
     def _p_item_interaction_box(
@@ -4687,7 +5306,6 @@ class MaaArenaReaderBackend:
         stage_number: int,
         slot: int,
     ) -> Sequence[int]:
-        del target, slot
         self._p_item_source_ocr_cache = {}
         if self.p_item_reader is None:
             self.p_item_reader = Task085PItemReader.from_model_root()
@@ -4880,6 +5498,10 @@ class MaaArenaReaderBackend:
                 visual_tiebreak_ids = (
                     decision_observed_ids if decision.accepted else ()
                 )
+                self._begin_detail_diagnostics(
+                    target=target, stage_number=stage_number, member_slot=slot,
+                    kind="p_item", screen_slot=screen_slot, source=images[0],
+                )
                 resolved_id = self._confirm_p_item_detail(
                     box,
                     candidate_ids=detail_candidates,
@@ -4888,6 +5510,7 @@ class MaaArenaReaderBackend:
                     unrepresented_ids=visual_tiebreak_blocked_ids,
                     source_images=images,
                     source_boxes=boxes,
+                    plan=plan,
                 )
                 screen_resolved_ids.append(resolved_id)
                 screen_diagnostics.append(
@@ -5398,6 +6021,88 @@ class MaaArenaReaderBackend:
             and str(candidate["reference_visual_group"]).strip()
         }
         return tuple(sorted(groups))
+
+    @staticmethod
+    def _reference_identity_candidates(
+        identity: dict[str, Any],
+    ) -> tuple[tuple[int, str], ...]:
+        """Return every high-confidence business-ID/visual-family pair."""
+
+        if not isinstance(identity, dict):
+            return ()
+        raw_candidates: Sequence[dict[str, Any]]
+        if identity.get("status") == "MEASURED":
+            raw_candidates = (identity,)
+        elif identity.get("status") == "MEASURED_CANDIDATES":
+            raw_value = identity.get("candidates")
+            if (
+                not isinstance(raw_value, Sequence)
+                or isinstance(raw_value, (str, bytes))
+                or not raw_value
+                or any(not isinstance(candidate, dict) for candidate in raw_value)
+            ):
+                return ()
+            raw_candidates = tuple(raw_value)
+        else:
+            return ()
+        candidates: set[tuple[int, str]] = set()
+        for candidate in raw_candidates:
+            business_id = candidate.get("reference_business_id")
+            visual_group = candidate.get("reference_visual_group")
+            if (
+                candidate.get("status") != "MEASURED"
+                or candidate.get("identity_low_confidence") is not False
+                or not isinstance(business_id, int)
+                or isinstance(business_id, bool)
+                or business_id < 1
+                or not isinstance(visual_group, str)
+                or not visual_group.strip()
+            ):
+                return ()
+            candidates.add((business_id, visual_group))
+        if len(candidates) != len(raw_candidates):
+            return ()
+        return tuple(sorted(candidates))
+
+    @classmethod
+    def _reference_identity_projection_is_strict(
+        cls,
+        identity: dict[str, Any],
+    ) -> bool:
+        """Require the legacy ID/group projections to describe every exact pair."""
+
+        candidates = cls._reference_identity_candidates(identity)
+        if not candidates:
+            return False
+        candidate_business_ids = tuple(
+            sorted({business_id for business_id, _visual_group in candidates})
+        )
+        candidate_visual_groups = tuple(
+            sorted({visual_group for _business_id, visual_group in candidates})
+        )
+        return bool(
+            candidate_business_ids == cls._reference_business_ids(identity)
+            and candidate_visual_groups == cls._reference_visual_groups(identity)
+        )
+
+    @classmethod
+    def _stable_reference_identity_candidates(
+        cls,
+        identities: Sequence[dict[str, Any]],
+    ) -> tuple[tuple[int, str], ...]:
+        """Return one non-empty candidate set reproduced exactly in every frame."""
+
+        if len(identities) != 3:
+            return ()
+        observed = tuple(
+            cls._reference_identity_candidates(identity) for identity in identities
+        )
+        if not observed or any(not candidates for candidates in observed):
+            return ()
+        first = observed[0]
+        if any(candidates != first for candidates in observed[1:]):
+            return ()
+        return first
 
     @classmethod
     def _stable_reference_visual_group(
@@ -6639,6 +7344,36 @@ class MaaArenaReaderBackend:
         return row[card_slot - 1]
 
     def open_skill_card(
+        self, target: TeamTarget, stage_number: int, member_slot: int,
+        group_index: int, card_slot: int, expected_customization_count: int,
+    ) -> None:
+        started = time.perf_counter()
+        clicks_before = self._runtime_counts.get("skill_card_detail_clicks", 0)
+        self._begin_detail_diagnostics(
+            target=target, stage_number=stage_number, member_slot=member_slot,
+            kind="skill_card", group_index=group_index, card_slot=card_slot,
+            phase="open",
+            source=getattr(self, "_card_images", {}).get(group_index),
+        )
+        try:
+            self._open_skill_card_once(
+                target, stage_number, member_slot, group_index, card_slot,
+                expected_customization_count,
+            )
+        except Exception as error:
+            if self._runtime_counts.get("skill_card_detail_clicks", 0) > clicks_before:
+                elapsed = time.perf_counter() - started
+                self._record_duration_sample("skill_card_detail_transaction", elapsed)
+                self._record_duration_sample(getattr(self, "_detail_kind_hint", "necessary_skill_card_detail_transaction"), elapsed)
+                self._record_duration_sample("skill_card_detail_failed_transaction", elapsed)
+                self._record_duration_sample("skill_card_detail_open_failed", elapsed)
+                self._increment("skill_card_detail_failed_transactions")
+                self._persist_detail_failure(str(error))
+            else:
+                self._detail_failure_frames = None
+            raise
+
+    def _open_skill_card_once(
         self,
         target: TeamTarget,
         stage_number: int,
@@ -6646,6 +7381,8 @@ class MaaArenaReaderBackend:
         group_index: int,
         card_slot: int,
         expected_customization_count: int,
+        *,
+        contact_start_index: int = 0,
     ) -> None:
         del target, stage_number, member_slot
         row = self._card_rows.get(group_index, ())
@@ -6677,11 +7414,12 @@ class MaaArenaReaderBackend:
         retry_click_box = self._skill_card_retry_interaction_box(card_box)
         last_text = ""
         last_error = ""
-        transaction_started = time.perf_counter()
+        open_started = time.perf_counter()
+        transaction_started = self._card_transaction_started.get(key, open_started)
         transaction_token = int(getattr(self, "_card_transaction_serial", 0)) + 1
         self._card_transaction_serial = transaction_token
         getattr(self, "_detail_identity_proofs", {}).pop(key, None)
-        transaction_ocr_started = (
+        transaction_ocr_started = getattr(self, "_card_transaction_ocr_started", {}).get(key, (
             self._runtime_counts.get(
                 "detail_capture_broad_ocr_backend_calls",
                 0,
@@ -6690,8 +7428,13 @@ class MaaArenaReaderBackend:
                 "detail_capture_broad_ocr_cache_hits",
                 0,
             ),
-        )
-        for attempt in range(2):
+        ))
+        contact_counts = getattr(self, "_card_transaction_contact_counts", None)
+        if contact_counts is None:
+            contact_counts = {}
+            self._card_transaction_contact_counts = contact_counts
+        for attempt in range(contact_start_index, 2):
+            contact_counts[key] = attempt + 1
             click_box = primary_click_box if attempt == 0 else retry_click_box
             self._increment("skill_card_detail_clicks")
             self._increment("skill_card_safe_region_clicks")
@@ -6780,16 +7523,26 @@ class MaaArenaReaderBackend:
                         ocr_started = {}
                         self._card_transaction_ocr_started = ocr_started
                     ocr_started[key] = transaction_ocr_started
-                    self._card_transaction_kinds[key] = (
-                        "necessary_skill_card_detail_transaction"
+                    self._card_transaction_kinds.setdefault(
+                        key, "necessary_skill_card_detail_transaction",
                     )
+                    diagnostic = getattr(self, "_detail_failure_frames", None)
+                    if diagnostic is not None and "confirmed_open" not in diagnostic:
+                        for captured in reversed(diagnostic["frames"]):
+                            if captured[1] is detail_image:
+                                diagnostic["confirmed_open"] = captured
+                                break
                     self._record_duration_sample(
                         "skill_card_detail_open_phase",
-                        time.perf_counter() - transaction_started,
+                        time.perf_counter() - open_started,
                     )
                     return
                 except ArenaCatalogError as error:
                     last_error = str(error)
+                    evidence = self._cached_full_frame_ocr_evidence(detail_image)
+                    if evidence is not None and self._retry_transient_communication_items(evidence.filtered_items):
+                        time.sleep(0.25)
+                        continue
                 time.sleep(0.25)
             # A failed OCR/identity read does not prove that the overlay stayed
             # closed. The same card point is a toggle while a detail is open,
@@ -6874,6 +7627,14 @@ class MaaArenaReaderBackend:
             1,
         )
 
+    def _open_detail_with_kind(self, kind: str, *args: Any) -> None:
+        previous = getattr(self, "_detail_kind_hint", "necessary_skill_card_detail_transaction")
+        self._detail_kind_hint = kind
+        try:
+            self.open_skill_card(*args)
+        finally:
+            self._detail_kind_hint = previous
+
     def _infer_badge_card_from_detail(
         self,
         target: TeamTarget,
@@ -6887,20 +7648,35 @@ class MaaArenaReaderBackend:
         detail_kind: str,
         *,
         allow_zero_without_badge_count: bool = False,
+        candidate_ids_override: Sequence[int] | None = None,
     ) -> ClickedSkillCard:
         """Resolve one seeded-plate shortlist candidate from clicked detail."""
 
-        candidate_ids = self._card_visual_family_candidates(
-            stage_number=stage_number,
-            image=image,
-            box=box,
-            slot_index=card_slot - 1,
+        candidate_ids = tuple(
+            dict.fromkeys(
+                candidate_ids_override
+                if candidate_ids_override is not None
+                else self._card_visual_family_candidates(
+                    stage_number=stage_number,
+                    image=image,
+                    box=box,
+                    slot_index=card_slot - 1,
+                )
+            )
         )
+        if not candidate_ids:
+            raise ArenaReaderError(
+                "skill_card_badge_detail_identity_unknown",
+                "detail recovery has no active-catalog title candidate",
+            )
         key = (group_index, card_slot)
         self._card_candidate_groups[key] = candidate_ids
         overlay_opened = False
+        inferred = None
+        detail_failure: ArenaReaderError | None = None
         try:
-            self.open_skill_card(
+            self._open_detail_with_kind(
+                detail_kind,
                 target,
                 stage_number,
                 member_slot,
@@ -6924,6 +7700,7 @@ class MaaArenaReaderBackend:
                 member_slot=member_slot,
             )
         except ArenaReaderError as error:
+            detail_failure = error
             if error.code == "skill_card_detail_noninteractive":
                 raise
             raise ArenaReaderError(
@@ -6931,19 +7708,47 @@ class MaaArenaReaderBackend:
                 f"group {group_index}/slot {card_slot}: {error}",
             ) from error
         finally:
-            if overlay_opened:
-                self._dismiss_skill_card_detail()
-        self._assert_inferred_card_group_visible_after_dismiss(
-            group_index,
-            card_slot=card_slot,
-            expected_card_id=inferred.card_id,
-        )
+            try:
+                if overlay_opened:
+                    self._dismiss_skill_card_detail()
+            except Exception:
+                if key in getattr(self, "_card_transaction_started", {}):
+                    self._finish_card_transaction(key, failed=True)
+                raise
+            finally:
+                if inferred is None and key in getattr(self, "_card_transaction_started", {}):
+                    self._finish_card_transaction(
+                        key, failed=True,
+                        error=None if detail_failure is None else str(detail_failure),
+                    )
+        try:
+            self._assert_inferred_card_group_visible_after_dismiss(
+                group_index,
+                card_slot=card_slot,
+                expected_card_id=inferred.card_id,
+            )
+        except Exception:
+            if key in getattr(self, "_card_transaction_started", {}):
+                self._finish_card_transaction(key, failed=True)
+            raise
         self._finish_card_transaction(key)
         self._inferred_clicked_cards[key] = inferred
         self._card_predictions[key] = inferred.card_id
         return inferred
 
     def _infer_zero_card_identity_from_detail(
+        self, target: TeamTarget, stage_number: int, member_slot: int,
+        group_index: int, card_slot: int, candidate_ids: Sequence[int],
+    ) -> ClickedSkillCard:
+        try:
+            return self._infer_zero_card_identity_from_detail_once(
+                target, stage_number, member_slot, group_index, card_slot, candidate_ids,
+            )
+        except Exception as error:
+            self._finish_card_transaction((group_index, card_slot), failed=True, error=str(error))
+            raise
+
+    def _infer_zero_card_identity_from_detail_once(
         self,
         target: TeamTarget,
         stage_number: int,
@@ -6958,7 +7763,8 @@ class MaaArenaReaderBackend:
         self._card_candidate_groups[key] = tuple(candidate_ids)
         overlay_opened = False
         try:
-            self.open_skill_card(
+            self._open_detail_with_kind(
+                "zero_identity_detail_transaction",
                 target,
                 stage_number,
                 member_slot,
@@ -7032,6 +7838,17 @@ class MaaArenaReaderBackend:
                 f"group {group_index} yielded empty flags {empty_flags!r}",
             )
         plan = self.season.stages[stage_number - 1].plan
+        forward_drift_ids = self._skill_card_forward_drift_for_plan(plan)
+        drift_title_candidates = (
+            self._skill_card_catalog_candidates_for_plan(plan)
+            if forward_drift_ids
+            else ()
+        )
+        drift_slot_indices = self._skill_card_forward_drift_slot_indices(
+            forward_drift_ids
+        )
+        if forward_drift_ids:
+            self._increment("skill_card_catalog_drift_groups")
         predictions: list[int] = []
         from card_selection.types import CandidateBox
 
@@ -7050,13 +7867,44 @@ class MaaArenaReaderBackend:
             and customization_count == 0
             and self._inferred_clicked_cards.get((group_index, index + 1)) is None
         )
-        zero_reference_ids: dict[int, int] = {}
-        if zero_slot_indices:
+        forced_detail_slot_indices = tuple(
+            slot_index
+            for slot_index in zero_slot_indices
+            if slot_index in drift_slot_indices
+        )
+        reference_slot_indices = tuple(
+            slot_index
+            for slot_index in zero_slot_indices
+            if slot_index not in drift_slot_indices
+        )
+        zero_reference_ids: dict[int, int] = {
+            slot_index: 0 for slot_index in forced_detail_slot_indices
+        }
+        if forced_detail_slot_indices:
+            # A closed-set visual gallery cannot prove that a stable unique
+            # match is not a newly added RIS card projected onto an older ID.
+            # The game's fixed deck order bounds P-idol/support drift to the
+            # corresponding first or second position of each row.
+            for slot_index in forced_detail_slot_indices:
+                key = (group_index, slot_index + 1)
+                self._zero_card_detail_candidates[key] = drift_title_candidates
+                self._zero_card_identity_fusion_diagnostics[key] = {
+                    "group_index": group_index,
+                    "slot": slot_index + 1,
+                    "plan": plan,
+                    "missing_catalog_reference_ids": list(forward_drift_ids),
+                    "detail_candidates": list(drift_title_candidates),
+                    "fallback_slot_indices": list(drift_slot_indices),
+                    "mode": "active_catalog_forward_drift_fixed_slots_exact_title",
+                }
+        if reference_slot_indices:
             try:
-                zero_reference_ids = self._resolve_zero_card_reference_ids(
-                    group_index,
-                    zero_slot_indices,
-                    plan=plan,
+                zero_reference_ids.update(
+                    self._resolve_zero_card_reference_ids(
+                        group_index,
+                        reference_slot_indices,
+                        plan=plan,
+                    )
                 )
             except BadgeReferenceError as first_error:
                 # A geometry-complete frame generation can still become stale
@@ -7065,10 +7913,12 @@ class MaaArenaReaderBackend:
                 try:
                     self._refresh_visible_card_groups(group_index)
                     self._increment("skill_card_identity_generation_refreshes")
-                    zero_reference_ids = self._resolve_zero_card_reference_ids(
-                        group_index,
-                        zero_slot_indices,
-                        plan=plan,
+                    zero_reference_ids.update(
+                        self._resolve_zero_card_reference_ids(
+                            group_index,
+                            reference_slot_indices,
+                            plan=plan,
+                        )
                     )
                 except (ArenaReaderError, BadgeReferenceError) as retry_error:
                     raise ArenaReaderError(
@@ -7130,24 +7980,63 @@ class MaaArenaReaderBackend:
                     min_margin=minimum_margin,
                     resolve_upgrade_state=False,
                 )
-                if not prediction.accepted or not prediction.card_id.isdigit():
-                    raise ArenaReaderError(
-                        "skill_card_icon_unknown",
-                        f"group {group_index}/slot {index} was rejected: {prediction.reason}",
+                candidate_ids = (
+                    tuple(
+                        dict.fromkeys(
+                            int(value)
+                            for visual_family in prediction.top_k_card_ids
+                            for value in visual_family
+                        )
                     )
-                candidate_ids = tuple(
-                    dict.fromkeys(
-                        int(value)
-                        for visual_family in prediction.top_k_card_ids
-                        for value in visual_family
-                    )
+                    if prediction.accepted
+                    else ()
                 )
-                if not candidate_ids:
-                    raise ArenaReaderError(
-                        "skill_card_icon_unknown",
-                        f"group {group_index}/slot {index} has no visual-family candidates",
-                    )
-                resolved_card_id = int(prediction.card_id)
+                structural_drift_slot = index - 1 in drift_slot_indices
+                if structural_drift_slot:
+                    # Positive cards are clicked later regardless of their
+                    # closed-set prediction.  Keep that mandatory title check
+                    # authoritative over the complete active-plan catalog: a
+                    # high-confidence old-gallery hit cannot exclude a newly
+                    # added P-idol or support card in its fixed deck position.
+                    candidate_ids = drift_title_candidates
+                    if prediction.accepted and prediction.card_id.isdigit():
+                        resolved_card_id = int(prediction.card_id)
+                    else:
+                        inferred = self._infer_badge_card_from_detail(
+                            target,
+                            stage_number,
+                            member_slot,
+                            group_index,
+                            index,
+                            image,
+                            box,
+                            customization_count,
+                            "catalog_drift_positive_identity_transaction",
+                            candidate_ids_override=drift_title_candidates,
+                        )
+                        resolved_card_id = inferred.card_id
+                        candidate_ids = (resolved_card_id,)
+                        self._increment(
+                            "skill_card_catalog_drift_positive_detail_confirmations"
+                        )
+                else:
+                    if (
+                        not prediction.accepted
+                        or not prediction.card_id.isdigit()
+                        or not candidate_ids
+                    ):
+                        if prediction.accepted and prediction.card_id.isdigit():
+                            raise ArenaReaderError(
+                                "skill_card_icon_unknown",
+                                f"group {group_index}/slot {index} has no "
+                                "visual-family candidates",
+                            )
+                        raise ArenaReaderError(
+                            "skill_card_icon_unknown",
+                            f"group {group_index}/slot {index} was rejected: "
+                            f"{prediction.reason}",
+                        )
+                    resolved_card_id = int(prediction.card_id)
             else:
                 # Zero-card identities were resolved as one page generation
                 # before the loop.  This prevents one ambiguous slot from
@@ -7173,6 +8062,10 @@ class MaaArenaReaderBackend:
                     )
                     resolved_card_id = inferred.card_id
                     candidate_ids = (resolved_card_id,)
+                    if forward_drift_ids:
+                        self._increment(
+                            "skill_card_catalog_drift_zero_detail_confirmations"
+                        )
             self._card_candidate_groups[key] = candidate_ids
             self._card_predictions[key] = resolved_card_id
             predictions.append(resolved_card_id)
@@ -7408,6 +8301,16 @@ class MaaArenaReaderBackend:
                 "skill_card_customization_count_input_mismatch",
                 f"group {group_index} is missing its six boxes or prepared frame",
             )
+        plan = self.season.stages[stage_number - 1].plan
+        forward_drift_ids = self._skill_card_forward_drift_for_plan(plan)
+        drift_slot_indices = self._skill_card_forward_drift_slot_indices(
+            forward_drift_ids
+        )
+        drift_title_candidates = (
+            self._skill_card_catalog_candidates_for_plan(plan)
+            if forward_drift_ids
+            else ()
+        )
         cached_frames = self._card_count_frames.get(group_index, ())
         if len(cached_frames) == 3:
             frame_samples = list(cached_frames)
@@ -7642,6 +8545,11 @@ class MaaArenaReaderBackend:
                                 None,
                                 "badge_candidate_detail_transaction",
                                 allow_zero_without_badge_count=True,
+                                candidate_ids_override=(
+                                    drift_title_candidates
+                                    if index - 1 in drift_slot_indices
+                                    else None
+                                ),
                             )
                         except ArenaReaderError as error:
                             if error.code == "skill_card_detail_noninteractive":
@@ -8238,8 +9146,6 @@ class MaaArenaReaderBackend:
     ) -> _DetailIdentityObservation | None:
         """Return exact-title evidence bound to the current post-contact frame."""
 
-        if resolved.detail_evidence_mode != "positive_unique":
-            return None
         transaction_started = getattr(self, "_card_transaction_started", {}).get(key)
         transaction_token = getattr(self, "_card_transaction_tokens", {}).get(key)
         source_card_box = getattr(
@@ -8360,88 +9266,92 @@ class MaaArenaReaderBackend:
         resolved: ClickedSkillCard,
         observations: Sequence[_DetailIdentityObservation],
     ) -> None:
-        """Certify two fresh exact-title frames from one physical transaction."""
+        """Certify exact-title identity independently from customization evidence."""
 
         proofs = getattr(self, "_detail_identity_proofs", None)
         if proofs is None:
             proofs = {}
             self._detail_identity_proofs = proofs
         proofs.pop(key, None)
-        if (
-            resolved.detail_evidence_mode != "positive_unique"
-            or not resolved.resolution_source.endswith("_positive_confirmed")
-            or resolved.detail_confirmation_reads < 2
-            or len(observations) < 2
-        ):
+        selected = tuple(observations[-2:])
+        if not selected:
             return
-        first, second = observations[-2:]
+        first = selected[0]
+        last = selected[-1]
         expected_customizations = tuple(
             sorted(
                 (str(customization_id), int(count))
                 for customization_id, count in resolved.customizations.items()
             )
         )
-        shared_fields_match = bool(
-            first.transaction_token == second.transaction_token
-            and first.transaction_started == second.transaction_started
-            and first.source_card_box == second.source_card_box
-            and first.interaction_box == second.interaction_box
-            and first.contact_released_at == second.contact_released_at
-            and first.source_guard_frames is second.source_guard_frames
-            and first.restoration_signatures is second.restoration_signatures
-            and first.identity_frames is second.identity_frames
-            and first.title == second.title
-            and first.card_id == second.card_id == resolved.card_id
-            and first.customizations
-            == second.customizations
-            == expected_customizations
-            and first.evidence_mode == second.evidence_mode == "positive_unique"
+        shared_fields_match = all(
+            observation.transaction_token == first.transaction_token
+            and observation.transaction_started == first.transaction_started
+            and observation.source_card_box == first.source_card_box
+            and observation.interaction_box == first.interaction_box
+            and observation.contact_released_at == first.contact_released_at
+            and observation.source_guard_frames is first.source_guard_frames
+            and observation.restoration_signatures is first.restoration_signatures
+            and observation.identity_frames is first.identity_frames
+            and observation.title == first.title
+            and observation.card_id == first.card_id == resolved.card_id
+            for observation in selected
+        )
+        capture_started_at = tuple(
+            observation.capture_started_at for observation in selected
+        )
+        detail_images = tuple(observation.detail_image for observation in selected)
+        captures_are_fresh = bool(
+            first.contact_released_at < capture_started_at[0]
+            and all(
+                earlier < later
+                for earlier, later in zip(
+                    capture_started_at,
+                    capture_started_at[1:],
+                    strict=False,
+                )
+            )
+            and len({id(image) for image in detail_images}) == len(detail_images)
         )
         if not (
             shared_fields_match
-            and first.detail_image is not second.detail_image
-            and first.contact_released_at
-            < first.capture_started_at
-            < second.capture_started_at
+            and captures_are_fresh
             and getattr(self, "_card_transaction_started", {}).get(key)
-            == second.transaction_started
+            == last.transaction_started
             and getattr(self, "_card_transaction_tokens", {}).get(key)
-            == second.transaction_token
+            == last.transaction_token
             and getattr(self, "_card_transaction_source_boxes", {}).get(key)
-            == second.source_card_box
+            == last.source_card_box
             and getattr(self, "_card_transaction_interaction_boxes", {}).get(key)
-            == second.interaction_box
+            == last.interaction_box
             and getattr(self, "_card_detail_last_contact_released_at", {}).get(key)
-            == second.contact_released_at
+            == last.contact_released_at
             and getattr(self, "_card_detail_capture_started_at", {}).get(key)
-            == second.capture_started_at
+            == last.capture_started_at
             and getattr(self, "_card_detail_images", {}).get(key)
-            is second.detail_image
+            is last.detail_image
             and getattr(self, "_card_source_guard_frames", {}).get(key[0])
-            is second.source_guard_frames
+            is last.source_guard_frames
             and getattr(self, "_card_restoration_signatures", {}).get(key[0])
-            is second.restoration_signatures
+            is last.restoration_signatures
             and getattr(self, "_card_identity_frames", {}).get(key[0])
-            is second.identity_frames
+            is last.identity_frames
         ):
             return
         proofs[key] = _DetailIdentityProof(
-            transaction_token=second.transaction_token,
-            transaction_started=second.transaction_started,
-            source_card_box=second.source_card_box,
-            interaction_box=second.interaction_box,
-            contact_released_at=second.contact_released_at,
-            capture_started_at=(
-                first.capture_started_at,
-                second.capture_started_at,
-            ),
-            detail_images=(first.detail_image, second.detail_image),
-            source_guard_frames=second.source_guard_frames,
-            restoration_signatures=second.restoration_signatures,
-            identity_frames=second.identity_frames,
-            title=second.title,
-            card_id=second.card_id,
-            customizations=second.customizations,
+            transaction_token=last.transaction_token,
+            transaction_started=last.transaction_started,
+            source_card_box=last.source_card_box,
+            interaction_box=last.interaction_box,
+            contact_released_at=last.contact_released_at,
+            capture_started_at=capture_started_at,
+            detail_images=detail_images,
+            source_guard_frames=last.source_guard_frames,
+            restoration_signatures=last.restoration_signatures,
+            identity_frames=last.identity_frames,
+            title=last.title,
+            card_id=last.card_id,
+            customizations=expected_customizations,
             resolution_source=resolved.resolution_source,
             evidence_mode=resolved.detail_evidence_mode,
             detail_confirmation_reads=resolved.detail_confirmation_reads,
@@ -8464,16 +9374,23 @@ class MaaArenaReaderBackend:
         proof = getattr(self, "_detail_identity_proofs", {}).get(key)
         if not isinstance(proof, _DetailIdentityProof):
             return False
-        first_capture, second_capture = proof.capture_started_at
+        captures = proof.capture_started_at
+        images = proof.detail_images
+        observations_are_fresh = bool(
+            captures
+            and len(captures) == len(images)
+            and proof.contact_released_at < captures[0]
+            and all(
+                earlier < later
+                for earlier, later in zip(captures, captures[1:], strict=False)
+            )
+            and len({id(image) for image in images}) == len(images)
+        )
         return bool(
             proof.card_id == expected_card_id
             and proof.source_card_box == tuple(source_card_box)
             and proof.title.strip()
-            and proof.evidence_mode == "positive_unique"
-            and proof.resolution_source.endswith("_positive_confirmed")
-            and proof.detail_confirmation_reads >= 2
-            and proof.detail_images[0] is not proof.detail_images[1]
-            and proof.contact_released_at < first_capture < second_capture
+            and observations_are_fresh
             and getattr(self, "_card_transaction_started", {}).get(key)
             == proof.transaction_started
             and getattr(self, "_card_transaction_tokens", {}).get(key)
@@ -8485,9 +9402,9 @@ class MaaArenaReaderBackend:
             and getattr(self, "_card_detail_last_contact_released_at", {}).get(key)
             == proof.contact_released_at
             and getattr(self, "_card_detail_capture_started_at", {}).get(key)
-            == second_capture
+            == captures[-1]
             and getattr(self, "_card_detail_images", {}).get(key)
-            is proof.detail_images[1]
+            is images[-1]
             and getattr(self, "_card_source_guard_frames", {}).get(key[0])
             is proof.source_guard_frames
             and getattr(self, "_card_restoration_signatures", {}).get(key[0])
@@ -8517,7 +9434,216 @@ class MaaArenaReaderBackend:
             "detail_confirmation_reads": proof.detail_confirmation_reads,
         }
 
+    def _recover_failed_skill_card_effect_text(
+        self,
+        key: tuple[int, int],
+        card_id: int,
+        error: ArenaReaderError,
+        *,
+        expected_customization_count: int | None,
+        allow_zero_without_badge_count: bool,
+    ) -> tuple[str, ClickedSkillCard] | None:
+        """Repair cached native atoms only after the existing views failed.
+
+        Geometry cannot select a catalog answer. The repaired text must still
+        have explicit positive evidence. Resolve its count from the detail
+        before considering existing auxiliary evidence; never start extra OCR.
+        The caller retains all cost, identity and fresh-frame confirmation.
+        """
+        if error.code not in {
+            "skill_card_detail_ambiguous",
+            "skill_card_badge_glyph_domain_invalid",
+            "skill_card_badge_glyph_ambiguous",
+        }:
+            return None
+        started = time.perf_counter()
+        self._increment("skill_card_error_numeric_attempts")
+        try:
+            image = self._card_detail_images.get(key)
+            evidence = self._cached_full_frame_ocr_evidence(image)
+            if evidence is None:
+                return None
+            atoms = tuple((_text(item), _box(item)) for item in evidence.all_items)
+            pattern = self.catalog.skill_card_title_anchor_pattern(card_id)
+            titles = tuple(box for value, box in atoms if re.search(pattern, value))
+            if len(titles) != 1:
+                return None
+            height, width = image.shape[:2]
+            roi = self._title_anchored_effect_roi(width, height, titles[0])
+            wrapped = recover_wrapped_signed_text(atoms, titles[0], roi)
+            if wrapped.status == "recovered":
+                self._increment("skill_card_error_wrapped_row_repairs")
+                logger.debug(
+                    f"skill-card error wrapped row recovery: key={key} card={card_id} "
+                    f"order={wrapped.reordered_indices} reason={wrapped.reason}",
+                )
+                clean_text = wrapped.protected_text
+            else:
+                if wrapped.status == "unrecoverable":
+                    return None
+                layout = recover_distant_number_text(atoms, titles[0], roi)
+                if layout.status != "recovered":
+                    self._increment("skill_card_error_numeric_no_repair")
+                    return None
+                self._increment("skill_card_error_numeric_layout_repairs")
+                logger.debug(
+                    f"skill-card error numeric isolation: key={key} card={card_id} "
+                    f"far={layout.far_indices} ambiguous={layout.ambiguous_indices}",
+                )
+                clean_text = layout.protected_text
+            if getattr(self, "_card_face_cost_optional_errors", {}).get(key):
+                return None
+            generic_values = self._measure_optional_card_face_generic_cost(key, card_id)
+            if wrapped.status == "recovered":
+                if expected_customization_count is None and not allow_zero_without_badge_count:
+                    return None
+                customizations = self.catalog._resolve_failed_detail_unique_customizations(
+                    card_id, clean_text,
+                )
+                count = sum(customizations.values())
+                if expected_customization_count is not None and count != expected_customization_count:
+                    return None
+                if generic_values is not None:
+                    self.catalog.certify_card_face_generic_cost(
+                        card_id, resolved=customizations, frame_values=generic_values,
+                    )
+                source = "detail_card_face_unique" if generic_values is not None else "detail_unconstrained"
+                mode = self.catalog.effective_customization_evidence_mode(
+                    card_id, clean_text, expected_count=count, resolved=customizations,
+                )
+            elif expected_customization_count is None:
+                if not allow_zero_without_badge_count:
+                    return None
+                try:
+                    if generic_values is None:
+                        customizations = self.catalog.resolve_effective_customizations_without_badge_count(
+                            card_id, clean_text,
+                        )
+                        source = "detail_unconstrained"
+                    else:
+                        customizations = self.catalog.resolve_effective_customizations_with_generic_cost_evidence(
+                            card_id, clean_text, generic_cost_frame_values=generic_values,
+                        )
+                        source = "detail_card_face_unique"
+                    mode = self.catalog.effective_customization_evidence_mode(
+                        card_id, clean_text,
+                        expected_count=sum(customizations.values()),
+                        resolved=customizations,
+                    )
+                except ArenaCatalogError:
+                    maximum = self.catalog.maximum_customization_count(card_id)
+                    # Reuse each resolution if auxiliary evidence is still
+                    # needed for a genuinely non-unique detail combination.
+                    by_count = {}
+                    for observed_count in range(1, maximum + 1):
+                        try:
+                            candidate = self.catalog.resolve_clicked_customizations(
+                                card_id, clean_text, observed_badge_count=observed_count,
+                                generic_cost_frame_values=generic_values,
+                            )
+                        except ArenaCatalogError:
+                            continue
+                        if (
+                            candidate.badge_count_match
+                            and candidate.resolved_count == observed_count
+                        ):
+                            by_count[observed_count] = candidate
+                    count = self._auxiliary_badge_glyph_count(
+                        key, maximum_count=maximum,
+                        admissible_counts=tuple(by_count), allow_ocr=False,
+                    )
+                    if count == 0:
+                        return None
+                    resolution = by_count[count]
+                    customizations = resolution.customizations
+                    source = f"{resolution.source}_auxiliary_badge_glyph"
+                    mode = resolution.evidence_mode
+            else:
+                if expected_customization_count == 0:
+                    return None
+                resolution = self.catalog.resolve_clicked_customizations(
+                    card_id, clean_text,
+                    observed_badge_count=expected_customization_count,
+                    generic_cost_frame_values=generic_values,
+                )
+                customizations = resolution.customizations
+                source, mode = resolution.source, resolution.evidence_mode
+            if not customizations or mode != "positive_unique":
+                return None
+            self._increment("skill_card_error_numeric_reparse_successes")
+            return clean_text, ClickedSkillCard(
+                card_id, customizations,
+                resolution_source=source, detail_evidence_mode=mode,
+            )
+        except (ArenaCatalogError, ArenaReaderError) as recovery_error:
+            self._increment("skill_card_error_numeric_reparse_failures")
+            logger.debug(f"skill-card error numeric recovery unresolved: {recovery_error}")
+            return None
+        finally:
+            self._record_duration_sample(
+                "skill_card_error_numeric_recovery", time.perf_counter() - started,
+            )
+
     def _read_resolved_card_detail(
+        self,
+        key: tuple[int, int],
+        candidate_ids: Sequence[int],
+        *,
+        expected_customization_count: int | None,
+        timeout_seconds: float = 1.50,
+        allow_zero_without_badge_count: bool = False,
+        target: TeamTarget | None = None,
+        stage_number: int | None = None,
+        member_slot: int | None = None,
+    ) -> ClickedSkillCard:
+        """Reopen a prematurely vanished detail using only its unused contact."""
+        arguments = {
+            "expected_customization_count": expected_customization_count,
+            "timeout_seconds": timeout_seconds,
+            "allow_zero_without_badge_count": allow_zero_without_badge_count,
+            "target": target, "stage_number": stage_number, "member_slot": member_slot,
+        }
+        try:
+            return self._read_resolved_card_detail_once(key, candidate_ids, **arguments)
+        except ArenaReaderError as error:
+            used_contacts = getattr(self, "_card_transaction_contact_counts", {}).get(key)
+            if error.code != "skill_card_detail_disappeared" or used_contacts != 1:
+                raise
+            original_error = str(error)
+        started = time.perf_counter()
+        before = dict(self._runtime_counts)
+        succeeded = False
+        self._increment("skill_card_detail_reopen_attempts")
+        try:
+            # The final failure already proved two source frames before any
+            # dismissal. Reuse the original retry contact, never a new budget.
+            self._open_skill_card_once(
+                target, stage_number, member_slot, key[0], key[1],
+                1 if expected_customization_count is None else expected_customization_count,
+                contact_start_index=used_contacts,
+            )
+            resolved = self._read_resolved_card_detail_once(key, candidate_ids, **arguments)
+            succeeded = True
+            self._increment("skill_card_detail_reopen_successes")
+            return resolved
+        finally:
+            elapsed = time.perf_counter() - started
+            self._record_duration_sample("skill_card_detail_reopen", elapsed)
+            logger.info(json.dumps({
+                "event": "arena_reader_recovery", "action": "skill_card_detail_reopen",
+                "team_id": None if target is None else target.team_id,
+                "stage_number": stage_number, "member_slot": member_slot,
+                "group_index": key[0], "card_slot": key[1],
+                "reason": original_error, "succeeded": succeeded,
+                "wall_seconds": round(elapsed, 6),
+                "extra_counts": {
+                    name: value - before.get(name, 0)
+                    for name, value in self._runtime_counts.items()
+                    if value > before.get(name, 0)
+                },
+            }, ensure_ascii=False, sort_keys=True))
+
+    def _read_resolved_card_detail_once(
         self,
         key: tuple[int, int],
         candidate_ids: Sequence[int],
@@ -8531,10 +9657,30 @@ class MaaArenaReaderBackend:
     ) -> ClickedSkillCard:
         """Resolve the accepted overlay text, rereading only while effects settle."""
 
+        diagnostic = getattr(self, "_detail_failure_frames", None)
+        if diagnostic is not None:
+            diagnostic["position"]["phase"] = "body"
+
         resolution_started = time.perf_counter()
         detail_identity_observations: list[_DetailIdentityObservation] = []
+        opened_image = self._card_detail_images.get(key)
+        opened_capture_time = getattr(self, "_card_detail_capture_started_at", {}).get(key)
+        transaction_token = getattr(self, "_card_transaction_tokens", {}).get(key)
+        source_guard_frames = getattr(self, "_card_source_guard_frames", {}).get(key[0])
+        recent_detail_frames: deque[tuple[float, Any]] = deque(maxlen=2)
 
         def finish_resolution(value: ClickedSkillCard) -> ClickedSkillCard:
+            # Exact title proves only the business ID.  Reuse the already
+            # accepted detail frame for every customization evidence mode;
+            # never add a click, capture, or reread solely to create this proof.
+            identity_observation = self._detail_identity_observation(
+                key,
+                candidate_ids,
+                value,
+            )
+            if identity_observation is not None:
+                detail_identity_observations.append(identity_observation)
+                del detail_identity_observations[:-2]
             self._record_detail_identity_proof(
                 key,
                 value,
@@ -8582,6 +9728,7 @@ class MaaArenaReaderBackend:
         cost_fallback_confirmation_reads = 0
         cost_fallback_confirmation_extension_applied = False
         terminal_error: ArenaReaderError | None = None
+        numeric_recovery_started = False
         same_frame_effect_roi_attempted = False
         same_frame_enhanced_effect_roi_attempted = False
         generic_cost_fallback_policy = (
@@ -8768,25 +9915,53 @@ class MaaArenaReaderBackend:
                             else:
                                 if not auxiliary_badge_glyph_allowed:
                                     raise unresolved_error
-                                resolved = self._resolve_clicked_card_text(
-                                    candidate_ids,
-                                    combined_text,
-                                    expected_customization_count=(
-                                        expected_customization_count
-                                    ),
-                                    allow_zero_without_badge_count=(
-                                        allow_zero_without_badge_count
-                                    ),
-                                    allow_auxiliary_badge_glyph=True,
-                                    generic_cost_fallback_policy=(
-                                        generic_cost_fallback_policy
-                                    ),
-                                    allow_generic_cost_fallback=True,
-                                    generic_cost_coverage_context=(
-                                        same_frame_effect_roi_context
-                                    ),
-                                    key=key,
-                                )
+                                try:
+                                    resolved = self._resolve_clicked_card_text(
+                                        candidate_ids,
+                                        combined_text,
+                                        expected_customization_count=(
+                                            expected_customization_count
+                                        ),
+                                        allow_zero_without_badge_count=(
+                                            allow_zero_without_badge_count
+                                        ),
+                                        allow_auxiliary_badge_glyph=True,
+                                        generic_cost_fallback_policy=(
+                                            generic_cost_fallback_policy
+                                        ),
+                                        allow_generic_cost_fallback=True,
+                                        generic_cost_coverage_context=(
+                                            same_frame_effect_roi_context
+                                        ),
+                                        key=key,
+                                    )
+                                except ArenaReaderError as exhausted_error:
+                                    if (
+                                        not numeric_recovery_started
+                                        and exhausted_error.code in {
+                                            "skill_card_detail_ambiguous",
+                                            "skill_card_badge_glyph_domain_invalid",
+                                            "skill_card_badge_glyph_ambiguous",
+                                        }
+                                    ):
+                                        numeric_recovery_started = True
+                                        self._increment("skill_card_error_numeric_transactions")
+                                    recovery = self._recover_failed_skill_card_effect_text(
+                                        key, card_id, exhausted_error,
+                                        expected_customization_count=(
+                                            expected_customization_count
+                                        ),
+                                        allow_zero_without_badge_count=(
+                                            allow_zero_without_badge_count
+                                        ),
+                                    )
+                                    if recovery is None:
+                                        raise
+                                    combined_text, resolved = recovery
+                                    # Recovery admits positive signatures only.
+                                    # Discard the failed views instead of feeding
+                                    # them into later coverage/cost certificates.
+                                    same_frame_effect_roi_context = None
                         text = combined_text
                         self._card_detail_texts[key] = combined_text
                         self._increment(
@@ -8942,9 +10117,13 @@ class MaaArenaReaderBackend:
                                 "an unconstrained zero detail arrived before the "
                                 "effect-render settle boundary",
                             )
+                        same_zero_resolution = self._same_clicked_card_resolution(
+                            zero_candidate,
+                            resolved,
+                        )
                         zero_confirmation_reads += 1
                         self._increment("skill_card_detail_zero_confirmation_reads")
-                        if self._same_clicked_card_resolution(zero_candidate, resolved):
+                        if same_zero_resolution:
                             resolved = ClickedSkillCard(
                                 resolved.card_id,
                                 dict(resolved.customizations),
@@ -9258,22 +10437,6 @@ class MaaArenaReaderBackend:
                             positive_candidate,
                             resolved,
                         )
-                        if not same_positive_resolution:
-                            detail_identity_observations.clear()
-                        exact_identity_observation = (
-                            self._detail_identity_observation(
-                                key,
-                                candidate_ids,
-                                resolved,
-                            )
-                        )
-                        if exact_identity_observation is None:
-                            detail_identity_observations.clear()
-                        else:
-                            detail_identity_observations.append(
-                                exact_identity_observation
-                            )
-                            del detail_identity_observations[:-2]
                         positive_confirmation_reads += 1
                         self._increment(
                             "skill_card_detail_positive_confirmation_reads"
@@ -9417,6 +10580,11 @@ class MaaArenaReaderBackend:
                     confirmation_candidate = None
                     confirmation_reason = None
                     last_error = str(error)
+                    image_evidence = self._cached_full_frame_ocr_evidence(self._card_detail_images.get(key))
+                    if image_evidence is not None and self._retry_transient_communication_items(image_evidence.filtered_items):
+                        text = ""
+                        zero_candidate = positive_candidate = cost_fallback_candidate = None
+                        continue
                     if error.code in {
                         "skill_card_cost_fallback_changed",
                         "skill_card_cost_fallback_contract_invalid",
@@ -9467,6 +10635,7 @@ class MaaArenaReaderBackend:
             else:
                 self._card_detail_texts[key] = text
                 self._card_detail_images[key] = detail_image
+                recent_detail_frames.append((detail_capture_started_at, detail_image))
                 capture_times = getattr(
                     self,
                     "_card_detail_capture_started_at",
@@ -9484,14 +10653,105 @@ class MaaArenaReaderBackend:
                 )
                 same_frame_effect_roi_attempted = False
                 same_frame_enhanced_effect_roi_attempted = False
+        self._record_duration_sample(
+            "skill_card_detail_failed_resolution_phase",
+            time.perf_counter() - resolution_started,
+        )
+        self._increment("skill_card_detail_failed_resolutions")
         if terminal_error is not None:
             raise terminal_error
+        if self._skill_card_detail_disappeared(
+            key, opened_image, opened_capture_time, transaction_token,
+            source_guard_frames, tuple(recent_detail_frames),
+        ):
+            self._increment("skill_card_detail_disappeared_before_confirmation")
+            raise ArenaReaderError(
+                "skill_card_detail_disappeared",
+                f"group {key[0]}/slot {key[1]}: the accepted detail disappeared "
+                "before confirmation; the last two captured frames match the "
+                "frozen member page; no extra observation was taken; "
+                f"original_error={last_error}",
+            )
         raise ArenaReaderError(
             "skill_card_detail_ambiguous",
             "card detail did not become uniquely resolvable within the bounded settle window: "
             f"{last_error}; pending_confirmation={confirmation_reason!r}; "
             f"OCR={text[:400]!r}",
         )
+
+    def _skill_card_detail_disappeared(
+        self,
+        key: tuple[int, int],
+        opened_image: Any,
+        opened_capture_time: float | None,
+        transaction_token: int | None,
+        source_frames: tuple[Any, ...] | None,
+        recent_frames: tuple[tuple[float, Any], ...],
+    ) -> bool:
+        """Classify a final body failure before dismissal, using cached frames only.
+
+        A successful close after an ordinary semantic failure proves nothing
+        about premature disappearance. Require the opened, title-confirmed
+        transaction to differ from its source and two later frames to already
+        match that source, under the existing overlay-restoration pixel gate.
+        """
+        if (
+            transaction_token is None
+            or getattr(self, "_card_transaction_tokens", {}).get(key) != transaction_token
+            or key not in getattr(self, "_card_transaction_started", {})
+            or source_frames is None or len(source_frames) != 3
+            or getattr(self, "_card_source_guard_frames", {}).get(key[0]) is not source_frames
+            or opened_image is None or opened_capture_time is None
+            or len(recent_frames) != 2
+            or not opened_capture_time < recent_frames[0][0] < recent_frames[1][0]
+            or recent_frames[0][1] is recent_frames[1][1]
+            or any(image is opened_image for _, image in recent_frames)
+            or self._card_detail_images.get(key) is not recent_frames[-1][1]
+        ):
+            return False
+        started = time.perf_counter()
+        try:
+            shape = getattr(opened_image, "shape", None)
+            if shape is None or any(getattr(image, "shape", None) != shape for image in (
+                *source_frames, *(image for _, image in recent_frames),
+            )):
+                return False
+            for _, image in recent_frames:
+                evidence = self._cached_full_frame_ocr_evidence(image)
+                if evidence is None or not evidence.hit:
+                    return False
+                if (
+                    len(self._matching_ocr_items(evidence.filtered_items, r"^体力$")) != 1
+                    or len(self._matching_ocr_items(evidence.filtered_items, r"^総合力$")) != 1
+                ):
+                    return False
+            boxes = self._skill_card_detail_overlay_guard_boxes(opened_image)
+            source_signatures = tuple(
+                p_item_content_generation_signatures(image, boxes)
+                for image in source_frames
+            )
+
+            def source_matches(image: Any) -> int:
+                signature = p_item_content_generation_signatures(image, boxes)
+                errors = tuple(
+                    measure_p_item_content_generation_from_signatures(source, signature)
+                    for source in source_signatures
+                )
+                return sum(
+                    bool(values) and max(values) <= CARD_CONTENT_STABILITY_MAX_MEAN_ABS_ERROR
+                    for values in errors
+                )
+
+            return source_matches(opened_image) == 0 and all(
+                source_matches(image) >= 2 for _, image in recent_frames
+            )
+        except (ArenaReaderError, PItemReferenceError, TypeError, ValueError):
+            # Missing or uncertain proof retains the original semantic error.
+            return False
+        finally:
+            self._record_duration_sample(
+                "skill_card_detail_disappearance_check", time.perf_counter() - started,
+            )
 
     @staticmethod
     def _same_clicked_card_resolution(
@@ -10207,6 +11467,19 @@ class MaaArenaReaderBackend:
         )
 
     def close_skill_card(
+        self, target: TeamTarget, stage_number: int, member_slot: int,
+        group_index: int, card_slot: int,
+    ) -> None:
+        diagnostic = getattr(self, "_detail_failure_frames", None)
+        if diagnostic is not None:
+            diagnostic["position"]["phase"] = "close"
+        try:
+            self._close_skill_card_once(target, stage_number, member_slot, group_index, card_slot)
+        except Exception as error:
+            self._finish_card_transaction((group_index, card_slot), failed=True, error=str(error))
+            raise
+
+    def _close_skill_card_once(
         self,
         target: TeamTarget,
         stage_number: int,
@@ -10272,6 +11545,54 @@ class MaaArenaReaderBackend:
             )
         self._member_metric_baseline = None
 
+    def recover_member_preview(
+        self, target: TeamTarget, stage_number: int, member_slot: int, *, error_code: str,
+    ) -> None:
+        """Use the existing back operation, stopping at this team's preview."""
+        started = time.perf_counter()
+        before = dict(self._runtime_counts)
+        succeeded = False
+        try:
+            # A close may already have returned to the preview. Check before
+            # Back so that recovery cannot leave the current opponent.
+            image = self._capture()
+            items = self._ocr(image, r".+")
+            expected_totals = (1, 2, 3) if target.is_own_team else (6,)
+            stages = self._matching_ocr_items(items, r"^ステージ\s*[123]$")
+            totals = self._matching_ocr_items(items, r"^総合力$")
+            if len(stages) >= 3 and len(totals) in expected_totals:
+                self._reset_member_card_state()
+                self._member_metric_baseline = None
+            elif (
+                (not stages or (
+                    len(stages) == 1
+                    and self._matching_ocr_items(stages, rf"^ステージ\s*{stage_number}$")
+                ))
+                and len(self._matching_ocr_items(items, r"^体力$")) == 1
+                and len(totals) == 1
+            ):
+                self.close_member(target, stage_number)
+            else:
+                raise ArenaReaderError(
+                    "member_preview_recovery_unproven",
+                    "current frame proves neither this team's preview nor a member detail; no back sent",
+                )
+            succeeded = True
+        finally:
+            elapsed = time.perf_counter() - started
+            self._record_duration_sample("member_preview_recovery", elapsed)
+            logger.info(json.dumps({
+                "event": "arena_reader_recovery", "action": "member_preview",
+                "team_id": target.team_id, "stage_number": stage_number,
+                "member_slot": member_slot, "error_code": error_code,
+                "succeeded": succeeded, "wall_seconds": round(elapsed, 6),
+                "extra_counts": {
+                    key: value - before.get(key, 0)
+                    for key, value in self._runtime_counts.items()
+                    if value > before.get(key, 0)
+                },
+            }, ensure_ascii=False, sort_keys=True))
+
     def _reset_member_card_state(self) -> None:
         """Discard card geometry, hints and frames that belong to the prior member."""
 
@@ -10311,8 +11632,10 @@ class MaaArenaReaderBackend:
         getattr(self, "_card_detail_capture_started_at", {}).clear()
         self._p_item_diagnostics = ()
         self._p_item_generation_evidence.clear()
-        self._card_transaction_started.clear()
+        for key in tuple(self._card_transaction_started):
+            self._finish_card_transaction(key, failed=True)
         getattr(self, "_card_transaction_tokens", {}).clear()
+        getattr(self, "_card_transaction_contact_counts", {}).clear()
         getattr(self, "_card_transaction_source_boxes", {}).clear()
         getattr(self, "_card_transaction_interaction_boxes", {}).clear()
         self._card_transaction_kinds.clear()
@@ -10428,10 +11751,44 @@ class MaaArenaReaderBackend:
         self._increment("arena_blocking_overlays_dismissed")
         return True
 
+    def _retry_transient_communication_items(self, items: Sequence[Any]) -> bool:
+        """Return whether a proven dialog occupies this already-read frame."""
+        titles = self._matching_ocr_items(items, r"^通信エラ(?:ー)?$")
+        if len(titles) != 1:
+            return False
+        groups = [self._matching_ocr_items(items, pattern) for pattern in (
+            r"^通信中にエラーが発生しました$",
+            r"^リトライ$", r"^タイトルへ$",
+        )]
+        if any(len(group) != 1 for group in groups):
+            return False
+        if getattr(self, "_arena_communication_retry_attempted", False):
+            # The original deadline may still be observing the sent Retry's
+            # transition. Do not resend and do not extend that deadline.
+            return True
+        self._arena_communication_retry_attempted = True
+        started = time.perf_counter()
+        succeeded = False
+        try:
+            self._click(_box(groups[1][0]), settle_seconds=0)
+            self._increment("arena_communication_retries")
+            succeeded = True
+        finally:
+            logger.info(json.dumps({
+                "event": "arena_reader_recovery", "action": "communication_retry",
+                "succeeded": succeeded, "extra_ocr": 0, "extra_clicks": 1,
+                "wall_seconds": round(time.perf_counter() - started, 6),
+            }, ensure_ascii=False, sort_keys=True))
+        return True
+
     def _capture(self) -> Any:
         started = time.perf_counter()
         try:
-            return self.context.tasker.controller.post_screencap().wait().get()
+            image = self.context.tasker.controller.post_screencap().wait().get()
+            diagnostic = getattr(self, "_detail_failure_frames", None)
+            if diagnostic is not None:
+                diagnostic["frames"].append((time.perf_counter(), image))
+            return image
         finally:
             self._increment("screenshots")
             self._add_timing("screenshots", time.perf_counter() - started)
@@ -10462,6 +11819,12 @@ class MaaArenaReaderBackend:
         if not detail or not detail.hit:
             return []
         return list(detail.filtered_results or detail.all_results or [])
+
+    @staticmethod
+    def _matching_ocr_items(items: Sequence[Any], expected: str) -> tuple[Any, ...]:
+        """Apply Maa's expected search to already filtered, ordered boxes."""
+        pattern = re.compile(expected)
+        return tuple(item for item in items if pattern.search(_text(item)))
 
     def _ocr_detail(
         self,
@@ -10622,6 +11985,8 @@ class MaaArenaReaderBackend:
     def _p_item_detail_panel_rows(
         image: Any,
         items: Sequence[Any],
+        *,
+        background_only: bool = False,
     ) -> tuple[
         tuple[
             str,
@@ -10637,6 +12002,9 @@ class MaaArenaReaderBackend:
         layer removes frozen source rows and treats only the first new row as
         title evidence; later effect prose remains visible for diagnostics but
         cannot participate in catalog matching.
+
+        The background-only view contains just the same-panel atoms excluded
+        by the title height gate. It never supplies title or page signatures.
         """
 
         height, width = image.shape[:2]
@@ -10661,7 +12029,8 @@ class MaaArenaReaderBackend:
             )
             if (
                 normalized_width < 16
-                or not 18 <= normalized_height <= 45
+                or normalized_height <= 0
+                or (18 <= normalized_height <= 45) == background_only
                 or not normalized_text
                 or not any(character.isalpha() for character in normalized_text)
             ):
@@ -10782,19 +12151,7 @@ class MaaArenaReaderBackend:
     def _p_item_ocr_observation(
         self,
         image: Any,
-    ) -> tuple[
-        str,
-        str,
-        bool,
-        tuple[
-            tuple[
-                str,
-                tuple[float, float, float, float],
-                tuple[tuple[str, tuple[float, float, float, float]], ...],
-            ],
-            ...,
-        ],
-    ]:
+    ) -> _PItemOcrObservation:
         """OCR one frame once and retain full text, title geometry and anchors."""
 
         detail = self.context.run_recognition(
@@ -10813,10 +12170,16 @@ class MaaArenaReaderBackend:
         items = list(detail.all_results or detail.filtered_results or [])
         full_text = "\n".join(_text(item) for item in items)
         panel_rows = self._p_item_detail_panel_rows(image, items)
+        background_rows = self._p_item_detail_panel_rows(
+            image, items, background_only=True,
+        )
         title_text = "\n".join(text for text, _, _ in panel_rows)
         exact_ocr_rows = {_text(item).strip() for item in items}
         member_anchors_visible = "体力" in exact_ocr_rows and "総合力" in exact_ocr_rows
-        return full_text, title_text, member_anchors_visible, panel_rows
+        return _PItemOcrObservation(
+            full_text, title_text, member_anchors_visible, panel_rows, background_rows,
+            tuple(items),
+        )
 
     def _click(
         self,
@@ -10838,6 +12201,7 @@ class MaaArenaReaderBackend:
         self._add_timing(f"{dispatch}_click_actions", elapsed)
         self._increment("click_actions")
         self._increment(f"{dispatch}_click_actions")
+        self._record_detail_action("click", box, succeeded=succeeded)
         if not succeeded:
             raise ArenaReaderError("maa_click_failed", f"Maa could not click {box}")
         if settle_seconds > 0:
@@ -10932,6 +12296,7 @@ class MaaArenaReaderBackend:
         self._add_timing("controller_direct_short_press_actions", elapsed)
         self._increment("short_press_actions")
         self._increment("controller_direct_short_press_actions")
+        self._record_detail_action("short_press", box, succeeded=down_succeeded and up_succeeded)
         if interaction_error is not None or not down_succeeded or not up_succeeded:
             detail = (
                 f"Maa could not short-press {box} at {point}; "
@@ -11143,9 +12508,11 @@ class MaaArenaReaderBackend:
         last_total_count = 0
         while time.monotonic() < deadline:
             image = self._capture()
-            last_stage_count = len(self._ocr(image, r"^ステージ\s*[123]$"))
-            last_total_count = len(self._stage_total_anchors(image))
-            if last_stage_count >= 3 and last_total_count in expected_total_counts:
+            items = self._ocr(image, r".+")
+            last_stage_count = len(self._matching_ocr_items(items, r"^ステージ\s*[123]$"))
+            last_total_count = len(self._matching_ocr_items(items, r"^総合力$"))
+            communication_dialog = self._retry_transient_communication_items(items)
+            if not communication_dialog and last_stage_count >= 3 and last_total_count in expected_total_counts:
                 return
             time.sleep(0.25)
         raise ArenaReaderError(
@@ -11185,12 +12552,13 @@ class MaaArenaReaderBackend:
         self,
         image: Any,
     ) -> tuple[ArenaPageState, tuple[int, int, int, int, int]]:
-        rehearsal_count = len(self._ocr(image, r"^リハーサル$"))
+        items = self._ocr(image, r".+")
+        rehearsal_count = len(self._matching_ocr_items(items, r"^リハーサル$"))
         opponent_count = len(self._recognize("ArenaReaderOpponentCards", image))
-        stage_label_count = len(self._ocr(image, r"^ステージ\s*[123]$"))
-        stage_total_count = len(self._stage_total_anchors(image))
+        stage_label_count = len(self._matching_ocr_items(items, r"^ステージ\s*[123]$"))
+        stage_total_count = len(self._matching_ocr_items(items, r"^総合力$"))
         exhausted_notice_count = len(
-            self._ocr(image, r"^本日の挑戦権を消費しました$")
+            self._matching_ocr_items(items, r"^本日の挑戦権を消費しました$")
         )
         counts = (
             rehearsal_count,
@@ -11363,7 +12731,11 @@ class MaaArenaReaderBackend:
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             image = self._capture()
-            if self._ocr(image, r"^体力$") and self._ocr(image, r"^総合力$"):
+            items = self._ocr(image, r".+")
+            communication_dialog = self._retry_transient_communication_items(items)
+            # Keep the original two-query member cadence so P-item sampling
+            # does not start earlier during the page transition.
+            if not communication_dialog and self._matching_ocr_items(items, r"^体力$") and self._ocr(image, r"^総合力$"):
                 return
             time.sleep(0.25)
         raise ArenaReaderError(
@@ -11478,11 +12850,13 @@ class MaaArenaReaderBackend:
                 "p_item_source_restore_evidence_missing",
                 "P-item source-page evidence requires the accepted source-row boxes",
             )
-        anchors_visible = (
-            bool(self._ocr(image, r"^体力$") and self._ocr(image, r"^総合力$"))
-            if member_anchors_visible is None
-            else member_anchors_visible
-        )
+        if member_anchors_visible is None:
+            # Both labels belong to this same frozen frame. Reuse its full
+            # OCR result instead of recognizing the whole image twice.
+            exact_rows = {_text(item) for item in self._ocr(image, r".+")}
+            anchors_visible = "体力" in exact_rows and "総合力" in exact_rows
+        else:
+            anchors_visible = member_anchors_visible
         if not source_images:
             raise ArenaReaderError(
                 "p_item_source_restore_evidence_missing",
@@ -11539,11 +12913,13 @@ class MaaArenaReaderBackend:
         match one of the three signatures from the already accepted source
         generation. A semantically identical card can nevertheless acquire a
         different 16x16 signature after the overlay closes (for example from
-        sub-pixel row-box jitter). In that case an already resolved detail ID
-        may authorize one stricter fallback: the same clean-reference family
-        must remain stable in three consecutive source frames and each frame's
-        raw clicked-slot content must match 2/3 frozen source frames at one
-        unique +/-1 native-pixel alignment under the unchanged 0.75 MAE gate.
+        sub-pixel row-box jitter or a top-family flip inside one stable
+        shortlist). In that case an already resolved detail ID may authorize
+        one stricter fallback: either the same single clean-reference family or
+        the complete business-ID/visual-family pair set must remain exact in
+        three consecutive frames, and each frame's raw clicked-slot content
+        must match 2/3 frozen source frames at one unique +/-1 native-pixel
+        alignment under the unchanged 0.75 MAE gate.
         If the fixed gallery maps that family to another business ID, the
         fallback remains available only to the active transaction whose exact
         title and complete semantic detail already resolved the expected ID,
@@ -11562,6 +12938,8 @@ class MaaArenaReaderBackend:
         source_guard_frames: tuple[Any, ...] | None = None
         source_stable_business_ids: tuple[int, ...] = ()
         source_stable_visual_group: str | None = None
+        source_stable_identity_candidates: tuple[tuple[int, str], ...] = ()
+        source_identity_projection_is_strict = False
         if card_slot is not None:
             restoration_signatures = getattr(
                 self,
@@ -11607,6 +12985,16 @@ class MaaArenaReaderBackend:
                 source_stable_visual_group = (
                     self._stable_reference_visual_group(source_identities)
                 )
+                source_stable_identity_candidates = (
+                    self._stable_reference_identity_candidates(source_identities)
+                )
+                source_identity_projection_is_strict = bool(
+                    source_stable_identity_candidates
+                    and all(
+                        self._reference_identity_projection_is_strict(identity)
+                        for identity in source_identities
+                    )
+                )
         if expected_card_id is not None and (
             isinstance(expected_card_id, bool)
             or not isinstance(expected_card_id, int)
@@ -11631,29 +13019,75 @@ class MaaArenaReaderBackend:
             else None
         )
         source_visual_group_allowed = bool(
-            source_stable_visual_group is not None
+            source_identity_projection_is_strict
+            and source_stable_visual_group is not None
             and self._source_visual_group_matches_expected_card(
                 source_stable_visual_group,
                 expected_card_id,
                 source_stable_business_ids,
             )
         )
-        detail_title_override_candidate = bool(
+        detail_identity_proof_matches = bool(
             card_slot is not None
             and len(accepted_row) == 6
-            and source_guard_frames is not None
-            and source_stable_visual_group is not None
-            and expected_fixed_visual_group is not None
-            and source_stable_visual_group != expected_fixed_visual_group
-            and not source_visual_group_allowed
             and self._detail_identity_proof_matches(
                 (group_index, card_slot),
                 expected_card_id,
                 accepted_row[card_slot - 1],
             )
         )
+        single_family_detail_title_override_candidate = bool(
+            card_slot is not None
+            and len(accepted_row) == 6
+            and source_guard_frames is not None
+            and source_identity_projection_is_strict
+            and source_stable_visual_group is not None
+            and expected_fixed_visual_group is not None
+            and source_stable_visual_group != expected_fixed_visual_group
+            and not source_visual_group_allowed
+            and detail_identity_proof_matches
+        )
+        source_stable_identity_business_ids = tuple(
+            sorted(
+                {
+                    business_id
+                    for business_id, _visual_group in source_stable_identity_candidates
+                }
+            )
+        )
+        source_stable_identity_visual_groups = tuple(
+            sorted(
+                {
+                    visual_group
+                    for _business_id, visual_group in source_stable_identity_candidates
+                }
+            )
+        )
+        expected_source_identity_present = bool(
+            expected_card_id is not None
+            and expected_fixed_visual_group is not None
+            and (expected_card_id, expected_fixed_visual_group)
+            in source_stable_identity_candidates
+        )
+        multi_family_detail_title_override_candidate = bool(
+            card_slot is not None
+            and len(accepted_row) == 6
+            and source_guard_frames is not None
+            and source_identity_projection_is_strict
+            and source_stable_visual_group is None
+            and len(source_stable_identity_business_ids) > 1
+            and len(source_stable_identity_visual_groups) > 1
+            and source_stable_identity_business_ids == source_stable_business_ids
+            and expected_source_identity_present
+            and detail_identity_proof_matches
+        )
+        detail_title_override_candidate = bool(
+            single_family_detail_title_override_candidate
+            or multi_family_detail_title_override_candidate
+        )
         source_visual_group_authorized = bool(
-            source_visual_group_allowed or detail_title_override_candidate
+            source_visual_group_allowed
+            or single_family_detail_title_override_candidate
         )
         deadline = time.monotonic() + timeout_seconds
         started = time.perf_counter()
@@ -11846,24 +13280,40 @@ class MaaArenaReaderBackend:
                     if not source_matches:
                         measured_business_ids = self._reference_business_ids(identity)
                         measured_visual_groups = self._reference_visual_groups(identity)
+                        measured_identity_candidates = (
+                            self._reference_identity_candidates(identity)
+                        )
+                        measured_identity_projection_is_strict = (
+                            self._reference_identity_projection_is_strict(identity)
+                        )
                         expected_identity_matches = bool(
-                            expected_card_id is not None
+                            measured_identity_projection_is_strict
+                            and expected_card_id is not None
                             and expected_card_id in measured_business_ids
                             and expected_fixed_visual_group is not None
                             and measured_visual_groups
                             == (expected_fixed_visual_group,)
                         )
                         source_visual_group_matches = bool(
-                            source_visual_group_authorized
+                            measured_identity_projection_is_strict
+                            and source_visual_group_authorized
                             and measured_visual_groups
                             == (source_stable_visual_group,)
                         )
+                        multi_family_identity_matches = bool(
+                            measured_identity_projection_is_strict
+                            and multi_family_detail_title_override_candidate
+                            and measured_identity_candidates
+                            == source_stable_identity_candidates
+                        )
                         aligned_content_proof: dict[str, Any] | None = None
                         if (
-                            source_visual_group_matches
+                            (
+                                source_visual_group_matches
+                                or multi_family_identity_matches
+                            )
                             and detail_title_override_candidate
                             and source_guard_frames is not None
-                            and source_stable_visual_group is not None
                         ):
                             aligned_started = time.perf_counter()
                             try:
@@ -11872,7 +13322,10 @@ class MaaArenaReaderBackend:
                                         source_guard_frames,
                                         image,
                                         accepted_row[card_slot - 1],
-                                        source_stable_visual_group,
+                                        (
+                                            source_stable_visual_group
+                                            or "detail-title-multi-family"
+                                        ),
                                     )
                                 )
                             finally:
@@ -11892,9 +13345,11 @@ class MaaArenaReaderBackend:
                                     "skill_card_source_restore_aligned_content_mismatches"
                                 )
                                 source_visual_group_matches = False
+                                multi_family_identity_matches = False
                         semantic_identity_matches = bool(
                             expected_identity_matches
                             or source_visual_group_matches
+                            or multi_family_identity_matches
                         )
                         if semantic_identity_matches:
                             semantic_stable_frames += 1
@@ -11922,9 +13377,28 @@ class MaaArenaReaderBackend:
                             if len(semantic_identity_frames) == 3
                             else None
                         )
+                        stable_identity_candidates = (
+                            self._stable_reference_identity_candidates(
+                                semantic_identity_frames
+                            )
+                            if len(semantic_identity_frames) == 3
+                            else ()
+                        )
                         source_visual_group_settled = bool(
                             source_visual_group_authorized
+                            and source_stable_visual_group is not None
                             and stable_visual_group == source_stable_visual_group
+                        )
+                        multi_family_identity_settled = bool(
+                            multi_family_detail_title_override_candidate
+                            and stable_identity_candidates
+                            == source_stable_identity_candidates
+                            and semantic_stable_frames >= 3
+                            and len(aligned_content_frames) == 3
+                            and all(
+                                bool(proof.get("matched"))
+                                for proof in aligned_content_frames
+                            )
                         )
                         semantic_source_settled = bool(
                             (
@@ -11935,6 +13409,7 @@ class MaaArenaReaderBackend:
                                 == expected_fixed_visual_group
                             )
                             or source_visual_group_settled
+                            or multi_family_identity_settled
                         )
                         if semantic_source_settled:
                             self._increment(
@@ -11944,13 +13419,15 @@ class MaaArenaReaderBackend:
                                 self._increment(
                                     "skill_card_source_restore_source_family_fallbacks"
                                 )
-                            if (
+                            if detail_title_override_candidate and (
                                 source_visual_group_settled
-                                and detail_title_override_candidate
+                                or multi_family_identity_settled
                             ):
                                 disambiguation = {
                                     "reason_code": (
-                                        "exact_detail_title_overrode_card_face"
+                                        "exact_detail_title_overrode_ambiguous_card_face"
+                                        if multi_family_identity_settled
+                                        else "exact_detail_title_overrode_card_face"
                                     ),
                                     "status": "resolved",
                                     "severity": "info",
@@ -11966,12 +13443,20 @@ class MaaArenaReaderBackend:
                                     "source_stable_visual_group": (
                                         source_stable_visual_group
                                     ),
+                                    "source_stable_identity_candidates": [
+                                        [business_id, visual_group]
+                                        for business_id, visual_group in source_stable_identity_candidates
+                                    ],
                                     "measured_card_ids": list(
                                         measured_business_ids
                                     ),
                                     "measured_visual_groups": list(
                                         measured_visual_groups
                                     ),
+                                    "measured_identity_candidates": [
+                                        [business_id, visual_group]
+                                        for business_id, visual_group in measured_identity_candidates
+                                    ],
                                     "semantic_consecutive_frames": (
                                         semantic_stable_frames
                                     ),
@@ -12025,9 +13510,13 @@ class MaaArenaReaderBackend:
                                 f"{source_stable_business_ids!r}; "
                                 "source_stable_visual_group="
                                 f"{source_stable_visual_group!r}; "
+                                "source_stable_identity_candidates="
+                                f"{source_stable_identity_candidates!r}; "
                                 f"measured_card_ids={measured_business_ids!r}; "
                                 "measured_visual_groups="
                                 f"{measured_visual_groups!r}; "
+                                "measured_identity_candidates="
+                                f"{measured_identity_candidates!r}; "
                                 f"semantic_consecutive_frames={semantic_stable_frames}; "
                                 f"stable_card_ids={stable_business_ids!r}; "
                                 f"stable_visual_group={stable_visual_group!r}; "

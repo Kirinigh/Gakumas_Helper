@@ -6,9 +6,9 @@
 
 ## 1. 当前适用范围
 
-- 当前自动化只批准 `arena_preview` 公开预览版。
-- 公开预览版本使用独立 GKH 语义化版本 (Semantic Versioning, SemVer) `vMAJOR.MINOR.PATCH`；本批次固定的上游 Maa 标签作为独立来源字段记录，不拼入 GKH 版本。
-- 当前发布器只批准 `arena_preview`，不得仅通过去掉 `--prerelease` 将预览包宣称为稳定版。普通客户端更新固定复用 MFAAvalonia 内置 GitHub 资源更新及其文件事务回滚；本文的候选、散列、Defender 和公开历史门只服务构建／发布，不构成第二套客户端更新协议。
+- 发布器支持 `arena_preview` 公开预览版与 `arena_release` 正式版；本批次使用哪一种必须与用户授权一致。正式发布表示进入 Stable 通道，不表示竞技场全部稳定性目标已验收；未完成的实机验证仍写入 manifest 的 `known_gates` 和发布说明。
+- 公开版本使用独立 GKH 语义化版本 (Semantic Versioning, SemVer) `vMAJOR.MINOR.PATCH`；本批次固定的上游 Maa 标签作为独立来源字段记录，不拼入 GKH 版本。
+- `arena_preview` 的 manifest 通道为 `beta`，GitHub Release 必须是 prerelease；`arena_release` 的通道为 `stable`，Release 必须是非 prerelease，并设为 GitHub Latest。不得只修改远端开关而保留不同资格的包。普通客户端更新固定复用 MFAAvalonia 内置 GitHub 资源更新及其文件事务回滚；本文的候选、散列、Defender 和公开历史门只服务构建／发布，不构成第二套客户端更新协议。
 - 公开发布与本机安装是两个独立批次。发布流程不得覆盖现有安装，也不得自动切换 `current`。
 
 ## 2. 完成定义与硬对齐门
@@ -32,7 +32,7 @@
 | 候选包 `interface.json`、构建清单、Release manifest | 版本、仓库、上游标签和源码 SHA 一致 |
 | 完整 ZIP、Release manifest、checksums | 本地文件名、大小和 SHA-256 互相一致 |
 | GitHub Release 资产 | 数量、文件名、大小、`uploaded` 状态和 digest 与本地一致 |
-| Release 状态 | 资产复核前保持 draft；公开预览版发布后为非 draft、prerelease |
+| Release 状态 | 资产复核前保持 draft；发布后非 draft，预览版为 prerelease，正式版为非 prerelease 且 Latest |
 
 任一关系不成立时必须停止，不得用发布说明、手工页面编辑或“稍后补齐”代替硬对齐。
 
@@ -61,12 +61,13 @@ PREPARE
 ## 4. 版本语义
 
 1. 批次必须分别固定 GKH 版本、上游 Maa 标签和上一通道版本，并把后者传给 `--previous-channel-version`；上游标签只能写入独立 provenance／manifest 字段。
-2. GKH 版本只允许 `vMAJOR.MINOR.PATCH`。项目处于 `0.x` 时，`MINOR` 表示基础大更新，`PATCH` 表示该基础上的内部迭代；只有项目正式完工才把 `MAJOR` 升至 `1`。
-3. 已进入独立命名空间后，目标版本必须按 SemVer 严格高于上一公开通道版本。仅本地生成的快照、候选、资产或冒烟失败不消耗版本，同一目标 SemVer 在新 build/run ID 目录重建；旧输出不得覆盖或复用。版本首次进入规范安装目录，或远端 `main`／tag、draft／Release、任一版本化资产或分发副本首次写到隔离区之外时才视为已消耗，后续修复必须递增 `PATCH`。
+2. GKH 版本只允许 `vMAJOR.MINOR.PATCH`。没有特殊要求的公开发布默认将上一独立公开版本的 `MINOR` 加 1、`PATCH` 归零；内部调试在当前基础版本上递增 `PATCH`。用户显式指定版本时优先使用指定值，仍须满足唯一性和严格递增要求。项目处于 `0.x` 时，`MINOR` 表示基础大更新，`PATCH` 表示该基础上的内部迭代；只有项目正式完工才把 `MAJOR` 升至 `1`，正式 Release 身份本身不触发升 `MAJOR`。
+3. 已进入独立命名空间后，目标版本必须按 SemVer 严格高于上一独立公开版本及目标通道的有效独立候选。仅本地生成的快照、候选、资产或冒烟失败不消耗版本，同一目标 SemVer 在新 build/run ID 目录重建；旧输出不得覆盖或复用。版本首次进入规范安装目录，或远端 `main`／tag、draft／Release、任一版本化资产或分发副本首次写到隔离区之外时才视为已消耗，后续修复使用新的版本号；公开发布继续遵守上述默认 MINOR 规则或用户显式要求。
 4. 旧 `vMAJOR.MINOR.PATCH+gkh.*` 组合版本到独立 GKH SemVer 只允许一次人工安装迁移。构建清单必须把这次迁移标记为 `requires_manual_bootstrap=true`；此后不得回退到旧命名空间。
 5. README、指南和 Issue 示例使用 `vXXX` 或结构占位符，不冻结当前精确版本；`interface.json`、构建清单、Release Notes、来源／散列证据和历史任务记录必须保留实际版本。
 6. `update_contract.requires_manual_bootstrap=true` 时发布说明必须要求手动安装；否则说明应引导用户使用 MFAAvalonia 内置 GitHub 资源更新，不得再用自定义“全故障矩阵未完成”阻止正常升级。
-7. 独立 GKH SemVer 不重置 MFA 对同一仓库全部 Release 的版本比较。远端仍存在数值更高的旧组合 Release 时，必须逐通道模拟 MFA 的筛选与 SemVer 排序；任何声明为自动更新入口的通道会把旧版选为候选时，不得宣称自动升级已恢复。首个独立版本可作为纯手动迁移 prerelease 发布，但 Release Notes 必须要求保持默认 Stable，并明确 Beta／Alpha 不受支持且 Stable 看不到后续 prerelease。
+7. 独立 GKH SemVer 不重置 MFA 对同一仓库全部 Release 的版本比较。远端仍存在数值更高的旧组合 Release 时，必须逐通道模拟 MFA 的筛选与 SemVer 排序；任何声明为自动更新入口的通道会把旧版选为候选时，不得宣称该通道自动升级已恢复。旧组合版本全为 prerelease 时，Stable 会过滤它们，允许发布新的正式版并单独核验 Stable 自动更新；Beta／Alpha 仍可能选中旧版，须保留为不受支持。纯手动迁移 prerelease 发布须说明 Stable 看不到 prerelease。
+8. 首次向空的目标通道发布时，`--previous-channel-version` 使用上一已公开独立 GKH 版本作为版本递增基线；它不表示该通道曾发布过此版本。批次证据必须分别记录目标通道为空、选用的独立版本基线，以及其他通道的实际最高候选。不得因 Stable 为空而改用只在 Beta／Alpha 出现的旧组合版本，也不得据此重复标记首次人工命名空间迁移。
 
 ## 5. PREPARE：冻结批次输入
 
@@ -74,7 +75,7 @@ PREPARE
 
 - 官方上游仓库、标签、完整提交 SHA；
 - 官方 Windows x86_64 Release 文件名、大小、SHA-256；
-- 上一公开通道版本和本次派生版本；
+- 发布资格、目标通道、各通道实际最高候选、上一独立公开版本和本次派生版本；目标通道为空时明确记录递增基线来源；
 - 公开仓库 URL；
 - 本地开发基线提交和隔离工作树；
 - 本地 build/run ID；它只进入 `.local` 目录名和任务证据，不进入产品版本、`interface.json` 或公开 manifest；
@@ -94,14 +95,21 @@ $DevelopmentWorktree = (Resolve-Path -LiteralPath '<DEVELOPMENT_WORKTREE>').Path
 $MfaCoreBundle = (Resolve-Path -LiteralPath '<VERIFIED_MFA_CORE_BUNDLE>').Path
 $Repository = 'https://github.com/Kirinigh/Gakumas_Helper'
 $Version = '<VERSION>'
-$PreviousVersion = '<PREVIOUS_MFA_CHANNEL_VERSION>'
+$PreviousVersion = '<PREVIOUS_MFA_CHANNEL_VERSION_OR_EMPTY_CHANNEL_INDEPENDENT_BASELINE>'
+$Qualification = '<arena_preview_OR_arena_release>'
+$ReleaseChannel = switch ($Qualification) {
+  'arena_preview' { 'beta' }
+  'arena_release' { 'stable' }
+  default { throw 'Unsupported release qualification' }
+}
 $ReleaseDate = '<YYYY-MM-DD>'
 $ExpectedRemoteMainSha = '<40_HEX_REMOTE_MAIN_SHA>'
 $PublicParentDirectory = [System.IO.Path]::GetFullPath('<NEW_VERIFIED_PUBLIC_PARENT_DIRECTORY>')
 ```
 
 - `$ReleaseWorktree` 必须是本批次已经验证的隔离发布工作树；三个发布脚本一律从该绝对路径调用，不依赖当前目录。
-- `$PreviousVersion` 来自目标 MFA 通道实际可枚举 Release 的最高候选，不是公开 `main` 中 `interface.json` 的版本；两者必须分别记录。
+- `$PreviousVersion` 来自目标 MFA 通道实际可枚举 Release 的最高候选；目标通道为空时使用第 4 节规定的独立公开版本基线。通道实际状态、基线来源和公开 `main` 版本必须分别记录。
+- `$Qualification` 只能为 `arena_preview` 或 `arena_release`，并与本批次授权及后续 manifest、GitHub Release 标志一致。`$ReleaseChannel` 按上述映射传给候选构建器；其默认值 `beta` 仅保留旧预览命令兼容，正式发布必须显式传 `stable`。
 - `$Python` 必须是已经验证的虚拟环境解释器绝对路径。执行 `& $Python --version` 并记录版本；不得在命令失败时退回 PATH 中的 `python`。
 - 所有已有输入路径用 `Resolve-Path -LiteralPath` 固定为绝对路径；尚不存在的输出目录用 `[System.IO.Path]::GetFullPath(...)` 固定，并确认其父目录正确且目标不存在。
 - 其余尖括号值也先绑定为变量。PowerShell 变量作为独立参数传入，确保含空格的路径或标题不会被拆分。
@@ -197,12 +205,14 @@ finally {
   --output $CandidateDirectory `
   --update-repository $Repository `
   --derived-version $Version `
-  --previous-channel-version $PreviousVersion
+  --previous-channel-version $PreviousVersion `
+  --release-channel $ReleaseChannel
 ```
 
 必须复核：
 
 - `GAKUMAS_HELPER_BUILD.json`、`interface.json` 和关键文件散列；
+- 候选 `update_contract.release_channel` 必须等于 `$ReleaseChannel`，且与后续发布 manifest 的 `release.channel` 一致；资产构建器按 `arena_preview → beta`、`arena_release → stable` 校验，两向错配均拒绝打包，不能只改外层资格或远端标志；
 - 上游标签/ZIP、公开源码 SHA、引擎、Python 包和更新契约；
 - MFA Core bundle 仅含 `manifest.json` 与 `MFAAvalonia.Core.dll`，固定来源、补丁、稳定 Sentry／编译器路径映射、构建输入、DLL 和 `THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE` 均与候选清单及实算散列一致；
 - 候选 `interface.json` 不含 `mirrorchyan_rid` 或 `mirrorchyan_multiplatform`；pip 依赖更新及 RIS engine/data 独立组件更新契约保持不变；
@@ -221,7 +231,7 @@ finally {
   --output-dir $ReleaseDirectory `
   --release-version $Version `
   --release-repository $Repository `
-  --qualification arena_preview
+  --qualification $Qualification
 ```
 
 仅允许生成三个最终资产：
@@ -258,7 +268,7 @@ finally {
 - 远端 `main` 精确 SHA 与本批次记录的预期值一致；
 - 目标 tag 不存在；
 - 同版本 Release（包括 draft）不存在；
-- 未认证 `/releases` 与认证维护者视角均已枚举；按安装态 MFA 的 Stable／Beta／Alpha 过滤与 SemVer 规则计算候选；自动更新所支持的通道不得把新 GKH 版本降回旧组合版本，纯手动迁移 prerelease 则必须证明默认 Stable 会过滤全部 prerelease，并在说明中禁用 Beta／Alpha；`make_latest=false` 不作为隔离证据；
+- 未认证 `/releases` 与认证维护者视角均已枚举；按安装态 MFA 的 Stable／Beta／Alpha 过滤与 SemVer 规则计算候选，并模拟加入本次 Release 后的结果。正式版支持的 Stable 必须选中新版本；旧组合 prerelease 仍占优的 Beta／Alpha 在说明中明确不受支持。纯手动迁移 prerelease 则必须证明默认 Stable 会过滤全部 prerelease；GitHub Latest 标志不代替 MFA 通道排序核验；
 - GitHub 登录身份和仓库权限正确；
 - 本地公开快照工作树干净，`HEAD` 等于 `<PUBLIC_SHA>`；
 - 本地公开快照 `HEAD^` 等于远端预期 SHA，且两者之间恰好一个提交；
@@ -300,13 +310,11 @@ git -C $PublicSnapshotDirectory push --atomic `
 引用对齐后创建草稿 Release：
 
 ```powershell
-gh release create $Version `
-  --repo 'Kirinigh/Gakumas_Helper' `
-  --verify-tag `
-  --title $ReleaseTitle `
-  --notes-file $ReleaseNotes `
-  --draft `
-  --prerelease
+$DraftArguments = @('release', 'create', $Version,
+  '--repo', 'Kirinigh/Gakumas_Helper', '--verify-tag',
+  '--title', $ReleaseTitle, '--notes-file', $ReleaseNotes, '--draft')
+if ($Qualification -eq 'arena_preview') { $DraftArguments += '--prerelease' }
+gh @DraftArguments
 
 gh release upload $Version `
   $PackageZip `
@@ -317,7 +325,7 @@ gh release upload $Version `
 
 上传完成后查询 Release API/CLI 并逐项比较：
 
-- `isDraft=true`、`isPrerelease=true`；
+- `isDraft=true`；`isPrerelease` 在预览版为 `true`，正式版为 `false`；
 - tag 名称和目标 SHA 正确；
 - 恰好三个资产；
 - 文件名、大小、`uploaded` 状态和 GitHub digest 与本地一致；
@@ -330,15 +338,18 @@ gh release upload $Version `
 ## 13. PUBLISHED：发布和公开复核
 
 ```powershell
-gh release edit $Version `
-  --repo 'Kirinigh/Gakumas_Helper' `
-  --draft=false `
-  --prerelease=true
+if ($Qualification -eq 'arena_release') {
+  gh release edit $Version --repo 'Kirinigh/Gakumas_Helper' `
+    --draft=false --prerelease=false --latest=true
+} else {
+  gh release edit $Version --repo 'Kirinigh/Gakumas_Helper' `
+    --draft=false --prerelease=true --latest=false
+}
 ```
 
 发布后同时用认证查询和未认证公开 API 复核：
 
-- Release 为非 draft、prerelease，且 `published_at` 非空；
+- Release 为非 draft，且 `published_at` 非空；prerelease 标志与资格一致；正式版还须查询 `/releases/latest` 并确认其 tag 为本次版本；
 - 远端 `main`、tag、Release tag 目标和两个 manifest 的源码 SHA 一致；
 - GitHub 首页 `README.md` 显示独立 GKH 版本结构与通用 `vXXX` 资产示例，不冻结本次精确版本；
 - `main` 和 tag 下的 `pyproject.toml`、`assets/interface.json` 均为本次版本，README 保持通用占位符；
@@ -366,10 +377,10 @@ gh release edit $Version `
 
 1. `tools/deployment/public/ASSET_PROVENANCE.md` 当前固定记录一个上游版本、提交和 ZIP 散列；升级上游时必须同步并复核。
 2. `tools/deployment/public/RELEASE_NOTES.md` 包含旧组合命名空间的一次性人工迁移说明；迁移完成后的发布必须根据构建清单实际 `update_contract` 生成或重写说明。
-3. `build_release_asset.py` 当前只允许公开预览资格；稳定版必须先扩展代码、测试和验收门。
+3. `arena_release` 表示正式发布通道，不表示竞技场稳定性满分。每批必须复核生成 manifest 的 `known_gates` 与实际未完成验证，不能沿用已过时的开放或完成结论。
 4. 当前没有统一的 GitHub 发布编排器；`main`、tag、draft、资产核对和最终发布仍须按本文逐项人工执行。
 5. 后续较高 SemVer Release 仍应完成一次 MFA 内置完整包更新冒烟；这只验证资产命名和原生入口接线，不新增项目下载器、客户端候选目录、逐组件散列、Defender 或独立回滚矩阵。RIS engine/data 依赖通道按其独立组件契约验证，不改变客户端 Release 契约。
-6. 既有公开仓库仍有数值高于首个独立 GKH 版本的旧组合 prerelease。MFA 会分页枚举 Release 并按通道筛选后取 SemVer 最大值；在旧候选完成通道隔离或使用不含旧 Release 的获准更新仓库前，独立版本只能作为要求保持 Stable 的人工迁移 prerelease 发布，MFA 自动更新声明保持阻断。
+6. 既有公开仓库的旧组合 prerelease 可能仍高于独立 GKH 版本。MFA 会分页枚举 Release 并按通道筛选后取 SemVer 最大值；Stable 可通过非 prerelease 正式版独立承接，Beta／Alpha 在旧候选仍占优时不受支持。不得将 Stable 已通过的排序结论扩大到全部通道。
 
 这些缺口必须在开发源码或模板中解决并重新生成产物；不得直接手工修改已经验证的候选、ZIP 或 manifest。
 

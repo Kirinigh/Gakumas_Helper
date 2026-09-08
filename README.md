@@ -1,63 +1,72 @@
-# MaaGakumasu Gakumas Helper
+# Gakumas Helper
 
-这是基于 [MaaGakumasu](https://github.com/SuperWaterGod/MaaGakumasu) 的公开派生预览版。它保留上游 Maa 客户端与日常功能，并新增竞技场完整编成读取、本地计分、保守胜率选敌、结果记录以及配套识别资源。
+面向《学园偶像大师》的日常小助手，基于 [MaaGakumasu](https://github.com/SuperWaterGod/MaaGakumasu)。在同一个 Maa 客户端中使用日常任务、自动培育，以及本项目新增的竞技场读取、胜率选敌和结果记录。
 
-- GKH 版本格式：独立语义化版本 (Semantic Versioning, SemVer) `vMAJOR.MINOR.PATCH`
-- 上游 Maa 基线：在每版 Release manifest 与来源记录中单独固定，不拼入 GKH 版本
-- 下载与校验：[https://github.com/Kirinigh/Gakumas_Helper Releases](https://github.com/Kirinigh/Gakumas_Helper/releases)
-- 上游项目：[SuperWaterGod/MaaGakumasu](https://github.com/SuperWaterGod/MaaGakumasu)
-- 许可证：AGPL-3.0；内嵌竞技场模拟引擎另按 BSD-3-Clause 与 Node.js 许可发布
+[下载最新版本](https://github.com/Kirinigh/Gakumas_Helper/releases/latest) · [首次使用](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/GETTING_STARTED.md) · [使用文档](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/README.md) · [问题反馈](https://github.com/Kirinigh/Gakumas_Helper/blob/main/SUPPORT.md)
 
-> [!WARNING]
-> 当前是 Windows x86_64 竞技场预览版，不代表全部识别验收或最终稳定版已经完成。竞技场任务会实际操作游戏并可能消耗挑战次数；请先阅读[首次使用](guides/GETTING_STARTED.md)与[竞技场指南](guides/ARENA_WIN_RATE.md)。
+## 功能
 
-## 快速开始
-
-1. 首次安装时从 Releases 下载 `MaaGakumasu-win-x86_64-vXXX.zip`；`vXXX` 代表资产名中的完整版本，checksums 可用于人工复核下载字节。
-2. 解压到新的独立目录，不要覆盖上游 Maa 或旧版 Gakumas Helper。
-3. 运行版本内 `deployment\Start-MaaGakumasu-Admin.cmd`，以管理员身份和唯一空 TEMP/TMP 启动；程序不会读取或保存 DMM 账号密码。
-4. 首次使用先添加并单独运行“重算竞技场己方总分”，成功后再运行“竞技场胜率分析并挑战（单次）”或“每日挑战 → 胜率选敌”。
-
-详细步骤、默认参数、分辨率要求和失败处理见[首次使用](guides/GETTING_STARTED.md)。
-
-## 相对上游新增
-
-| 领域 | Gakumas Helper 新增能力 |
+| 分类 | 可以做什么 |
 | --- | --- |
-| 竞技场读取 | 读取双方三舞台编成、表现力、支援加成、P 道具、技能卡、重复卡与自定义强化 |
-| 本地计分 | 使用固定版本、自包含的 `gakumas-tools` 引擎生成成员分数分布，不访问在线模拟网站 |
-| 胜率决策 | 应用同舞台第一名 `+20%` 规则、三局两胜、95% Wilson 区间及三对手 Bonferroni 校正 |
-| 节拍与缓存 | 首次自动校准 Worker；己方分数可缓存，日常默认只重读三个对手 |
-| 安全闭锁 | 身份、页面、字段、赛季或结果不能唯一确认时停止，不以综合力或猜测结果替代 |
-| 结果记录 | 挑战前创建待决记录，挑战后核对总体胜负与三舞台双方成绩，再允许下一轮 |
-| 发布治理 | 单提交公开源码快照、来源/许可证清单、Release manifest、校验和及隐私扫描 |
+| 日常任务 | 沿用上游的启动游戏、收取活动费、安排工作、社团活动与领取奖励 |
+| 商店兑换 | 沿用上游的扭蛋兑换、每日兑换与每周免费初星包任务，按用户配置执行 |
+| 培育与工具 | 保留上游自动培育、支援卡识别等已有任务和设置；适配范围见[与上游的区别](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/UPSTREAM_DIFFERENCES.md) |
+| 竞技场胜率选敌 | 读取双方编成并在本机模拟，优先选择达到胜率门槛的对手；无人达标时选择预测胜率最高者，仍记录为未达标 |
+| 己方重算与复用 | 单独读取并重算己方数据；日常复用兼容缓存，编成或期数变化后由用户重新计算 |
+| 对局记录与恢复 | 记录三个舞台赢家与总结果，成功保存后回到竞技场并继续剩余场次；分数异常不阻断，已支持的临时故障由客户端在固定次数和时限内自动恢复 |
 
-完整差异、继承范围和未完成边界见[与上游的区别](guides/UPSTREAM_DIFFERENCES.md)。
+竞技场提供三个入口：**重算竞技场己方总分**、**竞技场胜率分析并挑战（单次）**、**每日挑战 → 胜率选敌**。完整规则与缓存说明见[竞技场指南](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/ARENA_WIN_RATE.md)。
 
-## 使用与反馈入口
+## 下载与开始
 
-- [指导中心](guides/README.md)
-- [竞技场胜率功能](guides/ARENA_WIN_RATE.md)
-- [故障排查](guides/TROUBLESHOOTING.md)
-- [更新与回滚](guides/UPDATE_AND_ROLLBACK.md)
-- [隐私与安全](guides/PRIVACY_AND_SAFETY.md)
-- [问题反馈与分流](SUPPORT.md)
-- [贡献说明](CONTRIBUTING.md)
+当前发布为非预发布 Latest，公开源码位于 `main`。
 
-提交公开 Issue 前请先脱敏。不要上传账号信息、完整配置、完整日志包、未打码游戏截图、己方/对手缓存或训练数据。属于上游原版且能在官方 MaaGakumasu 复现的问题，请提交到[上游 Issues](https://github.com/SuperWaterGod/MaaGakumasu/issues)。
+1. 从 [Latest Release](https://github.com/Kirinigh/Gakumas_Helper/releases/latest) 下载 `MaaGakumasu-win-x86_64-vXXX.zip`；`vXXX` 为实际版本号。Release 同时提供校验和，供需要时核对下载文件。
+2. 解压到一个新的目录，保留完整包内容。首次安装、旧组合版本迁移或更新入口不可用时均使用此方式。
+3. 运行包内 `deployment\Start-MaaGakumasu-Admin.cmd`，按系统提示以管理员身份启动。DMM 用户在客户端选择 **PC** 控制器和 **DMM** 资源，再连接已登录的游戏。
+4. 在任务列表中添加需要的任务。第一次使用竞技场时，先单独运行 **重算竞技场己方总分**，确认期数与编成摘要正确。
+5. 再运行 **竞技场胜率分析并挑战（单次）**，或选择 **每日挑战 → 胜率选敌**。这两个入口会实际消耗挑战次数。
 
-## 安装与更新边界
+竞技场默认门槛为 **70%**、模拟 **2000** 次、模拟超时 **180 秒**。完整界面读取可能需要数分钟；180 秒只限制模拟阶段。更多设置和操作步骤见[首次使用](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/GETTING_STARTED.md)。
 
-GKH 版本独立于上游 Maa 标签。项目处于 `0.x` 时，`MINOR` 表示基础大更新，`PATCH` 表示该基础上的内部迭代；项目正式完工时才把 `MAJOR` 升至 `1`。从旧 `vMAJOR.MINOR.PATCH+gkh.*` 命名空间切入独立 GKH SemVer 时须手动安装一次；迁移预览期间保持 MFA 资源更新通道为默认 Stable，不要切换到 Beta 或 Alpha。独立版本之间按 SemVer 递增，但只有发布预检确认 MFA 的目标更新通道不会再选中数值更高的旧组合 Release 后，才允许启用自动升级；满足该门后，唯一客户端更新入口仍是 MFAAvalonia 内置 GitHub 资源更新。完整包会同时更新程序、Agent、资源、UI、模型、图库及竞技场离线基线，不需要手工逐组件校验或第二套客户端更新器。
+## 支持范围与当前限制
 
-内置 pip 入口只管理 pip 与 `requirements.txt` 中的 Python 依赖，不更新上述项目资产。竞技场 RIS engine/data 是严格窄例外：每个 Agent 进程首次需要模拟器时可按最新成功 production deployment 的不可变 SHA 成对更新，失败保留旧组件；它不更新客户端、Agent、UI、模型或图库。版本化目录、`current` 联接和本机安装器只服务开发部署与故障维护，不是普通客户端更新路径。
+| 项目 | 当前范围 |
+| --- | --- |
+| 发布包 | Windows x86_64 完整包；本项目竞技场实测环境为 Windows 11 + DMM PC 日文界面 |
+| 游戏画面 | 日常建议使用物理 `720×1280` 或更高的竖向 `9:16` 窗口。Maa 返回的识别图像与物理窗口尺寸可能不同，具体要求见[首次使用](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/GETTING_STARTED.md) |
+| 小窗口 | 物理 `540×960` 已完成读取验证，完整日常流程尚未通过验收 |
+| 其他环境 | 上游保留的模拟器、其他系统和汉化资源，不代表本项目竞技场已完成等价验证 |
 
-当前 Gakumas Helper 完整包不会声明上游 `MaaGakumasu` 的 MirrorChyan 资源 ID；MFA 资源检查在没有派生版 MirrorChyan RID 时回落到本项目 GitHub Releases。普通客户端更新仍只使用这一原生 GitHub 完整包入口。
+本次转场结果恢复的初步修复已完成离线回归，尚未新增实机验收；**同一版本连续两个游戏日、每天 5 场**及其余跨窗口、独立样本验收仍未全部完成。恢复额度耗尽后，客户端会保留未完成对局并停止新挑战；请按[故障排查](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/TROUBLESHOOTING.md)反馈。
 
-公开包不包含用户配置、日志、缓存、截图、对局记录、私有训练语料、凭据或本机路径。源码仓库使用独立的单提交公开快照，不包含内部开发仓库历史和任务管理记录。
+## 使用文档
+
+| 需要了解 | 文档 |
+| --- | --- |
+| 安装、连接和首次运行 | [首次使用](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/GETTING_STARTED.md) |
+| 竞技场规则、缓存和参数 | [竞技场胜率功能](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/ARENA_WIN_RATE.md) |
+| 与上游功能的关系 | [与上游的区别](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/UPSTREAM_DIFFERENCES.md) |
+| 报错与恢复 | [故障排查](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/TROUBLESHOOTING.md) |
+| 更新、迁移与回滚 | [更新与回滚](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/UPDATE_AND_ROLLBACK.md) |
+| 本机数据和反馈前脱敏 | [隐私与安全](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/PRIVACY_AND_SAFETY.md) |
+
+## 更新与反馈
+
+已使用独立 GKH 版本时，保持默认 **Stable**，通过 **MFAAvalonia 内置 GitHub 资源更新**获取完整包。旧 `vMAJOR.MINOR.PATCH+gkh.*` 组合版本仍需一次手工迁移；不要切到 Beta 或 Alpha 寻找新版。完整包会共同更新程序、资源和竞技场基线，不需要手工逐组件校验或第二套客户端更新器。当前尚未完成经 MFA 下载、应用和重启的完整实机升级验收，详细边界见[更新与回滚](https://github.com/Kirinigh/Gakumas_Helper/blob/main/guides/UPDATE_AND_ROLLBACK.md)。
+
+版本使用独立语义化版本 (Semantic Versioning, SemVer) `vMAJOR.MINOR.PATCH`；具体更新内容见每版 Release Notes，上游基线另行记录。本项目不会声明上游 `MaaGakumasu` 的 MirrorChyan 资源 ID，完整包更新使用本项目 GitHub Releases。
+
+问题、建议与使用疑问请先阅读[反馈与分流](https://github.com/Kirinigh/Gakumas_Helper/blob/main/SUPPORT.md)，再提交到[本项目 Issues](https://github.com/Kirinigh/Gakumas_Helper/issues)。能在官方 MaaGakumasu 中复现的上游问题，请提交到[上游 Issues](https://github.com/SuperWaterGod/MaaGakumasu/issues)。反馈时提供版本、任务入口、窗口尺寸、失败位置和脱敏后的错误信息；不要上传账号信息、完整配置、日志包或未打码游戏截图。
+
+## 贡献
+
+欢迎提交可复现的问题、文档改进、测试和代码修复。较大改动请先开 Issue 讨论范围，小型修复可直接提交拉取请求 (Pull Request, PR)。开发与来源要求见[贡献说明](https://github.com/Kirinigh/Gakumas_Helper/blob/main/CONTRIBUTING.md)。
 
 ## 来源与声明
 
-本仓库提供派生 Agent、资源、模型、数据及构建脚本的对应源码。完整 Windows 包复用固定 MaaGakumasu 上游发行版；竞技场模拟器来自固定版本的 [surisuririsu/gakumas-tools](https://github.com/surisuririsu/gakumas-tools)。具体版本、文件散列和许可证记录在 Release manifest、[来源说明](ASSET_PROVENANCE.md)与 `THIRD_PARTY_NOTICES` 中。
+客户端与上游日常能力来自 [MaaGakumasu](https://github.com/SuperWaterGod/MaaGakumasu)，由 [MaaFramework](https://github.com/MaaXYZ/MaaFramework) 和 [MFAAvalonia](https://github.com/MaaXYZ/MFAAvalonia) 提供框架与界面支持。竞技场模拟使用固定版本的 [gakumas-tools](https://github.com/surisuririsu/gakumas-tools)。感谢这些项目的开发者与贡献者。
 
-本项目与万代南梦宫及游戏官方无隶属或背书关系。使用自动化前请自行确认适用规则并承担账号与资源消耗风险。
+本项目代码按 [AGPL-3.0](LICENSE) 提供；第三方组件保留各自许可证，游戏文字、图形及其他内容权利归原权利人。固定来源、识别资源及第三方通知见[来源说明](ASSET_PROVENANCE.md)与包内 `THIRD_PARTY_NOTICES`。
+
+本项目与游戏官方无隶属或背书关系。程序通过截图、识别和正常界面输入工作，不读取游戏进程内存或处理 DMM 账号密码。自动化可能带来账号和资源消耗风险，请阅读使用文档并自行判断是否使用。

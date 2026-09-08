@@ -30,6 +30,7 @@ from .adapter import (
     SubprocessArenaAdapter,
 )
 from .catalog import ArenaCatalogError, ArenaEntityCatalog
+from .badge_reference import BadgeReferenceError, BadgeReferenceGallery
 from .component_builder import build_runtime_component
 
 REPOSITORY = "surisuririsu/gakumas-tools"
@@ -42,6 +43,13 @@ HOST_P_ITEM_REFERENCE_RELATIVE_ROOT = (
     / "model"
     / "embedding"
     / "p_item_reference"
+)
+HOST_CARD_REFERENCE_RELATIVE_ROOT = (
+    Path("resource")
+    / "base"
+    / "model"
+    / "embedding"
+    / "arena_badge_reference"
 )
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 STATE_SCHEMA_VERSION = 1
@@ -89,6 +97,23 @@ def _resolve_host_p_item_reference_root() -> Path:
     )
 
 
+def _resolve_host_card_reference_root() -> Path:
+    """Resolve the fixed card gallery in source-tree or installed Maa layout."""
+
+    candidates = (
+        PROJECT_ROOT / "assets" / HOST_CARD_REFERENCE_RELATIVE_ROOT,
+        PROJECT_ROOT / HOST_CARD_REFERENCE_RELATIVE_ROOT,
+    )
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if (candidate / "manifest.json").is_file()
+        ),
+        candidates[0],
+    )
+
+
 class ArenaUpstreamSource(Protocol):
     def discover_production_commit(self) -> str: ...
 
@@ -116,6 +141,7 @@ class _BundleInfo:
     catalog: ContestStageCatalog
     latest_season: int
     host_revision: str | None = None
+    reference_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -346,6 +372,7 @@ class ArenaComponentManager:
         self.source = source or GitHubProductionSource()
         self.host_revision = host_revision or _detect_host_revision()
         self.builder = builder
+        self._uses_default_validator = validator is None
         self.validator = validator or _validate_component_bundle
         self._lock = threading.Lock()
         self._checks: dict[Path, _CheckOutcome] = {}
@@ -380,10 +407,18 @@ class ArenaComponentManager:
 
     def _check_once(self, baseline_bundle: Path) -> _CheckOutcome:
         baseline = _inspect_bundle(baseline_bundle)
-        warnings: list[str] = []
         active = self._load_active()
         if active is None:
             active = baseline
+        active_reference_warnings = (
+            _validate_component_reference_coverage(
+                active.path,
+                enforce_p_item_reverse_compatibility=False,
+            )
+            if self._uses_default_validator
+            else active.reference_warnings
+        )
+        warnings = list(active_reference_warnings)
         try:
             remote_commit = self.source.discover_production_commit()
         except Exception as error:
@@ -453,7 +488,7 @@ class ArenaComponentManager:
             remote_latest_season=remote_latest,
             status="updated",
             update_activated=True,
-            warnings=tuple(warnings),
+            warnings=installed.reference_warnings,
         )
 
     def _load_active(self) -> _BundleInfo | None:
@@ -619,29 +654,7 @@ def _validate_component_bundle(bundle: Path, expected_commit: str) -> _BundleInf
     info = _inspect_bundle(bundle)
     if info.commit != expected_commit:
         raise ArenaComponentError("arena component commit does not match the requested production deployment")
-    try:
-        entity_catalog = ArenaEntityCatalog.from_bundle(bundle)
-    except (ArenaCatalogError, OSError, ValueError) as error:
-        raise ArenaComponentError(f"arena component entity catalog is invalid: {error}") from error
-    try:
-        from p_item_recognition import PItemReferenceError, PItemRenderedReferenceGallery
-    except ImportError as error:
-        raise ArenaComponentError(
-            "host P-item reference runtime is unavailable"
-        ) from error
-    try:
-        reference_gallery = PItemRenderedReferenceGallery.load(
-            _resolve_host_p_item_reference_root()
-        )
-    except (OSError, KeyError, TypeError, ValueError, PItemReferenceError) as error:
-        raise ArenaComponentError(
-            "host P-item reference gallery is unavailable or invalid"
-        ) from error
-    _validate_component_p_item_coverage(
-        entity_catalog,
-        reference_gallery.p_item_ids,
-        provisional_gallery_ids=reference_gallery.provisional_p_item_ids,
-    )
+    reference_warnings = _validate_component_reference_coverage(bundle)
 
     stage_ids = [
         stage.stage_id
@@ -692,7 +705,100 @@ def _validate_component_bundle(bundle: Path, expected_commit: str) -> _BundleInf
         detail = (completed.stderr or completed.stdout).strip()[-1000:]
         raise ArenaComponentError(f"arena component import smoke failed: {detail}")
     _validate_runner_protocol(bundle, info)
-    return info
+    return _BundleInfo(
+        info.path,
+        info.commit,
+        info.catalog,
+        info.latest_season,
+        info.host_revision,
+        reference_warnings,
+    )
+
+
+def _validate_component_reference_coverage(
+    bundle: Path,
+    *,
+    enforce_p_item_reverse_compatibility: bool = True,
+) -> tuple[str, ...]:
+    """Validate host galleries and warn when RIS has newer recognition IDs."""
+
+    try:
+        entity_catalog = ArenaEntityCatalog.from_bundle(bundle)
+    except (ArenaCatalogError, OSError, ValueError) as error:
+        raise ArenaComponentError(f"arena component entity catalog is invalid: {error}") from error
+    try:
+        from p_item_recognition import PItemReferenceError, PItemRenderedReferenceGallery
+    except ImportError as error:
+        raise ArenaComponentError(
+            "host P-item reference runtime is unavailable"
+        ) from error
+    try:
+        reference_gallery = PItemRenderedReferenceGallery.load(
+            _resolve_host_p_item_reference_root()
+        )
+    except (OSError, KeyError, TypeError, ValueError, PItemReferenceError) as error:
+        raise ArenaComponentError(
+            "host P-item reference gallery is unavailable or invalid"
+        ) from error
+    represented_p_item_ids = frozenset(
+        int(value) for value in reference_gallery.p_item_ids
+    )
+    required_p_item_ids = frozenset(
+        entity_catalog.arena_p_item_reference_required_ids()
+    )
+    missing_p_item_ids = tuple(
+        sorted(required_p_item_ids - represented_p_item_ids)
+    )
+    if enforce_p_item_reverse_compatibility:
+        _validate_component_p_item_coverage(
+            entity_catalog,
+            reference_gallery.p_item_ids,
+            provisional_gallery_ids=reference_gallery.provisional_p_item_ids,
+        )
+    try:
+        card_gallery = BadgeReferenceGallery.load(
+            _resolve_host_card_reference_root()
+        )
+    except (OSError, KeyError, TypeError, ValueError, BadgeReferenceError) as error:
+        raise ArenaComponentError(
+            "host skill-card reference gallery is unavailable or invalid"
+        ) from error
+    missing_skill_card_ids = _validate_component_skill_card_coverage(
+        entity_catalog,
+        card_gallery.business_ids,
+    )
+    fixed_slot_skill_card_ids: list[int] = []
+    gallery_update_required_skill_card_ids: list[int] = []
+    for card_id in missing_skill_card_ids:
+        try:
+            source_type = entity_catalog.skill_card_source_type(card_id)
+        except ArenaCatalogError:
+            gallery_update_required_skill_card_ids.append(card_id)
+            continue
+        if source_type in {"pIdol", "support"}:
+            fixed_slot_skill_card_ids.append(card_id)
+        else:
+            gallery_update_required_skill_card_ids.append(card_id)
+    warnings: list[str] = []
+    if missing_p_item_ids:
+        warnings.append(
+            "RIS_RECOGNITION_REFERENCE_LAG "
+            f"kind=p_item ids={missing_p_item_ids!r} mode=global_detail"
+        )
+    if fixed_slot_skill_card_ids:
+        warnings.append(
+            "RIS_RECOGNITION_REFERENCE_LAG "
+            f"kind=skill_card ids={tuple(fixed_slot_skill_card_ids)!r} "
+            "mode=fixed_slot_exact_title_detail"
+        )
+    if gallery_update_required_skill_card_ids:
+        warnings.append(
+            "RIS_RECOGNITION_REFERENCE_LAG "
+            "kind=skill_card "
+            f"ids={tuple(gallery_update_required_skill_card_ids)!r} "
+            "mode=gallery_update_required"
+        )
+    return tuple(warnings)
 
 
 def _validate_component_p_item_coverage(
@@ -700,17 +806,12 @@ def _validate_component_p_item_coverage(
     gallery_ids: Sequence[int],
     *,
     provisional_gallery_ids: Sequence[int] = (),
-) -> None:
-    """Reject activation before new arena IDs outrun the host visual contract."""
+) -> tuple[int, ...]:
+    """Return forward drift while rejecting reverse P-item incompatibility."""
 
     represented = frozenset(int(value) for value in gallery_ids)
     required = frozenset(catalog.arena_p_item_reference_required_ids())
     missing = tuple(sorted(required - represented))
-    if missing:
-        raise ArenaPItemCoverageError(
-            "arena component requires P-item IDs absent from the host reference "
-            f"gallery: {missing!r}"
-        )
     provisional = frozenset(int(value) for value in provisional_gallery_ids)
     stale_provisional = tuple(sorted(provisional - required))
     if stale_provisional:
@@ -725,6 +826,18 @@ def _validate_component_p_item_coverage(
             "host P-item reference gallery contains IDs absent from the candidate "
             f"P-item catalog: {unknown_gallery_ids!r}"
         )
+    return missing
+
+
+def _validate_component_skill_card_coverage(
+    catalog: ArenaEntityCatalog,
+    gallery_ids: Sequence[int],
+) -> tuple[int, ...]:
+    """Return skill-card IDs supplied by RIS but absent from the host gallery."""
+
+    represented = frozenset(int(value) for value in gallery_ids)
+    catalog_ids = frozenset(catalog.skill_card_business_ids())
+    return tuple(sorted(catalog_ids - represented))
 
 
 def _validate_runner_protocol(bundle: Path, info: _BundleInfo) -> None:

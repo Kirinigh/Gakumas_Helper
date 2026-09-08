@@ -1,8 +1,10 @@
 # Keep pinned embedding assets byte-for-byte stable across core.autocrlf settings.
 assets/resource/base/model/classify/card_embedding/*.onnx -text
 assets/resource/base/model/classify/card_embedding/*.npz -text
+assets/resource/base/model/classify/card_embedding/*.json -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/arena_card/*.onnx -text
 assets/resource/base/model/embedding/arena_card/*.npz -text
+assets/resource/base/model/embedding/arena_card/*.json -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/arena_badge_reference/*.npz -text
 assets/resource/base/model/embedding/arena_badge_reference/*.json -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/arena_card_cost_reference/*.npz -text

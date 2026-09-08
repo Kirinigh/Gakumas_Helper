@@ -836,6 +836,7 @@ def build_derived_package(
     allow_upstream_trial_channel: bool,
     derived_version: str | None = None,
     previous_channel_version: str | None = None,
+    release_channel: str = "beta",
     validate_python_runtime: bool = True,
 ) -> Path:
     source_root = source_root.resolve()
@@ -845,6 +846,8 @@ def build_derived_package(
     python_site_packages = python_site_packages.resolve()
     output = output.resolve()
 
+    if release_channel not in {"beta", "stable"}:
+        raise BuildError("release channel must be beta or stable")
     if not upstream_archive.is_file():
         raise BuildError(f"upstream archive is missing: {upstream_archive}")
     if re.fullmatch(r"[0-9A-Fa-f]{64}", upstream_sha256) is None:
@@ -870,6 +873,8 @@ def build_derived_package(
         raise BuildError(f"output already exists: {output}")
 
     if update_repository == UPSTREAM_REPOSITORY:
+        if release_channel != "beta":
+            raise BuildError("a local upstream trial cannot select a durable release channel")
         if derived_version is not None:
             raise BuildError("an explicit derived release version cannot use the upstream update repository")
         if previous_channel_version is not None:
@@ -1040,7 +1045,7 @@ def build_derived_package(
                 "mode": update_mode,
                 "repository": update_repository,
                 "previous_channel_version": previous_channel_version,
-                "release_channel": "beta" if update_mode == "derived_release_channel" else "local",
+                "release_channel": release_channel if update_mode == "derived_release_channel" else "local",
                 "version_namespace": (
                     "independent_gkh_semver"
                     if update_mode == "derived_release_channel"
@@ -1084,6 +1089,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-upstream-trial-channel", action="store_true")
     parser.add_argument("--derived-version")
     parser.add_argument("--previous-channel-version")
+    parser.add_argument("--release-channel", choices=("beta", "stable"), default="beta")
     return parser
 
 
@@ -1103,6 +1109,7 @@ def main() -> int:
         allow_upstream_trial_channel=args.allow_upstream_trial_channel,
         derived_version=args.derived_version,
         previous_channel_version=args.previous_channel_version,
+        release_channel=args.release_channel,
     )
     print(result)
     return 0

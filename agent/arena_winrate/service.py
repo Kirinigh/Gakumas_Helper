@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Mapping, Callable, Protocol
 from pathlib import Path
 from dataclasses import replace, dataclass
@@ -54,6 +55,7 @@ class ArenaProviderAttemptFailure:
     error_type: str
     code: str | None
     detail: str
+    wall_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -392,6 +394,7 @@ class ArenaWinRateService:
         observation_error: Exception | None = None
         provider_attempt_failures: list[ArenaProviderAttemptFailure] = []
         for attempt in range(1, 3):
+            provider_started = time.perf_counter()
             try:
                 observation = provider.read()
             except Exception as error:
@@ -404,6 +407,7 @@ class ArenaWinRateService:
                         error_type=type(error).__name__,
                         code=None if raw_code is None else str(raw_code),
                         detail=str(raw_detail),
+                        wall_seconds=time.perf_counter() - provider_started,
                     )
                 )
                 continue

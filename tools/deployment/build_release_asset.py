@@ -27,17 +27,20 @@ except ModuleNotFoundError:  # Direct script execution from tools/deployment.
     from privacy_gate import PrivacyGateError, validate_tree
 
 try:
+    from tools.deployment import promote_static_reference_handoff as static_handoff
     from tools.deployment.promote_static_reference_handoff import (
         StaticReferenceHandoffError,
         validate_promoted_component,
     )
 except ModuleNotFoundError:  # Direct script execution from tools/deployment.
+    import promote_static_reference_handoff as static_handoff
     from promote_static_reference_handoff import (
         StaticReferenceHandoffError,
         validate_promoted_component,
     )
 
 SCHEMA_VERSION = 1
+RELEASE_CHANNELS = {"arena_preview": "beta", "arena_release": "stable"}
 PLATFORM = "win-x86_64"
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
@@ -194,11 +197,10 @@ MINIMUM_INDEPENDENT_PROJECT_VERSION = "v0.1.0"
 MINIMUM_P_ITEM_REFERENCE_BUSINESS_ID_COUNT = 426
 P_ITEM_CATALOG_RELATIVE_PATH = "node_modules/gakumas-data/json/p_items.json"
 SKILL_CARD_CATALOG_RELATIVE_PATH = "node_modules/gakumas-data/json/skill_cards.json"
-P_ITEM_PRODUCTION_SOURCE_EVIDENCE_PATH = (
+P_ITEM_PRODUCTION_SOURCE_EVIDENCE_DIR = (
     Path(__file__).resolve().parents[1]
     / "p-item-embedding"
     / "evidence"
-    / "p_item_production_source_d476.json"
 )
 FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION = "v0.1.1"
 RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS = frozenset({"v0.1.0"})
@@ -235,6 +237,75 @@ def _load_object(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ReleaseBuildError(f"JSON root must be an object: {path}")
     return value
+
+
+def _select_p_item_production_source_evidence(
+    component_root: Path,
+    manifest: Mapping[str, Any],
+) -> Path:
+    """Select one code-approved source proof using the bound report's digest."""
+
+    evaluation = manifest.get("evaluation")
+    if (
+        not isinstance(evaluation, Mapping)
+        or evaluation.get("path") != static_handoff.REPORT_NAME
+        or not static_handoff._is_sha256(evaluation.get("sha256"))
+    ):
+        raise StaticReferenceHandoffError(
+            "p_item_reference evaluation report binding is invalid"
+        )
+    report_path = component_root / static_handoff.REPORT_NAME
+    if (
+        not report_path.is_file()
+        or sha256_file(report_path).casefold()
+        != str(evaluation["sha256"]).casefold()
+    ):
+        raise StaticReferenceHandoffError(
+            "p_item_reference evaluation report hash mismatch"
+        )
+    report = static_handoff._load_object(
+        report_path, label="p_item_reference evaluation report"
+    )
+    if report_path.read_bytes() != static_handoff.canonical_json_bytes(report):
+        raise StaticReferenceHandoffError(
+            "p_item_reference evaluation report is not canonical LF JSON"
+        )
+    promotion_evidence = report.get("promotion_evidence")
+    evidence_sha256 = (
+        promotion_evidence.get("production_source_evidence_sha256")
+        if isinstance(promotion_evidence, Mapping)
+        else None
+    )
+    if (
+        not static_handoff._is_sha256(evidence_sha256)
+        or str(evidence_sha256).upper()
+        not in static_handoff.P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256_ALLOWLIST
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence digest is not in the code allowlist"
+        )
+
+    evidence_root = P_ITEM_PRODUCTION_SOURCE_EVIDENCE_DIR.resolve()
+    matches: list[Path] = []
+    try:
+        for path in sorted(evidence_root.glob("p_item_production_source_*.json")):
+            if path.resolve().parent != evidence_root:
+                raise StaticReferenceHandoffError(
+                    "P-item production/source evidence escapes the fixed directory"
+                )
+            if path.is_file() and sha256_file(path) == str(evidence_sha256).upper():
+                matches.append(path)
+    except OSError as error:
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence directory is unavailable"
+        ) from error
+    if len(matches) != 1:
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence requires exactly one fixed-directory "
+            f"match; found {len(matches)}"
+        )
+    static_handoff._load_p_item_production_source_evidence(matches[0])
+    return matches[0]
 
 
 def _validate_component_production_handoff(
@@ -1869,7 +1940,13 @@ def _validate_mfa_core_build_binding(
         )
 
 
-def _validate_candidate(candidate: Path, expected_version: str, expected_repository: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def _validate_candidate(
+    candidate: Path,
+    expected_version: str,
+    expected_repository: str,
+    *,
+    expected_channel: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     forbidden = [relative for relative in FORBIDDEN_MUTABLE_PATHS if (candidate / relative).exists()]
     if forbidden:
         raise ReleaseBuildError(f"candidate contains mutable runtime state: {', '.join(forbidden)}")
@@ -1900,8 +1977,10 @@ def _validate_candidate(candidate: Path, expected_version: str, expected_reposit
         raise ReleaseBuildError(
             "candidate update contract must use the MFA built-in full-package update path"
         )
-    if update_contract.get("release_channel") != "beta":
-        raise ReleaseBuildError("arena preview candidate must record the beta release channel")
+    if update_contract.get("release_channel") != expected_channel:
+        raise ReleaseBuildError(
+            f"candidate must record the {expected_channel} release channel for its release qualification"
+        )
     previous_channel_version = update_contract.get("previous_channel_version")
     if expected_version == FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION:
         if previous_channel_version != LAST_PUBLISHED_LEGACY_CHANNEL_VERSION:
@@ -1963,6 +2042,28 @@ def _project_version_key(version: str) -> tuple[int, int, int]:
     if match is None:
         raise ReleaseBuildError("release version must use independent GKH SemVer")
     return tuple(int(part) for part in version.removeprefix("v").split("."))
+
+
+def _validate_packaged_p_item_qualification(candidate: Path, manifest: Mapping[str, Any]) -> None:
+    """Bind derived calibration to the recognizer bytes actually being packaged.
+
+    The fixed-tool check in the static promoter cannot stand in for this check:
+    the inspected candidate may be a different directory. Never import its code.
+    """
+    source = manifest.get("source")
+    provenance = source.get("extension_provenance") if isinstance(source, Mapping) else None
+    if not isinstance(provenance, Mapping) or provenance.get("schema_version") != 5:
+        return
+    declaration = provenance.get(static_handoff.derived_source.SOURCE_KEY)
+    qualification = declaration.get("qualification") if isinstance(declaration, Mapping) else None
+    expected = qualification.get("reference_code_canonical_lf_sha256") if isinstance(qualification, Mapping) else None
+    if not static_handoff._is_sha256(expected):
+        raise ReleaseBuildError("derived P-item qualification lacks the packaged recognizer source binding")
+    path = _resolve_inside(candidate, "agent/p_item_recognition/reference.py")
+    if not path.is_file():
+        raise ReleaseBuildError("derived P-item qualification requires packaged agent/p_item_recognition/reference.py")
+    if static_handoff.derived_source.canonical_source_sha256(path) != str(expected).upper():
+        raise ReleaseBuildError("packaged P-item recognizer source differs from the scoped qualification")
 
 
 def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
@@ -2037,11 +2138,15 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
                     else None
                 ),
                 p_item_production_source_evidence_path=(
-                    P_ITEM_PRODUCTION_SOURCE_EVIDENCE_PATH
+                    _select_p_item_production_source_evidence(
+                        manifest_root, raw[component]
+                    )
                     if component == "p_item_reference"
                     else None
                 ),
             )
+            if component == "p_item_reference":
+                _validate_packaged_p_item_qualification(candidate, raw[component])
         except StaticReferenceHandoffError as error:
             raise ReleaseBuildError(
                 f"{component} production handoff validation failed: {error}"
@@ -2253,30 +2358,35 @@ def build_release_assets(
 ) -> dict[str, Path]:
     candidate = candidate.resolve()
     output_dir = output_dir.resolve()
-    if qualification != "arena_preview":
-        raise ReleaseBuildError("this release path is currently approved only for the arena preview qualification")
+    if qualification not in RELEASE_CHANNELS:
+        raise ReleaseBuildError("release qualification must be arena_preview or arena_release")
     if not candidate.is_dir():
         raise ReleaseBuildError(f"candidate directory is missing: {candidate}")
     version_match = ARENA_PREVIEW_VERSION_PATTERN.fullmatch(release_version)
     if version_match is None:
         raise ReleaseBuildError(
-            "arena preview releases must use independent GKH SemVer vMAJOR.MINOR.PATCH"
+            "arena releases must use independent GKH SemVer vMAJOR.MINOR.PATCH"
         )
     if _project_version_key(release_version) < _project_version_key(
         MINIMUM_INDEPENDENT_PROJECT_VERSION
     ):
         raise ReleaseBuildError(
-            "arena preview version must not precede the first independent GKH version "
+            "arena release version must not precede the first independent GKH version "
             f"{MINIMUM_INDEPENDENT_PROJECT_VERSION}"
         )
     if release_version in RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS:
         raise ReleaseBuildError(
-            f"arena preview version {release_version} is permanently reserved after a failed "
+            f"arena release version {release_version} is permanently reserved after a failed "
             "pre-publication install and must not be rebuilt or published; use at least "
             f"{FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION}"
         )
 
-    build, interface = _validate_candidate(candidate, release_version, release_repository)
+    build, interface = _validate_candidate(
+        candidate,
+        release_version,
+        release_repository,
+        expected_channel=RELEASE_CHANNELS[qualification],
+    )
     upstream = build.get("upstream")
     if not isinstance(upstream, dict) or re.fullmatch(
         r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)",
@@ -2344,7 +2454,7 @@ def build_release_assets(
             "qualification": qualification,
             "release": {
                 "version": release_version,
-                "channel": "beta",
+                "channel": RELEASE_CHANNELS[qualification],
                 "repository": release_repository,
                 "asset": package_name,
                 "asset_bytes": package_path.stat().st_size,
@@ -2395,6 +2505,10 @@ def build_release_assets(
                 "P-item upgraded-marker and broader real-window evidence remain open",
                 "Arena reader second-window blind validation remains open",
                 "Arena win-rate final product acceptance remains preview-only",
+            ] if qualification == "arena_preview" else [
+                "Result transition recovery has not yet passed new live-device validation",
+                "A complete arena daily challenge at 540x960 has not yet passed",
+                "Uninterrupted two-day arena daily acceptance remains open",
             ],
         }
         manifest_path = temporary_root / manifest_name
@@ -2422,7 +2536,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--release-version", required=True)
     parser.add_argument("--release-repository", required=True)
-    parser.add_argument("--qualification", default="arena_preview")
+    parser.add_argument("--qualification", choices=tuple(RELEASE_CHANNELS), default="arena_preview")
     return parser
 
 

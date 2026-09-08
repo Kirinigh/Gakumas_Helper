@@ -17,6 +17,7 @@ from .challenge_flow import (
     ArenaChallengeFlowError,
     ArenaChallengeRecordStore,
     contest_day_key,
+    battle_outcome_tap_box,
     classify_post_challenge_page,
     result_observations_complete,
     serialise_result_observations,
@@ -48,45 +49,281 @@ def _full_ocr(context: Context, image):
     return tuple(detail.all_results or detail.filtered_results or ())
 
 
+def pending_challenge_recovery_state(store: ArenaChallengeRecordStore | None = None) -> str:
+    """Report the only continuation without starting another challenge."""
+
+    store = ArenaChallengeRecordStore() if store is None else store
+    pending = store.load_pending()
+    if pending is None:
+        return "none"
+    path = store.recorded_result_path(str(pending.get("capture_id", "")))
+    if path is None:
+        return "result_needed"
+    record = store._load_result(path)
+    if record["lifecycle"]["state"] in {"FINISHED", "RECOVERED_FINISHED"}:
+        store._clear_completed_pending()
+        return "none"
+    return "return_needed"
+
+
+def challenge_result_saved(store: ArenaChallengeRecordStore | None = None) -> bool:
+    """Gate result-leaving input on durable, capture-bound winner evidence."""
+
+    store = ArenaChallengeRecordStore() if store is None else store
+    pending = store.load_pending()
+    return bool(
+        pending is not None
+        and store.recorded_result_path(str(pending.get("capture_id", ""))) is not None
+    )
+
+
+def _communication_retry_box(rows):
+    groups = [
+        [row for row in rows if re.fullmatch(pattern, str(getattr(row, "text", "")).strip())]
+        for pattern in (
+            r"通信エラ(?:ー)?", r"通信中にエラーが発生しました", r"リトライ", r"タイトルへ",
+        )
+    ]
+    if any(len(group) != 1 for group in groups):
+        return None
+    box = tuple(int(value) for value in groups[2][0].box)
+    if len(box) != 4 or min(box[2:]) <= 0:
+        raise ArenaChallengeFlowError("communication retry button has no valid box")
+    return box
+
+
+def _retry_communication(context, store, capture_id: str, box) -> bool:
+    if not store.reserve_communication_retry(capture_id):
+        raise ArenaChallengeFlowError("communication retry budget exhausted")
+    click = context.tasker.controller.post_click(box[0] + box[2] // 2, box[1] + box[3] // 2).wait()
+    if not click.status.succeeded:
+        raise ArenaChallengeFlowError("communication retry click failed")
+    logger.info(json.dumps({
+        "event": "arena_challenge_communication_retry", "capture_id": capture_id,
+        "communication_retries": 1,
+    }, ensure_ascii=False, sort_keys=True))
+    return True
+
+
+def _advance_battle_outcome(context, store, capture_id: str, box) -> bool:
+    if not store.reserve_outcome_tap(capture_id):
+        return False
+    started = time.monotonic()
+    succeeded = False
+    try:
+        click = context.tasker.controller.post_click(box[0] + box[2] // 2, box[1] + box[3] // 2).wait()
+        succeeded = bool(click.status.succeeded)
+        if not succeeded:
+            raise ArenaChallengeFlowError("outcome TAP click failed")
+        return True
+    finally:
+        logger.info(json.dumps({
+            "event": "arena_challenge_outcome_tap", "capture_id": capture_id,
+            "outcome_taps": 1, "tap_box": list(box), "succeeded": succeeded,
+            "extra_captures": 0, "extra_ocr": 0, "extra_clicks": 1,
+            "wall_seconds": round(time.monotonic() - started, 6),
+        }, ensure_ascii=False, sort_keys=True))
+
+
+def _await_formal_result(context, store, capture_id: str, *, entry_probe: bool = False) -> bool:
+    """Wait on the original result template before spending any winner frame."""
+    started = time.monotonic()
+    wait = store.begin_result_page_wait(capture_id)
+    if wait["remaining_seconds"] <= 0:
+        raise ArenaChallengeFlowError("result page wait budget exhausted")
+    if entry_probe and store.reserve_result_page_probe(capture_id):
+        image = _capture(context)
+        rows = _full_ocr(context, image)
+        # These raw rows belong to page navigation, never to winner recovery.
+        store.note_result_page_probe(capture_id, serialise_result_observations(rows))
+        logger.info(json.dumps({
+            "event": "arena_challenge_result_page_probe", "capture_id": capture_id,
+            "extra_captures": 1, "extra_ocr": 1, "extra_clicks": 0,
+            "wall_seconds": round(time.monotonic() - started, 6),
+        }, ensure_ascii=False, sort_keys=True))
+        if store.begin_result_page_wait(capture_id)["remaining_seconds"] <= 0:
+            raise ArenaChallengeFlowError("result page wait budget exhausted")
+        shape = getattr(image, "shape", (1280, 720))
+        tap = battle_outcome_tap_box(rows, frame_size=(shape[1], shape[0]))
+        if tap is not None:
+            _advance_battle_outcome(context, store, capture_id, tap)
+        else:
+            retry = _communication_retry_box(rows)
+            if retry is not None:
+                _retry_communication(context, store, capture_id, retry)
+    wait = store.begin_result_page_wait(capture_id)
+    if wait["remaining_seconds"] <= 0:
+        raise ArenaChallengeFlowError("result page wait budget exhausted")
+    # DirectHit entry -> TemplateMatch/DoNothing leaf. Neither node can leave
+    # a result page, send Start, or run winner OCR while the game is loading.
+    timeout = max(1, int(wait["remaining_seconds"] * 1000))
+    task = context.run_task("ArenaChallengeAwaitFormalResult", pipeline_override={
+        "ArenaChallengeAwaitFormalResult": {"timeout": timeout},
+        "ArenaChallengeFormalResultPage": {"timeout": timeout},
+    })
+    succeeded = bool(task and task.status.succeeded)
+    remaining = store.begin_result_page_wait(capture_id)["remaining_seconds"]
+    logger.info(json.dumps({
+        "event": "arena_challenge_result_page_wait", "capture_id": capture_id,
+        "succeeded": succeeded, "remaining_seconds": remaining,
+        "wall_seconds": round(time.monotonic() - started, 6),
+        "winner_frames_consumed": 0,
+    }, ensure_ascii=False, sort_keys=True))
+    return succeeded and remaining > 0
+
+
 class ArenaChallengeRecordResultAction(CustomAction):
-    """Record low-dimensional result evidence before its button is clicked."""
+    """Save independent winner evidence before its result-page button is clicked."""
+
+    def __init__(self, record_store: ArenaChallengeRecordStore | None = None) -> None:
+        super().__init__()
+        self._record_store = ArenaChallengeRecordStore() if record_store is None else record_store
+
+    def _save(self, capture_id: str, result: dict) -> bool:
+        store = self._record_store
+        unrecorded_failures = 0
+        while True:
+            if store.recorded_result_path(capture_id) is not None:
+                return True
+            previous_attempts = store._recovery_budget(store._pending_for_capture(capture_id))["save_attempts"]
+            try:
+                reserved = store.reserve_result_save(
+                    capture_id, result, unrecorded_failures=unrecorded_failures,
+                )
+            except (ArenaChallengeFlowError, OSError) as error:
+                logger.error(f"竞技场结果保存预算写入失败，复用同帧结果重试一次: {error}")
+                current_attempts = store._recovery_budget(store._pending_for_capture(capture_id))["save_attempts"]
+                unrecorded_failures += int(current_attempts == previous_attempts)
+                if max(previous_attempts, current_attempts) + unrecorded_failures >= 2:
+                    return False
+                continue
+            if not reserved:
+                return False
+            unrecorded_failures = 0
+            try:
+                path = store.complete_idempotent(capture_id, result)
+            except (ArenaChallengeFlowError, OSError) as error:
+                logger.error(f"竞技场结果保存失败，保留同帧结果并按原预算重试: {error}")
+                continue
+            logger.info(json.dumps({
+                "event": "arena_challenge_result_recorded",
+                "result_path": str(path), "result": result,
+            }, ensure_ascii=False, sort_keys=True))
+            return True
 
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         del argv
         try:
             if not _administrator_process():
                 raise ArenaChallengeFlowError("Maa result process is not elevated")
-            image = _capture(context)
-            result = serialise_result_observations(_full_ocr(context, image))
-            result.update(
-                {
+            store = self._record_store
+            pending = store.load_pending()
+            if pending is None:
+                raise ArenaChallengeFlowError("result page has no pending challenge")
+            capture_id = str(pending.get("capture_id", ""))
+            if store.recorded_result_path(capture_id) is not None:
+                return True
+            result = store.recoverable_pending_result(capture_id)
+            if result is not None:
+                return self._save(capture_id, result)
+            retry_deadline = None
+            while retry_deadline is None or time.monotonic() < retry_deadline:
+                if not store.reserve_result_frame(capture_id):
+                    break
+                try:
+                    image = _capture(context)
+                    result = serialise_result_observations(_full_ocr(context, image))
+                except Exception as error:
+                    result = {"ocr_observations": [], "observation_error": type(error).__name__}
+                result.update({
                     "recorded_at": datetime.now(timezone.utc).isoformat(),
-                    "contest_day": contest_day_key(),
-                }
-            )
-            if not result_observations_complete(result):
-                ArenaChallengeRecordStore().note_incomplete_result(result)
-                raise ArenaChallengeFlowError(
-                    "arena result OCR lacks a complete outcome and three stage scores"
-                )
-            path = ArenaChallengeRecordStore().complete(result)
-            logger.info(
-                json.dumps(
-                    {
-                        "event": "arena_challenge_result_recorded",
-                        "result_path": str(path),
-                        "result": result,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )
-            )
+                    "contest_day": pending.get("contest_day", contest_day_key()),
+                })
+                if result_observations_complete(result):
+                    return self._save(capture_id, result)
+                store.note_incomplete_result(result, capture_id=capture_id)
+                if retry_deadline is None:
+                    retry_deadline = time.monotonic() + 2.0
+            raise ArenaChallengeFlowError("result winner recovery budget exhausted")
         except Exception as error:
-            # The ticket may already be consumed.  The finish path is still
-            # allowed to restore the arena main page, while the unresolved
-            # pending record blocks another challenge.
-            logger.error(f"竞技场结果页记录失败；将先完成返回且阻止下一次挑战: {error}")
-        return True
+            logger.error(f"竞技场结果未保存；保留原结果页并停止离页及下一次挑战: {error}")
+        return False
+
+
+def resume_pending_challenge(context: Context, argv=None, store=None) -> bool:
+    """Continue one pending result/return in the client, never start a battle."""
+
+    store = ArenaChallengeRecordStore() if store is None else store
+    try:
+        state = pending_challenge_recovery_state(store)
+        if state == "none":
+            return True
+        if not _administrator_process():
+            raise ArenaChallengeFlowError("Maa recovery process is not elevated")
+        if state == "result_needed":
+            pending = store.load_pending()
+            capture_id = str(pending.get("capture_id", ""))
+            if store.recoverable_pending_result(capture_id) is None:
+                if not _await_formal_result(context, store, capture_id, entry_probe=True):
+                    return False
+            if not ArenaChallengeRecordResultAction(store).run(context, argv):
+                return False
+        pending = store.load_pending()
+        verification = pending.get("return_verification", {})
+        if (
+            verification.get("status") == "verified"
+            and verification.get("evidence_origin") == "product"
+            and isinstance(verification.get("evidence"), dict)
+        ):
+            store.complete_return(pending["capture_id"], evidence=verification["evidence"])
+            return True
+        task = context.run_task("ArenaChallengeResumeReturn")
+        return bool(task and task.status.succeeded and store.load_pending() is None)
+    except Exception as error:
+        logger.error(f"竞技场客户端待办恢复未完成，禁止新挑战: {error}")
+        return False
+
+
+class ArenaChallengeRetryCurrentBattleAction(CustomAction):
+    """Recover a proven dialog; an outcome TAP must finish the page wait first."""
+
+    def __init__(self, record_store: ArenaChallengeRecordStore | None = None) -> None:
+        super().__init__()
+        self._record_store = ArenaChallengeRecordStore() if record_store is None else record_store
+
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        del argv
+        try:
+            if not _administrator_process():
+                raise ArenaChallengeFlowError("Maa retry process is not elevated")
+            pending = self._record_store.load_pending()
+            if pending is None:
+                raise ArenaChallengeFlowError("communication retry has no pending challenge")
+            capture_id = str(pending.get("capture_id", ""))
+            unresolved = self._record_store.recorded_result_path(capture_id) is None
+            if unresolved:
+                if self._record_store._remaining_winner_seconds(pending, datetime.now(timezone.utc)) == 0:
+                    raise ArenaChallengeFlowError("result winner recovery budget exhausted")
+                if "page_wait" in pending.get("result_recovery", {}):
+                    if self._record_store.begin_result_page_wait(capture_id)["remaining_seconds"] <= 0:
+                        raise ArenaChallengeFlowError("result page wait budget exhausted")
+            image = _capture(context)
+            rows = _full_ocr(context, image)
+            shape = getattr(image, "shape", (1280, 720))
+            tap = battle_outcome_tap_box(rows, frame_size=(shape[1], shape[0]))
+            if tap is not None:
+                _advance_battle_outcome(context, self._record_store, capture_id, tap)
+                return _await_formal_result(context, self._record_store, capture_id)
+            box = _communication_retry_box(rows)
+            if box is None:
+                raise ArenaChallengeFlowError("page has no unique supported communication dialog or outcome TAP")
+            _retry_communication(context, self._record_store, capture_id, box)
+            if unresolved and "page_wait" in pending.get("result_recovery", {}):
+                return _await_formal_result(context, self._record_store, capture_id)
+            return True
+        except Exception as error:
+            logger.error(f"竞技场当前对局页面恢复停止: {error}")
+            return False
 
 
 class ArenaChallengeVerifyRefreshAction(CustomAction):
@@ -115,10 +352,17 @@ class ArenaChallengeVerifyRefreshAction(CustomAction):
         if not pending_capture_id:
             logger.error("竞技场待完成挑战记录缺少 capture_id，已停止")
             return False
+        try:
+            if self._record_store.recorded_result_path(pending_capture_id) is None:
+                raise ArenaChallengeFlowError("challenge result must be saved before return input")
+            return_budget = self._record_store.begin_return_recovery(pending_capture_id)
+        except ArenaChallengeFlowError as error:
+            logger.error(f"竞技场结果尚未保存，禁止回场输入: {error}")
+            return False
         started = time.monotonic()
-        deadline = started + 20.0
-        reward_close_clicks = 0
-        finish_resend_clicks = 0
+        deadline = started + return_budget["remaining_seconds"]
+        reward_close_clicks = return_budget["reward_close_clicks"]
+        finish_resend_clicks = return_budget["finish_resend_clicks"]
         finish_proof_box: tuple[int, int, int, int] | None = None
         last_return_evidence: dict[str, object] = {}
         while time.monotonic() < deadline:
@@ -258,6 +502,12 @@ class ArenaChallengeVerifyRefreshAction(CustomAction):
                     logger.error("竞技场待完成挑战记录在结束页补发前已变化，已停止")
                     return False
                 box = list(current_finish_box)
+                try:
+                    if not self._record_store.reserve_return_click(pending_capture_id, "finish_resend_clicks"):
+                        raise ArenaChallengeFlowError("finish resend budget exhausted")
+                except ArenaChallengeFlowError as error:
+                    logger.error(f"竞技场结束页补发未获持久化预算，已停止: {error}")
+                    return False
                 click = context.tasker.controller.post_click(
                     box[0] + box[2] // 2,
                     box[1] + box[3] // 2,
@@ -293,6 +543,12 @@ class ArenaChallengeVerifyRefreshAction(CustomAction):
                 return False
             if page_state == "CLOSE_REWARD":
                 box = list(close_results[0].box)
+                try:
+                    if not self._record_store.reserve_return_click(pending_capture_id, "reward_close_clicks"):
+                        raise ArenaChallengeFlowError("reward close budget exhausted")
+                except ArenaChallengeFlowError as error:
+                    logger.error(f"竞技场奖励页关闭未获持久化预算，已停止: {error}")
+                    return False
                 click = context.tasker.controller.post_click(
                     box[0] + box[2] // 2,
                     box[1] + box[3] // 2,

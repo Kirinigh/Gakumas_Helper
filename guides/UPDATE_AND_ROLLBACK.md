@@ -33,7 +33,7 @@ Gakumas Helper 使用独立语义化版本 (Semantic Versioning, SemVer) `vMAJOR
 
 手动安装时，从[本项目 Releases](https://github.com/Kirinigh/Gakumas_Helper/releases)下载 `MaaGakumasu-win-x86_64-vXXX.zip`，解压到独立目录，并使用版本内 `deployment\Start-MaaGakumasu-Admin.cmd` 启动。Release 同时提供 checksums 供希望人工复核下载字节的用户使用，但它不是后续日常升级的重复硬门。
 
-独立 GKH SemVer 只解决新版本之间的顺序，不会自动清除同一 GitHub 仓库里的旧组合版本。当前人工迁移预览必须保持 MFA 资源更新通道为默认 Stable；不要切换到 Beta 或 Alpha，否则旧组合版本可能因数值更高而被误判为“更新”。Stable 不会发现 prerelease，因此新的 `0.x` 预览在旧 Release 完成通道隔离前仍须逐版手动安装；只有发布预检证明旧候选已被隔离后，才可宣称更高 GKH SemVer 能通过 MFA 自动升级。
+当前版本以非预发布版本设为 GitHub Latest；已使用独立 GKH 版本的用户可保持 MFA 默认 Stable，通过原生入口更新完整包。旧组合版本用户仍需上述一次手工迁移。独立 GKH SemVer 不会清除仓库里的旧组合版本；不要改用 Beta 或 Alpha，否则旧组合版本可能因数值更高而被误判为“更新”。发布通道已切换，客户端实际下载、应用和重启的完整升级验收仍未完成。
 
 ## pip 更新的边界
 
