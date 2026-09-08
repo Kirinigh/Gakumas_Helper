@@ -27,7 +27,14 @@ import numpy as np
 from PIL import Image
 
 try:
+    from tools import p_item_derived_source as derived_source
     from agent.arena_winrate.catalog import ArenaEntityCatalog
+    from tools.published_ui_reference import (
+        PublishedUiReferenceError,
+        replay_published_ui_reference,
+        validate_published_ui_references,
+        validate_published_ui_reference_png,
+    )
     from agent.arena_winrate.card_cost import (
         GenericCostReferenceError,
         GenericCostReferenceGallery,
@@ -39,7 +46,14 @@ try:
     )
 except ModuleNotFoundError:  # Direct script execution from tools/deployment.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools import p_item_derived_source as derived_source
     from agent.arena_winrate.catalog import ArenaEntityCatalog  # type: ignore[no-redef]
+    from tools.published_ui_reference import (  # type: ignore[no-redef]
+        PublishedUiReferenceError,
+        replay_published_ui_reference,
+        validate_published_ui_references,
+        validate_published_ui_reference_png,
+    )
     from agent.arena_winrate.card_cost import (  # type: ignore[no-redef]
         GenericCostReferenceError,
         GenericCostReferenceGallery,
@@ -58,8 +72,22 @@ PROMOTED_STATUS = "READY_WITH_REAL_SAMPLES_PENDING"
 P_ITEM_PRODUCTION_SOURCE_EVIDENCE_TOOL_CONTRACT = (
     "task095-p-item-production-source-evidence-v1"
 )
+P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V2_TOOL_CONTRACT = (
+    "p-item-production-source-evidence-v2"
+)
+P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V3_TOOL_CONTRACT = (
+    "p-item-production-source-evidence-v3"
+)
 P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256 = (
     "8398CF4041FEED83AEC4EA356351E5F69E8E33101852738070B7CDFB17A20463"
+)
+P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256_ALLOWLIST = frozenset(
+    {
+        P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256,
+        "6B07FC7955420D3B9CAF710CCA46F3DFDB1074F5B49EAA9EAD3CCF64CEE2B887",
+        "C05E36FE97458517F22B5CB56CBDE7976A8183D0686F1D81808484ADECECD5AD",
+        "BBBA253C9B7C40A7C3A4C1740788AAAF4AA6758465D36BCD15156F65D1B92650",
+    }
 )
 P_ITEM_PRODUCTION_REVISION = "d476e78b1d3b9fb8eac61924e3869b647ca82ab2"
 P_ITEM_PRODUCTION_DEPLOYMENT_ID = 6156565906
@@ -145,6 +173,28 @@ class StaticReferenceHandoffError(RuntimeError):
     """Raised when a static reference component cannot be promoted or released."""
 
 
+def _p_item_source_key(schema_version: object, *, provenance: bool = False) -> str:
+    if schema_version == (5 if provenance else 4):
+        return derived_source.SOURCE_KEY
+    if schema_version == (4 if provenance else 3):
+        return "published_ui_crops"
+    return "official_rendered_source"
+
+
+def _promoted_reason(component: str, manifest: Mapping[str, Any]) -> str:
+    provenance = manifest.get("source", {}).get("extension_provenance", {})
+    if component == "p_item_reference" and provenance.get("schema_version") == 5:
+        return derived_source.PROMOTED_REASON
+    return _contract(component)["promoted_reason"]
+
+
+def _validate_p_item_derived_source(source: object, *, expected_ids: tuple[int, ...], catalog_revision: str) -> None:
+    try:
+        derived_source.validate_derived_source(source, expected_ids=expected_ids, catalog_revision=catalog_revision)
+    except derived_source.DerivedSourceError as error:
+        raise StaticReferenceHandoffError(str(error)) from error
+
+
 def _is_sha1(value: object) -> bool:
     return isinstance(value, str) and SHA1_PATTERN.fullmatch(value) is not None
 
@@ -179,6 +229,14 @@ def sha256_file(path: Path) -> str:
 def _validate_p_item_production_source_evidence(
     evidence: Mapping[str, Any],
 ) -> None:
+    schema_version = evidence.get("schema_version")
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence schema is invalid"
+        )
+    if schema_version in {2, 3, 4}:
+        _validate_p_item_append_source_evidence(evidence)
+        return
     if (
         set(evidence)
         != {
@@ -189,7 +247,7 @@ def _validate_p_item_production_source_evidence(
             "source",
             "tool_contract",
         }
-        or evidence.get("schema_version") != 1
+        or schema_version != 1
         or evidence.get("tool_contract")
         != P_ITEM_PRODUCTION_SOURCE_EVIDENCE_TOOL_CONTRACT
     ):
@@ -342,11 +400,311 @@ def _validate_p_item_production_source_evidence(
             )
 
 
+def _ordered_business_ids(
+    value: object,
+    *,
+    label: str,
+    allow_empty: bool,
+) -> tuple[int, ...]:
+    if (
+        not isinstance(value, list)
+        or (not allow_empty and not value)
+        or any(
+            isinstance(business_id, bool)
+            or not isinstance(business_id, int)
+            or business_id < 1
+            for business_id in value
+        )
+        or value != sorted(set(value))
+    ):
+        raise StaticReferenceHandoffError(f"P-item {label} is invalid")
+    return tuple(value)
+
+
+def _validate_p_item_append_source_evidence(
+    evidence: Mapping[str, Any],
+) -> None:
+    published = evidence.get("schema_version") == 3
+    derived = evidence.get("schema_version") == 4
+    source_key = _p_item_source_key(evidence.get("schema_version"))
+    tool_contract = (
+        derived_source.EVIDENCE_TOOL_CONTRACT if derived else P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V3_TOOL_CONTRACT
+        if published else P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V2_TOOL_CONTRACT
+    )
+    if (
+        set(evidence)
+        != {
+            "base_gallery",
+            "catalog",
+            source_key,
+            "schema_version",
+            "source",
+            "tool_contract",
+        }
+        or evidence.get("tool_contract")
+        != tool_contract
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence contract is invalid"
+        )
+    base = evidence.get("base_gallery")
+    catalog = evidence.get("catalog")
+    official = evidence.get(source_key)
+    source = evidence.get("source")
+    if not all(
+        isinstance(value, Mapping) for value in (base, catalog, official, source)
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence is incomplete"
+        )
+    assert isinstance(base, Mapping)
+    assert isinstance(catalog, Mapping)
+    assert isinstance(official, Mapping)
+    assert isinstance(source, Mapping)
+
+    if set(base) != {
+        "added_business_ids",
+        "base_business_id_count",
+        "inherited_business_id_count",
+        "replaced_business_ids",
+        "sha256",
+        "target_business_id_count",
+    }:
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence base gallery is invalid"
+        )
+    added = _ordered_business_ids(
+        base.get("added_business_ids"),
+        label="added business-ID declaration",
+        allow_empty=True,
+    )
+    replaced = _ordered_business_ids(
+        base.get("replaced_business_ids"),
+        label="replaced business-ID declaration",
+        allow_empty=True,
+    )
+    if not added and not replaced:
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence declares no gallery change"
+        )
+    if set(added) & set(replaced):
+        raise StaticReferenceHandoffError(
+            "P-item added and replaced business-ID declarations overlap"
+        )
+    base_count = base.get("base_business_id_count")
+    target_count = base.get("target_business_id_count")
+    inherited_count = base.get("inherited_business_id_count")
+    if (
+        any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in (base_count, target_count, inherited_count)
+        )
+        or target_count != base_count + len(added)
+        or inherited_count != base_count - len(replaced)
+        or inherited_count < 0
+        or not _is_sha256(base.get("sha256"))
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence base gallery is invalid"
+        )
+
+    if set(source) != {
+        "business_id_count",
+        "business_ids",
+        "revision",
+        "sanitized_icons_sha256",
+        "source_icons_sha256",
+    }:
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence source contract is invalid"
+        )
+    source_ids = _ordered_business_ids(
+        source.get("business_ids"),
+        label="source gallery inventory",
+        allow_empty=False,
+    )
+    if (
+        source.get("business_id_count") != target_count
+        or len(source_ids) != target_count
+        or not set(added).issubset(source_ids)
+        or not set(replaced).issubset(source_ids)
+        or not _is_sha256(source.get("sanitized_icons_sha256"))
+        or not _is_sha256(source.get("source_icons_sha256"))
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence source contract is invalid"
+        )
+
+    expected_catalog_keys = {
+        "arena_stage_business_ids",
+        "excluded_current_rows",
+        "included_business_ids",
+        "p_items_git_blob_sha1",
+        "p_items_sha256",
+        "path",
+        "repository",
+        "revision",
+        "stage_scope_contract",
+    }
+    if set(catalog) != expected_catalog_keys:
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence catalog contract is invalid"
+        )
+    arena_stage_ids = _ordered_business_ids(
+        catalog.get("arena_stage_business_ids"),
+        label="arena-stage catalog inventory",
+        allow_empty=False,
+    )
+    included = _ordered_business_ids(
+        catalog.get("included_business_ids"),
+        label="included catalog declaration",
+        allow_empty=False,
+    )
+    changed = tuple(sorted((*added, *replaced)))
+    catalog_revision = catalog.get("revision")
+    if (
+        catalog.get("repository")
+        != "https://github.com/surisuririsu/gakumas-tools"
+        or catalog.get("path") != "packages/gakumas-data/json/p_items.json"
+        or not _is_sha1(catalog_revision)
+        or included != changed
+        or not set(arena_stage_ids).issubset(source_ids)
+        or not set(changed).issubset(arena_stage_ids)
+        or not isinstance(catalog.get("excluded_current_rows"), list)
+        or not isinstance(catalog.get("stage_scope_contract"), str)
+        or not catalog["stage_scope_contract"]
+        or not _is_sha1(catalog.get("p_items_git_blob_sha1"))
+        or not _is_sha256(catalog.get("p_items_sha256"))
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence catalog contract is invalid"
+        )
+
+    expected_source_revision = (
+        f"base-gallery-sha256@{base['sha256']}+"
+        f"gakumas-tools@{catalog_revision}"
+    )
+    if derived:
+        _validate_p_item_derived_source(official, expected_ids=changed, catalog_revision=catalog_revision)
+        if added or source.get("revision") != expected_source_revision + derived_source.SOURCE_REVISION_SUFFIX:
+            raise StaticReferenceHandoffError("P-item derived source revision or addition inventory is invalid")
+        if not set(official["generated_business_ids"]).issubset(source_ids) or any(record["base_business_id"] not in source_ids for record in official["references"].values()):
+            raise StaticReferenceHandoffError("P-item derived pairing is outside the source inventory")
+        return
+    if published:
+        _validate_p_item_published_source(
+            official, expected_ids=changed, catalog_revision=catalog_revision
+        )
+        if source.get("revision") != expected_source_revision + "+published-ui-crops-v1":
+            raise StaticReferenceHandoffError("P-item published UI source revision is invalid")
+        return
+    deployment = official.get("production_deployment")
+    references = official.get("references")
+    if (
+        source.get("revision") != expected_source_revision
+        or set(official)
+        != {
+            "first_added_revision",
+            "first_successful_production_revision",
+            "gk_img_gitlink_path",
+            "gk_img_gitlink_repository",
+            "gk_img_gitlink_revision",
+            "package_path",
+            "production_deployment",
+            "references",
+            "repository",
+        }
+        or official.get("repository")
+        != "https://github.com/surisuririsu/gakumas-tools"
+        or official.get("package_path") != "packages/gakumas-images"
+        or official.get("gk_img_gitlink_path") != "gk-img"
+        or official.get("gk_img_gitlink_repository")
+        != "https://github.com/surisuririsu/gk-img"
+        or not _is_sha1(official.get("gk_img_gitlink_revision"))
+        or not _is_sha1(official.get("first_added_revision"))
+        or not _is_sha1(official.get("first_successful_production_revision"))
+        or not isinstance(deployment, Mapping)
+        or set(deployment) != {"deployment_id", "revision", "status"}
+        or isinstance(deployment.get("deployment_id"), bool)
+        or not isinstance(deployment.get("deployment_id"), int)
+        or int(deployment["deployment_id"]) < 1
+        or deployment.get("revision") != catalog_revision
+        or deployment.get("status") != "success"
+        or not isinstance(references, Mapping)
+        or set(references) != set(map(str, changed))
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item production/source evidence deployment contract is invalid"
+        )
+    assert isinstance(references, Mapping)
+    for business_id in changed:
+        reference = references.get(str(business_id))
+        if (
+            not isinstance(reference, Mapping)
+            or set(reference)
+            != {
+                "dimensions",
+                "git_blob_sha1",
+                "path",
+                "png_sha256",
+                "rgb_pixel_sha256",
+                "size",
+            }
+            or reference.get("dimensions") != [130, 130]
+            or reference.get("path")
+            != f"packages/gakumas-images/images/pItems/icons/{business_id}.png"
+            or not _is_sha1(reference.get("git_blob_sha1"))
+            or not _is_sha256(reference.get("png_sha256"))
+            or not _is_sha256(reference.get("rgb_pixel_sha256"))
+            or isinstance(reference.get("size"), bool)
+            or not isinstance(reference.get("size"), int)
+            or int(reference["size"]) < 1
+        ):
+            raise StaticReferenceHandoffError(
+                "P-item production/source evidence reference contract is invalid"
+            )
+
+
+def _validate_p_item_published_source(
+    published: Mapping[str, Any],
+    *,
+    expected_ids: tuple[int, ...],
+    catalog_revision: str,
+    catalog_rows: list[Mapping[str, Any]] | None = None,
+) -> None:
+    deployment = published.get("catalog_production_deployment")
+    if (
+        set(published) != {"source_type", "catalog_production_deployment", "references"}
+        or published.get("source_type") != "third_party_published_ui_crops"
+        or not isinstance(deployment, Mapping)
+        or set(deployment) != {"deployment_id", "revision", "status"}
+        or isinstance(deployment.get("deployment_id"), bool)
+        or not isinstance(deployment.get("deployment_id"), int)
+        or deployment["deployment_id"] < 1
+        or deployment.get("revision") != catalog_revision
+        or deployment.get("status") != "success"
+    ):
+        raise StaticReferenceHandoffError("P-item published UI source or catalog deployment is invalid")
+    try:
+        validate_published_ui_references(
+            published.get("references"),
+            expected_ids=expected_ids,
+            catalog_rows=catalog_rows,
+            component="p_item",
+        )
+    except PublishedUiReferenceError as error:
+        raise StaticReferenceHandoffError("P-item published UI references are invalid") from error
+
+
 def _load_p_item_production_source_evidence(path: Path) -> dict[str, Any]:
     resolved = path.resolve()
+    allowed_sha256 = {
+        *P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256_ALLOWLIST,
+        P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256,
+    }
     if (
         not resolved.is_file()
-        or sha256_file(resolved) != P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256
+        or sha256_file(resolved) not in allowed_sha256
     ):
         raise StaticReferenceHandoffError(
             "P-item production/source evidence is unavailable or not frozen"
@@ -358,6 +716,42 @@ def _load_p_item_production_source_evidence(path: Path) -> dict[str, Any]:
         )
     _validate_p_item_production_source_evidence(evidence)
     return evidence
+
+
+def _validate_p_item_append_provenance_public_shape(
+    provenance: Mapping[str, Any],
+) -> None:
+    source_key = _p_item_source_key(provenance.get("schema_version"), provenance=True)
+    validation = provenance.get("validation")
+    live = (
+        validation.get("live_jjc_calibration")
+        if isinstance(validation, Mapping)
+        else None
+    )
+    if (
+        set(provenance)
+        != {
+            "base_gallery",
+            "catalog",
+            source_key,
+            "schema_version",
+            "validation",
+        }
+        or not isinstance(validation, Mapping)
+        or set(validation)
+        != {
+            "full_gallery_64px",
+            "live_jjc_calibration",
+            "metadata_removed_business_id_count",
+            "source_added_business_ids",
+            "source_replacement_changed_business_ids",
+        }
+        or not isinstance(live, Mapping)
+        or set(live) != {"runtime_detail_authority", "status"}
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item candidate provenance contains non-public or unsupported fields"
+        )
 
 
 def _validate_p_item_candidate_source_evidence(
@@ -372,6 +766,21 @@ def _validate_p_item_candidate_source_evidence(
         raise StaticReferenceHandoffError(
             "P-item candidate extension provenance is invalid"
         )
+    evidence_schema_version = evidence.get("schema_version")
+    provenance_schema_version = provenance.get("schema_version")
+    if (
+        isinstance(evidence_schema_version, bool)
+        or not isinstance(evidence_schema_version, int)
+        or isinstance(provenance_schema_version, bool)
+        or not isinstance(provenance_schema_version, int)
+        or provenance_schema_version != evidence_schema_version + 1
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item candidate extension provenance schema is invalid"
+        )
+    if provenance_schema_version in {3, 4, 5}:
+        _validate_p_item_append_provenance_public_shape(provenance)
+    source_key = _p_item_source_key(evidence_schema_version)
     candidate_source = {
         key: source.get(key)
         for key in (
@@ -381,12 +790,23 @@ def _validate_p_item_candidate_source_evidence(
             "source_icons_sha256",
         )
     }
+    evidence_source = {
+        key: evidence["source"].get(key)
+        for key in candidate_source
+    }
+    declared_inventory = source.get("business_ids")
+    evidence_inventory = evidence["source"].get("business_ids")
+    inventory_matches = (
+        declared_inventory == evidence_inventory
+        if evidence_schema_version >= 2
+        else declared_inventory is None or declared_inventory == evidence_inventory
+    )
     if (
-        candidate_source != evidence["source"]
+        candidate_source != evidence_source
+        or not inventory_matches
         or provenance.get("base_gallery") != evidence["base_gallery"]
         or provenance.get("catalog") != evidence["catalog"]
-        or provenance.get("official_rendered_source")
-        != evidence["official_rendered_source"]
+        or provenance.get(source_key) != evidence[source_key]
     ):
         raise StaticReferenceHandoffError(
             "P-item candidate provenance differs from frozen production/source evidence"
@@ -1064,11 +1484,24 @@ def _evaluate_p_item(
         raise StaticReferenceHandoffError("P-item production loader changed ID order")
 
     provenance = source.get("extension_provenance")
-    if not isinstance(provenance, Mapping) or provenance.get("schema_version") != 2:
+    provenance_schema_version = (
+        provenance.get("schema_version") if isinstance(provenance, Mapping) else None
+    )
+    if (
+        not isinstance(provenance, Mapping)
+        or isinstance(provenance_schema_version, bool)
+        or not isinstance(provenance_schema_version, int)
+        or provenance_schema_version not in {2, 3, 4, 5}
+    ):
         raise StaticReferenceHandoffError("P-item extension provenance is required and invalid")
+    if provenance_schema_version in {3, 4, 5}:
+        _validate_p_item_append_provenance_public_shape(provenance)
+    published = provenance_schema_version == 4
+    derived = provenance_schema_version == 5
+    source_key = _p_item_source_key(provenance_schema_version, provenance=True)
     base = provenance.get("base_gallery")
     catalog = provenance.get("catalog")
-    official = provenance.get("official_rendered_source")
+    official = provenance.get(source_key)
     validation = provenance.get("validation")
     if not all(isinstance(value, Mapping) for value in (base, catalog, official, validation)):
         raise StaticReferenceHandoffError("P-item extension provenance is incomplete")
@@ -1076,67 +1509,136 @@ def _evaluate_p_item(
     assert isinstance(catalog, Mapping)
     assert isinstance(official, Mapping)
     assert isinstance(validation, Mapping)
-    replaced = base.get("replaced_business_ids")
-    included = catalog.get("included_business_ids")
-    declared_changed = validation.get("source_replacement_changed_business_ids")
+    candidate_ids = tuple(map(int, ids))
+    candidate_id_set = set(candidate_ids)
+    if provenance_schema_version == 2:
+        added_ids: tuple[int, ...] = ()
+        replaced_ids = _ordered_business_ids(
+            base.get("replaced_business_ids"),
+            label="replacement lineage",
+            allow_empty=False,
+        )
+        base_count = count
+        target_count = count
+        inherited_count = count - len(replaced_ids)
+        lineage_is_valid = (
+            base.get("business_id_count") == target_count
+            and base.get("inherited_business_id_count") == inherited_count
+            and catalog.get("included_business_ids") == list(replaced_ids)
+            and validation.get("source_replacement_changed_business_ids")
+            == list(replaced_ids)
+        )
+    else:
+        added_ids = _ordered_business_ids(
+            base.get("added_business_ids"),
+            label="addition lineage",
+            allow_empty=True,
+        )
+        replaced_ids = _ordered_business_ids(
+            base.get("replaced_business_ids"),
+            label="replacement lineage",
+            allow_empty=True,
+        )
+        base_count = base.get("base_business_id_count")
+        target_count = base.get("target_business_id_count")
+        inherited_count = base.get("inherited_business_id_count")
+        changed = tuple(sorted((*added_ids, *replaced_ids)))
+        lineage_is_valid = (
+            bool(changed)
+            and not set(added_ids) & set(replaced_ids)
+            and not isinstance(base_count, bool)
+            and isinstance(base_count, int)
+            and base_count > 0
+            and target_count == count == base_count + len(added_ids)
+            and inherited_count == base_count - len(replaced_ids)
+            and catalog.get("included_business_ids") == list(changed)
+            and validation.get("source_added_business_ids")
+            == list(added_ids)
+            and validation.get("source_replacement_changed_business_ids")
+            == list(replaced_ids)
+        )
+    changed_ids = tuple(sorted((*added_ids, *replaced_ids)))
     if (
-        not isinstance(replaced, list)
-        or not replaced
-        or any(isinstance(value, bool) or not isinstance(value, int) for value in replaced)
-        or replaced != sorted(set(replaced))
-        or any(value not in set(map(int, ids)) for value in replaced)
-        or included != replaced
-        or declared_changed != replaced
-        or base.get("business_id_count") != count
-        or base.get("inherited_business_id_count") != count - len(replaced)
+        not lineage_is_valid
+        or not set(changed_ids).issubset(candidate_id_set)
         or validation.get("metadata_removed_business_id_count") != count
     ):
-        raise StaticReferenceHandoffError("P-item extension replacement lineage is invalid")
-    changed_ids = tuple(replaced)
+        raise StaticReferenceHandoffError("P-item extension lineage is invalid")
     base_sha256_value = base.get("sha256")
     if not _is_sha256(base_sha256_value):
         raise StaticReferenceHandoffError("P-item base gallery SHA-256 is invalid")
     base_sha256 = str(base_sha256_value).upper()
 
     catalog_revision = catalog.get("revision")
-    production_deployment = official.get("production_deployment")
     if (
         catalog.get("repository") != "https://github.com/surisuririsu/gakumas-tools"
         or catalog.get("path") != "packages/gakumas-data/json/p_items.json"
         or not _is_sha1(catalog_revision)
         or not _is_sha1(catalog.get("p_items_git_blob_sha1"))
         or not _is_sha256(catalog.get("p_items_sha256"))
-        or official.get("repository") != "https://github.com/surisuririsu/gakumas-tools"
-        or official.get("package_path") != "packages/gakumas-images"
-        or official.get("gk_img_gitlink_path") != "gk-img"
-        or official.get("gk_img_gitlink_repository") != "https://github.com/surisuririsu/gk-img"
-        or not _is_sha1(official.get("gk_img_gitlink_revision"))
-        or not _is_sha1(official.get("first_added_revision"))
-        or not _is_sha1(official.get("first_successful_production_revision"))
-        or not isinstance(production_deployment, Mapping)
-        or isinstance(production_deployment.get("deployment_id"), bool)
-        or not isinstance(production_deployment.get("deployment_id"), int)
-        or int(production_deployment["deployment_id"]) < 1
-        or production_deployment.get("status") != "success"
-        or production_deployment.get("revision") != catalog_revision
-        or source.get("revision") != f"base-gallery-sha256@{base_sha256}+gakumas-tools@{catalog_revision}"
     ):
+        raise StaticReferenceHandoffError("P-item catalog provenance is invalid")
+    expected_source_revision = f"base-gallery-sha256@{base_sha256}+gakumas-tools@{catalog_revision}"
+    if derived:
+        _validate_p_item_derived_source(official, expected_ids=changed_ids, catalog_revision=catalog_revision)
+        try:
+            derived_source.validate_public_qualification(official["qualification"], candidate_sha256=sha256_file(gallery_path), verify_current_code=True)
+        except derived_source.DerivedSourceError as error:
+            raise StaticReferenceHandoffError(str(error)) from error
+        expected_source_revision += derived_source.SOURCE_REVISION_SUFFIX
+    elif published:
+        _validate_p_item_published_source(
+            official, expected_ids=changed_ids, catalog_revision=catalog_revision
+        )
+        expected_source_revision += "+published-ui-crops-v1"
+    else:
+        production_deployment = official.get("production_deployment")
+        if (
+            official.get("repository") != "https://github.com/surisuririsu/gakumas-tools"
+            or official.get("package_path") != "packages/gakumas-images"
+            or official.get("gk_img_gitlink_path") != "gk-img"
+            or official.get("gk_img_gitlink_repository") != "https://github.com/surisuririsu/gk-img"
+            or not _is_sha1(official.get("gk_img_gitlink_revision"))
+            or not _is_sha1(official.get("first_added_revision"))
+            or not _is_sha1(official.get("first_successful_production_revision"))
+            or not isinstance(production_deployment, Mapping)
+            or isinstance(production_deployment.get("deployment_id"), bool)
+            or not isinstance(production_deployment.get("deployment_id"), int)
+            or int(production_deployment["deployment_id"]) < 1
+            or production_deployment.get("status") != "success"
+            or production_deployment.get("revision") != catalog_revision
+        ):
+            raise StaticReferenceHandoffError("P-item source revision or deployment provenance is invalid")
+    if source.get("revision") != expected_source_revision:
         raise StaticReferenceHandoffError("P-item source revision or deployment provenance is invalid")
 
     references = official.get("references")
-    if not isinstance(references, Mapping) or set(references) != set(map(str, replaced)):
+    reference_ids = tuple(official["generated_business_ids"]) if derived else changed_ids
+    if not set(reference_ids).issubset(candidate_id_set):
+        raise StaticReferenceHandoffError("P-item source references are outside the candidate inventory")
+    if not isinstance(references, Mapping) or set(references) != set(map(str, reference_ids)):
         raise StaticReferenceHandoffError("P-item official rendered references are incomplete")
     id_indexes = {int(value): index for index, value in enumerate(ids)}
-    for business_id in replaced:
+    for business_id in reference_ids:
         reference = references.get(str(business_id))
         if not isinstance(reference, Mapping):
             raise StaticReferenceHandoffError("P-item official rendered reference is invalid")
         dimensions = reference.get("dimensions")
+        if published:
+            encoded = bytes(png_bytes[int(offsets[id_indexes[business_id]]) : int(offsets[id_indexes[business_id] + 1])])
+            try:
+                validate_published_ui_reference_png(reference, encoded)
+            except PublishedUiReferenceError as error:
+                raise StaticReferenceHandoffError("P-item published UI reference pixels are stale") from error
         if (
-            set(reference) != {"dimensions", "git_blob_sha1", "path", "png_sha256", "rgb_pixel_sha256", "size"}
+            (
+                not published and not derived and (
+                    set(reference) != {"dimensions", "git_blob_sha1", "path", "png_sha256", "rgb_pixel_sha256", "size"}
+                    or reference.get("path") != f"packages/gakumas-images/images/pItems/icons/{business_id}.png"
+                    or not _is_sha1(reference.get("git_blob_sha1"))
+                )
+            )
             or dimensions != list(shapes[id_indexes[business_id]])
-            or reference.get("path") != f"packages/gakumas-images/images/pItems/icons/{business_id}.png"
-            or not _is_sha1(reference.get("git_blob_sha1"))
             or not _is_sha256(reference.get("png_sha256"))
             or not _is_sha256(reference.get("rgb_pixel_sha256"))
             or str(reference["rgb_pixel_sha256"]).upper() != rgb_hashes[business_id]
@@ -1145,6 +1647,10 @@ def _evaluate_p_item(
             or int(reference["size"]) < 1
         ):
             raise StaticReferenceHandoffError("P-item official rendered reference pixels are stale")
+        if derived:
+            encoded = bytes(png_bytes[int(offsets[id_indexes[business_id]]) : int(offsets[id_indexes[business_id] + 1])])
+            if hashlib.sha256(encoded).hexdigest().upper() != reference["png_sha256"] or len(encoded) != reference["size"]:
+                raise StaticReferenceHandoffError("P-item derived rendered reference bytes are stale")
 
     live = validation.get("live_jjc_calibration")
     declared_rankings = validation.get("full_gallery_64px")
@@ -1153,7 +1659,8 @@ def _evaluate_p_item(
         or live.get("status") != "PENDING"
         or live.get("runtime_detail_authority") is not False
         or not isinstance(declared_rankings, Mapping)
-        or set(declared_rankings) != set(map(str, replaced)) | {"coarse_fine_guard"}
+        or set(declared_rankings)
+        != set(map(str, changed_ids)) | {"coarse_fine_guard"}
         or declared_rankings.get("coarse_fine_guard") != "fails_safe_to_full_gallery"
     ):
         raise StaticReferenceHandoffError("P-item validation provenance is invalid")
@@ -1171,19 +1678,75 @@ def _evaluate_p_item(
                 base_ids = np.asarray(base_arrays["p_item_ids"])
                 base_payload = np.asarray(base_arrays["png_bytes"])
                 base_offsets = np.asarray(base_arrays["png_offsets"])
+            if (
+                base_ids.dtype != np.dtype(np.int32)
+                or base_ids.ndim != 1
+                or base_payload.dtype != np.dtype(np.uint8)
+                or base_payload.ndim != 1
+                or base_offsets.dtype != np.dtype(np.int64)
+                or base_offsets.shape != (len(base_ids) + 1,)
+                or int(base_offsets[0]) != 0
+                or int(base_offsets[-1]) != len(base_payload)
+                or np.any(np.diff(base_offsets) <= 0)
+                or tuple(map(int, base_ids)) != tuple(sorted(map(int, base_ids)))
+                or len(set(map(int, base_ids))) != len(base_ids)
+            ):
+                raise StaticReferenceHandoffError(
+                    "P-item base gallery inventory is invalid"
+                )
             base_images, _, _ = _decode_pngs(base_ids, base_payload, base_offsets)
         except StaticReferenceHandoffError:
             raise
         except (OSError, EOFError, KeyError, TypeError, ValueError) as error:
             raise StaticReferenceHandoffError("P-item base gallery is invalid") from error
-        if tuple(map(int, base_ids)) != tuple(map(int, ids)):
-            raise StaticReferenceHandoffError("P-item extension changed the inherited ID order")
-        actual_changed = tuple(
-            int(ids[index])
-            for index, (before, after) in enumerate(zip(base_images, images, strict=True))
-            if before.shape != after.shape or not np.array_equal(before, after)
+        base_id_values = tuple(map(int, base_ids))
+        if len(base_id_values) != base_count:
+            raise StaticReferenceHandoffError("P-item base gallery count is stale")
+        if provenance_schema_version == 2:
+            if base_id_values != candidate_ids:
+                raise StaticReferenceHandoffError(
+                    "P-item extension changed the inherited ID order"
+                )
+        elif (
+            tuple(value for value in candidate_ids if value not in set(added_ids))
+            != base_id_values
+            or set(candidate_ids) - set(base_id_values) != set(added_ids)
+            or set(base_id_values) - set(candidate_ids)
+        ):
+            raise StaticReferenceHandoffError(
+                "P-item extension changed the inherited ID order"
+            )
+        candidate_images_by_id = dict(zip(candidate_ids, images, strict=True))
+        base_encoded_by_id = {
+            business_id: bytes(
+                base_payload[
+                    int(base_offsets[index]) : int(base_offsets[index + 1])
+                ]
+            )
+            for index, business_id in enumerate(base_id_values)
+        }
+        candidate_encoded_by_id = {
+            business_id: bytes(
+                png_bytes[int(offsets[index]) : int(offsets[index + 1])]
+            )
+            for index, business_id in enumerate(candidate_ids)
+        }
+        if any(
+            candidate_encoded_by_id[business_id]
+            != base_encoded_by_id[business_id]
+            for business_id in base_id_values
+            if business_id not in set(replaced_ids)
+        ):
+            raise StaticReferenceHandoffError(
+                "P-item extension changed inherited reference bytes"
+            )
+        actual_replaced = tuple(
+            business_id
+            for business_id, before in zip(base_id_values, base_images, strict=True)
+            if before.shape != candidate_images_by_id[business_id].shape
+            or not np.array_equal(before, candidate_images_by_id[business_id])
         )
-        if actual_changed != changed_ids:
+        if actual_replaced != replaced_ids:
             raise StaticReferenceHandoffError("P-item extension changed undeclared reference pixels")
 
     sample_ids = changed_ids or tuple(map(int, ids[: min(2, count)]))
@@ -1249,10 +1812,14 @@ def _verify_p_item_production_source_files(
     base_gallery_path: Path,
     source_dir: Path,
     catalog_path: Path,
+    original_root: Path | None = None,
 ) -> tuple[tuple[Path, ...], dict[int, np.ndarray], list[Mapping[str, Any]]]:
     base = evidence["base_gallery"]
     catalog = evidence["catalog"]
-    official = evidence["official_rendered_source"]
+    published = evidence.get("schema_version") == 3
+    derived = evidence.get("schema_version") == 4
+    source_key = _p_item_source_key(evidence.get("schema_version"))
+    official = evidence[source_key]
     source = evidence["source"]
     base_gallery_path = base_gallery_path.resolve()
     source_dir = source_dir.resolve()
@@ -1277,9 +1844,14 @@ def _verify_p_item_production_source_files(
             key=lambda path: int(path.stem),
         )
     )
+    expected_source_ids = source.get("business_ids")
     if (
         len(source_paths) != len(all_source_files)
         or len(source_paths) != source["business_id_count"]
+        or (
+            expected_source_ids is not None
+            and [int(path.stem) for path in source_paths] != expected_source_ids
+        )
         or _p_item_source_digest(source_paths)
         != str(source["source_icons_sha256"]).upper()
     ):
@@ -1314,7 +1886,24 @@ def _verify_p_item_production_source_files(
         raise StaticReferenceHandoffError("P-item catalog rows are invalid")
 
     references = official["references"]
-    for business_id in P_ITEM_PRODUCTION_REFERENCE_IDS:
+    changed_business_ids = tuple(
+        sorted(
+            (
+                *base.get("added_business_ids", []),
+                *base["replaced_business_ids"],
+            )
+        )
+    )
+    if published:
+        if original_root is None:
+            raise StaticReferenceHandoffError("P-item published UI promotion requires original images for crop replay")
+        _validate_p_item_published_source(
+            official,
+            expected_ids=changed_business_ids,
+            catalog_revision=catalog["revision"],
+            catalog_rows=catalog_rows,
+        )
+    for business_id in changed_business_ids:
         path = source_dir / f"{business_id}.png"
         reference = references[str(business_id)]
         if not path.is_file() or business_id not in source_images:
@@ -1328,13 +1917,23 @@ def _verify_p_item_production_source_files(
             len(raw) != reference["size"]
             or hashlib.sha256(raw).hexdigest().upper()
             != str(reference["png_sha256"]).upper()
-            or _git_blob_sha1(raw).casefold()
-            != str(reference["git_blob_sha1"]).casefold()
+            or (
+                not published and not derived
+                and _git_blob_sha1(raw).casefold() != str(reference["git_blob_sha1"]).casefold()
+            )
             or rgb_sha256 != str(reference["rgb_pixel_sha256"]).upper()
         ):
             raise StaticReferenceHandoffError(
                 "P-item official rendered source bytes differ from frozen evidence"
             )
+        if published:
+            assert original_root is not None
+            try:
+                replayed = replay_published_ui_reference(reference, original_root)
+            except PublishedUiReferenceError as error:
+                raise StaticReferenceHandoffError("P-item original image crop replay failed") from error
+            if replayed != raw:
+                raise StaticReferenceHandoffError("P-item cropped PNG differs from deterministic original-image replay")
     return source_paths, source_images, catalog_rows
 
 
@@ -1345,6 +1944,9 @@ def _evaluate_p_item_external_evidence(
     source_dir: Path,
     catalog_path: Path,
     production_source_evidence: Mapping[str, Any],
+    original_root: Path | None = None,
+    derived_overlay: Path | None = None,
+    scoped_report: Path | None = None,
 ) -> dict[str, Any]:
     source = production_source_evidence["source"]
     base = production_source_evidence["base_gallery"]
@@ -1355,6 +1957,7 @@ def _evaluate_p_item_external_evidence(
             base_gallery_path=base_gallery_path,
             source_dir=source_dir,
             catalog_path=catalog_path,
+            original_root=original_root,
         )
     )
     try:
@@ -1387,7 +1990,35 @@ def _evaluate_p_item_external_evidence(
         and not isinstance(row.get("id"), bool)
     }
     included = tuple(catalog["included_business_ids"])
-    if any(business_id not in rows_by_id or rows_by_id[business_id].get("mode") != "stage" for business_id in included):
+    arena_stage_ids = tuple(
+        sorted(
+            business_id
+            for business_id, row in rows_by_id.items()
+            if row.get("mode") == "stage"
+            and row.get("sourceType") in {"pIdol", "support"}
+        )
+    )
+    declared_arena_stage_ids = catalog.get("arena_stage_business_ids")
+    if (
+        declared_arena_stage_ids is not None
+        and tuple(declared_arena_stage_ids) != arena_stage_ids
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item arena-stage catalog inventory is stale"
+        )
+    source_ids = tuple(int(path.stem) for path in source_paths)
+    if declared_arena_stage_ids is not None and not set(arena_stage_ids).issubset(
+        source_ids
+    ):
+        raise StaticReferenceHandoffError(
+            "P-item source gallery omits arena-stage catalog IDs"
+        )
+    if any(
+        business_id not in rows_by_id
+        or rows_by_id[business_id].get("mode") != "stage"
+        or rows_by_id[business_id].get("sourceType") not in {"pIdol", "support"}
+        for business_id in included
+    ):
         raise StaticReferenceHandoffError("P-item included catalog rows do not satisfy the stage contract")
     excluded_rows = catalog.get("excluded_current_rows")
     if not isinstance(excluded_rows, list):
@@ -1407,16 +2038,36 @@ def _evaluate_p_item_external_evidence(
         ):
             raise StaticReferenceHandoffError("P-item excluded catalog declaration is stale")
 
-    return {
+    result = {
         "base_gallery_sha256": str(base["sha256"]).upper(),
         "catalog_git_blob_sha1": str(catalog["p_items_git_blob_sha1"]).upper(),
         "catalog_sha256": str(catalog["p_items_sha256"]).upper(),
-        "official_reference_count": len(included),
-        "production_source_evidence_sha256": P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256,
+        ("derived_reference_count" if production_source_evidence.get("schema_version") == 4 else "published_ui_reference_count" if production_source_evidence.get("schema_version") == 3 else "official_reference_count"): len(included),
+        "production_source_evidence_sha256": hashlib.sha256(
+            canonical_json_bytes(production_source_evidence)
+        ).hexdigest().upper(),
         "source_icon_count": len(source_paths),
         "source_icons_sha256": str(source["source_icons_sha256"]).upper(),
         "source_pixel_match_count": len(source_paths),
     }
+    if production_source_evidence.get("schema_version") == 4:
+        if derived_overlay is None or scoped_report is None:
+            raise StaticReferenceHandoffError("P-item derived promotion requires overlay and private scoped qualification report")
+        frozen_source = production_source_evidence[derived_source.SOURCE_KEY]
+        try:
+            actual_source = derived_source.build_derived_source(
+                base_gallery_path=base_gallery_path, catalog_path=catalog_path,
+                overlay_path=derived_overlay, source_dir=source_dir, candidate_root=gallery_path.parent,
+                qualification_report=scoped_report, runtime_contract=P_ITEM_RUNTIME_CONTRACT,
+                catalog_production_deployment=frozen_source["catalog_production_deployment"],
+            )
+        except (derived_source.DerivedSourceError, OSError, ValueError) as error:
+            raise StaticReferenceHandoffError("P-item derived source/scoped qualification replay failed") from error
+        if actual_source != frozen_source:
+            raise StaticReferenceHandoffError("P-item derived replay differs from frozen source/qualification evidence")
+        result["derived_reference_count"] = len(actual_source["references"])
+        result["scoped_qualification"] = actual_source["qualification"]
+    return result
 
 
 def evaluate_component(
@@ -1455,6 +2106,9 @@ def promote_component(
     p_item_source_dir: Path | None = None,
     p_item_catalog_path: Path | None = None,
     p_item_production_source_evidence_path: Path | None = None,
+    p_item_original_root: Path | None = None,
+    p_item_derived_overlay: Path | None = None,
+    p_item_scoped_report: Path | None = None,
 ) -> dict[str, Any]:
     """Evaluate one candidate and atomically create its promoted directory."""
 
@@ -1521,6 +2175,9 @@ def promote_component(
             source_dir=p_item_source_dir,
             catalog_path=p_item_catalog_path,
             production_source_evidence=production_source_evidence,
+            original_root=p_item_original_root,
+            derived_overlay=p_item_derived_overlay,
+            scoped_report=p_item_scoped_report,
         )
     else:  # Defensive; evaluate_component already rejected this.
         raise StaticReferenceHandoffError(f"unsupported component: {component}")
@@ -1560,7 +2217,7 @@ def promote_component(
             "tool_contract": PROMOTION_TOOL_CONTRACT,
         }
         promoted["production_handoff"] = {
-            "reason": contract["promoted_reason"],
+            "reason": _promoted_reason(component, candidate),
             "status": PROMOTED_STATUS,
         }
         (temporary / "manifest.json").write_bytes(canonical_json_bytes(promoted))
@@ -1598,6 +2255,8 @@ def _expected_promotion_evidence(
     component_root: Path,
     manifest: Mapping[str, Any],
     validation: Mapping[str, Any],
+    *,
+    p_item_production_source_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if component == "arena_cost_reference":
         return {
@@ -1621,23 +2280,32 @@ def _expected_promotion_evidence(
             },
         }
     if component == "p_item_reference":
+        if p_item_production_source_evidence is None:
+            raise StaticReferenceHandoffError(
+                "P-item release validation requires frozen production/source evidence"
+            )
         source = manifest["source"]
         provenance = source["extension_provenance"]
         catalog = provenance["catalog"]
-        official = provenance["official_rendered_source"]
+        published = provenance.get("schema_version") == 4
+        derived = provenance.get("schema_version") == 5
+        official = provenance[_p_item_source_key(provenance.get("schema_version"), provenance=True)]
         count = validation["business_id_count"]
-        return {
+        result = {
             "base_gallery_sha256": str(provenance["base_gallery"]["sha256"]).upper(),
             "catalog_git_blob_sha1": str(catalog["p_items_git_blob_sha1"]).upper(),
             "catalog_sha256": str(catalog["p_items_sha256"]).upper(),
-            "official_reference_count": len(official["references"]),
-            "production_source_evidence_sha256": (
-                P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256
-            ),
+            ("derived_reference_count" if derived else "published_ui_reference_count" if published else "official_reference_count"): len(official["references"]),
+            "production_source_evidence_sha256": hashlib.sha256(
+                canonical_json_bytes(p_item_production_source_evidence)
+            ).hexdigest().upper(),
             "source_icon_count": count,
             "source_icons_sha256": str(source["source_icons_sha256"]).upper(),
             "source_pixel_match_count": count,
         }
+        if derived:
+            result["scoped_qualification"] = official["qualification"]
+        return result
     raise StaticReferenceHandoffError(f"unsupported component: {component}")
 
 
@@ -1653,6 +2321,7 @@ def validate_promoted_component(
 
     root = component_root.resolve()
     contract = _contract(component)
+    production_source_evidence: dict[str, Any] | None = None
     if component == "p_item_reference":
         if p_item_production_source_evidence_path is None:
             raise StaticReferenceHandoffError(
@@ -1680,7 +2349,7 @@ def validate_promoted_component(
             "tool_contract": contract["build_tool_contract"],
         }
         or not isinstance(handoff, Mapping)
-        or handoff != {"reason": contract["promoted_reason"], "status": PROMOTED_STATUS}
+        or handoff != {"reason": _promoted_reason(component, manifest), "status": PROMOTED_STATUS}
         or not isinstance(evaluation, Mapping)
         or evaluation.get("status") != "PASS"
         or evaluation.get("tool_contract") != PROMOTION_TOOL_CONTRACT
@@ -1743,6 +2412,7 @@ def validate_promoted_component(
             root,
             manifest,
             validation,
+            p_item_production_source_evidence=production_source_evidence,
         ),
         "schema_version": SCHEMA_VERSION,
         "status": "PASS",
@@ -1800,6 +2470,13 @@ def _arguments() -> argparse.Namespace:
         type=Path,
         help="Frozen allowlisted production/source evidence for P-item promotion",
     )
+    parser.add_argument(
+        "--p-item-original-root",
+        type=Path,
+        help="Frozen original published images required to replay P-item crops at promotion",
+    )
+    parser.add_argument("--p-item-derived-overlay", type=Path)
+    parser.add_argument("--p-item-scoped-report", type=Path)
     return parser.parse_args()
 
 
@@ -1817,6 +2494,9 @@ def main() -> int:
         p_item_production_source_evidence_path=(
             args.p_item_production_source_evidence
         ),
+        p_item_original_root=args.p_item_original_root,
+        p_item_derived_overlay=args.p_item_derived_overlay,
+        p_item_scoped_report=args.p_item_scoped_report,
     )
     print(json.dumps(promoted, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

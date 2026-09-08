@@ -9,6 +9,7 @@ from dataclasses import dataclass
 STAGE_NUMBERS = (1, 2, 3)
 VISIBLE_OPPONENT_FAMILY_SIZE = 3
 FAMILYWISE_DECISION_RULE = "bonferroni_one_sided_wilson_lower"
+HIGHEST_WIN_RATE_FALLBACK_RULE = "highest_observed_win_rate_fallback"
 
 
 @dataclass(frozen=True)
@@ -149,7 +150,7 @@ def select_first_qualified(
     confidence: float = 0.95,
     family_size: int = VISIBLE_OPPONENT_FAMILY_SIZE,
 ) -> ArenaDecision:
-    """Select the first opponent whose familywise lower bound passes."""
+    """Prefer the first qualified opponent, otherwise the highest win rate."""
 
     if not 0 <= threshold <= 1:
         raise ValueError("threshold must be between 0 and 1")
@@ -193,6 +194,11 @@ def select_first_qualified(
         if selected is None and qualified:
             selected = estimate
 
+    decision_rule = FAMILYWISE_DECISION_RULE
+    if selected is None and estimates:
+        selected = max(estimates, key=lambda item: (item.win_rate, -item.position))
+        decision_rule = HIGHEST_WIN_RATE_FALLBACK_RULE
+
     return ArenaDecision(
         selected_position=selected.position if selected else None,
         selected_opponent_id=selected.opponent_id if selected else None,
@@ -200,6 +206,6 @@ def select_first_qualified(
         confidence=confidence,
         family_size=family_size,
         familywise_confidence=confidence,
-        decision_rule=FAMILYWISE_DECISION_RULE,
+        decision_rule=decision_rule,
         estimates=tuple(rows),
     )

@@ -1,4 +1,5 @@
 import json
+import time
 import ctypes
 import random
 from pathlib import Path
@@ -9,6 +10,7 @@ from collections.abc import Mapping, Callable
 
 from utils import logger
 from maa.context import Context
+from maa.pipeline import JClick, JActionType
 from arena_winrate import (
     DEFAULT_OWN_SCORE_CACHE,
     AdapterError,
@@ -33,6 +35,7 @@ from arena_winrate import (
 )
 from maa.custom_action import CustomAction
 from arena_winrate.config import resolve_cached_arena_grade
+from arena_winrate.decision import HIGHEST_WIN_RATE_FALLBACK_RULE
 from maa.agent.agent_server import AgentServer
 from arena_winrate.user_messages import (
     ArenaUserStatus,
@@ -46,6 +49,9 @@ from arena_winrate.cost_fallback_logging import (
 from arena_winrate.maa_challenge_actions import (
     ArenaChallengeRecordResultAction,
     ArenaChallengeVerifyRefreshAction,
+    ArenaChallengeRetryCurrentBattleAction,
+    challenge_result_saved,
+    resume_pending_challenge,
 )
 
 from .arena_reader import MaaArenaReaderBackend
@@ -179,6 +185,109 @@ def _log_own_score_evaluation(
     )
 
 
+def _resolved_own_score_params(context: Context) -> dict[str, object]:
+    """Resolve the own-only task without reading challenge mode or Grade."""
+
+    resolved: dict[str, object] = {}
+    for name, allowed in (
+        ("ArenaOwnScoreRun", {"simulations", "timeout_seconds"}),
+        ("ChallengeSeasonConfig", {"season"}),
+    ):
+        node = context.get_node_data(name)
+        attached = node.get("attach") if isinstance(node, Mapping) else None
+        if isinstance(attached, str):
+            attached = json.loads(attached)
+        if not isinstance(attached, Mapping) or set(attached) - allowed:
+            raise ValueError(f"{name} attach contains invalid own-score parameters")
+        resolved.update(attached)
+    return resolved
+
+
+@AgentServer.custom_action("ArenaOwnScoreRecalculate")
+class ArenaOwnScoreRecalculate(CustomAction):
+    """Read and cache only the own lineup; never dispatch challenge selection."""
+
+    @_report_unexpected_errors
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        del argv
+        try:
+            config = ArenaRuntimeConfig.from_mapping(_resolved_own_score_params(context))
+        except (TypeError, ValueError) as error:
+            return _stop_with_error(context, "己方总分重算参数无效，已安全停止", error)
+        try:
+            logger.info("正在解析竞技场组件；默认目录在本进程首次使用时会检查 RIS 生产版本")
+            component = resolve_arena_component(config.bundle_dir, config.season)
+            season = component.season
+            for warning in component.warnings:
+                logger.warning(warning)
+            logger.info(
+                "竞技场己方独立重算组件就绪: "
+                f"状态={component.status}, RIS={component.commit[:12]}, 赛季={season.season}"
+            )
+            if config.season == "latest":
+                logger.warning(
+                    f"竞技场赛季使用 latest，当前 RIS 组件解析为第 {season.season} 期；"
+                    "若与游戏当期不一致请在 UI 手动选择期数"
+                )
+            if season.preview:
+                logger.warning(
+                    "RIS 目录将所选赛季标为预览；将继续运行并保留警告，用户可在 UI 手动选择其他期数"
+                )
+            adapter = SubprocessArenaAdapter.from_bundle(
+                component.bundle_dir,
+                timeout_seconds=config.timeout_seconds,
+            )
+            cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
+            reset_prepared_own_score_cache(cache_store)
+            backend = MaaArenaReaderBackend(context, season, component.bundle_dir)
+            reader = ArenaLineupReader(backend, season)
+            evaluation = ArenaOwnScoreService(
+                adapter,
+                simulations=config.simulations,
+                cache_store=cache_store,
+            ).calculate(reader)
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "arena_own_read_metrics",
+                        "status": evaluation.status,
+                        **reader.last_read_metrics_summary(),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+            own_cost_fallbacks = (
+                _log_cost_customization_fallbacks(reader, side="own")
+                if evaluation.status in {"calculated", "adapter_failure", "cache_failure"}
+                else ()
+            )
+            _log_own_score_evaluation(
+                evaluation,
+                trigger="manual_task",
+                cost_customization_fallbacks=own_cost_fallbacks,
+            )
+            _publish_status(
+                context,
+                own_score_user_status(evaluation, simulations=config.simulations),
+                log_detail=(
+                    evaluation.error_detail or evaluation.error
+                    if evaluation.status != "calculated"
+                    else evaluation.summary_error_detail
+                ),
+            )
+            return evaluation.status == "calculated"
+        except (
+            ArenaComponentError,
+            ArenaReaderError,
+            AdapterError,
+            OwnScoreCacheError,
+            OSError,
+            ValueError,
+        ) as error:
+            return _stop_with_error(context, "己方总分重算失败，已安全停止", error)
+
+
 def _log_cost_customization_fallbacks(
     reader: ArenaLineupReader,
     *,
@@ -299,7 +408,8 @@ class ChallengeResetOwnScorePreparation(CustomAction):
         context: Context,
         argv: CustomAction.RunArg,
     ) -> bool:
-        del context, argv
+        if not resume_pending_challenge(context, argv):
+            return False
         reset_prepared_own_score_cache(OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE))
         logger.info("已清除上一任务可能遗留的竞技场己方缓存准备状态")
         return True
@@ -319,6 +429,8 @@ class ChallengePrepareOwnScore(CustomAction):
         params = _resolved_challenge_params(context)
         if params.get("mode", "win_rate") != "win_rate":
             return True
+        if not resume_pending_challenge(context):
+            return False
 
         auto_recalculate = params.get("auto_recalculate_own", False)
         if not isinstance(auto_recalculate, bool):
@@ -410,6 +522,8 @@ class ChallengeAuto(CustomAction):
             params = _resolved_challenge_params(context)
         except (TypeError, ValueError) as error:
             return _stop_with_error(context, "竞技场任务参数无效，已安全停止", error)
+        if params.get("mode", "win_rate") == "win_rate" and not resume_pending_challenge(context):
+            return False
 
         mode_allowed = [
             "fixed",
@@ -692,13 +806,24 @@ class ChallengeAuto(CustomAction):
                     known_grade=effective_grade,
                 )
                 reader = ArenaLineupReader(backend, season)
+                opponent_read_attempts: list[dict[str, object]] = []
 
                 class OpponentSnapshotProvider:
                     snapshot: dict[str, object] | None = None
 
                     def read(self) -> dict[str, object]:
-                        self.snapshot = reader.read_opponents(own_snapshot)
-                        return self.snapshot
+                        started = time.perf_counter()
+                        succeeded = False
+                        try:
+                            self.snapshot = reader.read_opponents(own_snapshot)
+                            succeeded = True
+                            return self.snapshot
+                        finally:
+                            opponent_read_attempts.append({
+                                "attempt": len(opponent_read_attempts) + 1,
+                                "succeeded": succeeded,
+                                "read_wall_seconds": round(time.perf_counter() - started, 6),
+                            })
 
                 provider = OpponentSnapshotProvider()
 
@@ -732,20 +857,24 @@ class ChallengeAuto(CustomAction):
                 if provider.snapshot is not None
                 else ()
             )
-            opponent_read_summary = (
-                None
-                if provider.snapshot is None
-                else {
-                    "read_wall_seconds": provider.snapshot.get(
-                        "read_wall_seconds"
-                    ),
-                    "team_read_wall_seconds": [
-                        opponent.get("read_wall_seconds")
-                        for opponent in provider.snapshot["opponents"]
-                    ],
-                    **reader.last_read_metrics_summary(),
-                }
-            )
+            opponent_read_summary = {
+                "read_wall_seconds": (
+                    None if provider.snapshot is None
+                    else provider.snapshot.get("read_wall_seconds")
+                ),
+                "team_read_wall_seconds": [
+                    opponent.get("read_wall_seconds")
+                    for opponent in (
+                        [] if provider.snapshot is None
+                        else provider.snapshot["opponents"]
+                    )
+                ],
+                **reader.last_read_metrics_summary(),
+                "read_attempts": opponent_read_attempts,
+                # Backend totals include unfinished members and earlier
+                # failed attempts, which completed-member reports omit.
+                "runtime_metrics_all_attempts": backend.runtime_metrics(),
+            }
             logger.info(
                 json.dumps(
                     {
@@ -795,6 +924,13 @@ class ChallengeAuto(CustomAction):
                 for row in evaluation.decision.estimates
                 if row["position"] == selected_position
             )
+            if evaluation.decision.decision_rule == HIGHEST_WIN_RATE_FALLBACK_RULE:
+                logger.info(
+                    "竞技场未有对手达到 "
+                    f"{evaluation.decision.threshold * 100:.0f}% 门槛，"
+                    f"按最高预测胜率选择第 {selected_position + 1} 位对手"
+                    f"（胜率 {float(selected_row['win_rate']) * 100:.2f}%）"
+                )
             record_store = ArenaChallengeRecordStore()
             begun = False
             try:
@@ -863,3 +999,52 @@ class ArenaChallengeRecordResult(ArenaChallengeRecordResultAction):
 @AgentServer.custom_action("ArenaChallengeVerifyRefresh")
 class ArenaChallengeVerifyRefresh(ArenaChallengeVerifyRefreshAction):
     pass
+
+
+@AgentServer.custom_action("ArenaChallengeRetryCurrentBattle")
+class ArenaChallengeRetryCurrentBattle(ArenaChallengeRetryCurrentBattleAction):
+    pass
+
+
+@AgentServer.custom_action("ArenaChallengeResumePending")
+class ArenaChallengeResumePending(CustomAction):
+    @_report_unexpected_errors
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        return resume_pending_challenge(context, argv)
+
+
+def _challenge_recognized_click(context: Context, argv: CustomAction.RunArg) -> bool:
+    """Keep Maa's original recognized target without recapturing or re-OCR."""
+    result = context.run_action_direct(JActionType.Click, JClick(), argv.box)
+    return bool(result is not None and result.success)
+
+
+@AgentServer.custom_action("ArenaChallengeStartOnce")
+class ArenaChallengeStartOnce(CustomAction):
+    @_report_unexpected_errors
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        if not _administrator_process():
+            return False
+        store = ArenaChallengeRecordStore()
+        pending = store.load_pending()
+        if pending is not None:
+            try:
+                # Persist before sending: a lost response cannot rearm Start.
+                store.mark_battle_started(str(pending.get("capture_id", "")))
+            except (ArenaChallengeFlowError, OSError) as error:
+                return _stop_with_error(context, "当前对局已发送开始或无法登记，未重复挑战", error)
+        return _challenge_recognized_click(context, argv)
+
+
+@AgentServer.custom_action("ArenaChallengeLeaveResult")
+class ArenaChallengeLeaveResult(CustomAction):
+    @_report_unexpected_errors
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        if not _administrator_process():
+            return False
+        store = ArenaChallengeRecordStore()
+        if store.load_pending() is not None and not challenge_result_saved(store):
+            return _stop_with_error(context, "竞技场结果尚未保存，保留当前页面继续结果恢复")
+        if store.load_pending() is not None and getattr(argv, "node_name", "") == "ChallengeError":
+            return resume_pending_challenge(context, argv, store)
+        return _challenge_recognized_click(context, argv)

@@ -18,7 +18,7 @@
   "properties": {
     "schema_version": { "const": 1 },
     "product": { "const": "MaaGakumasu-GakumasHelper" },
-    "qualification": { "enum": ["arena_preview", "stable"] },
+    "qualification": { "enum": ["arena_preview", "arena_release", "stable"] },
     "release": {
       "type": "object",
       "required": ["version", "channel", "repository", "asset", "asset_bytes", "asset_sha256", "platform"],
@@ -194,6 +194,16 @@
     },
     "known_gates": { "type": "array", "items": { "type": "string" } }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "qualification": { "const": "arena_preview" } } },
+      "then": { "properties": { "release": { "properties": { "channel": { "const": "beta" } } } } }
+    },
+    {
+      "if": { "properties": { "qualification": { "const": "arena_release" } } },
+      "then": { "properties": { "release": { "properties": { "channel": { "const": "stable" } } } } }
+    }
+  ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9A-F]{64}$" },
     "component": {

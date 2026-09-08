@@ -129,9 +129,10 @@
       "param": {}
     },
     "action": {
-      "type": "DoNothing",
-      "param": {}
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeResumePending"}
     },
+    "on_error": ["ChallengeWinRateStop"],
     "next": [
       "ChallengeChoose",
       "ChallengeRunOut",
@@ -310,9 +311,10 @@
       }
     },
     "action": {
-      "type": "Click",
-      "param": {}
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeStartOnce"}
     },
+    "on_error": ["ChallengeRetryAfterStart"],
     "next": [
       "ChallengeReady",
       "[JumpBack]ChallengeUnformation"
@@ -337,7 +339,8 @@
     },
     "next": [
       "ChallengeSkip"
-    ]
+    ],
+    "on_error": ["ChallengeRetryBeforeSkip"]
   },
   "ChallengeSkip": {
     "recognition": {
@@ -357,6 +360,7 @@
       "param": {}
     },
     "timeout": 60000,
+    "on_error": ["ChallengeRetryBeforeResult"],
     "next": [
       "ChallengeNext",
       "ChallengeSkip",
@@ -384,7 +388,8 @@
     },
     "next": [
       "ChallengeNext"
-    ]
+    ],
+    "on_error": ["ChallengeWinRateStop"]
   },
   "ChallengeNext": {
     "recognition": {
@@ -402,14 +407,14 @@
       }
     },
     "action": {
-      "type": "Click",
-      "param": {}
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeLeaveResult"}
     },
     "timeout": 60000,
     "next": [
-      "ChallengeFinish",
-      "[JumpBack]ClickCenter"
-    ]
+      "ChallengeFinish"
+    ],
+    "on_error": ["ChallengeRetryBeforeFinish"]
   },
   "ChallengeFinish": {
     "recognition": {
@@ -425,8 +430,8 @@
       }
     },
     "action": {
-      "type": "Click",
-      "param": {}
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeLeaveResult"}
     },
     "next": [
       "ChallengeVerifyRefresh"
@@ -445,7 +450,78 @@
     },
     "next": [
       "ChallengeSelector"
-    ]
+    ],
+    "on_error": ["ChallengeRetryBeforeReturn"]
+  },
+  "ArenaChallengeAwaitFormalResult": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "DoNothing", "param": {}},
+    "pre_delay": 0,
+    "post_delay": 0,
+    "timeout": 60000,
+    "next": ["ArenaChallengeFormalResultPage"],
+    "on_error": []
+  },
+  "ArenaChallengeFormalResultPage": {
+    "recognition": {"type": "TemplateMatch", "param": {"roi": [0, 980, 720, 300], "template": "challenge_next.png"}},
+    "action": {"type": "DoNothing", "param": {}},
+    "pre_delay": 0,
+    "post_delay": 0,
+    "next": [],
+    "on_error": []
+  },
+  "ArenaChallengeResumeReturn": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "DoNothing", "param": {}},
+    "next": ["ChallengeResumeNext", "ChallengeResumeVerify"]
+  },
+  "ChallengeResumeNext": {
+    "recognition": {"type": "TemplateMatch", "param": {"roi": [0, 980, 720, 300], "template": "challenge_next.png"}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeLeaveResult"}},
+    "next": ["ChallengeResumeVerify"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
+  "ChallengeResumeVerify": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeVerifyRefresh"}},
+    "next": [],
+    "on_error": ["ChallengeRetryBeforeResumeReturn"]
+  },
+  "ChallengeRetryAfterStart": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
+    "next": ["ChallengeReady", "[JumpBack]ChallengeUnformation"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
+  "ChallengeRetryBeforeSkip": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
+    "next": ["ChallengeSkip"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
+  "ChallengeRetryBeforeResult": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
+    "next": ["ChallengeResultRecord", "ChallengeSkip"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
+  "ChallengeRetryBeforeFinish": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
+    "next": ["ChallengeFinish"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
+  "ChallengeRetryBeforeReturn": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
+    "next": ["ChallengeVerifyRefresh"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
+  "ChallengeRetryBeforeResumeReturn": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
+    "next": ["ChallengeResumeVerify"],
+    "on_error": ["ChallengeWinRateStop"]
   },
   "ChallengeRunOut": {
     "recognition": {
@@ -477,9 +553,10 @@
       }
     },
     "action": {
-      "type": "Click",
-      "param": {}
-    }
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeLeaveResult"}
+    },
+    "on_error": ["ChallengeWinRateStop"]
   },
   "ChallengeReadyPeriod": {
     "recognition": {
@@ -645,9 +722,10 @@
       }
     },
     "action": {
-      "type": "Click",
-      "param": {}
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeStartOnce"}
     },
+    "on_error": ["ChallengeWinRateStop"],
     "focus": {
       "Node.Action.Succeeded": "[color:DeepSkyBlue]自动编队完成[/color]"
     }

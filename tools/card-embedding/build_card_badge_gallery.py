@@ -296,6 +296,51 @@ def _extension_references(
         raise BadgeGalleryBuildError(
             "extension dataset identity/source contract is invalid"
         ) from error
+    sources = manifest.get("sources", {})
+    fixed_icons = sources.get("fixed_icons") if isinstance(sources, Mapping) else None
+    if isinstance(fixed_icons, Mapping) and fixed_icons.get("source_type") == "third_party_published_ui_crops":
+        project_root = Path(__file__).resolve().parents[2]
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        from tools.published_ui_reference import (
+            PublishedUiReferenceError,
+            validate_published_ui_references,
+            validate_published_ui_reference_png,
+        )
+
+        if (
+            set(fixed_icons) != {"schema_version", "source_type", "references"}
+            or type(fixed_icons.get("schema_version")) is not int
+            or fixed_icons["schema_version"] != 1
+        ):
+            raise BadgeGalleryBuildError("unsupported published fixed-icon source schema")
+        _declared_sha256(sources.get("fixed_icon_provenance_sha256"), label="fixed-icon provenance")
+        crosswalk_path = _resolve_inside(
+            manifest_path.parent,
+            manifest["mapping"]["crosswalk_path"],
+            label="extension crosswalk",
+        )
+        crosswalk = json.loads(crosswalk_path.read_text(encoding="utf-8-sig"))
+        try:
+            validate_published_ui_references(
+                fixed_icons.get("references"),
+                expected_ids=plan.business_ids,
+                catalog_rows={
+                    row["business_id"]: {
+                        "name": row["catalog_name"],
+                        "upgraded": bool(row["upgrade_count"]),
+                    }
+                    for row in crosswalk
+                },
+                component="skill_card",
+            )
+            for sample in plan.samples:
+                validate_published_ui_reference_png(
+                    fixed_icons["references"][str(sample.business_id)],
+                    sample.marker_path.read_bytes(),
+                )
+        except PublishedUiReferenceError as error:
+            raise BadgeGalleryBuildError(f"published fixed-icon provenance: {error}") from error
     references: list[BadgeReference] = []
     for sample in plan.samples:
         class_name = sample.class_name
@@ -1505,16 +1550,22 @@ def build_badge_gallery(
             catalog_source,
             label="catalog",
         )
-        repository, revision, license_name = _source_provenance(
-            fixed_icon_source,
-            label="fixed-icon",
-        )
         source = dict(base_source)
+        if isinstance(fixed_icon_source, Mapping) and fixed_icon_source.get("source_type") == "third_party_published_ui_crops":
+            for key in ("repository", "revision", "license"):
+                source.pop(key, None)
+            source["fixed_icons"] = dict(fixed_icon_source)
+            source["fixed_icon_provenance_sha256"] = extension_sources["fixed_icon_provenance_sha256"]
+        else:
+            repository, revision, license_name = _source_provenance(
+                fixed_icon_source,
+                label="fixed-icon",
+            )
+            source.pop("fixed_icons", None)
+            source.pop("fixed_icon_provenance_sha256", None)
+            source.update({"repository": repository, "revision": revision, "license": license_name})
         source.update(
             {
-                "repository": repository,
-                "revision": revision,
-                "license": license_name,
                 "catalog_repository": catalog_repository,
                 "catalog_revision": catalog_revision,
                 "catalog_license": catalog_license,
@@ -1603,7 +1654,7 @@ def main() -> int:
         live_reference_manifest=args.live_reference_manifest,
         output_dir=args.output_dir,
     )
-    print(json.dumps(manifest, ensure_ascii=False, sort_keys=True))
+    print(json.dumps(manifest, ensure_ascii=True, sort_keys=True))
     return 0
 
 

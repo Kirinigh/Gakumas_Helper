@@ -8,8 +8,10 @@ import itertools
 from typing import Any
 from pathlib import Path
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import replace, dataclass
 from collections.abc import Mapping, Sequence
+
+from ._p_item_detail_text import PItemDetailTextIndex, PItemDetailTextResult
 
 
 class ArenaCatalogError(ValueError):
@@ -101,6 +103,30 @@ _OCR_NUMERIC_TOKEN_BOUNDARY = "\u2063"
 # is removed by ``_normalise_effect_text`` and could otherwise manufacture a
 # token from the end of one view and the start of another.
 _OCR_EFFECT_VIEW_BOUNDARY = "\u241e"
+_ADDED_NUMERIC_EFFECT_LABELS = {
+    "goodConditionTurns": ("好調", "ターン"),
+    "goodImpressionTurns": ("好印象+", ""),
+    "perfectConditionTurns": ("絶好調", "ターン"),
+    "concentration": ("集中+", ""),
+    "genki": ("元気+", ""),
+    "motivation": ("やる気+", ""),
+    "fullPowerCharge": ("全力値+", ""),
+    "halfCostTurns": ("消費体力減少", "ターン"),
+    "turnsRemaining": ("ターン追加+", ""),
+    "score": ("スコア+", ""),
+}
+_ADDED_NUMERIC_EFFECT_MARKERS = re.compile(
+    "|".join(
+        re.escape(prefix)
+        for prefix in sorted(
+            # Consume fixedGenki as its own complete marker, so its inner
+            # 元気+ cannot be validated against an ordinary genki domain.
+            ("固定元気+", *(value[0] for value in _ADDED_NUMERIC_EFFECT_LABELS.values())),
+            key=len, reverse=True,
+        )
+    )
+)
+_ADDED_NUMERIC_INTEGER = re.compile(r"-?[0-9]+(?!\d|[.,．，。]\d)")
 
 
 def _normalise_text(value: object) -> str:
@@ -113,7 +139,10 @@ def _normalise_text(value: object) -> str:
 def _normalise_skill_card_title_text(value: object) -> str:
     """Normalize only fixed catalog-to-rendered skill-card title aliases."""
 
-    compact = _normalise_text(value)
+    # The same rendered middle dot is returned as U+00B7 by title OCR and
+    # stored as U+30FB in the catalog. Apply the equivalence to both indexed
+    # titles and queries here, without changing effect text or P-item titles.
+    compact = _normalise_text(value).replace("·", "・")
     for source, rendered in _SKILL_CARD_RENDERED_TITLE_REPLACEMENTS.items():
         compact = compact.replace(source, rendered)
     return compact
@@ -159,10 +188,15 @@ def _contains_exact_integer_token(
 
 
 def _exact_title_anchor_branch(value: str) -> str:
+    # Title queries already equate these middle dots. Match either raw OCR
+    # glyph here too, without changing shared effect or P-item normalization.
     return "".join(
         (
             re.escape(character)
-            if len(variants := _TEXT_ANCHOR_CHARACTER_VARIANTS.get(character, (character,)))
+            if len(variants := (
+                ("・", "·") if character in ("・", "·")
+                else _TEXT_ANCHOR_CHARACTER_VARIANTS.get(character, (character,))
+            ))
             == 1
             else rf"(?:{'|'.join(re.escape(variant) for variant in variants)})"
         )
@@ -273,7 +307,14 @@ class ArenaEntityCatalog:
         p_items: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         self._cards = tuple(dict(row) for row in skill_cards)
+        self._added_numeric_effect_domain_cache: dict[
+            int, tuple[dict[str, tuple[int, ...]], dict[str, str]]
+        ] = {}
         self._p_items = tuple(dict(row) for row in p_items)
+        self._p_item_detail_text_index: PItemDetailTextIndex | None = None
+        self._p_item_detail_text_index_loaded = False
+        self._p_item_detail_text_index_error: str | None = None
+        self._p_item_detail_fuzzy_titles: dict[int, tuple[tuple[str, int], ...]] | None = None
         self._customizations = {int(row["id"]): dict(row) for row in customizations}
         if len(self._customizations) != len(customizations):
             raise ArenaCatalogError("bundled customization IDs must be unique positive integers")
@@ -319,6 +360,100 @@ class ArenaEntityCatalog:
             raise ArenaCatalogError("bundled entity catalogs must be JSON arrays")
         return cls(cards, customizations, p_items)
 
+    def _added_numeric_effect_domains(
+        self,
+        card_id: int,
+    ) -> tuple[dict[str, tuple[int, ...]], dict[str, str]]:
+        """Prove complete domains only for optional literal-added action rows.
+
+        Base-field references and other same-field DSL keep their established
+        resolver paths. In particular, the first integer of an expression is
+        never treated as the expression's complete set of rendered values.
+        The cache belongs to this version-matched catalog instance only.
+        """
+        cached = self._added_numeric_effect_domain_cache.get(card_id)
+        if cached is not None:
+            return cached
+        card = self._cards_by_id.get(card_id)
+        if card is None:
+            raise ArenaCatalogError(f"skill-card ID is absent from the bundled catalog: {card_id}")
+        definitions = tuple(
+            self._customizations[identifier]
+            for identifier in self.available_customization_ids(card_id)
+        )
+        domains: dict[str, tuple[int, ...]] = {}
+        exclusions: dict[str, str] = {}
+        dsl_fields = ("conditions", "cost", "actions", "effects")
+        for field, (prefix, _) in _ADDED_NUMERIC_EFFECT_LABELS.items():
+            direct_assignment = re.compile(rf"(?<![.A-Za-z0-9_]){field}\+=")
+            if not any(direct_assignment.search(_normalise_text(row.get("actions"))) for row in definitions):
+                continue
+            reference = re.compile(rf"(?<![A-Za-z0-9_]){field}(?![A-Za-z0-9_])")
+            if any(reference.search(str(card.get(key) or "")) for key in dsl_fields):
+                exclusions[field] = "base_mentions_field"
+                continue
+            if prefix in _normalise_skill_card_title_text(card.get("name")):
+                exclusions[field] = "effect_marker_in_card_title"
+                continue
+            values: set[int] = set()
+            for definition in definitions:
+                if not any(reference.search(str(definition.get(key) or "")) for key in dsl_fields):
+                    continue
+                literal = re.fullmatch(
+                    rf"{field}\+=(-?[0-9]+);?",
+                    _normalise_text(definition.get("actions")),
+                )
+                if literal is None or any(
+                    reference.search(str(definition.get(key) or ""))
+                    for key in ("conditions", "cost", "effects")
+                ):
+                    exclusions[field] = "complex_same_field_customization"
+                    break
+                if definition.get("max") != 1:
+                    exclusions[field] = "multi_level_added_action"
+                    break
+                values.add(int(literal.group(1)))
+            if field not in exclusions and values:
+                domains[field] = tuple(sorted(values))
+        result = (domains, exclusions)
+        self._added_numeric_effect_domain_cache[card_id] = result
+        return result
+
+    def _validate_added_numeric_effects(self, card_id: int, detail_text: str) -> None:
+        """Reject corrupt present optional rows without redefining absent rows."""
+        domains, _ = self._added_numeric_effect_domains(card_id)
+        if not domains or not isinstance(detail_text, str):
+            return
+        by_marker = {
+            _ADDED_NUMERIC_EFFECT_LABELS[field][0]: (
+                field, _ADDED_NUMERIC_EFFECT_LABELS[field][1], values,
+            )
+            for field, values in domains.items()
+        }
+        for view_index, view in enumerate(detail_text.split(_OCR_EFFECT_VIEW_BOUNDARY)):
+            compact = _normalise_effect_text(view)
+            # The longest marker wins: 絶好調 is not 好調, and 固定元気+ is
+            # not 元気+. A marker outside the optional domains stays untouched.
+            for occurrence in _ADDED_NUMERIC_EFFECT_MARKERS.finditer(compact):
+                domain = by_marker.get(occurrence.group())
+                if domain is None:
+                    continue
+                field, suffix, values = domain
+                tail = compact[occurrence.end():]
+                number = _ADDED_NUMERIC_INTEGER.match(tail)
+                if (
+                    number is None
+                    or number.group() != str(int(number.group()))
+                    or int(number.group()) not in values
+                    or not tail[number.end():].startswith(suffix)
+                ):
+                    raise ArenaCatalogError(
+                        "malformed added numeric effect: "
+                        f"card {card_id}, field {field}, view {view_index}, "
+                        f"marker {occurrence.group()!r}, payload {tail[:32]!r}, "
+                        f"allowed_values={values!r}, suffix={suffix!r}"
+                    )
+
     def p_item_business_ids(self) -> tuple[int, ...]:
         """Return every P-item business ID declared by the active engine data."""
 
@@ -349,6 +484,142 @@ class ArenaEntityCatalog:
                     or item.get("plan") in {None, "", "free", plan}
                 )
             )
+        )
+
+    def _get_p_item_detail_text_index(self) -> PItemDetailTextIndex | None:
+        """Build the full active-catalog text relation once, only when needed."""
+
+        if not self._p_item_detail_text_index_loaded:
+            self._p_item_detail_text_index_loaded = True
+            try:
+                self._p_item_detail_text_index = PItemDetailTextIndex(self._p_items)
+            except (OSError, ValueError) as error:
+                # A missing asset must not cause repeated filesystem work for
+                # each detail. It also must not invalidate image-only reads.
+                self._p_item_detail_text_index_error = f"{type(error).__name__}: {error}"
+        return self._p_item_detail_text_index
+
+    def p_item_detail_title_family_ids(
+        self,
+        title_text: str,
+        *,
+        plan: str | None = None,
+        allow_one_substitution: bool = False,
+    ) -> tuple[int, ...]:
+        """Find the complete title family in the active catalog, before images.
+
+        Exact titles never depend on icon candidates. The optional legacy OCR
+        substitution recovery retains its equal-length, suffix-preserving,
+        globally unique restriction; its caller still owns the old additional
+        visual boundary for that approximate-title path only.
+        """
+
+        index = self._get_p_item_detail_text_index()
+        if index is None:
+            return ()
+        family = index.family_ids_for_title(title_text, plan=plan)
+        if family or not allow_one_substitution:
+            return family
+        recovered = self._recover_p_item_title_one_substitution(title_text)
+        return index.family_ids_for_title(recovered, plan=plan) if recovered else ()
+
+    def _recover_p_item_title_one_substitution(self, title_text: str) -> str | None:
+        """Keep the original global title ambiguity rule for legacy recovery."""
+
+        title = _normalise_text(title_text)
+        core = title[:-1] if title.endswith("+") else title
+        if len(core) < 4:
+            return None
+        if self._p_item_detail_fuzzy_titles is None:
+            by_length: defaultdict[int, list[tuple[str, int]]] = defaultdict(list)
+            for item in self._p_items:
+                normalized = _normalise_text(item.get("name"))
+                if normalized:
+                    by_length[len(normalized)].append((normalized, int(item["id"])))
+            self._p_item_detail_fuzzy_titles = {
+                length: tuple(rows) for length, rows in by_length.items()
+            }
+        same_length = self._p_item_detail_fuzzy_titles.get(len(title), ())
+        if any(expected == title for expected, _ in same_length):
+            return None
+        recovered = [
+            expected
+            for expected, _ in same_length
+            if expected.endswith("+") == title.endswith("+")
+            and sum(a != b for a, b in zip(expected, title, strict=True)) == 1
+        ]
+        if len(recovered) != 1:
+            return None
+        return recovered[0]
+
+    def resolve_clicked_p_item_text(
+        self,
+        atoms: Sequence[Mapping[str, Any]],
+        *,
+        title_index: int,
+        source_frames: Any = (),
+        plan: str | None = None,
+        candidate_p_item_ids: Sequence[int] = (),
+        visual_tiebreak_p_item_ids: Sequence[int] = (),
+        title_text: str | None = None,
+        detail_text: str | None = None,
+        allow_one_substitution: bool = False,
+    ) -> PItemDetailTextResult:
+        """Resolve attributed detail text without image candidate preselection.
+
+        Production supplies same-frame atoms and source observations. The text
+        adapter exists for callers that historically have no geometry; it is
+        never used to replace failed geometry from a real observation.
+        """
+
+        index = self._get_p_item_detail_text_index()
+        title_recovery = None
+        if index is not None and allow_one_substitution:
+            observed_title = title_text if not atoms else None
+            if (
+                atoms
+                and isinstance(title_index, int)
+                and not isinstance(title_index, bool)
+                and 0 <= title_index < len(atoms)
+            ):
+                observed_title = str(atoms[title_index].get("text", ""))
+            if observed_title and not index.family_ids_for_title(observed_title, plan=plan):
+                recovered = self._recover_p_item_title_one_substitution(observed_title)
+                if recovered and index.family_ids_for_title(recovered, plan=plan):
+                    title_recovery = {"observed": observed_title, "recovered": recovered}
+                    if atoms:
+                        substituted_atoms = list(atoms)
+                        substituted_atoms[title_index] = {
+                            **atoms[title_index],
+                            "text": recovered,
+                        }
+                        atoms = substituted_atoms
+                    else:
+                        title_text = recovered
+        if index is None:
+            result = PItemDetailTextResult(
+                status="unknown",
+                ids=(),
+                reason="reference_unavailable",
+                diagnostics={"load_error": self._p_item_detail_text_index_error},
+            )
+        elif not atoms and title_text is not None and detail_text is not None:
+            result = index.match_text(title_text, detail_text, plan=plan)
+        else:
+            result = index.match(
+                atoms,
+                title_index=title_index,
+                source_frames=source_frames,
+                plan=plan,
+            )
+        return replace(
+            result,
+            diagnostics={
+                **result.diagnostics,
+                "visual_candidate_ids_diagnostic_only": tuple(candidate_p_item_ids),
+                "visual_tiebreak_ids_diagnostic_only": tuple(visual_tiebreak_p_item_ids),
+                "title_one_substitution_recovery": title_recovery,
+            },
         )
 
     def confirm_clicked_p_item_candidates(
@@ -748,6 +1019,21 @@ class ArenaEntityCatalog:
 
         return tuple(sorted(self._cards_by_id))
 
+    def skill_card_source_type(self, card_id: int) -> str:
+        """Return the authoritative deck-source class for one skill card."""
+
+        card = self._cards_by_id.get(card_id)
+        if card is None:
+            raise ArenaCatalogError(
+                f"skill-card ID is absent from the bundled catalog: {card_id}"
+            )
+        source_type = card.get("sourceType")
+        if not isinstance(source_type, str) or not source_type.strip():
+            raise ArenaCatalogError(
+                f"skill-card {card_id} has no valid sourceType"
+            )
+        return source_type.strip()
+
     @staticmethod
     def normalize_skill_card_title_text(value: object) -> str:
         """Expose the catalog's sole title normalization contract to readers."""
@@ -778,7 +1064,7 @@ class ArenaEntityCatalog:
         return rf"^(?:{'|'.join(branches)})$"
 
     def skill_card_title_aliases(self, card_id: int) -> tuple[str, ...]:
-        """Return the exact title and any globally unique one-glyph-loss alias."""
+        """Return the exact title and globally unique bounded OCR aliases."""
 
         if card_id not in self._cards_by_id:
             raise ArenaCatalogError(
@@ -788,27 +1074,59 @@ class ArenaEntityCatalog:
 
     def _build_skill_card_title_aliases(self) -> dict[int, tuple[str, ...]]:
         full_title_owners: defaultdict[str, set[int]] = defaultdict(set)
-        dropped_title_owners: defaultdict[str, set[int]] = defaultdict(set)
+        weak_title_owners: defaultdict[str, set[int]] = defaultdict(set)
         normalized_titles: dict[int, str] = {}
+        terminal_note_aliases: dict[int, str] = {}
         for card_id, card in self._cards_by_id.items():
             title = _normalise_skill_card_title_text(card.get("name"))
             if not title:
                 raise ArenaCatalogError(f"skill-card {card_id} has no fixed title")
             normalized_titles[card_id] = title
             full_title_owners[title].add(card_id)
+            full_title_owners[self._skill_card_display_title(card)].add(card_id)
             dropped = title[1:]
             dropped_core = dropped[:-1] if dropped.endswith("+") else dropped
             if len(dropped_core) >= 4:
-                dropped_title_owners[dropped].add(card_id)
+                weak_title_owners[dropped].add(card_id)
+                if title.startswith("一"):
+                    # A leading horizontal stroke can be rendered by OCR as
+                    # ASCII '-'. Keep this a complete-title alias; ordinary
+                    # minus signs and exact-title rebinding stay unchanged.
+                    weak_title_owners[f"-{dropped}"].add(card_id)
+            # A settled detail can omit its terminal music note even when the
+            # same transaction's opening frame read it. Keep every other
+            # character, including the rendered upgrade mark, and require the
+            # complete OCR line inside the existing visual candidate family.
+            note = re.fullmatch(
+                r"([^♪+]{3,})♪(\+?)", self._skill_card_display_title(card)
+            )
+            if note is not None:
+                note_alias = "".join(note.groups())
+                terminal_note_aliases[card_id] = note_alias
+                weak_title_owners[note_alias].add(card_id)
         aliases: dict[int, tuple[str, ...]] = {}
         for card_id, title in normalized_titles.items():
             values = [title]
             dropped = title[1:]
             if (
-                dropped_title_owners.get(dropped) == {card_id}
+                weak_title_owners.get(dropped) == {card_id}
                 and dropped not in full_title_owners
             ):
                 values.append(dropped)
+            stroke_alias = f"-{dropped}"
+            if (
+                title.startswith("一")
+                and weak_title_owners.get(stroke_alias) == {card_id}
+                and stroke_alias not in full_title_owners
+            ):
+                values.append(stroke_alias)
+            note_alias = terminal_note_aliases.get(card_id)
+            if (
+                note_alias is not None
+                and weak_title_owners.get(note_alias) == {card_id}
+                and note_alias not in full_title_owners
+            ):
+                values.append(note_alias)
             aliases[card_id] = tuple(values)
         return aliases
 
@@ -824,7 +1142,7 @@ class ArenaEntityCatalog:
         compact = _normalise_skill_card_title_text(detail_text)
         matches = [len(aliases[0])] if aliases[0] in compact else []
         if allow_missing_lead_alias:
-            # A one-glyph-loss alias is deliberately narrower than the exact
+            # A bounded OCR alias is deliberately narrower than the exact
             # title path: it must occupy one complete OCR line.  This prevents
             # effect text or an unrelated longer title from satisfying the
             # recovery merely because it contains the same substring.
@@ -1264,7 +1582,9 @@ class ArenaEntityCatalog:
         if self._pure_generic_cost_delta(customization_id) is not None:
             return "card_face_generic_cost"
         if _normalise_text(definition.get("actions")) == "upgradeHand":
-            return "badge_constraint_only"
+            if self._upgrade_hand_detail_signature(card, "") is None:
+                return "badge_constraint_only"
+            return "detail_positive" if level > 0 else "no_direct_zero_evidence"
         if level == 0:
             return (
                 "visible_baseline"
@@ -1318,6 +1638,13 @@ class ArenaEntityCatalog:
                 for level in range(1, maximum + 1)
             ):
                 return _first_integer_increment(card.get("actions"), field) is not None
+        if self._named_action_threshold_descriptor(card, customization_id) is not None:
+            return True
+        if (
+            "g.scoreByGoodImpressionTurns+=" in str(definition.get("effects", ""))
+            and "score+=goodImpressionTurns*" not in str(card.get("actions", ""))
+        ):
+            return self._good_impression_score_coefficient(card) is not None
         return definition.get("limit") == 0 and card.get("limit") == 1
 
     def generic_cost_hypotheses(
@@ -1537,6 +1864,7 @@ class ArenaEntityCatalog:
         row and therefore needs an independent effect-ROI read before runtime
         use.
         """
+        self._validate_added_numeric_effects(card_id, detail_text)
 
         legal_groups = self.legal_customization_groups(
             card_id,
@@ -1644,10 +1972,12 @@ class ArenaEntityCatalog:
         customization must then be either one of
         those certified omissions, have its own explicitly rendered positive
         signature, or be backed by an independently certified three-frame
-        card-face generic-cost value. Other invisible effects (for example
-        ``upgradeHand`` without a visible positive signature) remain
-        fail-closed.
+        card-face generic-cost value. A customization indistinguishable from
+        an identical base action (for example, another ``upgradeHand`` when
+        the base already contains it) remains fail-closed.
         """
+        self._validate_added_numeric_effects(card_id, full_detail_text)
+        self._validate_added_numeric_effects(card_id, effect_roi_text)
 
         legal_groups = self.legal_customization_groups(
             card_id,
@@ -2045,6 +2375,25 @@ class ArenaEntityCatalog:
             is not None
         )
 
+    @staticmethod
+    def _literal_score_good_condition_annotation(
+        card: Mapping[str, Any],
+        base_score: int,
+    ) -> str:
+        """Bind a rendered annotation to its adjacent, sole literal score action."""
+
+        actions = _normalise_text(card.get("actions"))
+        if len(re.findall(r"(?<![.A-Za-z0-9_])score\+=", actions)) != 1:
+            return ""
+        multiplier = re.search(
+            r"(?:^|;)goodConditionTurnsMultiplier=([1-9][0-9]*(?:\.[0-9]+)?);"
+            rf"score\+={base_score}(?=;|$)",
+            actions,
+        )
+        if multiplier is None:
+            return ""
+        return f"(好調効果を{multiplier.group(1)}倍適用)"
+
     def _detail_counted_score_anchor_present(
         self,
         card: Mapping[str, Any],
@@ -2081,12 +2430,27 @@ class ArenaEntityCatalog:
         )
         if repetitions < 2:
             return False
-        return (
+        if (
             re.search(
                 rf"(?:スコア)?\+{expected_value}[（(]?{repetitions}回(?!まで)",
                 compact,
             )
             is not None
+        ):
+            return True
+        if "好調効果を" not in compact:
+            return False
+        annotation = self._literal_score_good_condition_annotation(
+            card,
+            expected_value - selected_delta,
+        )
+        return bool(
+            annotation
+            and re.search(
+                rf"(?:スコア)?\+{expected_value}{re.escape(annotation)}"
+                rf"[（(]?{repetitions}回(?!まで)",
+                compact,
+            )
         )
 
     def _selected_direct_growth_increment(
@@ -2259,10 +2623,9 @@ class ArenaEntityCatalog:
                 )
                 if int(group.get(str(customization_id), 0)) == level
             )
-        if (
-            self._pure_generic_cost_delta(customization_id) is not None
-            or _normalise_text(definition.get("actions")) == "upgradeHand"
-        ):
+        if _normalise_text(definition.get("actions")) == "upgradeHand":
+            return self._upgrade_hand_detail_signature(card, compact) is True
+        if self._pure_generic_cost_delta(customization_id) is not None:
             return False
         for field in (
             "goodConditionTurns",
@@ -2314,6 +2677,10 @@ class ArenaEntityCatalog:
         """
 
         definition = self._customizations[customization_id]
+        named_threshold = self._named_action_threshold_descriptor(card, customization_id)
+        if named_threshold is not None:
+            field, base_threshold, _ = named_threshold
+            return self._named_action_threshold_is_visible(compact, field, base_threshold)
         typed_cost = re.fullmatch(
             r"(concentration|cost|stamina|fullPowerCharge|goodConditionTurns|goodImpressionTurns|motivation|perfectConditionTurns)-=([0-9]+)",
             str(card.get("cost", "")),
@@ -2392,6 +2759,14 @@ class ArenaEntityCatalog:
                 for level in range(1, int(definition["max"]) + 1)
             ):
                 continue
+            if (
+                action_field == "goodImpressionTurns"
+                and "score+=goodImpressionTurns*" not in str(card.get("actions", ""))
+            ):
+                coefficient = self._good_impression_score_coefficient(card)
+                return coefficient is not None and self._good_impression_score_is_visible(
+                    compact, int(round(coefficient * 100)),
+                )
             base = re.search(
                 rf"score\+={re.escape(action_field)}\*([0-9]+(?:\.[0-9]+)?)",
                 str(card.get("actions", "")),
@@ -2599,10 +2974,15 @@ class ArenaEntityCatalog:
                         and effective_scores.count(effective_scores[0]) == 1
                     ):
                         visible_zero_scores.add(effective_scores[0])
+            annotation = self._literal_score_good_condition_annotation(
+                card,
+                base_scores[0],
+            ) if "好調効果を" in compact else ""
+            annotation_gap = rf"(?:{re.escape(annotation)})?" if annotation else ""
             return any(
                 re.search(
                     rf"スコア\+{score}"
-                    r"(?![0-9]|[.,．，。][0-9]|[（(][0-9]+回)",
+                    rf"(?![0-9]|[.,．，。][0-9]|{annotation_gap}[（(]?[0-9]+回)",
                     compact,
                 )
                 is not None
@@ -2680,6 +3060,7 @@ class ArenaEntityCatalog:
         detail_text: str,
     ) -> tuple[CustomizationObservation, ...]:
         """Extract only card-eligible customization rows from a clicked detail."""
+        self._validate_added_numeric_effects(card_id, detail_text)
 
         import re
 
@@ -2777,6 +3158,7 @@ class ArenaEntityCatalog:
         and requires exactly one combination to agree with the final text.
         Unsupported or non-unique cards fail closed.
         """
+        self._validate_added_numeric_effects(card_id, detail_text)
 
         if isinstance(expected_count, bool) or not isinstance(expected_count, int) or expected_count < 0:
             raise ArenaCatalogError("expected customization count must be a non-negative integer")
@@ -2896,6 +3278,7 @@ class ArenaEntityCatalog:
                 raise ArenaCatalogError(
                     f"effect detail OCR view {view_index} is not a string"
                 )
+            self._validate_added_numeric_effects(card_id, value)
             # A title-bound ROI may already contain independently certified
             # native and enlarged observations.  Flatten nested merges so the
             # outer full-detail/ROI gate still reasons over every source view.
@@ -3011,61 +3394,60 @@ class ArenaEntityCatalog:
             )
         return levels
 
-    def _detail_proves_complete_zero_state(
+    def _resolve_failed_detail_unique_customizations(
         self,
         card_id: int,
         detail_text: str,
-    ) -> bool:
-        """Admit badge-free zero only when every effect has its own zero proof.
+    ) -> dict[str, int]:
+        """Strict error-only solve, evaluating each visible level exactly once.
 
-        A missing positive row is an OCR omission, not evidence for level zero.
-        Each independent OCR view must therefore expose the zero signature for
-        every supported customization before the unconstrained resolver may
-        enumerate the all-zero state.  A reliable external zero badge still
-        uses ``resolve_effective_customizations(..., expected_count=0)``.
+        Unlike badge-assisted positive completion, every available effect must
+        match the same text. There must be one positive group across all
+        totals, including groups that share a total. Nothing is cached across
+        observations and a failed solve never starts a badge-count search.
         """
-
-        card = self._cards_by_id.get(card_id)
-        if card is None:
-            raise ArenaCatalogError(
-                f"skill-card ID is absent from the bundled catalog: {card_id}"
-            )
+        self._validate_added_numeric_effects(card_id, detail_text)
         available = self.available_customization_ids(card_id)
-        views = tuple(
-            view.strip()
-            for view in detail_text.split(_OCR_EFFECT_VIEW_BOUNDARY)
-            if view.strip()
-        )
-        if not views:
-            return False
+        if not available:
+            raise ArenaCatalogError(f"card {card_id} has no positive detail group")
+        card = self._cards_by_id[card_id]
+        compact = _normalise_effect_text(detail_text)
+        levels = []
         for customization_id in available:
             matcher = self._effective_detail_matcher(card, customization_id)
             if matcher is None:
-                return False
-            if any(
-                self._visible_effect_levels(
-                    card,
-                    customization_id,
-                    matcher,
-                    view,
+                raise ArenaCatalogError(
+                    f"card {card_id} has unsupported final-effect signature {customization_id}"
                 )
-                != frozenset({0})
-                for view in views
-            ):
-                return False
-        return True
+            matched = tuple(
+                count for count in range(int(self._customizations[customization_id]["max"]) + 1)
+                if matcher(compact, count)
+            )
+            if not matched:
+                raise ArenaCatalogError(f"card {card_id} has an unresolved visible effect")
+            levels.append(matched)
+        resolved = None
+        for counts in itertools.product(*levels):
+            if not any(counts):
+                continue
+            if resolved is not None:
+                raise ArenaCatalogError(f"card {card_id} has multiple strict positive detail groups")
+            resolved = {
+                str(customization_id): count
+                for customization_id, count in zip(available, counts, strict=True)
+                if count
+            }
+        if resolved is None:
+            raise ArenaCatalogError(f"card {card_id} has no strict positive detail group")
+        return resolved
 
     def resolve_effective_customizations_without_badge_count(
         self,
         card_id: int,
         detail_text: str,
     ) -> dict[str, int]:
-        """Infer one positive badge count from an authorized clicked detail.
-
-        This narrow fallback is only for clean-reference-positive cards whose
-        bounded digit reads remained unreadable.  It enumerates the finite
-        catalog counts and still requires one unique final-effect match.
-        """
+        """Infer one positive combination and its total from final-effect text."""
+        self._validate_added_numeric_effects(card_id, detail_text)
 
         available = self.available_customization_ids(card_id)
         if not available:
@@ -3073,9 +3455,6 @@ class ArenaEntityCatalog:
                 f"card {card_id} cannot infer a positive customization count"
             )
         maximum_total = sum(int(self._customizations[item]["max"]) for item in available)
-        preserve_omitted_siblings = (
-            self._detail_requires_badge_total_for_omitted_siblings(card_id)
-        )
         matches: list[dict[str, int]] = []
         for expected_count in range(1, maximum_total + 1):
             try:
@@ -3083,13 +3462,7 @@ class ArenaEntityCatalog:
                     card_id,
                     detail_text,
                     expected_count=expected_count,
-                    # Some newly rendered additive action rows have no
-                    # independent zero carrier.  For those semantic families,
-                    # keep higher-count states whose sibling row may have been
-                    # omitted by OCR; the bounded face badge must close that
-                    # degree of freedom.  Preserve the previously validated
-                    # strict behavior for other matcher families.
-                    allow_positive_completion=preserve_omitted_siblings,
+                    allow_positive_completion=False,
                 )
             except ArenaCatalogError:
                 continue
@@ -3116,6 +3489,7 @@ class ArenaEntityCatalog:
         two otherwise identical groups.  Three stable source-frame reads close
         that degree of freedom without adding another UI action.
         """
+        self._validate_added_numeric_effects(card_id, detail_text)
 
         if self.generic_cost_hypotheses(card_id) is None:
             raise ArenaCatalogError(
@@ -3168,6 +3542,7 @@ class ArenaEntityCatalog:
         effects that are not visibly rendered while preventing a wrong face
         digit from discarding a unique detail result.
         """
+        self._validate_added_numeric_effects(card_id, detail_text)
 
         if (
             isinstance(observed_badge_count, bool)
@@ -3240,6 +3615,7 @@ class ArenaEntityCatalog:
         widening the later glyph classifier to every integer below the static
         maximum.
         """
+        self._validate_added_numeric_effects(card_id, detail_text)
 
         maximum_total = self.maximum_customization_count(card_id)
         admissible: list[int] = []
@@ -3266,34 +3642,20 @@ class ArenaEntityCatalog:
         detail_text: str,
     ) -> dict[str, int]:
         """Resolve zero or one unique positive combination without badge input."""
+        self._validate_added_numeric_effects(card_id, detail_text)
 
         available = self.available_customization_ids(card_id)
         if not available:
             return {}
         maximum_total = sum(int(self._customizations[item]["max"]) for item in available)
-        preserve_omitted_siblings = (
-            self._detail_requires_badge_total_for_omitted_siblings(card_id)
-        )
         matches: list[dict[str, int]] = []
-        minimum_count = 0
-        if preserve_omitted_siblings and not self._detail_proves_complete_zero_state(
-            card_id,
-            detail_text,
-        ):
-            # The new additive row is absent from the base card, so its matcher
-            # necessarily accepts a missing row at level zero.  Without an
-            # independent zero signature that is only OCR omission, not zero
-            # evidence.  Keep legacy families on their established resolver;
-            # this gate applies solely to the DSL family that introduced the
-            # omission ambiguity.
-            minimum_count = 1
-        for expected_count in range(minimum_count, maximum_total + 1):
+        for expected_count in range(0, maximum_total + 1):
             try:
                 resolved = self.resolve_effective_customizations(
                     card_id,
                     detail_text,
                     expected_count=expected_count,
-                    allow_positive_completion=preserve_omitted_siblings,
+                    allow_positive_completion=False,
                 )
             except ArenaCatalogError:
                 continue
@@ -3324,6 +3686,9 @@ class ArenaEntityCatalog:
         non-cost customization leave exactly two legal states.  Those states
         must differ solely by one single-level ``g.cost+=`` customization.
         """
+        self._validate_added_numeric_effects(card_id, detail_text)
+        self._validate_added_numeric_effects(card_id, full_detail_text or "")
+        self._validate_added_numeric_effects(card_id, effect_roi_text or "")
 
         if observed_badge_count is not None and (
             isinstance(observed_badge_count, bool)
@@ -3857,22 +4222,112 @@ class ArenaEntityCatalog:
         )
         return repetitions == 1 + increment * level
 
-    def _detail_requires_badge_total_for_omitted_siblings(self, card_id: int) -> bool:
-        """Keep sibling action rows unknown until a bounded total is available."""
+    @staticmethod
+    def _upgrade_hand_detail_signature(
+        card: Mapping[str, Any],
+        compact: str,
+    ) -> bool | None:
+        # An existing base action cannot prove whether an identical optional
+        # action was added. Preserve that real ambiguity for such catalogs.
+        if re.search(
+            r"\bupgradeHand\b",
+            f"{card.get('actions', '')};{card.get('effects', '')}",
+        ):
+            return None
+        # Match one complete hand-wide action, not scattered background words.
+        # Normalization already joins legal OCR line wraps and retains the
+        # non-collapsible boundary between independently recognized views.
+        return re.search(
+            r"手札(?:(?:の|にある)スキルカード)?をすべて"
+            r"(?:試験・ステージ中|レッスン中|ステージ中)?強化",
+            compact,
+        ) is not None
 
-        card = self._cards_by_id.get(card_id)
-        if card is None:
-            raise ArenaCatalogError(
-                f"skill-card ID is absent from the bundled catalog: {card_id}"
-            )
-        return any(
-            self._move_random_to_top_descriptor(card, customization_id) is not None
-            or self._dynamic_full_power_score_times_descriptor(
-                card,
-                customization_id,
-            )
-            is not None
-            for customization_id in self.available_customization_ids(card_id)
+    @staticmethod
+    def _good_impression_score_coefficient(card: Mapping[str, Any]) -> float | None:
+        # A bare operand is multiplication by one.  Do not truncate a larger
+        # expression or assign one visible percentage to two scoring actions.
+        actions = str(card.get("actions", ""))
+        bare = re.findall(
+            r"(?:^|[;{])\s*score\+=goodImpressionTurns\s*(?=[;}]|$)", actions,
+        )
+        if not bare:
+            # Preserve the established explicit-multiplier path, including
+            # cards with repeated equal scores in different conditional blocks.
+            explicit = re.search(r"score\+=goodImpressionTurns\*([0-9]+(?:\.[0-9]+)?)", actions)
+            return float(explicit.group(1)) if explicit else None
+        if len(bare) != 1 or actions.count("score+=goodImpressionTurns") != 1:
+            return None
+        return 1.0
+
+    @staticmethod
+    def _good_impression_score_is_visible(compact: str, percent: int) -> bool:
+        views = tuple(view for view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY) if "好印象の" in view)
+        if any(len(set(re.findall(r"好印象の([0-9]+)%分スコア", view))) > 1 for view in views):
+            raise ArenaCatalogError("one effect detail OCR view contains mutually exclusive good-impression percentages")
+        return bool(views) and all(
+            view.count("好印象の") == 1
+            and re.findall(r"好印象の([0-9]+)%分スコア", view) == [str(percent)]
+            for view in views
+        )
+
+    def _named_action_threshold_descriptor(
+        self,
+        card: Mapping[str, Any],
+        customization_id: int,
+    ) -> tuple[str, int, int] | None:
+        """Bind a pure threshold replacement to one uniquely rendered field.
+
+        Anchors are DSL identities, not displayed text.  Repeated conditions
+        on the same field cannot be attributed from their text alone.
+        """
+        definition = self._customizations[customization_id]
+        if int(definition["max"]) != 1 or any(
+            definition.get(key) not in (None, "")
+            for key in ("conditions", "effects", "cost", "limit", "forceInitialHand")
+        ):
+            return None
+        patch = re.fullmatch(
+            r"@([A-Za-z_][A-Za-z_0-9]*)\s+if:"
+            r"(concentration|goodConditionTurns)>=([0-9]+)",
+            str(definition.get("actions", "")).strip(),
+        )
+        if patch is None:
+            return None
+        anchor, field, custom_text = patch.groups()
+        actions = str(card.get("actions", ""))
+        base = re.findall(
+            rf"@{re.escape(anchor)}\s+if:{field}>=([0-9]+)\s*\{{", actions,
+        )
+        if (
+            len(base) != 1
+            or len(re.findall(rf"@{re.escape(anchor)}\b", actions)) != 1
+            or len(re.findall(rf"\bif:{field}\b", actions)) != 1
+            or re.search(rf"\bif:{field}\b", str(card.get("conditions", "")))
+        ):
+            return None
+        base_threshold, custom_threshold = int(base[0]), int(custom_text)
+        if base_threshold == custom_threshold:
+            return None
+        for other_id in self.available_customization_ids(int(card["id"])):
+            if other_id != customization_id and re.search(
+                rf"@{re.escape(anchor)}\b",
+                str(self._customizations[other_id].get("actions", "")),
+            ):
+                return None
+        return field, base_threshold, custom_threshold
+
+    @staticmethod
+    def _named_action_threshold_is_visible(compact: str, field: str, threshold: int) -> bool:
+        label, unit = (
+            ("集中", "") if field == "concentration" else ("好調", "ターン")
+        )
+        prefix = rf"(?<!絶){label}が"
+        views = tuple(view for view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY) if re.search(prefix, view))
+        return bool(views) and all(
+            len(re.findall(prefix, view)) == 1
+            and re.search(rf"{prefix}{threshold}{unit}以上", view) is not None
+            for view in views
         )
 
     def _effective_detail_matcher(
@@ -4228,6 +4683,34 @@ class ArenaEntityCatalog:
 
             return match_card_use_addition
 
+        named_threshold = self._named_action_threshold_descriptor(card, customization_id)
+        if named_threshold is not None:
+            field, base_threshold, custom_threshold = named_threshold
+            named_thresholds = tuple(
+                descriptor
+                for other_id in self.available_customization_ids(int(card["id"]))
+                if (descriptor := self._named_action_threshold_descriptor(card, other_id))
+                is not None
+            )
+
+            def match_named_action_threshold(compact: str, count: int) -> bool:
+                if count not in (0, 1):
+                    return False
+                # Preserve legacy completion for missing rows.  Only an
+                # explicitly rendered invalid or conflicting peer value vetoes
+                # positive evidence from another condition in the same card.
+                if not all(
+                    not re.search(rf"(?<!絶){'集中' if key == 'concentration' else '好調'}が", compact)
+                    or any(self._named_action_threshold_is_visible(compact, key, value) for value in (base, custom))
+                    for key, base, custom in named_thresholds
+                ):
+                    return False
+                return self._named_action_threshold_is_visible(
+                    compact, field, custom_threshold if count else base_threshold,
+                )
+
+            return match_named_action_threshold
+
         condition = str(definition.get("conditions", ""))
         condition_match = re.fullmatch(
             r"@usable if:(goodConditionTurns|goodImpressionTurns|genki|preservationTimes)>=([0-9]+)",
@@ -4432,13 +4915,10 @@ class ArenaEntityCatalog:
             if match:
                 score_by_good_impression_levels[level] = float(match.group(1))
         if score_by_good_impression_levels:
-            base_match = re.search(
-                r"score\+=goodImpressionTurns\*([0-9]+(?:\.[0-9]+)?)",
-                str(card.get("actions", "")),
-            )
-            if base_match is None:
+            base_coefficient = self._good_impression_score_coefficient(card)
+            if base_coefficient is None:
                 return None
-            base_coefficient = float(base_match.group(1))
+            bare_coefficient = "score+=goodImpressionTurns*" not in str(card.get("actions", ""))
 
             def match_score_by_good_impression_growth(
                 compact: str,
@@ -4452,7 +4932,10 @@ class ArenaEntityCatalog:
                 if increment is None:
                     return False
                 percent = int(round((base_coefficient + increment) * 100))
-                return f"好印象の{percent}%分スコア" in compact
+                return (
+                    self._good_impression_score_is_visible(compact, percent)
+                    if bare_coefficient else f"好印象の{percent}%分スコア" in compact
+                )
 
             return match_score_by_good_impression_growth
 
@@ -4577,11 +5060,8 @@ class ArenaEntityCatalog:
         if _normalise_text(definition.get("actions")) == "upgradeHand":
 
             def match_upgrade_hand(compact: str, count: int) -> bool:
-                del compact, count
-                # The contest detail does not render this applied action.  It
-                # remains resolvable only by the other visible alternatives
-                # plus the independently read badge total.
-                return True
+                visible = self._upgrade_hand_detail_signature(card, compact)
+                return visible is None or visible is (count > 0)
 
             return match_upgrade_hand
 

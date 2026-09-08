@@ -1,0 +1,54 @@
+{
+  "ArenaOwnScore": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {
+      "type": "Custom",
+      "param": {
+        "custom_action": "LocalDataConfigure",
+        "custom_action_param": {"capture_mode": "off", "root": ".local/runtime-data"}
+      }
+    },
+    "next": [
+      "ArenaOwnScoreReady",
+      "ArenaOwnScoreHomeFlag",
+      "ArenaOwnScoreEnter",
+      "[JumpBack]ReturnHome",
+      "[JumpBack]BackHome",
+      "[JumpBack]CloseMenu",
+      "[JumpBack]CloseRoundButton"
+    ]
+  },
+  "ArenaOwnScoreHomeFlag": {
+    "recognition": {"type": "TemplateMatch", "param": {"template": ["home.png", "home_1.png"]}},
+    "action": {"type": "DoNothing", "param": {}},
+    "next": ["ArenaOwnScoreClick"]
+  },
+  "ArenaOwnScoreClick": {
+    "recognition": {"type": "TemplateMatch", "param": {"template": "challenge.png"}},
+    "action": {"type": "Click", "param": {}},
+    "next": ["ArenaOwnScoreEnter"]
+  },
+  "ArenaOwnScoreEnter": {
+    "recognition": {"type": "OCR", "param": {"roi": [426, 809, 213, 157], "expected": ["コンテスト"], "replace": []}},
+    "action": {"type": "Click", "param": {}},
+    "post_wait_freezes": 200,
+    "next": ["ArenaOwnScoreReady", "[JumpBack]ClickCenter"]
+  },
+  "ArenaOwnScoreReady": {
+    "recognition": {"type": "OCR", "param": {"expected": ["リハーサル"]}},
+    "action": {"type": "DoNothing", "param": {}},
+    "next": ["ArenaOwnScoreRun"]
+  },
+  "ArenaOwnScoreRun": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaOwnScoreRecalculate"}},
+    "attach": {"simulations": 2000, "timeout_seconds": 180},
+    "next": [],
+    "on_error": ["ArenaOwnScoreStop"]
+  },
+  "ArenaOwnScoreStop": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "DoNothing", "param": {}},
+    "next": []
+  }
+}

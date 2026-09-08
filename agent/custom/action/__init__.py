@@ -13,6 +13,7 @@ __all__ = [
     "ShoppingDailyExchangeMoneyAuto",
     "ShoppingDailyExchangeAPAuto",
     "ChallengeAuto",
+    "ArenaOwnScoreRecalculate",
     "ChallengeResetOwnScorePreparation",
     "ChallengePrepareOwnScore",
     "ProduceChooseCardIdObserve",
