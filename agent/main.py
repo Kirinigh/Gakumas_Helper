@@ -262,6 +262,7 @@ def agent():
         from utils import logger
         from maa.toolkit import Toolkit
         from arena_winrate import DEFAULT_OWN_SCORE_CACHE, OwnScoreCacheStore
+        from arena_winrate.task_log import register_arena_log_sinks
         from maa.agent.agent_server import AgentServer
 
         try:
@@ -274,10 +275,12 @@ def agent():
 
         socket_id = sys.argv[-1]
 
+        arena_log_sinks = register_arena_log_sinks(AgentServer, logger)
         _start_agent_server(AgentServer, socket_id)
         logger.info("AgentServer 启动")
         AgentServer.join()
         AgentServer.shut_down()
+        del arena_log_sinks
         logger.info("AgentServer 关闭")
     except Exception as e:
         logger.exception("Agent 运行过程中发生异常")

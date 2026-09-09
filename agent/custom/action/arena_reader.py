@@ -22,7 +22,7 @@ from collections import Counter, deque
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
-from utils import logger
+from utils import logger as _base_logger
 from maa.context import Context
 from maa.pipeline import JClick, JActionType
 from arena_winrate import (
@@ -74,12 +74,14 @@ from p_item_recognition import (
     measure_p_item_content_generation_from_signatures,
 )
 from card_selection.model import frame_identifier, isolate_card_candidates
+from arena_winrate.task_log import diagnostic_logger
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
 from arena_winrate._detail_text_layout import (
     recover_distant_number_text,
     recover_wrapped_signed_text,
 )
 
+logger = diagnostic_logger(_base_logger)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -706,7 +708,41 @@ class MaaArenaReaderBackend:
     def record_lineup_read_attempt(self, record: dict[str, Any]) -> None:
         logger.info(json.dumps(record, ensure_ascii=False, sort_keys=True))
 
+    def last_failure_location(self, error: object = None) -> dict[str, Any] | None:
+        failure = getattr(self, "_last_detail_failure_location", None)
+        if failure is None:
+            return None
+        original, location = str(failure[0]), failure[1]
+        # The evaluation service adds this one fixed prefix to provider errors.
+        current = str(error).removeprefix("snapshot provider failed: ")
+        member = (
+            str(location.get("team_id")), str(location.get("stage_number")),
+            str(location.get("member_slot")),
+        )
+        contexts = re.findall(r"\b(own|self|opponent-\d+)/stage-(\d+)/member-(\d+)(?!\d)", current)
+        if any(context != member for context in contexts):
+            return None
+        if original not in current:
+            # _read_team keeps the code but inserts this member before the
+            # original detail. Require the exact cause and coordinates, not
+            # merely a recurring error code from an earlier transaction.
+            code, separator, detail = original.partition(":")
+            prefix = f"{member[0]}/stage-{member[1]}/member-{member[2]}: "
+            if not separator or current != f"{code}: {prefix}{detail.lstrip()}":
+                return None
+        return dict(location)
+
+    def _note_confirmed_detail_name(self, card_id: int) -> None:
+        diagnostic = getattr(self, "_detail_failure_frames", None)
+        if diagnostic is None:
+            return
+        try:
+            diagnostic["position"]["card_name"] = self.catalog.skill_card_title(card_id)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            pass
+
     def _begin_detail_diagnostics(self, *, source: Any = None, **position: Any) -> None:
+        self._last_detail_failure_location = None
         target = position.pop("target", None)
         if target is not None:
             position.update(team_id=getattr(target, "team_id", None), opponent_position=getattr(target, "opponent_position", None))
@@ -730,6 +766,7 @@ class MaaArenaReaderBackend:
         self._detail_failure_frames = None
         if diagnostic is None:
             return
+        self._last_detail_failure_location = (error, dict(diagnostic["position"]))
         save_started = time.perf_counter()
         try:
             import cv2
@@ -854,7 +891,10 @@ class MaaArenaReaderBackend:
             phase = getattr(self, "_detail_failure_frames", None)
             if phase is not None:
                 self._record_duration_sample(f"skill_card_detail_{phase['position'].get('phase', 'body')}_failed", elapsed)
-            self._persist_detail_failure(error or "skill_card_transaction_failed")
+            self._persist_detail_failure(
+                error or (phase.get("error") if phase is not None else None)
+                or "skill_card_transaction_failed"
+            )
         else:
             self._detail_failure_frames = None
         if ocr_started is not None:
@@ -3764,6 +3804,7 @@ class MaaArenaReaderBackend:
         return tuple(occupied)
 
     def open_member(self, target: TeamTarget, stage_number: int, slot: int) -> None:
+        self._last_detail_failure_location = None
         boxes = self._member_boxes.get((target.team_id, stage_number), {})
         box = boxes.get(slot)
         if box is None:
@@ -4909,6 +4950,8 @@ class MaaArenaReaderBackend:
                     time.sleep(0.12)
                     continue
                 resolved = matches[0]
+                if diagnostic is not None:
+                    diagnostic["position"]["p_item_name"] = last_title_text
                 if unique_match_used_effect:
                     self._increment("p_item_detail_effect_disambiguations")
                 detail_confirmed = True
@@ -7458,7 +7501,7 @@ class MaaArenaReaderBackend:
                 except ArenaReaderError:
                     last_text = ""
                 try:
-                    self._confirm_clicked_skill_card_id(
+                    confirmed_card_id = self._confirm_clicked_skill_card_id(
                         last_text,
                         candidate_ids,
                         expected_customization_count=expected_customization_count,
@@ -7467,6 +7510,7 @@ class MaaArenaReaderBackend:
                         source_card_box=card_box,
                     )
                     self._card_detail_texts[key] = last_text
+                    self._note_confirmed_detail_name(confirmed_card_id)
                     self._card_detail_images[key] = detail_image
                     contact_times = getattr(
                         self,
@@ -9606,10 +9650,18 @@ class MaaArenaReaderBackend:
         try:
             return self._read_resolved_card_detail_once(key, candidate_ids, **arguments)
         except ArenaReaderError as error:
+            diagnostic = getattr(self, "_detail_failure_frames", None)
+            if diagnostic is not None:
+                diagnostic["error"] = str(error)
             used_contacts = getattr(self, "_card_transaction_contact_counts", {}).get(key)
             if error.code != "skill_card_detail_disappeared" or used_contacts != 1:
                 raise
             original_error = str(error)
+        except Exception as error:
+            diagnostic = getattr(self, "_detail_failure_frames", None)
+            if diagnostic is not None:
+                diagnostic["error"] = str(error)
+            raise
         started = time.perf_counter()
         before = dict(self._runtime_counts)
         succeeded = False
@@ -9626,6 +9678,11 @@ class MaaArenaReaderBackend:
             succeeded = True
             self._increment("skill_card_detail_reopen_successes")
             return resolved
+        except Exception as error:
+            diagnostic = getattr(self, "_detail_failure_frames", None)
+            if diagnostic is not None:
+                diagnostic["error"] = str(error)
+            raise
         finally:
             elapsed = time.perf_counter() - started
             self._record_duration_sample("skill_card_detail_reopen", elapsed)

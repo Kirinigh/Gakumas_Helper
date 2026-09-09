@@ -8,11 +8,12 @@ import time
 import ctypes
 from datetime import datetime, timezone
 
-from utils import logger
+from utils import logger as user_logger
 from maa.context import Context
 from maa.custom_action import CustomAction
 
 from .reader import ArenaPageState, classify_arena_page
+from .task_log import arena_task_log, diagnostic_logger, report_action_failure
 from .challenge_flow import (
     ArenaChallengeFlowError,
     ArenaChallengeRecordStore,
@@ -22,6 +23,40 @@ from .challenge_flow import (
     result_observations_complete,
     serialise_result_observations,
 )
+
+logger = diagnostic_logger(user_logger)
+
+
+def _show_saved_result(context, capture_id, store, result=None, *, result_path=None):
+    state = arena_task_log.current(context)
+    if state is None or capture_id in state.results:
+        return
+    try:
+        if result is None:
+            path = result_path if result_path is not None else store.recorded_result_path(capture_id)
+            if path is None:
+                return
+            result = json.loads(path.read_text(encoding="utf-8"))["result"]
+        arena_task_log.result_saved(context, capture_id, result, user_logger)
+    except Exception as error:
+        logger.warning(f"Could not display the saved arena result: {error}")
+
+
+def _show_resumed_return(context, capture_id, store, path):
+    """Reflect a completed child pipeline in its original parent task only."""
+    if arena_task_log.current(context) is None:
+        return
+    try:
+        if path is None:
+            return
+        record = store._load_result(path)
+        store._require_result_capture_id(record, capture_id)
+        if record["lifecycle"]["state"] not in {"FINISHED", "RECOVERED_FINISHED"}:
+            return
+        _show_saved_result(context, capture_id, store, record["result"])
+        arena_task_log.returned(context, capture_id, exhausted=record["return_verification"]["evidence"].get("daily_attempts_exhausted", False))
+    except Exception:
+        logger.exception("竞技场已恢复对局的摘要生成失败")
 
 
 def _administrator_process() -> bool:
@@ -179,11 +214,12 @@ class ArenaChallengeRecordResultAction(CustomAction):
         super().__init__()
         self._record_store = ArenaChallengeRecordStore() if record_store is None else record_store
 
-    def _save(self, capture_id: str, result: dict) -> bool:
+    def _save(self, capture_id: str, result: dict, *, context=None) -> bool:
         store = self._record_store
         unrecorded_failures = 0
         while True:
             if store.recorded_result_path(capture_id) is not None:
+                _show_saved_result(context, capture_id, store)
                 return True
             previous_attempts = store._recovery_budget(store._pending_for_capture(capture_id))["save_attempts"]
             try:
@@ -209,8 +245,10 @@ class ArenaChallengeRecordResultAction(CustomAction):
                 "event": "arena_challenge_result_recorded",
                 "result_path": str(path), "result": result,
             }, ensure_ascii=False, sort_keys=True))
+            _show_saved_result(context, capture_id, store, result)
             return True
 
+    @report_action_failure("竞技场结果尚未完整保存，任务已中断", user_logger)
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         del argv
         try:
@@ -222,10 +260,11 @@ class ArenaChallengeRecordResultAction(CustomAction):
                 raise ArenaChallengeFlowError("result page has no pending challenge")
             capture_id = str(pending.get("capture_id", ""))
             if store.recorded_result_path(capture_id) is not None:
+                _show_saved_result(context, capture_id, store)
                 return True
             result = store.recoverable_pending_result(capture_id)
             if result is not None:
-                return self._save(capture_id, result)
+                return self._save(capture_id, result, context=context)
             retry_deadline = None
             while retry_deadline is None or time.monotonic() < retry_deadline:
                 if not store.reserve_result_frame(capture_id):
@@ -240,7 +279,7 @@ class ArenaChallengeRecordResultAction(CustomAction):
                     "contest_day": pending.get("contest_day", contest_day_key()),
                 })
                 if result_observations_complete(result):
-                    return self._save(capture_id, result)
+                    return self._save(capture_id, result, context=context)
                 store.note_incomplete_result(result, capture_id=capture_id)
                 if retry_deadline is None:
                     retry_deadline = time.monotonic() + 2.0
@@ -275,10 +314,19 @@ def resume_pending_challenge(context: Context, argv=None, store=None) -> bool:
             and verification.get("evidence_origin") == "product"
             and isinstance(verification.get("evidence"), dict)
         ):
-            store.complete_return(pending["capture_id"], evidence=verification["evidence"])
+            path = store.complete_return(pending["capture_id"], evidence=verification["evidence"])
+            _show_resumed_return(context, pending["capture_id"], store, path)
             return True
+        try:
+            result_path = store.recorded_result_path(pending["capture_id"])
+        except Exception:
+            logger.exception("竞技场恢复摘要路径暂时不可读；继续原回场流程")
+            result_path = None
         task = context.run_task("ArenaChallengeResumeReturn")
-        return bool(task and task.status.succeeded and store.load_pending() is None)
+        resumed = bool(task and task.status.succeeded and store.load_pending() is None)
+        if resumed:
+            _show_resumed_return(context, pending["capture_id"], store, result_path)
+        return resumed
     except Exception as error:
         logger.error(f"竞技场客户端待办恢复未完成，禁止新挑战: {error}")
         return False
@@ -335,6 +383,7 @@ class ArenaChallengeVerifyRefreshAction(CustomAction):
             ArenaChallengeRecordStore() if record_store is None else record_store
         )
 
+    @report_action_failure("竞技场返回确认未完成，任务已中断", user_logger)
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         del argv
         if not _administrator_process():
@@ -476,6 +525,8 @@ class ArenaChallengeVerifyRefreshAction(CustomAction):
                         sort_keys=True,
                     )
                 )
+                _show_saved_result(context, pending_capture_id, self._record_store, result_path=result_path)
+                arena_task_log.returned(context, pending_capture_id, exhausted=last_return_evidence["daily_attempts_exhausted"])
                 return True
             if page_state == "RESEND_FINISH":
                 current_finish_box = tuple(int(value) for value in finish_results[0].box)

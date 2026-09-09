@@ -8,7 +8,7 @@ from functools import wraps
 from dataclasses import asdict
 from collections.abc import Mapping, Callable
 
-from utils import logger
+from utils import logger as user_logger
 from maa.context import Context
 from maa.pipeline import JClick, JActionType
 from arena_winrate import (
@@ -36,6 +36,7 @@ from arena_winrate import (
 from maa.custom_action import CustomAction
 from arena_winrate.config import resolve_cached_arena_grade
 from arena_winrate.decision import HIGHEST_WIN_RATE_FALLBACK_RULE
+from arena_winrate.task_log import arena_task_log, diagnostic_logger, opponent_rates_message
 from maa.agent.agent_server import AgentServer
 from arena_winrate.user_messages import (
     ArenaUserStatus,
@@ -56,6 +57,8 @@ from arena_winrate.maa_challenge_actions import (
 
 from .arena_reader import MaaArenaReaderBackend
 
+logger = diagnostic_logger(user_logger)
+
 _CHALLENGE_CONFIG_CARRIERS = (
     "ChallengeStrategyConfig",
     "ChallengeSeasonConfig",
@@ -68,11 +71,19 @@ def _administrator_process() -> bool:
     return bool(ctypes.windll.shell32.IsUserAnAdmin())
 
 
+def _failure_location(backend, error):
+    lookup = getattr(backend, "last_failure_location", None)
+    return lookup(error) if callable(lookup) else None
+
+
 def _publish_status(context: Context, status: ArenaUserStatus, *, log_detail: str | None = None) -> bool:
     message = status.message
     if log_detail:
         message = f"{message}；技术细节：{log_detail}"
     getattr(logger, status.level)(message)
+    getattr(user_logger, status.level)(status.message)
+    if status.level == "error":
+        arena_task_log.failed(context, status.message)
     focus_content = status.message.replace("\\", "＼").replace("/", "／")
     try:
         context.run_action(
@@ -82,7 +93,7 @@ def _publish_status(context: Context, status: ArenaUserStatus, *, log_detail: st
                     "focus": {
                         "Node.ActionNode.Succeeded": {
                             "content": focus_content,
-                            "display": ["log", "notification"],
+                            "display": ["notification"],
                         }
                     }
                 }
@@ -109,9 +120,10 @@ def _report_unexpected_errors(method: Callable[..., bool]) -> Callable[..., bool
         try:
             return method(self, context, argv)
         except Exception as error:
+            logger.exception("竞技场任务出现未处理异常")
             return _stop_with_error(
                 context,
-                f"竞技场任务发生未处理异常 {type(error).__name__}，已安全停止",
+                "竞技场任务出现异常，已中断",
                 error,
             )
 
@@ -269,7 +281,8 @@ class ArenaOwnScoreRecalculate(CustomAction):
             )
             _publish_status(
                 context,
-                own_score_user_status(evaluation, simulations=config.simulations),
+                own_score_user_status(evaluation, simulations=config.simulations,
+                                      location=_failure_location(backend, evaluation.error_detail or evaluation.error)),
                 log_detail=(
                     evaluation.error_detail or evaluation.error
                     if evaluation.status != "calculated"
@@ -350,7 +363,8 @@ def _prepare_daily_own_score_cache(
     if evaluation.status != "calculated":
         return _publish_status(
             context,
-            own_score_user_status(evaluation, simulations=simulations),
+            own_score_user_status(evaluation, simulations=simulations,
+                                  location=_failure_location(backend, evaluation.error_detail or evaluation.error)),
             log_detail=evaluation.error_detail or evaluation.error,
         )
     if cached is None:
@@ -408,8 +422,13 @@ class ChallengeResetOwnScorePreparation(CustomAction):
         context: Context,
         argv: CustomAction.RunArg,
     ) -> bool:
+        try:
+            if _resolved_challenge_params(context).get("mode", "win_rate") == "win_rate":
+                arena_task_log.enable(context)
+        except Exception:
+            logger.exception("竞技场日志模式尚未解析；继续原待办恢复")
         if not resume_pending_challenge(context, argv):
-            return False
+            return _stop_with_error(context, "上次竞技场对局尚未恢复，任务已中断")
         reset_prepared_own_score_cache(OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE))
         logger.info("已清除上一任务可能遗留的竞技场己方缓存准备状态")
         return True
@@ -633,6 +652,7 @@ class ChallengeAuto(CustomAction):
             )
 
         if mode in {"win_rate", "win_rate_recalculate_own"}:
+            arena_task_log.enable(context)
             try:
                 config = ArenaRuntimeConfig.from_mapping(params)
             except ValueError as error:
@@ -707,6 +727,7 @@ class ChallengeAuto(CustomAction):
                         own_score_user_status(
                             own_evaluation,
                             simulations=config.simulations,
+                            location=_failure_location(backend, own_evaluation.error_detail or own_evaluation.error),
                         ),
                         log_detail=(
                             own_evaluation.error_detail or own_evaluation.error
@@ -798,6 +819,13 @@ class ChallengeAuto(CustomAction):
                     "竞技场 Grade 已从己方缓存复用: "
                     f"有效值={effective_grade}, 来源={grade_state.source}, "
                     f"识别值={grade_state.recognized_grade}, 覆盖值={grade_state.grade_override}"
+                )
+                arena_task_log.background(
+                    context,
+                    f"竞技场日常：第 {season.season} 期，Grade {effective_grade}；"
+                    f"胜率门槛 {config.threshold_percent}%，模拟 {config.simulations} 次，超时 {config.timeout_seconds} 秒；"
+                    + ("本轮已刷新己方数据" if auto_recalculate_own else "使用已保存的己方数据"),
+                    user_logger,
                 )
                 backend = MaaArenaReaderBackend(
                     context,
@@ -902,9 +930,10 @@ class ChallengeAuto(CustomAction):
             ):
                 return _publish_status(
                     context,
-                    win_rate_stop_user_status(evaluation),
+                    win_rate_stop_user_status(evaluation, location=_failure_location(backend, evaluation.error)),
                     log_detail=evaluation.error,
                 )
+            user_logger.info(opponent_rates_message(evaluation.decision))
             if contest_day_key() != contest_day:
                 return _stop_with_error(
                     context,
@@ -1031,6 +1060,7 @@ class ArenaChallengeStartOnce(CustomAction):
             try:
                 # Persist before sending: a lost response cannot rearm Start.
                 store.mark_battle_started(str(pending.get("capture_id", "")))
+                arena_task_log.battle_started(context, str(pending.get("capture_id", "")))
             except (ArenaChallengeFlowError, OSError) as error:
                 return _stop_with_error(context, "当前对局已发送开始或无法登记，未重复挑战", error)
         return _challenge_recognized_click(context, argv)

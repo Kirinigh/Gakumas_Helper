@@ -1,6 +1,6 @@
 import sys
-from datetime import timedelta
 from pathlib import Path
+from datetime import timedelta
 
 DEFAULT_LOG_DIR = Path(".local/runtime-data/logs")
 LOG_ROTATION = "00:00"
@@ -36,7 +36,7 @@ try:
             record["extra"]["level_short"] = level_map.get(
                 record["level"].name, record["level"].name.lower()
             )
-            return True
+            return record["extra"].get("ui_visible", True)
 
         _logger.add(
             sys.stderr,
@@ -106,6 +106,9 @@ except ImportError:
         def trace(self, message, *args, **kwargs):
             return self._wrapped.debug(message, *args, **kwargs)
 
+        def bind(self, **extra):
+            return CompatibleLogger(logging.LoggerAdapter(self._wrapped, extra))
+
 
     _fallback_logger = logging.getLogger("maagakumasu")
 
@@ -127,6 +130,7 @@ except ImportError:
 
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(console_level)
+        console_handler.addFilter(lambda record: getattr(record, "ui_visible", True))
         console_handler.setFormatter(ShortLevelFormatter("%(level_short)s:%(message)s"))
 
         file_handler = TimedRotatingFileHandler(
