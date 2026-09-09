@@ -6,6 +6,7 @@ import re
 import json
 import itertools
 from typing import Any
+from decimal import Decimal
 from pathlib import Path
 from collections import defaultdict
 from dataclasses import replace, dataclass
@@ -332,6 +333,14 @@ class ArenaEntityCatalog:
             title: tuple(owners) for title, owners in by_display_title.items()
         }
         self._skill_card_title_aliases = self._build_skill_card_title_aliases()
+        self._skill_card_terminal_note_titles = {
+            "".join(note.groups()): card_id
+            for card_id, card in self._cards_by_id.items()
+            if (note := re.fullmatch(
+                r"([^♪+]{3,})♪(\+?)", self._skill_card_display_title(card)
+            )) is not None
+            and "".join(note.groups()) in self._skill_card_title_aliases[card_id][1:]
+        }
         self._p_items_by_id = {
             int(row["id"]): row
             for row in self._p_items
@@ -421,6 +430,7 @@ class ArenaEntityCatalog:
 
     def _validate_added_numeric_effects(self, card_id: int, detail_text: str) -> None:
         """Reject corrupt present optional rows without redefining absent rows."""
+        self._validate_good_impression_buff_effect(card_id, detail_text)
         domains, _ = self._added_numeric_effect_domains(card_id)
         if not domains or not isinstance(detail_text, str):
             return
@@ -1096,7 +1106,8 @@ class ArenaEntityCatalog:
             # A settled detail can omit its terminal music note even when the
             # same transaction's opening frame read it. Keep every other
             # character, including the rendered upgrade mark, and require the
-            # complete OCR line inside the existing visual candidate family.
+            # complete OCR line. Global recovery uses its own restricted index;
+            # other weak aliases remain confined to the visual family.
             note = re.fullmatch(
                 r"([^♪+]{3,})♪(\+?)", self._skill_card_display_title(card)
             )
@@ -1322,6 +1333,26 @@ class ArenaEntityCatalog:
         if isinstance(card_id, bool) or not isinstance(card_id, int) or card_id < 1:
             raise ArenaCatalogError("resolved skill-card ID is invalid")
         return card_id
+
+    def confirm_clicked_skill_card_by_terminal_note_title(self, detail_text: str) -> int:
+        """Recover only one globally unique omitted terminal music note.
+
+        The caller must first prove a new popup title row from frame geometry
+        and source-page text. This is not a general weak-title lookup: exact
+        names, other missing characters and joined OCR lines cannot enter it.
+        """
+        lines = tuple(
+            normalized
+            for line in str(detail_text or "").splitlines()
+            if (normalized := _normalise_skill_card_title_text(line))
+        )
+        if len(lines) == 1:
+            card_id = self._skill_card_terminal_note_titles.get(lines[0])
+            if card_id is not None:
+                return card_id
+        raise ArenaCatalogError(
+            "clicked skill-card terminal-note title requires one globally unique OCR line"
+        )
 
     def confirm_clicked_customizable_skill_card(
         self,
@@ -4330,6 +4361,58 @@ class ArenaEntityCatalog:
             for view in views
         )
 
+    def _good_impression_buff_descriptor(
+        self, card: Mapping[str, Any], customization_id: int,
+    ) -> tuple[int, int] | None:
+        """Bind the real preview's 好印象強化 sentence to its DSL operands."""
+        definition = self._customizations[customization_id]
+        action = re.fullmatch(
+            r"setGoodImpressionTurnsEffectBuff\(([0-9]+(?:\.[0-9]+)?),([1-9][0-9]*)\);?",
+            _normalise_text(definition.get("actions")),
+        )
+        if (
+            action is None or definition.get("max") != 1
+            or any(definition.get(field) not in (None, "", False) for field in (
+                "conditions", "cost", "effects", "forceInitialHand", "limit",
+            ))
+            or any("setGoodImpressionTurnsEffectBuff" in str(card.get(field) or "")
+                   for field in ("actions", "effects"))
+        ):
+            return None
+        percent = Decimal(action.group(1)) * 100
+        if percent <= 0 or percent != percent.to_integral_value():
+            return None
+        return int(percent), int(action.group(2))
+
+    def _validate_good_impression_buff_effect(self, card_id: int, detail_text: str) -> None:
+        # Absence retains the existing complete-detail contract. A present but
+        # damaged row must not be filled from a badge count or another effect.
+        if not isinstance(detail_text, str) or "強" not in detail_text or "好" not in detail_text:
+            return
+        compact = _normalise_effect_text(detail_text)
+        if "好印象強化" not in compact:
+            return
+        card = self._cards_by_id.get(card_id)
+        if card is None:
+            return
+        operands = {
+            descriptor for identifier in self.available_customization_ids(card_id)
+            if (descriptor := self._good_impression_buff_descriptor(card, identifier)) is not None
+        }
+        if not operands:
+            return
+        patterns = tuple(re.compile(rf"好印象強化\+{percent}%\({turns}ターン\)")
+                         for percent, turns in operands)
+        for view_index, view in enumerate(compact.split(_OCR_EFFECT_VIEW_BOUNDARY)):
+            markers = tuple(re.finditer("好印象強化", view))
+            if len(markers) > 1 or any(
+                not any(pattern.match(view, marker.start()) for pattern in patterns)
+                for marker in markers
+            ):
+                raise ArenaCatalogError(
+                    f"malformed good-impression buff effect: card {card_id}, view {view_index}"
+                )
+
     def _effective_detail_matcher(
         self,
         card: Mapping[str, Any],
@@ -4377,6 +4460,22 @@ class ArenaEntityCatalog:
         normalized_customization_actions = _normalise_text(
             definition.get("actions")
         )
+        if "setGoodImpressionTurnsEffectBuff" in normalized_customization_actions:
+            impression_buff = self._good_impression_buff_descriptor(card, customization_id)
+            if impression_buff is None:
+                return None
+            percent, turns = impression_buff
+            visible_pattern = re.compile(
+                rf"好印象強化\+{percent}%\({turns}ターン\)"
+            )
+
+            def match_good_impression_buff(compact: str, count: int) -> bool:
+                if count not in (0, 1):
+                    return False
+                visible = visible_pattern.search(compact) is not None
+                return visible if count else "好印象強化" not in compact
+
+            return match_good_impression_buff
         good_condition_applied_score = (
             self._good_condition_applied_score_descriptor(
                 card,

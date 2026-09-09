@@ -6879,6 +6879,18 @@ class MaaArenaReaderBackend:
             )
         except ArenaCatalogError as error:
             candidate_error = error
+        if title_text is not None:
+            note_resolver = getattr(
+                self.catalog, "confirm_clicked_skill_card_by_terminal_note_title", None,
+            )
+            if note_resolver is not None:
+                try:
+                    recovered_id = note_resolver(title_text)
+                except ArenaCatalogError:
+                    pass
+                else:
+                    self._increment("skill_card_terminal_note_title_recoveries")
+                    return recovered_id
         try:
             return self.catalog.confirm_clicked_customizable_skill_card_without_badge_count(
                 identity_text
@@ -6896,6 +6908,38 @@ class MaaArenaReaderBackend:
                 raise exact_title_error
             assert candidate_error is not None
             raise candidate_error
+
+    def _resolve_proven_skill_card_title(self, title_text: str) -> int:
+        """Resolve a geometrically proven title without widening other aliases."""
+        exact_resolver = getattr(self.catalog, "confirm_clicked_skill_card_by_exact_title", None)
+        if exact_resolver is None:
+            raise ArenaCatalogError("catalog has no exact title resolver")
+        try:
+            return exact_resolver(title_text)
+        except ArenaCatalogError:
+            note_resolver = getattr(
+                self.catalog, "confirm_clicked_skill_card_by_terminal_note_title", None,
+            )
+            if note_resolver is None:
+                raise
+            return note_resolver(title_text)
+
+    def _same_proven_skill_card_title(self, first: str, second: str, card_id: int) -> bool:
+        if first == second:
+            return True
+        if not any(
+            (note := re.fullmatch(r"([^♪+]{3,})♪(\+?)", complete)) is not None
+            and "".join(note.groups()) == omitted
+            for complete, omitted in ((first, second), (second, first))
+        ):
+            return False
+        try:
+            return (
+                self._resolve_proven_skill_card_title(first)
+                == self._resolve_proven_skill_card_title(second) == card_id
+            )
+        except ArenaCatalogError:
+            return False
 
     def _normalized_skill_card_ocr_lines(self, text: str) -> tuple[str, ...]:
         normalizer = getattr(
@@ -7157,7 +7201,7 @@ class MaaArenaReaderBackend:
             if hasattr(self, "_runtime_counts"):
                 self._increment("skill_card_exact_title_index_queries")
             try:
-                exact_resolver(line)
+                self._resolve_proven_skill_card_title(line)
                 return True
             except ArenaCatalogError:
                 pass
@@ -9280,7 +9324,7 @@ class MaaArenaReaderBackend:
         if title_text is None:
             return None
         try:
-            exact_card_id = exact_resolver(title_text)
+            exact_card_id = self._resolve_proven_skill_card_title(title_text)
         except ArenaCatalogError:
             return None
         if exact_card_id != resolved.card_id:
@@ -9340,7 +9384,9 @@ class MaaArenaReaderBackend:
             and observation.source_guard_frames is first.source_guard_frames
             and observation.restoration_signatures is first.restoration_signatures
             and observation.identity_frames is first.identity_frames
-            and observation.title == first.title
+            and self._same_proven_skill_card_title(
+                observation.title, first.title, resolved.card_id,
+            )
             and observation.card_id == first.card_id == resolved.card_id
             for observation in selected
         )
@@ -10719,6 +10765,9 @@ class MaaArenaReaderBackend:
         )
         self._increment("skill_card_detail_failed_resolutions")
         if terminal_error is not None:
+            # The detail transaction owns this terminal decision. Propagate it
+            # through both direct and badge paths without renewing the budget.
+            terminal_error.retry_whole_read = False
             raise terminal_error
         if self._skill_card_detail_disappeared(
             key, opened_image, opened_capture_time, transaction_token,
@@ -12524,7 +12573,7 @@ class MaaArenaReaderBackend:
             if title_text is None:
                 return False
             try:
-                confirmed_card_id = exact_resolver(title_text)
+                confirmed_card_id = self._resolve_proven_skill_card_title(title_text)
             except ArenaCatalogError:
                 return False
             if confirmed_card_id != expected_card_id:

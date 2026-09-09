@@ -170,7 +170,7 @@
       ],
       "default_check": false,
       "description": ".local/arena-win-rate/own-score-cache-summary.md",
-      "label": "重算竞技场己方总分"
+      "label": "$重算竞技场己方总分"
     },
     {
       "name": "每周免费初星包",
@@ -787,22 +787,26 @@
     },
     "arena_recalculate_own_score_parameters": {
       "type": "input",
-      "label": "己方总分重算参数",
-      "description": "每日挑战默认复用己方缓存；首次使用、期数或编成变化后可手动运行本任务，也可在每日挑战的胜率模式中临时启用自动重算。任务说明会显示当前缓存摘要。",
+      "label": "$己方总分重算参数",
+      "description": "$己方总分重算参数说明",
       "inputs": [
         {
           "name": "arena_own_score_simulations",
-          "label": "模拟次数",
+          "label": "$模拟次数",
+          "description": "$模拟次数说明",
           "default": "2000",
           "pipeline_type": "int",
-          "verify": "^[1-9]\\d{3,}$"
+          "verify": "^[1-9]\\d{3,}$",
+          "pattern_msg": "$模拟次数输入说明"
         },
         {
           "name": "arena_own_score_timeout_seconds",
-          "label": "模拟超时（秒）",
-          "default": "180",
+          "label": "$模拟超时（秒）",
+          "description": "$模拟超时说明",
+          "default": "300",
           "pipeline_type": "int",
-          "verify": "^[1-9]\\d*$"
+          "verify": "^[1-9]\\d*$",
+          "pattern_msg": "$模拟超时输入说明"
         }
       ],
       "pipeline_override": {
@@ -817,7 +821,7 @@
     "每日挑战本地画面采集": {
       "type": "select",
       "default_case": "关闭",
-      "description": "$本地画面采集说明",
+      "description": "$竞技场本地画面采集说明",
       "cases": [
         {
           "name": "关闭",
@@ -845,7 +849,7 @@
         },
         {
           "name": "ROI与失败现场",
-          "label": "$ROI与失败现场",
+          "label": "$竞技场识别区域及失败现场",
           "pipeline_override": {
             "LocalDataConfigureChallenge": {
               "custom_action_param": {
@@ -857,7 +861,7 @@
         },
         {
           "name": "截图ROI与失败现场",
-          "label": "$截图ROI与失败现场",
+          "label": "$竞技场截图及识别区域及失败现场",
           "pipeline_override": {
             "LocalDataConfigureChallenge": {
               "custom_action_param": {
@@ -868,10 +872,11 @@
           }
         }
       ],
-      "label": "$本地画面采集"
+      "label": "$竞技场本地画面采集"
     },
     "挑战模式": {
       "type": "select",
+      "description": "$每日挑战说明",
       "default_case": "胜率选敌",
       "cases": [
         {
@@ -1112,6 +1117,7 @@
         {
           "name": "arena_win_rate_threshold_percent",
           "label": "$胜率门槛（百分比）",
+          "description": "$胜率门槛说明",
           "default": "70",
           "pipeline_type": "int",
           "verify": "^(?:100|[1-9]?\\d)$",
@@ -1120,6 +1126,7 @@
         {
           "name": "arena_win_rate_simulations",
           "label": "$模拟次数",
+          "description": "$模拟次数说明",
           "default": "2000",
           "pipeline_type": "int",
           "verify": "^[1-9]\\d{3,}$",
@@ -1128,7 +1135,8 @@
         {
           "name": "arena_win_rate_timeout_seconds",
           "label": "$模拟超时（秒）",
-          "default": "180",
+          "description": "$模拟超时说明",
+          "default": "300",
           "pipeline_type": "int",
           "verify": "^[1-9]\\d*$",
           "pattern_msg": "$模拟超时输入说明"

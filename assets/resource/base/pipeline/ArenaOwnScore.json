@@ -42,7 +42,7 @@
   "ArenaOwnScoreRun": {
     "recognition": {"type": "DirectHit", "param": {}},
     "action": {"type": "Custom", "param": {"custom_action": "ArenaOwnScoreRecalculate"}},
-    "attach": {"simulations": 2000, "timeout_seconds": 180},
+    "attach": {"simulations": 2000, "timeout_seconds": 300},
     "next": [],
     "on_error": ["ArenaOwnScoreStop"]
   },

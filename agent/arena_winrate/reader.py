@@ -24,9 +24,10 @@ from .stages import ContestSeasonDefinition
 class ArenaReaderError(RuntimeError):
     """Raised when a screen state or required visible field is ambiguous."""
 
-    def __init__(self, code: str, detail: str) -> None:
+    def __init__(self, code: str, detail: str, *, retry_whole_read: bool = True) -> None:
         self.code = code
         self.detail = detail
+        self.retry_whole_read = retry_whole_read
         super().__init__(f"{code}: {detail}")
 
 
@@ -956,6 +957,7 @@ class ArenaLineupReader:
                 raise ArenaReaderError(
                     "recovery_failed",
                     f"read failed at {active_target}: {error}; recovery also failed: {recovery_error}",
+                    retry_whole_read=getattr(error, "retry_whole_read", True),
                 ) from error
             if isinstance(error, ArenaReaderError):
                 raise
@@ -995,6 +997,7 @@ class ArenaLineupReader:
                 raise ArenaReaderError(
                     "recovery_failed",
                     f"own-team read failed while active={active}: {error}; recovery also failed: {recovery_error}",
+                    retry_whole_read=getattr(error, "retry_whole_read", True),
                 ) from error
             if isinstance(error, ArenaReaderError):
                 raise
@@ -1049,6 +1052,7 @@ class ArenaLineupReader:
                 raise ArenaReaderError(
                     "recovery_failed",
                     f"opponent read failed at {active_target}: {error}; recovery also failed: {recovery_error}",
+                    retry_whole_read=getattr(error, "retry_whole_read", True),
                 ) from error
             if isinstance(error, ArenaReaderError):
                 raise
@@ -1092,6 +1096,7 @@ class ArenaLineupReader:
                         error.code,
                         f"{target.team_id}/stage-{stage_number}/member-{slot}: "
                         f"{error.detail}",
+                        retry_whole_read=error.retry_whole_read,
                     ) from error
                 if observation.support_bonus is not None:
                     support_bonus = observation.support_bonus
@@ -1157,6 +1162,24 @@ class ArenaLineupReader:
                     or recovery_code is None
                     or not callable(recover)
                 ):
+                    if isinstance(error, ArenaReaderError) and (
+                        recovery_code is not None
+                        or error.code in {
+                            "skill_card_detail_ambiguous",
+                            "skill_card_badge_detail_inference_ambiguous",
+                            "skill_card_customization_detail_empty",
+                            "skill_card_customization_total_mismatch",
+                            "p_item_detail_parser_failed",
+                            "p_item_detail_ambiguous",
+                            "p_item_detail_open_or_title_failed",
+                            "p_item_detail_budget_exceeded",
+                            "p_item_detail_recovery_failed",
+                        }
+                    ):
+                        # These detail transactions already used their local
+                        # observations/retries. A new lineup read cannot renew
+                        # that budget or repair an unsupported catalog meaning.
+                        error.retry_whole_read = False
                     raise
                 self._member_reopen_used = True
                 try:
@@ -1169,6 +1192,7 @@ class ArenaLineupReader:
                         "member_reopen_recovery_failed",
                         f"member read failed: {error}; returning to its team "
                         f"preview also failed: {recovery_error}",
+                        retry_whole_read=False,
                     ) from recovery_error
                 # No partial observation escaped the failed invocation. The
                 # next invocation reopens and rereads this member completely.
@@ -1216,6 +1240,7 @@ class ArenaLineupReader:
                 "skill_card_close_failed",
                 "skill_card_close_left_member",
                 "skill_card_detail_disappeared",
+                "skill_card_detail_missing",
                 "p_item_source_restore_unproven",
             }:
                 return current.code

@@ -56,6 +56,7 @@ class ArenaProviderAttemptFailure:
     code: str | None
     detail: str
     wall_seconds: float | None = None
+    retry_whole_read: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -120,10 +121,12 @@ class ArenaOwnScoreService:
                 break
             except Exception as error:
                 failure = error
+                if getattr(error, "retry_whole_read", True) is False:
+                    break
         if snapshot is None:
             return ArenaOwnScoreEvaluation(
                 status="incomplete_input",
-                attempts=2,
+                attempts=attempt,
                 error=str(failure),
             )
         request = {
@@ -411,8 +414,11 @@ class ArenaWinRateService:
                         code=None if raw_code is None else str(raw_code),
                         detail=str(raw_detail),
                         wall_seconds=time.perf_counter() - provider_started,
+                        retry_whole_read=getattr(error, "retry_whole_read", None),
                     )
                 )
+                if getattr(error, "retry_whole_read", True) is False:
+                    break
                 continue
             observation_error = None
             try:
@@ -424,14 +430,14 @@ class ArenaWinRateService:
             if observation_error is not None:
                 return ArenaEvaluation(
                     status="observation_failure",
-                    attempts=2,
+                    attempts=attempt,
                     safe_to_click=False,
                     error=f"snapshot provider failed: {observation_error}",
                     provider_attempt_failures=tuple(provider_attempt_failures),
                 )
             return ArenaEvaluation(
                 status="incomplete_input",
-                attempts=2,
+                attempts=attempt,
                 safe_to_click=False,
                 error=str(validation_error),
                 provider_attempt_failures=tuple(provider_attempt_failures),

@@ -189,7 +189,7 @@ def own_score_user_status(
         )
 
     status_labels = {
-        "incomplete_input": "己方编成连续两次未能完整读取",
+        "incomplete_input": "己方编成未能完整读取",
         "adapter_failure": "本地模拟器执行失败",
         "cache_failure": "分数缓存写入失败",
     }

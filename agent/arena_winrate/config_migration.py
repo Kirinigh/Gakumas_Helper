@@ -1,4 +1,4 @@
-"""One-time migration from free-text arena seasons to the fixed selector."""
+"""Migrate saved arena selectors and approved defaults during local installation."""
 
 from __future__ import annotations
 
@@ -13,6 +13,10 @@ from collections.abc import Mapping, MutableMapping, MutableSequence
 PERIOD_OPTION_NAME = "竞技场期数"
 PERIOD_CONFIG_NODE = "ChallengeSeasonConfig"
 LEGACY_SEASON_FIELDS = ("arena_win_rate_season", "arena_own_score_season")
+TIMEOUT_OPTIONS = {
+    "arena_win_rate_timeout_seconds": "竞技场胜率参数",
+    "arena_own_score_timeout_seconds": "arena_recalculate_own_score_parameters",
+}
 
 
 class ArenaPeriodMigrationError(RuntimeError):
@@ -45,6 +49,7 @@ class ArenaPeriodSelectionCatalog:
     index_by_value: Mapping[str | int, int]
     value_by_index: tuple[str | int, ...]
     default_index: int
+    timeout_defaults: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_interface(cls, value: Mapping[str, Any]) -> "ArenaPeriodSelectionCatalog":
@@ -77,10 +82,24 @@ class ArenaPeriodSelectionCatalog:
             index_by_value[selection] = index
         if default_index is None:
             raise ArenaPeriodMigrationError("fixed arena period default case is absent")
+        timeout_defaults: dict[str, str] = {}
+        for timeout_field, option_name in TIMEOUT_OPTIONS.items():
+            option = options.get(option_name)
+            inputs = option.get("inputs") if isinstance(option, Mapping) else None
+            if not isinstance(inputs, list):
+                continue
+            defaults = [
+                item.get("default")
+                for item in inputs
+                if isinstance(item, Mapping) and item.get("name") == timeout_field
+            ]
+            if len(defaults) == 1 and type(defaults[0]) in (str, int):
+                timeout_defaults[timeout_field] = str(defaults[0])
         return cls(
             index_by_value=index_by_value,
             value_by_index=tuple(index_by_value),
             default_index=default_index,
+            timeout_defaults=timeout_defaults,
         )
 
     def legacy_index(self, value: object) -> int | None:
@@ -100,6 +119,7 @@ class ArenaPeriodMigrationResult:
     selectors_added: int = 0
     selectors_repaired: int = 0
     selectors_remapped: int = 0
+    timeout_defaults_updated: int = 0
     warnings: list[str] = field(default_factory=list)
 
 
@@ -128,6 +148,21 @@ def _migrate_option_list(
         data_key = _property(option, "data")
         data = option.get(data_key) if data_key is not None else None
         if isinstance(data, MutableMapping):
+            if previous_catalog is not None:
+                for timeout_field, option_name in TIMEOUT_OPTIONS.items():
+                    # Only migrate the released default, proved by the old interface.
+                    # Later user choices (including 180) remain untouched.
+                    if (
+                        name_key is not None
+                        and option.get(name_key) == option_name
+                        and previous_catalog.timeout_defaults.get(timeout_field) == "180"
+                        and catalog.timeout_defaults.get(timeout_field) == "300"
+                        and type(data.get(timeout_field)) in (str, int)
+                        and str(data[timeout_field]) == "180"
+                    ):
+                        data[timeout_field] = "300" if isinstance(data[timeout_field], str) else 300
+                        result.changed = True
+                        result.timeout_defaults_updated += 1
             for legacy_field in LEGACY_SEASON_FIELDS:
                 if legacy_field in data:
                     legacy_values.append(data.pop(legacy_field))
@@ -309,6 +344,7 @@ def main() -> int:
                         "selectors_added": result.selectors_added,
                         "selectors_repaired": result.selectors_repaired,
                         "selectors_remapped": result.selectors_remapped,
+                        "timeout_defaults_updated": result.timeout_defaults_updated,
                         "warnings": result.warnings,
                     }
                 )

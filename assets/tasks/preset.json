@@ -42,7 +42,7 @@
             "竞技场胜率参数": {
               "arena_win_rate_threshold_percent": "70",
               "arena_win_rate_simulations": "2000",
-              "arena_win_rate_timeout_seconds": "180"
+              "arena_win_rate_timeout_seconds": "300"
             },
             "每日挑战自动重算己方数据": "No",
             "每日挑战本地画面采集": "关闭"
