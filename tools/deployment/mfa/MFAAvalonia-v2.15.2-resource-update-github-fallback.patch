@@ -1,8 +1,8 @@
 diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionChecker.cs
-index 6e6d111..108ee8c 100644
+index 6e6d111..a063d95 100644
 --- a/MFAAvalonia/Helper/VersionChecker.cs
 +++ b/MFAAvalonia/Helper/VersionChecker.cs
-@@ -306,6 +306,16 @@ public static class VersionChecker
+@@ -306,6 +306,16 @@
          return Path.Combine(AppPaths.TempResourceDirectory, $"local_package_{pathHash}_extracted");
      }
  
@@ -19,7 +19,7 @@ index 6e6d111..108ee8c 100644
      private static async Task UpdateResourceFromLocalPackageCoreAsync(string packagePath, string currentVersion)
      {
          var extractDirectory = GetLocalPackageExtractDirectory(packagePath);
-@@ -515,6 +525,7 @@ public static class VersionChecker
+@@ -515,6 +525,7 @@
          bool notifyWhenUpToDate = true,
          bool notifyOnError = true)
      {
@@ -27,7 +27,7 @@ index 6e6d111..108ee8c 100644
          Instances.RootViewModel.SetUpdating(true);
          var url = MaaProcessor.Interface?.Github ?? MaaProcessor.Interface?.Url ?? string.Empty;
  
-@@ -679,6 +690,8 @@ public static class VersionChecker
+@@ -679,6 +690,8 @@
          var dryRun = debugEnabled && IsEnvEnabled(ResourceUpdateDryRunEnv);
          var keepArtifacts = debugEnabled || IsEnvEnabled(ResourceUpdateKeepArtifactsEnv);
          var isLocalPackage = !string.IsNullOrWhiteSpace(localPackagePath);
@@ -36,9 +36,168 @@ index 6e6d111..108ee8c 100644
          ProgressBar? progress = null;
          TextBlock? textBlock = null;
          TextBlock? downloadSpeedTextBlock = null;
+@@ -849,14 +862,14 @@
+             SetStatusText(textBlock, downloadSpeedTextBlock, LangKeys.Downloading.ToLocalization());
+             SetProgress(progress, 0);
+             (var downloadStatus, tempZipFilePath) = await DownloadWithRetry(downloadUrl, tempZipFilePath, progress, 3, textBlock, downloadSpeedTextBlock);
+-            LoggerHelper.Info($"已下载更新包到临时文件：文件={tempZipFilePath}");
+             if (!downloadStatus)
+             {
+                 Dismiss(sukiToast);
+                 ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
+                 Instances.RootViewModel.SetUpdating(false);
+-                return;
+-            }
++                throw new IOException($"更新包下载失败：文件={tempZipFilePath}");
++            }
++            LoggerHelper.Info($"已下载更新包到临时文件：文件={tempZipFilePath}");
+         }
+         else
+         {
+@@ -879,7 +892,7 @@
+             Dismiss(sukiToast);
+             ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
+             Instances.RootViewModel.SetUpdating(false);
+-            return;
++            throw new IOException($"已下载的更新包不存在：文件={tempZipFilePath}");
+         }
+         SetStatusText(textBlock, downloadSpeedTextBlock, LangKeys.Verifying.ToLocalization());
+         var sha256Verified = true;
+@@ -901,7 +914,7 @@
+             Dismiss(sukiToast);
+             ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.HashVerificationFailed.ToLocalization());
+             Instances.RootViewModel.SetUpdating(false);
+-            return;
++            throw new InvalidDataException($"更新包 SHA256 校验失败：文件={tempZipFilePath}");
+         }
+         SetStatusText(textBlock, downloadSpeedTextBlock, LangKeys.Extracting.ToLocalization());
+         LoggerHelper.Info($"准备解压资源包：源文件={tempZipFilePath}，目标目录={tempExtractDir}");
+@@ -916,7 +929,7 @@
+             Dismiss(sukiToast);
+             ToastHelper.Warn(LangKeys.Warning.ToLocalization(), validationMessage, -1);
+             Instances.RootViewModel.SetUpdating(false);
+-            return;
++            throw new InvalidDataException(validationMessage);
+         }
+ 
+         var containsCoreApplicationFiles = ContainsCoreApplicationFiles(originPath);
+@@ -2030,7 +2043,7 @@
+                 Dismiss(sukiToast);
+                 ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
+                 Instances.RootViewModel.SetUpdating(false);
+-                return;
++                throw new IOException($"更新包下载失败：文件={tempZip}");
+             }
+ 
+             // 解压文件
+@@ -2154,13 +2167,14 @@
+     {
+         for (int i = 0; i < retries; i++)
+         {
+-            try
+-            {
+-                return await DownloadFileAsync(url, savePath, progress, downloadSizeTextBlock, downloadSpeedTextBlock);
+-            }
+-            catch (WebException ex) when (i < retries - 1)
+-            {
+-                LoggerHelper.Warning($"下载失败，准备重试：第 {i + 1}/{retries} 次，状态={ex.Status}");
++            var result = await DownloadFileAsync(url, savePath, progress, downloadSizeTextBlock, downloadSpeedTextBlock);
++            savePath = result.Item2;
++            if (result.Item1)
++                return result;
++
++            if (i < retries - 1)
++            {
++                LoggerHelper.Warning($"下载失败，准备重试：第 {i + 1}/{retries} 次");
+                 await Task.Delay(2000 * (i + 1));
+             }
+         }
+@@ -2402,7 +2416,7 @@
+                 Dismiss(sukiToast);
+                 ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
+                 Instances.RootViewModel.SetUpdating(false);
+-                return;
++                throw new IOException($"更新包下载失败：文件={tempZip}");
+             }
+ 
+             SetText(textBlock, LangKeys.ApplyingUpdate.ToLocalization());
+@@ -3104,6 +3118,8 @@
+         TextBlock? downloadSpeedTextBlock = null)
+     {
+         var targetFilePath = filePath;
++        var createdDownloadFile = false;
++        var downloadCompleted = false;
+         try
+         {
+             using var httpClient = CreateHttpClientWithProxy();
+@@ -3147,6 +3163,7 @@
+ 
+             await using var contentStream = await response.Content.ReadAsStreamAsync();
+             await using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
++            createdDownloadFile = true;
+ 
+             var buffer = new byte[8192];
+             var stopwatch = Stopwatch.StartNew();
+@@ -3176,7 +3193,7 @@
+                 double progressPercentage;
+                 if (totalBytes.HasValue && totalBytes.Value > 0)
+                 {
+-                    progressPercentage = Math.Min((double)totalBytesRead / totalBytes.Value * 100, 100);
++                    progressPercentage = Math.Min((double)totalBytesRead / totalBytes.Value * 100, 99);
+                 }
+                 else
+                 {
+@@ -3199,6 +3216,11 @@
+                 }
+             }
+ 
++            if (totalBytesRead == 0 || (totalBytes.HasValue && totalBytesRead != totalBytes.Value))
++                throw new IOException($"下载内容不完整：已接收={totalBytesRead}，预期={totalBytes}");
++
++            await fileStream.FlushAsync();
++            downloadCompleted = true;
+             SetProgress(progressBar, 100);
+             SetDownloadInfo(downloadSizeTextBlock, downloadSpeedTextBlock, totalBytesRead, totalBytes ?? totalBytesRead, bytesPerSecond);
+             DispatcherHelper.PostOnMainThread(() =>
+@@ -3225,6 +3247,20 @@
+         {
+             LoggerHelper.Error($"下载文件时发生未知错误：原因={ex.Message}", ex);
+             return (false, targetFilePath);
++        }
++        finally
++        {
++            if (createdDownloadFile && !downloadCompleted)
++            {
++                try
++                {
++                    File.Delete(targetFilePath);
++                }
++                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
++                {
++                    LoggerHelper.Warning($"清理未完成的下载失败：文件={targetFilePath}，原因={ex.Message}");
++                }
++            }
+         }
+     }
+ 
+diff --git a/MFAAvalonia/Extensions/MaaFW/MaaProcessor.cs b/MFAAvalonia/Extensions/MaaFW/MaaProcessor.cs
+index 54e6302..300dbb5 100644
+--- a/MFAAvalonia/Extensions/MaaFW/MaaProcessor.cs
++++ b/MFAAvalonia/Extensions/MaaFW/MaaProcessor.cs
+@@ -1693,9 +1693,7 @@
+                 if (Directory.Exists(tempMaaDir))
+                     Directory.Delete(tempMaaDir, true);
+ 
+-                var tempResDir = AppPaths.TempResourceDirectory;
+-                if (Directory.Exists(tempResDir))
+-                    Directory.Delete(tempResDir, true);
++                // temp_res 由资源更新器管理；任务初始化可能与后台下载并行。
+             }
+             catch (Exception e)
+             {
 diff --git a/MFAAvalonia/Directory.Build.targets b/MFAAvalonia/Directory.Build.targets
 new file mode 100644
-index 0000000..894b751
+index 0000000..54699de
 --- /dev/null
 +++ b/MFAAvalonia/Directory.Build.targets
 @@ -0,0 +1,18 @@
