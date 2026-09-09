@@ -5,10 +5,12 @@ from __future__ import annotations
 import re
 import json
 import math
+import time
 import subprocess
 from typing import Any, Mapping, Sequence
 from pathlib import Path
 from dataclasses import field, dataclass
+from collections.abc import Callable
 
 from .decision import StageEstimate, OpponentEstimate
 
@@ -56,6 +58,7 @@ class SubprocessArenaAdapter:
         *,
         timeout_seconds: float,
         expected_upstream_commit: str = UPSTREAM_COMMIT,
+        cancel_check: Callable[[], None] | None = None,
     ) -> None:
         if not command:
             raise ValueError("command must not be empty")
@@ -66,9 +69,13 @@ class SubprocessArenaAdapter:
         self.command = tuple(str(part) for part in command)
         self.timeout_seconds = timeout_seconds
         self.expected_upstream_commit = expected_upstream_commit
+        self.cancel_check = cancel_check
 
     @classmethod
-    def from_bundle(cls, bundle_dir: Path, *, timeout_seconds: float) -> "SubprocessArenaAdapter":
+    def from_bundle(
+        cls, bundle_dir: Path, *, timeout_seconds: float,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> "SubprocessArenaAdapter":
         manifest_path = bundle_dir / "manifest.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -87,6 +94,7 @@ class SubprocessArenaAdapter:
             (bundle_dir / "node.exe", bundle_dir / "runner.mjs"),
             timeout_seconds=timeout_seconds,
             expected_upstream_commit=commit,
+            cancel_check=cancel_check,
         )
 
     def simulate(self, request: Mapping[str, Any]) -> SimulationBatch:
@@ -112,7 +120,8 @@ class SubprocessArenaAdapter:
 
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
-            completed = subprocess.run(
+            runner = self._run_cancellable if self.cancel_check is not None else subprocess.run
+            completed = runner(
                 self.command,
                 input=json.dumps(request, ensure_ascii=False),
                 capture_output=True,
@@ -134,6 +143,40 @@ class SubprocessArenaAdapter:
             return json.loads(completed.stdout)
         except json.JSONDecodeError as error:
             raise AdapterError("adapter returned invalid JSON") from error
+
+    def _run_cancellable(self, command, *, input, timeout, check, **kwargs):
+        """Stop the exact simulator process; its worker_threads exit with it."""
+        del check
+        assert self.cancel_check is not None
+        self.cancel_check()
+        kwargs.pop("capture_output")
+        started = time.monotonic()
+        with subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, **kwargs,
+        ) as process:
+            try:
+                payload = input
+                while True:
+                    self.cancel_check()
+                    remaining = timeout - (time.monotonic() - started)
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    try:
+                        stdout, stderr = process.communicate(
+                            input=payload, timeout=min(0.1, remaining),
+                        )
+                        self.cancel_check()
+                        return subprocess.CompletedProcess(
+                            command, process.returncode, stdout, stderr,
+                        )
+                    except subprocess.TimeoutExpired:
+                        # communicate resumes its existing stdin/stdout state.
+                        payload = None
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate()
 
     @staticmethod
     def _parse_own_response(

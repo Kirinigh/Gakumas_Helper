@@ -38,6 +38,11 @@ from arena_winrate.config import resolve_cached_arena_grade
 from arena_winrate.decision import HIGHEST_WIN_RATE_FALLBACK_RULE
 from arena_winrate.task_log import arena_task_log, diagnostic_logger, opponent_rates_message
 from maa.agent.agent_server import AgentServer
+from arena_winrate.cancellation import (
+    ArenaTaskCancelled,
+    cancellation_for,
+    active_cancellation,
+)
 from arena_winrate.user_messages import (
     ArenaUserStatus,
     describe_arena_error,
@@ -117,8 +122,14 @@ def _stop_with_error(context: Context, summary: str, error: object | None = None
 def _report_unexpected_errors(method: Callable[..., bool]) -> Callable[..., bool]:
     @wraps(method)
     def wrapped(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        cancellation = cancellation_for(context)
+        token = active_cancellation.set(cancellation)
         try:
+            cancellation.check()
             return method(self, context, argv)
+        except ArenaTaskCancelled:
+            logger.info("竞技场任务已停止")
+            return False
         except Exception as error:
             logger.exception("竞技场任务出现未处理异常")
             return _stop_with_error(
@@ -126,6 +137,8 @@ def _report_unexpected_errors(method: Callable[..., bool]) -> Callable[..., bool
                 "竞技场任务出现异常，已中断",
                 error,
             )
+        finally:
+            active_cancellation.reset(token)
 
     return wrapped
 
@@ -248,6 +261,7 @@ class ArenaOwnScoreRecalculate(CustomAction):
             adapter = SubprocessArenaAdapter.from_bundle(
                 component.bundle_dir,
                 timeout_seconds=config.timeout_seconds,
+                cancel_check=cancellation_for(context).check,
             )
             cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
             reset_prepared_own_score_cache(cache_store)
@@ -257,7 +271,7 @@ class ArenaOwnScoreRecalculate(CustomAction):
                 adapter,
                 simulations=config.simulations,
                 cache_store=cache_store,
-            ).calculate(reader)
+            ).calculate(reader, before_cache_save=cancellation_for(context).check)
             logger.info(
                 json.dumps(
                     {
@@ -347,6 +361,7 @@ def _prepare_daily_own_score_cache(
         seed=400,
         expected_upstream_commit=adapter.expected_upstream_commit,
         force_recalculate=True,
+        before_cache_save=cancellation_for(context).check,
     )
     if evaluation is None:
         raise OwnScoreCacheError("automatic recalculation did not produce an evaluation")
@@ -396,6 +411,7 @@ def _select_challenge_index(
 ) -> bool:
     """Select one legacy opponent and fail closed when Maa did not click it."""
 
+    cancellation_for(context).check()
     result = context.run_task(
         "ChallengeIndex",
         pipeline_override={
@@ -404,6 +420,7 @@ def _select_challenge_index(
             }
         },
     )
+    cancellation_for(context).check()
     if not result or not result.status.succeeded:
         return _stop_with_error(
             context,
@@ -485,6 +502,7 @@ class ChallengePrepareOwnScore(CustomAction):
             adapter = SubprocessArenaAdapter.from_bundle(
                 component.bundle_dir,
                 timeout_seconds=config.timeout_seconds,
+                cancel_check=cancellation_for(context).check,
             )
             cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
             return _prepare_daily_own_score_cache(
@@ -584,7 +602,9 @@ class ChallengeAuto(CustomAction):
             )
 
         if mode in {"auto", "max", "min"}:
+            cancellation_for(context).check()
             image = context.tasker.controller.post_screencap().wait().get()
+            cancellation_for(context).check()
             detail = context.run_recognition(
                 "ChallengeRating",
                 image,
@@ -597,6 +617,7 @@ class ChallengeAuto(CustomAction):
                     }
                 },
             )
+            cancellation_for(context).check()
             if not detail or not detail.hit:
                 return _stop_with_error(context, "三个对手的综合力识别失败，已安全停止")
             results = detail.filtered_results or detail.all_results or ()
@@ -621,6 +642,7 @@ class ChallengeAuto(CustomAction):
                 index = min(valid, key=lambda item: item[1])[0]
                 logger.info(f"选择挑战评分最低的第 {index + 1} 位")
             else:
+                cancellation_for(context).check()
                 own_detail = context.run_recognition(
                     "ChallengeRating",
                     image,
@@ -633,6 +655,7 @@ class ChallengeAuto(CustomAction):
                         }
                     },
                 )
+                cancellation_for(context).check()
                 if not own_detail or not own_detail.hit:
                     return _stop_with_error(context, "己方综合力识别失败，已安全停止")
                 try:
@@ -701,6 +724,7 @@ class ChallengeAuto(CustomAction):
                 adapter = SubprocessArenaAdapter.from_bundle(
                     component.bundle_dir,
                     timeout_seconds=config.timeout_seconds,
+                    cancel_check=cancellation_for(context).check,
                 )
                 cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
                 if mode == "win_rate_recalculate_own":
@@ -710,7 +734,7 @@ class ChallengeAuto(CustomAction):
                         adapter,
                         simulations=config.simulations,
                         cache_store=cache_store,
-                    ).calculate(reader)
+                    ).calculate(reader, before_cache_save=cancellation_for(context).check)
                     own_cost_fallbacks = (
                         _log_cost_customization_fallbacks(reader, side="own")
                         if own_evaluation.status
@@ -773,6 +797,7 @@ class ChallengeAuto(CustomAction):
                         expected_upstream_commit=adapter.expected_upstream_commit,
                         force_recalculate=False,
                         require_prepared=auto_recalculate_own,
+                        before_cache_save=cancellation_for(context).check,
                     )
                 except OwnScoreCacheError as error:
                     if auto_recalculate_own:
@@ -963,10 +988,12 @@ class ChallengeAuto(CustomAction):
             record_store = ArenaChallengeRecordStore()
             begun = False
             try:
+                cancellation_for(context).check()
                 record_store.begin(
                     {
                         "capture_id": challenge_id,
                         "source_capture_id": source_capture_id,
+                        "start_reservation_required": True,
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "contest_day": contest_day,
                         "season": season.season,
@@ -985,11 +1012,22 @@ class ChallengeAuto(CustomAction):
                     }
                 )
                 begun = True
+                cancellation_for(context).check()
                 guard = backend.select_opponent_for_challenge(selected_position)
+                cancellation_for(context).check()
                 if contest_day_key() != contest_day:
                     raise ArenaChallengeFlowError(
                         "contest day changed after opponent selection and before start"
                     )
+            except ArenaTaskCancelled:
+                if begun:
+                    try:
+                        # Abort validates that Start was never reserved.  A
+                        # Stop must not leave an unstarted result to recover.
+                        record_store.abort(challenge_id)
+                    except (ArenaChallengeFlowError, OSError) as error:
+                        logger.warning(f"停止后未能撤销未开战记录；保留原状态: {error}")
+                raise
             except Exception as error:
                 if begun:
                     record_store.abort(challenge_id)
@@ -1022,17 +1060,23 @@ class ChallengeAuto(CustomAction):
 
 @AgentServer.custom_action("ArenaChallengeRecordResult")
 class ArenaChallengeRecordResult(ArenaChallengeRecordResultAction):
-    pass
+    @_report_unexpected_errors
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        return super().run(context, argv)
 
 
 @AgentServer.custom_action("ArenaChallengeVerifyRefresh")
 class ArenaChallengeVerifyRefresh(ArenaChallengeVerifyRefreshAction):
-    pass
+    @_report_unexpected_errors
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        return super().run(context, argv)
 
 
 @AgentServer.custom_action("ArenaChallengeRetryCurrentBattle")
 class ArenaChallengeRetryCurrentBattle(ArenaChallengeRetryCurrentBattleAction):
-    pass
+    @_report_unexpected_errors
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        return super().run(context, argv)
 
 
 @AgentServer.custom_action("ArenaChallengeResumePending")
@@ -1044,7 +1088,9 @@ class ArenaChallengeResumePending(CustomAction):
 
 def _challenge_recognized_click(context: Context, argv: CustomAction.RunArg) -> bool:
     """Keep Maa's original recognized target without recapturing or re-OCR."""
+    cancellation_for(context).check()
     result = context.run_action_direct(JActionType.Click, JClick(), argv.box)
+    cancellation_for(context).check()
     return bool(result is not None and result.success)
 
 
@@ -1059,6 +1105,7 @@ class ArenaChallengeStartOnce(CustomAction):
         if pending is not None:
             try:
                 # Persist before sending: a lost response cannot rearm Start.
+                cancellation_for(context).check()
                 store.mark_battle_started(str(pending.get("capture_id", "")))
                 arena_task_log.battle_started(context, str(pending.get("capture_id", "")))
             except (ArenaChallengeFlowError, OSError) as error:

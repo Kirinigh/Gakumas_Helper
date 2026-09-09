@@ -13,8 +13,11 @@ from maa.context import Context
 from maa.custom_action import CustomAction
 
 from .reader import ArenaPageState, classify_arena_page
+from .recovery import error_retry_box
 from .task_log import arena_task_log, diagnostic_logger, report_action_failure
+from .cancellation import cancellation_for
 from .challenge_flow import (
+    CHALLENGE_LIFECYCLE_INTENT,
     ArenaChallengeFlowError,
     ArenaChallengeRecordStore,
     contest_day_key,
@@ -64,10 +67,19 @@ def _administrator_process() -> bool:
 
 
 def _capture(context: Context):
-    return context.tasker.controller.post_screencap().wait().get()
+    cancellation_for(context).check()
+    image = context.tasker.controller.post_screencap().wait().get()
+    cancellation_for(context).check()
+    return image
+
+
+def _post_click(context, *args, **kwargs):
+    cancellation_for(context).check()
+    return context.tasker.controller.post_click(*args, **kwargs)
 
 
 def _full_ocr(context: Context, image):
+    cancellation_for(context).check()
     detail = context.run_recognition(
         "ArenaReaderOCR",
         image,
@@ -79,6 +91,7 @@ def _full_ocr(context: Context, image):
             }
         },
     )
+    cancellation_for(context).check()
     if not detail or not detail.hit:
         return ()
     return tuple(detail.all_results or detail.filtered_results or ())
@@ -113,24 +126,13 @@ def challenge_result_saved(store: ArenaChallengeRecordStore | None = None) -> bo
 
 
 def _communication_retry_box(rows):
-    groups = [
-        [row for row in rows if re.fullmatch(pattern, str(getattr(row, "text", "")).strip())]
-        for pattern in (
-            r"通信エラ(?:ー)?", r"通信中にエラーが発生しました", r"リトライ", r"タイトルへ",
-        )
-    ]
-    if any(len(group) != 1 for group in groups):
-        return None
-    box = tuple(int(value) for value in groups[2][0].box)
-    if len(box) != 4 or min(box[2:]) <= 0:
-        raise ArenaChallengeFlowError("communication retry button has no valid box")
-    return box
+    return error_retry_box(rows)
 
 
 def _retry_communication(context, store, capture_id: str, box) -> bool:
     if not store.reserve_communication_retry(capture_id):
         raise ArenaChallengeFlowError("communication retry budget exhausted")
-    click = context.tasker.controller.post_click(box[0] + box[2] // 2, box[1] + box[3] // 2).wait()
+    click = _post_click(context, box[0] + box[2] // 2, box[1] + box[3] // 2).wait()
     if not click.status.succeeded:
         raise ArenaChallengeFlowError("communication retry click failed")
     logger.info(json.dumps({
@@ -146,7 +148,7 @@ def _advance_battle_outcome(context, store, capture_id: str, box) -> bool:
     started = time.monotonic()
     succeeded = False
     try:
-        click = context.tasker.controller.post_click(box[0] + box[2] // 2, box[1] + box[3] // 2).wait()
+        click = _post_click(context, box[0] + box[2] // 2, box[1] + box[3] // 2).wait()
         succeeded = bool(click.status.succeeded)
         if not succeeded:
             raise ArenaChallengeFlowError("outcome TAP click failed")
@@ -192,10 +194,12 @@ def _await_formal_result(context, store, capture_id: str, *, entry_probe: bool =
     # DirectHit entry -> TemplateMatch/DoNothing leaf. Neither node can leave
     # a result page, send Start, or run winner OCR while the game is loading.
     timeout = max(1, int(wait["remaining_seconds"] * 1000))
+    cancellation_for(context).check()
     task = context.run_task("ArenaChallengeAwaitFormalResult", pipeline_override={
         "ArenaChallengeAwaitFormalResult": {"timeout": timeout},
         "ArenaChallengeFormalResultPage": {"timeout": timeout},
     })
+    cancellation_for(context).check()
     succeeded = bool(task and task.status.succeeded)
     remaining = store.begin_result_page_wait(capture_id)["remaining_seconds"]
     logger.info(json.dumps({
@@ -294,6 +298,26 @@ def resume_pending_challenge(context: Context, argv=None, store=None) -> bool:
 
     store = ArenaChallengeRecordStore() if store is None else store
     try:
+        pending = store.load_pending()
+        if pending is None:
+            return True
+        if (
+            pending.get("start_reservation_required") is True
+            and pending.get("lifecycle_state") == CHALLENGE_LIFECYCLE_INTENT
+            and not any(key in pending for key in (
+                "battle_started", "incomplete_result", "result_recovery",
+                "result_recorded_at", "return_recovery", "return_verification",
+            ))
+        ):
+            # Only new intents explicitly promise a durable Start reservation
+            # before input. Missing fields in legacy records prove nothing.
+            capture_id = str(pending.get("capture_id", ""))
+            if store.recorded_result_path(capture_id) is None:
+                cancellation_for(context).check()
+                # Abort revalidates the capture, lifecycle, Start and result.
+                store.abort(capture_id)
+                logger.info("已清除上次选敌后尚未预留开始的记录，继续竞技场入口")
+                return True
         state = pending_challenge_recovery_state(store)
         if state == "none":
             return True
@@ -322,7 +346,9 @@ def resume_pending_challenge(context: Context, argv=None, store=None) -> bool:
         except Exception:
             logger.exception("竞技场恢复摘要路径暂时不可读；继续原回场流程")
             result_path = None
+        cancellation_for(context).check()
         task = context.run_task("ArenaChallengeResumeReturn")
+        cancellation_for(context).check()
         resumed = bool(task and task.status.succeeded and store.load_pending() is None)
         if resumed:
             _show_resumed_return(context, pending["capture_id"], store, result_path)
@@ -559,7 +585,7 @@ class ArenaChallengeVerifyRefreshAction(CustomAction):
                 except ArenaChallengeFlowError as error:
                     logger.error(f"竞技场结束页补发未获持久化预算，已停止: {error}")
                     return False
-                click = context.tasker.controller.post_click(
+                click = _post_click(context,
                     box[0] + box[2] // 2,
                     box[1] + box[3] // 2,
                 ).wait()
@@ -600,7 +626,7 @@ class ArenaChallengeVerifyRefreshAction(CustomAction):
                 except ArenaChallengeFlowError as error:
                     logger.error(f"竞技场奖励页关闭未获持久化预算，已停止: {error}")
                     return False
-                click = context.tasker.controller.post_click(
+                click = _post_click(context,
                     box[0] + box[2] // 2,
                     box[1] + box[3] // 2,
                 ).wait()

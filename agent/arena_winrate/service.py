@@ -227,6 +227,7 @@ def prepare_own_score_cache(
     expected_upstream_commit: str,
     force_recalculate: bool,
     require_prepared: bool = False,
+    before_cache_save: Callable[[], None] | None = None,
 ) -> tuple[
     ArenaOwnScoreEvaluation | None,
     tuple[dict[str, Any], dict[str, Any]] | None,
@@ -247,6 +248,8 @@ def prepare_own_score_cache(
                 "竞技场日期在己方缓存落盘前跨过了每日 04:00 刷新边界；"
                 "新缓存未落盘，请重新运行任务"
             )
+        if before_cache_save is not None:
+            before_cache_save()
 
     if force_recalculate:
         evaluation = ArenaOwnScoreService(

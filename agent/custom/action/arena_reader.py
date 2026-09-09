@@ -74,7 +74,9 @@ from p_item_recognition import (
     measure_p_item_content_generation_from_signatures,
 )
 from card_selection.model import frame_identifier, isolate_card_candidates
+from arena_winrate.recovery import error_retry_box
 from arena_winrate.task_log import diagnostic_logger
+from arena_winrate.cancellation import ArenaTaskCancelled, cancellation_for
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
 from arena_winrate._detail_text_layout import (
     recover_distant_number_text,
@@ -525,6 +527,7 @@ class MaaArenaReaderBackend:
         ):
             raise ValueError("known_grade must be an integer from 1 to 7")
         self.context = context
+        self._cancellation = cancellation_for(context)
         self.season = season
         self.catalog = ArenaEntityCatalog.from_bundle(bundle_dir)
         self.p_item_reader = p_item_reader
@@ -1420,7 +1423,7 @@ class MaaArenaReaderBackend:
                 if remaining > 0:
                     if time.monotonic() + remaining >= deadline:
                         return reject("deadline")
-                    time.sleep(remaining)
+                    self._sleep(remaining)
                 if time.monotonic() >= deadline:
                     return reject("deadline")
                 capture_started = time.monotonic()
@@ -3589,7 +3592,7 @@ class MaaArenaReaderBackend:
                             raise
                         grade_error = error
                         if attempt < 3:
-                            time.sleep(0.25)
+                            self._sleep(0.25)
                             continue
                         raise
                     logger.info(
@@ -3607,13 +3610,13 @@ class MaaArenaReaderBackend:
             if state is ArenaPageState.AMBIGUOUS:
                 ambiguous_reads += 1
                 if ambiguous_reads < 2:
-                    time.sleep(0.5)
+                    self._sleep(0.5)
                     continue
                 break
             if state is ArenaPageState.OPPONENTS_UNAVAILABLE:
                 unavailable_reads += 1
                 if unavailable_reads < 3:
-                    time.sleep(0.25)
+                    self._sleep(0.25)
                     continue
             break
         (
@@ -3731,7 +3734,7 @@ class MaaArenaReaderBackend:
                 }
             if len(starts) > 1:
                 break
-            time.sleep(0.2)
+            self._sleep(0.2)
         raise ArenaReaderError(
             "arena_challenge_start_ambiguous",
             "selected opponent preview did not expose one challenge-start control",
@@ -3830,7 +3833,7 @@ class MaaArenaReaderBackend:
             self._team_stage_total_anchors(target, image)
             if len(self._ocr(image, r"^ステージ\s*[123]$")) < 3:
                 raise
-            time.sleep(0.5)
+            self._sleep(0.5)
             self._long_press(box)
             self._assert_member_detail()
 
@@ -3882,7 +3885,7 @@ class MaaArenaReaderBackend:
             value = read_overlay()
             if value is not None:
                 break
-            time.sleep(0.08)
+            self._sleep(0.08)
         self._add_timing("support_bonus_open_wait", time.perf_counter() - started)
         retries = getattr(self, "_support_bonus_retried_teams", None)
         if retries is None:
@@ -3903,7 +3906,7 @@ class MaaArenaReaderBackend:
                 if value is not None:
                     break
                 if reads < 3 and time.monotonic() + 0.08 < recovery_deadline:
-                    time.sleep(0.08)
+                    self._sleep(0.08)
             elapsed = time.perf_counter() - recovery_started
             self._record_duration_sample("support_bonus_recovery", elapsed)
             logger.info(json.dumps({
@@ -4043,7 +4046,7 @@ class MaaArenaReaderBackend:
                     previous_values = current_values
                     failure = f"parameter values have not stabilized: {current_values!r}"
             if attempt < 3:
-                time.sleep(0.25)
+                self._sleep(0.25)
         raise ArenaReaderError("param_value_ambiguous", f"stable in-memory reads failed: {failure}")
 
     def _read_enhanced_numeric_roi(
@@ -4947,7 +4950,7 @@ class MaaArenaReaderBackend:
                         "P-item title needs a second consecutive targeted OCR "
                         f"confirmation for {current_match}"
                     )
-                    time.sleep(0.12)
+                    self._sleep(0.12)
                     continue
                 resolved = matches[0]
                 if diagnostic is not None:
@@ -5006,7 +5009,7 @@ class MaaArenaReaderBackend:
             elif retried and consecutive_source_reads >= 3:
                 transaction_states.append("OPEN_FAILED")
                 break
-            time.sleep(0.12)
+            self._sleep(0.12)
         self._add_timing(
             "p_item_detail_open_wait",
             time.perf_counter() - open_wait_started,
@@ -5321,7 +5324,7 @@ class MaaArenaReaderBackend:
                 rejected_windows += 1
                 self._increment("p_item_content_generation_resets")
             if interval_seconds > 0:
-                time.sleep(interval_seconds)
+                self._sleep(interval_seconds)
         self._add_timing(
             "p_item_content_stable_wait",
             time.perf_counter() - started,
@@ -6314,7 +6317,7 @@ class MaaArenaReaderBackend:
         while time.monotonic() < deadline:
             remaining = next_capture_not_before - time.monotonic()
             while remaining > 0:
-                time.sleep(remaining)
+                self._sleep(remaining)
                 remaining = next_capture_not_before - time.monotonic()
             if time.monotonic() >= deadline:
                 break
@@ -7011,7 +7014,7 @@ class MaaArenaReaderBackend:
             cache = {}
             self._full_frame_ocr_evidence = cache
         started = time.perf_counter()
-        detail = self.context.run_recognition(
+        detail = self._run_recognition(
             "ArenaReaderOCR",
             image,
             pipeline_override={
@@ -7585,9 +7588,9 @@ class MaaArenaReaderBackend:
                     last_error = str(error)
                     evidence = self._cached_full_frame_ocr_evidence(detail_image)
                     if evidence is not None and self._retry_transient_communication_items(evidence.filtered_items):
-                        time.sleep(0.25)
+                        self._sleep(0.25)
                         continue
-                time.sleep(0.25)
+                self._sleep(0.25)
             # A failed OCR/identity read does not prove that the overlay stayed
             # closed. The same card point is a toggle while a detail is open,
             # so every retry first performs an inert backdrop dismissal and
@@ -8361,7 +8364,7 @@ class MaaArenaReaderBackend:
         else:
             frame_samples = [prepared]
             for _ in range(2):
-                time.sleep(0.12)
+                self._sleep(0.12)
                 frame_samples.append(self._capture())
         frames = tuple(frame_samples)
         for attempt in range(2):
@@ -10671,7 +10674,7 @@ class MaaArenaReaderBackend:
             # transaction budget.  Poll semantic evidence at a short cadence
             # and return immediately on the first complete result; the 1.50 s
             # deadline is a failure bound, not a per-card fixed wait.
-            time.sleep(0.08)
+            self._sleep(0.08)
             self._increment("skill_card_detail_ocr_rereads")
             try:
                 previous_capture_started_at = frame_capture_started_at
@@ -11732,6 +11735,7 @@ class MaaArenaReaderBackend:
         unavailable_reads = 0
         for _ in range(maximum_steps):
             image = self._capture()
+            self._last_retry_dialog_seen = False
             state, _ = self._arena_page_state(image)
             if arena_page_allows_team_entry(
                 state,
@@ -11745,13 +11749,18 @@ class MaaArenaReaderBackend:
                         "arena_opponents_unavailable",
                         "opponent cards stayed absent on the arena main page; recovery will not navigate away",
                     )
-                time.sleep(0.25)
+                self._sleep(0.25)
                 continue
             unavailable_reads = 0
             if self._dismiss_known_blocking_overlay(image):
-                time.sleep(0.25)
+                self._sleep(0.25)
                 continue
             self._back()
+        if getattr(self, "_last_retry_dialog_seen", False):
+            raise ArenaReaderError(
+                "arena_communication_retry_exhausted",
+                "the error dialog remained after its one retry and bounded recovery wait",
+            )
         required_state = "with three opponents" if require_opponents else "with the rehearsal anchor"
         raise ArenaReaderError(
             error_code,
@@ -11761,6 +11770,9 @@ class MaaArenaReaderBackend:
     def _dismiss_known_blocking_overlay(self, image: Any) -> bool:
         """Dismiss only overlays proven by independent page-specific anchors."""
 
+        # Recovery gets one full-frame problem check; reuse the same OCR boxes.
+        if self._retry_transient_communication_items(self._ocr(image, r".+")):
+            return True
         menu_profile = self._ocr(image, r"^プロフィール$")
         menu_settings = self._ocr(image, r"^設定$")
         if len(menu_profile) == 1 and len(menu_settings) == 1:
@@ -11773,28 +11785,6 @@ class MaaArenaReaderBackend:
             return True
 
         error_titles = self._ocr(image, r"^通信エラ(?:ー)?$")
-        transient_details = self._ocr(
-            image,
-            r"^通信中にエラーが発生しました$",
-        )
-        retry_buttons = self._ocr(image, r"^リトライ$")
-        title_buttons = self._ocr(image, r"^タイトルへ$")
-        if (
-            len(error_titles) == 1
-            and len(transient_details) == 1
-            and len(retry_buttons) == 1
-            and len(title_buttons) == 1
-        ):
-            if getattr(self, "_arena_communication_retry_attempted", False):
-                raise ArenaReaderError(
-                    "arena_communication_retry_exhausted",
-                    "the proven communication-error overlay remained after one retry",
-                )
-            self._arena_communication_retry_attempted = True
-            self._click(_box(retry_buttons[0]), settle_seconds=1.5)
-            self._increment("arena_communication_retries")
-            return True
-
         failure_details = self._ocr(image, r"^アセット取得に失敗$")
         if len(error_titles) != 1 or len(failure_details) != 1:
             return False
@@ -11810,14 +11800,10 @@ class MaaArenaReaderBackend:
 
     def _retry_transient_communication_items(self, items: Sequence[Any]) -> bool:
         """Return whether a proven dialog occupies this already-read frame."""
-        titles = self._matching_ocr_items(items, r"^通信エラ(?:ー)?$")
-        if len(titles) != 1:
-            return False
-        groups = [self._matching_ocr_items(items, pattern) for pattern in (
-            r"^通信中にエラーが発生しました$",
-            r"^リトライ$", r"^タイトルへ$",
-        )]
-        if any(len(group) != 1 for group in groups):
+        self._check_cancelled()
+        retry_box = error_retry_box(items)
+        self._last_retry_dialog_seen = retry_box is not None
+        if retry_box is None:
             return False
         if getattr(self, "_arena_communication_retry_attempted", False):
             # The original deadline may still be observing the sent Retry's
@@ -11827,7 +11813,7 @@ class MaaArenaReaderBackend:
         started = time.perf_counter()
         succeeded = False
         try:
-            self._click(_box(groups[1][0]), settle_seconds=0)
+            self._click(retry_box, settle_seconds=0)
             self._increment("arena_communication_retries")
             succeeded = True
         finally:
@@ -11838,10 +11824,30 @@ class MaaArenaReaderBackend:
             }, ensure_ascii=False, sort_keys=True))
         return True
 
+    def _check_cancelled(self) -> None:
+        cancellation = getattr(self, "_cancellation", None)
+        if cancellation is None:
+            cancellation = cancellation_for(getattr(self, "context", None))
+            self._cancellation = cancellation
+        cancellation.check()
+
+    def _sleep(self, seconds: float) -> None:
+        self._check_cancelled()
+        time.sleep(seconds)
+        self._check_cancelled()
+
+    def _run_recognition(self, *args, **kwargs):
+        self._check_cancelled()
+        result = self.context.run_recognition(*args, **kwargs)
+        self._check_cancelled()
+        return result
+
     def _capture(self) -> Any:
+        self._check_cancelled()
         started = time.perf_counter()
         try:
             image = self.context.tasker.controller.post_screencap().wait().get()
+            self._check_cancelled()
             diagnostic = getattr(self, "_detail_failure_frames", None)
             if diagnostic is not None:
                 diagnostic["frames"].append((time.perf_counter(), image))
@@ -11851,7 +11857,7 @@ class MaaArenaReaderBackend:
             self._add_timing("screenshots", time.perf_counter() - started)
 
     def _recognize(self, entry: str, image: Any) -> list[Any]:
-        detail = self.context.run_recognition(entry, image)
+        detail = self._run_recognition(entry, image)
         if not detail or not detail.hit:
             return []
         return list(detail.filtered_results or detail.all_results or [])
@@ -11904,7 +11910,7 @@ class MaaArenaReaderBackend:
             override["ArenaReaderOCR"]["roi"] = list(roi)
         if only_rec:
             override["ArenaReaderOCR"]["only_rec"] = True
-        return self.context.run_recognition(
+        return self._run_recognition(
             "ArenaReaderOCR",
             image,
             pipeline_override=override,
@@ -12211,7 +12217,7 @@ class MaaArenaReaderBackend:
     ) -> _PItemOcrObservation:
         """OCR one frame once and retain full text, title geometry and anchors."""
 
-        detail = self.context.run_recognition(
+        detail = self._run_recognition(
             "ArenaReaderOCR",
             image,
             pipeline_override={
@@ -12244,6 +12250,7 @@ class MaaArenaReaderBackend:
         *,
         settle_seconds: float = 0.25,
     ) -> None:
+        self._check_cancelled()
         started = time.perf_counter()
         dispatch = "context_box"
         if box[2:] == (1, 1):
@@ -12259,10 +12266,11 @@ class MaaArenaReaderBackend:
         self._increment("click_actions")
         self._increment(f"{dispatch}_click_actions")
         self._record_detail_action("click", box, succeeded=succeeded)
+        self._check_cancelled()
         if not succeeded:
             raise ArenaReaderError("maa_click_failed", f"Maa could not click {box}")
         if settle_seconds > 0:
-            time.sleep(settle_seconds)
+            self._sleep(settle_seconds)
 
     @staticmethod
     def _box_center_point(
@@ -12279,20 +12287,21 @@ class MaaArenaReaderBackend:
         return (x + width // 2, y + height // 2, 1, 1)
 
     def _long_press(self, box: tuple[int, int, int, int]) -> None:
+        self._check_cancelled()
         x, y, width, height = box
         point = (x + width // 2, y + height // 2)
         started = time.perf_counter()
         controller = self.context.tasker.controller
         down_succeeded = False
         up_succeeded = False
-        interaction_error: Exception | None = None
+        interaction_error: BaseException | None = None
         try:
             down_succeeded = bool(
                 controller.post_touch_down(*point).wait().succeeded
             )
             if down_succeeded:
-                time.sleep(self._member_long_press_seconds)
-        except Exception as error:  # pragma: no cover - native Maa boundary
+                self._sleep(self._member_long_press_seconds)
+        except (ArenaTaskCancelled, Exception) as error:
             interaction_error = error
         finally:
             try:
@@ -12305,6 +12314,7 @@ class MaaArenaReaderBackend:
         self._add_timing("controller_direct_long_press_actions", elapsed)
         self._increment("long_press_actions")
         self._increment("controller_direct_long_press_actions")
+        self._check_cancelled()
         if interaction_error is not None or not down_succeeded or not up_succeeded:
             detail = (
                 f"Maa could not long-press {box} at {point}; "
@@ -12322,6 +12332,7 @@ class MaaArenaReaderBackend:
     ) -> None:
         """Send one bounded tap-like contact when an instantaneous click drops."""
 
+        self._check_cancelled()
         if not 50 <= duration_ms <= 200:
             raise ArenaReaderError(
                 "maa_short_press_duration_invalid",
@@ -12333,14 +12344,14 @@ class MaaArenaReaderBackend:
         controller = self.context.tasker.controller
         down_succeeded = False
         up_succeeded = False
-        interaction_error: Exception | None = None
+        interaction_error: BaseException | None = None
         try:
             down_succeeded = bool(
                 controller.post_touch_down(*point).wait().succeeded
             )
             if down_succeeded:
-                time.sleep(duration_ms / 1000.0)
-        except Exception as error:  # pragma: no cover - native Maa boundary
+                self._sleep(duration_ms / 1000.0)
+        except (ArenaTaskCancelled, Exception) as error:
             interaction_error = error
         finally:
             try:
@@ -12354,6 +12365,7 @@ class MaaArenaReaderBackend:
         self._increment("short_press_actions")
         self._increment("controller_direct_short_press_actions")
         self._record_detail_action("short_press", box, succeeded=down_succeeded and up_succeeded)
+        self._check_cancelled()
         if interaction_error is not None or not down_succeeded or not up_succeeded:
             detail = (
                 f"Maa could not short-press {box} at {point}; "
@@ -12398,6 +12410,7 @@ class MaaArenaReaderBackend:
                 1,
             )
         started = time.perf_counter()
+        self._check_cancelled()
         job = self.context.tasker.controller.post_swipe(
             begin[0],
             begin[1],
@@ -12410,13 +12423,14 @@ class MaaArenaReaderBackend:
         self._add_timing("controller_direct_swipe_actions", elapsed)
         self._increment("swipe_actions")
         self._increment("controller_direct_swipe_actions")
+        self._check_cancelled()
         if not job.succeeded:
             raise ArenaReaderError("maa_swipe_failed", f"Maa could not swipe {vertical}")
 
     def _back(self) -> None:
         image = self._capture()
         height, width = image.shape[:2]
-        detail = self.context.run_recognition(
+        detail = self._run_recognition(
             "ChallengeBack",
             image,
             pipeline_override={
@@ -12435,7 +12449,9 @@ class MaaArenaReaderBackend:
         self._click(self._box_center_point(_box(results[0])))
 
     def _close_overlay(self) -> None:
+        self._check_cancelled()
         result = self.context.run_task("CloseButton")
+        self._check_cancelled()
         if not result or not result.status.succeeded:
             image = self._capture()
             height, width = image.shape[:2]
@@ -12515,7 +12531,7 @@ class MaaArenaReaderBackend:
                 return False
             self._increment("skill_card_detail_close_retry_evidence_frames")
             if frame_index == 0:
-                time.sleep(self._source_restore_poll_seconds)
+                self._sleep(self._source_restore_poll_seconds)
         return True
 
     def _assert_inferred_card_group_visible_after_dismiss(
@@ -12571,7 +12587,7 @@ class MaaArenaReaderBackend:
             communication_dialog = self._retry_transient_communication_items(items)
             if not communication_dialog and last_stage_count >= 3 and last_total_count in expected_total_counts:
                 return
-            time.sleep(0.25)
+            self._sleep(0.25)
         raise ArenaReaderError(
             "stage_member_list_timeout",
             f"stage anchors={last_stage_count}, total anchors={last_total_count}, "
@@ -12794,7 +12810,7 @@ class MaaArenaReaderBackend:
             # does not start earlier during the page transition.
             if not communication_dialog and self._matching_ocr_items(items, r"^体力$") and self._ocr(image, r"^総合力$"):
                 return
-            time.sleep(0.25)
+            self._sleep(0.25)
         raise ArenaReaderError(
             "member_detail_anchor_missing",
             "体力/総合力 anchors did not become visible",
@@ -12830,7 +12846,7 @@ class MaaArenaReaderBackend:
                     return
             else:
                 consecutive = 0
-            time.sleep(0.12)
+            self._sleep(0.12)
         raise ArenaReaderError(
             "p_item_source_restore_unproven",
             "member anchors and two stable source-row generations did not return: "
@@ -13277,11 +13293,11 @@ class MaaArenaReaderBackend:
                         self._increment(
                             "skill_card_source_restore_overlay_guard_mismatches"
                         )
-                        time.sleep(self._source_restore_poll_seconds)
+                        self._sleep(self._source_restore_poll_seconds)
                         continue
                     source_guard_consecutive += 1
                     if source_guard_consecutive < 2:
-                        time.sleep(self._source_restore_poll_seconds)
+                        self._sleep(self._source_restore_poll_seconds)
                         continue
                 if restoration_signatures is not None:
                     signature_started = time.perf_counter()
@@ -13301,7 +13317,7 @@ class MaaArenaReaderBackend:
                         self._increment(
                             "skill_card_source_restore_signature_failures"
                         )
-                        time.sleep(self._source_restore_poll_seconds)
+                        self._sleep(self._source_restore_poll_seconds)
                         continue
                     finally:
                         self._add_timing(
@@ -13587,7 +13603,7 @@ class MaaArenaReaderBackend:
                             )
                             if len(semantic_identity_frames) == 3:
                                 reset_consecutive_evidence()
-                            time.sleep(self._source_restore_poll_seconds)
+                            self._sleep(self._source_restore_poll_seconds)
                             continue
                 self._card_rows[group_index] = row
                 self._card_images[group_index] = image
@@ -13615,7 +13631,7 @@ class MaaArenaReaderBackend:
             except ArenaReaderError as error:
                 reset_consecutive_evidence()
                 last_error = str(error)
-            time.sleep(self._source_restore_poll_seconds)
+            self._sleep(self._source_restore_poll_seconds)
         restore_elapsed = time.perf_counter() - started
         self._add_timing(
             "skill_card_source_restore_wait",
@@ -13879,7 +13895,7 @@ class MaaArenaReaderBackend:
         self,
         image: Any,
     ) -> tuple[tuple[int, int, int, int], ...]:
-        detail = self.context.run_recognition(
+        detail = self._run_recognition(
             "ProduceRecognitionCards",
             image,
         )

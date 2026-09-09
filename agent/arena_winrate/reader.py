@@ -955,7 +955,7 @@ class ArenaLineupReader:
             except Exception as recovery_error:
                 raise ArenaReaderError(
                     "recovery_failed",
-                    f"read failed at {active_target}; recovery also failed: {recovery_error}",
+                    f"read failed at {active_target}: {error}; recovery also failed: {recovery_error}",
                 ) from error
             if isinstance(error, ArenaReaderError):
                 raise
@@ -994,7 +994,7 @@ class ArenaLineupReader:
             except Exception as recovery_error:
                 raise ArenaReaderError(
                     "recovery_failed",
-                    f"own-team read failed while active={active}; recovery also failed: {recovery_error}",
+                    f"own-team read failed while active={active}: {error}; recovery also failed: {recovery_error}",
                 ) from error
             if isinstance(error, ArenaReaderError):
                 raise
@@ -1048,7 +1048,7 @@ class ArenaLineupReader:
             except Exception as recovery_error:
                 raise ArenaReaderError(
                     "recovery_failed",
-                    f"opponent read failed at {active_target}; recovery also failed: {recovery_error}",
+                    f"opponent read failed at {active_target}: {error}; recovery also failed: {recovery_error}",
                 ) from error
             if isinstance(error, ArenaReaderError):
                 raise
