@@ -2618,7 +2618,8 @@ def build_release_assets(
                 "Arena reader second-window blind validation remains open",
                 "Arena win-rate final product acceptance remains preview-only",
             ] if qualification == "arena_preview" else [
-                "Result transition recovery has not yet passed new live-device validation",
+                "Reader cancellation, error recovery and title fixes require new live-device validation",
+                "Full-read latency targets on other hardware remain unverified",
                 "A complete arena daily challenge at 540x960 has not yet passed",
                 "Uninterrupted two-day arena daily acceptance remains open",
             ],
