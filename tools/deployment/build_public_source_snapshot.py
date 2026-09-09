@@ -264,6 +264,63 @@ def _run_bytes(
     return completed.stdout
 
 
+def _materialize_git_blobs(
+    repository: Path,
+    blobs: dict[str, list[Path]],
+    *,
+    temporary_directory: Path,
+    env: dict[str, str],
+) -> None:
+    """Read each distinct blob once without buffering the whole tree in memory."""
+    if not blobs:
+        return
+    with tempfile.TemporaryFile(dir=temporary_directory) as batch_output:
+        try:
+            completed = subprocess.run(
+                ("git", "cat-file", "--batch"),
+                input="".join(f"{object_sha}\n" for object_sha in blobs).encode("ascii"),
+                cwd=repository,
+                stdout=batch_output,
+                stderr=subprocess.PIPE,
+                timeout=120,
+                check=False,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise PublicSnapshotError("Git batch object read timed out") from error
+        if completed.returncode != 0:
+            detail = completed.stderr[-4000:].decode("utf-8", errors="replace").strip()
+            raise PublicSnapshotError(f"Git batch object read failed: {detail}")
+        batch_output.seek(0)
+        for object_sha, targets in blobs.items():
+            header = batch_output.readline(256)
+            match = re.fullmatch(rb"([0-9a-f]{40}) blob (0|[1-9][0-9]*)\n", header)
+            if match is None or match[1].decode("ascii") != object_sha:
+                raise PublicSnapshotError(f"Git batch returned an invalid blob header: {object_sha}")
+            size = int(match[2])
+            digest = hashlib.sha1(b"blob " + match[2] + b"\0")
+            target = targets[0]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            remaining = size
+            with target.open("wb") as output:
+                while remaining:
+                    chunk = batch_output.read(min(remaining, 1024 * 1024))
+                    if not chunk:
+                        raise PublicSnapshotError(f"Git batch returned a truncated blob: {object_sha}")
+                    output.write(chunk)
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+            if batch_output.read(1) != b"\n":
+                raise PublicSnapshotError(f"Git batch returned an invalid blob boundary: {object_sha}")
+            if digest.hexdigest() != object_sha:
+                raise PublicSnapshotError(f"Git batch returned mismatched blob content: {object_sha}")
+            for duplicate_target in targets[1:]:
+                duplicate_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(target, duplicate_target)
+        if batch_output.read(1):
+            raise PublicSnapshotError("Git batch returned unexpected trailing data")
+
+
 def _materialize_git_tree(
     repository: Path,
     revision: str,
@@ -286,6 +343,7 @@ def _materialize_git_tree(
     seen_prefix_casefold: dict[str, str] = {}
     tree_paths: set[str] = set()
     blob_paths: set[str] = set()
+    blob_targets: dict[str, list[Path]] = {}
     path_machine_markers = private_machine_markers()
     for record in records:
         try:
@@ -347,11 +405,7 @@ def _materialize_git_tree(
             tree_paths.add(git_path)
             continue
         blob_paths.add(git_path)
-        target = destination.joinpath(*parts)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(
-            _run_bytes(("git", "cat-file", "blob", object_sha), cwd=repository, env=env)
-        )
+        blob_targets.setdefault(object_sha, []).append(destination.joinpath(*parts))
     nonempty_tree_paths = {
         "/".join(blob_path.split("/")[:length])
         for blob_path in blob_paths
@@ -362,6 +416,12 @@ def _materialize_git_tree(
         raise PublicSnapshotError(
             f"public Git tree contains an empty directory: {empty_tree_paths[0]}"
         )
+    _materialize_git_blobs(
+        repository,
+        blob_targets,
+        temporary_directory=destination.parent,
+        env=env,
+    )
     return len(blob_paths)
 
 
