@@ -6,6 +6,8 @@ Installs a verified derived package for local development or recovery.
 This maintenance tool is not the product update path. Normal installed clients use
 MFAAvalonia's built-in GitHub resource updater and receive one full derived package.
 It deploys a version directory and switches current, but preserves the stable root launcher.
+SameVersionSourceUpdate explicitly permits a different source revision of the active
+version in a separate revision directory; the existing version is never overwritten.
 #>
 [CmdletBinding()]
 param(
@@ -13,6 +15,8 @@ param(
     [string]$CandidatePath,
 
     [string]$InstallRoot = 'C:\Tools\MaaGakumasu',
+
+    [switch]$SameVersionSourceUpdate,
 
     [switch]$SkipDefenderScan
 )
@@ -47,6 +51,103 @@ function Assert-Manifest {
             throw "Build manifest hash mismatch: $relative; actual $actual; expected $expected"
         }
     }
+}
+
+function Assert-SameVersionMetadata {
+    param(
+        [AllowEmptyString()][string]$ManifestText,
+        [AllowEmptyString()][string]$InterfaceText,
+        [ValidateSet('candidate', 'current')][string]$Side
+    )
+
+    # Windows PowerShell unwraps a one-element JSON array. Keep the object
+    # requirement explicit before ConvertFrom-Json can erase that distinction.
+    if (-not $ManifestText.TrimStart().StartsWith('{') -or
+        -not $InterfaceText.TrimStart().StartsWith('{')) {
+        throw "Same-version source update $Side build manifest identity is invalid."
+    }
+    $metadata = $ManifestText | ConvertFrom-Json
+    $interfaceMetadata = $InterfaceText | ConvertFrom-Json
+    if ($metadata -isnot [pscustomobject] -or $interfaceMetadata -isnot [pscustomobject] -or
+        $metadata.schema_version -ne 1 -or $metadata.product -ne 'MaaGakumasu' -or
+        $metadata.critical_files -isnot [pscustomobject] -or
+        @($metadata.critical_files.PSObject.Properties).Count -eq 0) {
+        throw "Same-version source update $Side build manifest identity is invalid."
+    }
+}
+
+function Resolve-InstallationTargetPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$VersionsRoot,
+        [Parameter(Mandatory = $true)][string]$CurrentPath,
+        [Parameter(Mandatory = $true)][string]$Version,
+        [AllowEmptyString()][string]$SourceRevision,
+        [switch]$SameVersionSourceUpdate
+    )
+
+    $targetName = $Version
+    if ($SameVersionSourceUpdate) {
+        if ($Version -notmatch '^v\d+\.\d+\.\d+(?:-(?:alpha|beta)\.\d+|\+gkh\.(?:[0-9a-f]{7,40}|\d{6}))?$') {
+            throw "Same-version source update candidate version is invalid: $Version"
+        }
+        if ($SourceRevision -notmatch '^[0-9a-fA-F]{40}\z') {
+            throw 'Same-version source update requires a full 40-character candidate source revision.'
+        }
+        if (-not (Test-Path -LiteralPath $CurrentPath -PathType Container)) {
+            throw 'Same-version source update requires an existing current installation.'
+        }
+        $currentItem = Get-Item -LiteralPath $CurrentPath -Force
+        if ($currentItem.LinkType -ne 'Junction' -or -not $currentItem.Target) {
+            throw "current is not a verifiable junction: $CurrentPath"
+        }
+        $currentTarget = [IO.Path]::GetFullPath([string]$currentItem.Target)
+        $resolvedVersionsRoot = [IO.Path]::GetFullPath($VersionsRoot).TrimEnd('\') + '\'
+        if (-not $currentTarget.StartsWith($resolvedVersionsRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Same-version source update current target is outside the versions directory.'
+        }
+        $currentTargetParent = [IO.Path]::GetFullPath((Split-Path -Parent $currentTarget)).TrimEnd('\') + '\'
+        if (-not $currentTargetParent.Equals($resolvedVersionsRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Same-version source update current target must be a direct child of the versions directory.'
+        }
+        $currentTargetItem = Get-Item -LiteralPath $currentTarget -Force
+        if (($currentTargetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Same-version source update current target must not redirect through another junction or link.'
+        }
+
+        $currentManifestPath = Join-Path $CurrentPath 'GAKUMAS_HELPER_BUILD.json'
+        $currentInterfacePath = Join-Path $CurrentPath 'interface.json'
+        $currentVersionPath = Join-Path (Split-Path -Parent $CurrentPath) 'CURRENT_VERSION.txt'
+        foreach ($requiredPath in @($currentManifestPath, $currentInterfacePath, $currentVersionPath)) {
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                throw "Same-version source update current metadata is missing: $requiredPath"
+            }
+        }
+        $currentManifestText = Get-Content -LiteralPath $currentManifestPath -Raw -Encoding UTF8
+        $currentInterfaceText = Get-Content -LiteralPath $currentInterfacePath -Raw -Encoding UTF8
+        Assert-SameVersionMetadata -ManifestText $currentManifestText -InterfaceText $currentInterfaceText -Side current
+        $currentManifest = $currentManifestText | ConvertFrom-Json
+        $currentInterface = $currentInterfaceText | ConvertFrom-Json
+        $currentVersion = (Get-Content -LiteralPath $currentVersionPath -Raw -Encoding UTF8).Trim()
+        if ([string]$currentManifest.derived_version -ne $Version -or
+            [string]$currentInterface.version -ne $Version -or $currentVersion -ne $Version) {
+            throw 'Same-version source update requires matching candidate, current manifest, interface and CURRENT_VERSION versions.'
+        }
+        $currentRevision = [string]$currentManifest.source.revision
+        if ($currentRevision -notmatch '^[0-9a-fA-F]{40}\z') {
+            throw 'Same-version source update current source revision is invalid.'
+        }
+        if ($currentRevision -ieq $SourceRevision) {
+            throw 'Same-version source update candidate source revision is already installed.'
+        }
+        Assert-Manifest -Root $CurrentPath -Manifest $currentManifest
+        $targetName = $Version + '--' + $SourceRevision.Substring(0, 12).ToLowerInvariant()
+    }
+
+    $targetPath = Join-Path $VersionsRoot $targetName
+    if (Test-Path -LiteralPath $targetPath) {
+        throw "Target version directory already exists and was not overwritten: $targetPath"
+    }
+    return $targetPath
 }
 
 function Install-AtomicFile {
@@ -259,7 +360,8 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     throw "Candidate is missing GAKUMAS_HELPER_BUILD.json: $candidateRoot"
 }
 
-$manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$manifestText = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8
+$manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema_version -ne 1 -or $manifest.product -ne 'MaaGakumasu') {
     throw 'Candidate build manifest identity is invalid.'
 }
@@ -271,7 +373,11 @@ $interfacePath = Join-Path $candidateRoot 'interface.json'
 if (-not (Test-Path -LiteralPath $interfacePath -PathType Leaf)) {
     throw 'Candidate is missing interface.json.'
 }
-$interface = Get-Content -LiteralPath $interfacePath -Raw -Encoding UTF8 | ConvertFrom-Json
+$interfaceText = Get-Content -LiteralPath $interfacePath -Raw -Encoding UTF8
+$interface = $interfaceText | ConvertFrom-Json
+if ($SameVersionSourceUpdate) {
+    Assert-SameVersionMetadata -ManifestText $manifestText -InterfaceText $interfaceText -Side candidate
+}
 if ([string]$interface.version -ne $version) {
     throw 'Candidate version does not match interface.json.'
 }
@@ -301,10 +407,13 @@ if (-not $SkipDefenderScan) {
 }
 
 New-Item -ItemType Directory -Path $versionsRoot -Force | Out-Null
-$targetPath = Join-Path $versionsRoot $version
-if (Test-Path -LiteralPath $targetPath) {
-    throw "Target version directory already exists and was not overwritten: $targetPath"
-}
+$targetPath = Resolve-InstallationTargetPath `
+    -VersionsRoot $versionsRoot `
+    -CurrentPath $currentPath `
+    -Version $version `
+    -SourceRevision ([string]$manifest.source.revision) `
+    -SameVersionSourceUpdate:$SameVersionSourceUpdate
+$maintenanceMode = if ($SameVersionSourceUpdate) { 'same_version_source_update' } else { 'version_install' }
 
 $stagingPath = Join-Path $versionsRoot ('.staging-' + $version + '-' + [guid]::NewGuid().ToString('N'))
 $previousTarget = $null
@@ -371,6 +480,7 @@ try {
 - Upstream version: $($manifest.upstream.tag)
 - Upstream release SHA-256: $($manifest.upstream.sha256)
 - Local source revision: $($manifest.source.revision)
+- Maintenance mode: $maintenanceMode
 - Arena engine revision: $($manifest.arena_engine.commit)
 - Update mode: $($manifest.update_contract.mode)
 - Update repository: $($manifest.update_contract.repository)
@@ -404,6 +514,9 @@ try {
     $arenaPeriodMigrationValue = ConvertFrom-Json -InputObject $arenaPeriodMigration
     $resultJson = [pscustomobject]@{
         Version = $version
+        SourceRevision = [string]$manifest.source.revision
+        MaintenanceMode = $maintenanceMode
+        SameVersionSourceUpdate = [bool]$SameVersionSourceUpdate
         TargetPath = $targetPath
         CurrentPath = $currentPath
         PreviousTarget = $previousTarget
