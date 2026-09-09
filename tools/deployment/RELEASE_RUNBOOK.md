@@ -1,6 +1,6 @@
 # Gakumas Helper 版本更新与公开发布运行手册
 
-本文是维护者执行上游同步、公开源码快照、完整包和 GitHub Release 的稳定操作契约。它只描述长期不变的步骤、停止条件和核对关系，不记录当前任务状态、某次发布进度或移动中的版本号。
+本文是维护者执行上游同步、普通公开源码提交、公开发布快照、完整包和 GitHub Release 的稳定操作契约。它只描述长期不变的步骤、停止条件和核对关系，不记录当前任务状态、某次发布进度或移动中的版本号。
 
 本文不授予联网取得、远端写入、Release 发布、本机安装或切换活动版本的权限。每个发布批次仍须取得对应授权。
 
@@ -10,10 +10,11 @@
 - 公开版本使用独立 GKH 语义化版本 (Semantic Versioning, SemVer) `vMAJOR.MINOR.PATCH`；本批次固定的上游 Maa 标签作为独立来源字段记录，不拼入 GKH 版本。
 - `arena_preview` 的 manifest 通道为 `beta`，GitHub Release 必须是 prerelease；`arena_release` 的通道为 `stable`，Release 必须是非 prerelease，并设为 GitHub Latest。不得只修改远端开关而保留不同资格的包。普通客户端更新固定复用 MFAAvalonia 内置 GitHub 资源更新及其文件事务回滚；本文的候选、散列、Defender 和公开历史门只服务构建／发布，不构成第二套客户端更新协议。
 - 公开发布与本机安装是两个独立批次。发布流程不得覆盖现有安装，也不得自动切换 `current`。
+- 普通源码更新使用 `--source-update`，在已验证公开 `main` 的线性历史上追加真实的功能、修复或文档提交，保持父提交的版本号，不生成本次发布公告、不打包、不创建 tag 或 Release。可以逐次推送，也可以积累多个已验证提交后一次普通快进 (fast-forward) 推送；每次推送仍须核对相应授权和明确提交清单。
 
 ## 2. 完成定义与硬对齐门
 
-一次发布只有在下列关系全部成立时才算完成：
+一次发布只有在完成复核时下列关系全部成立才算完成：
 
 ```text
 远端 main SHA
@@ -36,9 +37,11 @@
 
 任一关系不成立时必须停止，不得用发布说明、手工页面编辑或“稍后补齐”代替硬对齐。
 
+上述 `main` 对齐是该次发布完成时的检查。发布后允许通过普通源码提交继续推进 `main`，领先最近 Release；已发布 tag、该次发布源码 SHA 与制品来源仍保持一致，不随 `main` 移动。普通源码更新只核对本次提交及公开历史，不承担新版本、下载资产或 Release 完成门。
+
 ## 3. 发布状态机
 
-发布批次只允许按以下顺序前进：
+版本发布批次只允许按以下顺序前进：
 
 ```text
 PREPARE
@@ -58,11 +61,13 @@ PREPARE
 - 不得从已运行或被更新器混写的安装目录构建候选。
 - 不得从含未提交改动的共享工作树构建公开包。
 
+普通源码更新按第 7 节生成并验证公开提交，按第 10 节核对适用的远端预检项，然后只快进推送 `main`。它不进入候选构建、资产、tag、草稿或 Release 阶段。
+
 ## 4. 版本语义
 
-1. 批次必须分别固定 GKH 版本、上游 Maa 标签和上一通道版本，并把后者传给 `--previous-channel-version`；上游标签只能写入独立 provenance／manifest 字段。
-2. GKH 版本只允许 `vMAJOR.MINOR.PATCH`。没有特殊要求的公开发布默认将上一独立公开版本的 `MINOR` 加 1、`PATCH` 归零；内部调试在当前基础版本上递增 `PATCH`。用户显式指定版本时优先使用指定值，仍须满足唯一性和严格递增要求。项目处于 `0.x` 时，`MINOR` 表示基础大更新，`PATCH` 表示该基础上的内部迭代；只有项目正式完工才把 `MAJOR` 升至 `1`，正式 Release 身份本身不触发升 `MAJOR`。
-3. 已进入独立命名空间后，目标版本必须按 SemVer 严格高于上一独立公开版本及目标通道的有效独立候选。仅本地生成的快照、候选、资产或冒烟失败不消耗版本，同一目标 SemVer 在新 build/run ID 目录重建；旧输出不得覆盖或复用。版本首次进入规范安装目录，或远端 `main`／tag、draft／Release、任一版本化资产或分发副本首次写到隔离区之外时才视为已消耗，后续修复使用新的版本号；公开发布继续遵守上述默认 MINOR 规则或用户显式要求。
+1. 版本发布批次必须分别固定 GKH 版本、上游 Maa 标签和上一通道版本，并把后者传给 `--previous-channel-version`；上游标签只能写入独立 provenance／manifest 字段。普通源码更新沿用父版，不运行需要此通道参数的候选构建器。
+2. GKH 版本只允许 `vMAJOR.MINOR.PATCH`。没有特殊要求的公开发布默认将上一独立公开版本的 `MINOR` 加 1、`PATCH` 归零；需要安装或分发的内部调试版本在当前基础版本上递增 `PATCH`。用户显式指定版本时优先使用指定值，仍须满足发版版本的唯一性和严格递增要求。普通源码提交保持父公开提交版本，不为每个提交升版。项目处于 `0.x` 时，`MINOR` 表示基础大更新，`PATCH` 表示该基础上的内部迭代；只有项目正式完工才把 `MAJOR` 升至 `1`，正式 Release 身份本身不触发升 `MAJOR`。
+3. 已进入独立命名空间后，版本发布目标必须按 SemVer 严格高于父公开提交版本、上一独立公开版本及目标通道的有效独立候选。仅本地生成的快照、候选、资产或冒烟失败不消耗版本，同一目标 SemVer 在新 build/run ID 目录重建；旧输出不得覆盖或复用。新的发布版本身份首次进入规范安装目录，或通过远端 `main`／tag、draft／Release、任一版本化资产或分发副本首次写到隔离区之外时才视为已消耗，后续需要发版的修复使用新的版本号。保持父版本的普通源码提交不消耗新版本，也不改变该版本已有下载包；公开发布继续遵守上述默认 MINOR 规则或用户显式要求。
 4. 旧 `vMAJOR.MINOR.PATCH+gkh.*` 组合版本到独立 GKH SemVer 只允许一次人工安装迁移。构建清单必须把这次迁移标记为 `requires_manual_bootstrap=true`；此后不得回退到旧命名空间。
 5. README、指南和 Issue 示例使用 `vXXX` 或结构占位符，不冻结当前精确版本；`interface.json`、构建清单、Release Notes、来源／散列证据和历史任务记录必须保留实际版本。
 6. `update_contract.requires_manual_bootstrap=true` 时发布说明必须要求手动安装；否则说明应引导用户使用 MFAAvalonia 内置 GitHub 资源更新，不得再用自定义“全故障矩阵未完成”阻止正常升级。
@@ -71,7 +76,7 @@ PREPARE
 
 ## 5. PREPARE：冻结批次输入
 
-每个批次在修改前固定并记录：
+每个版本发布批次在修改前固定并记录：
 
 - 官方上游仓库、标签、完整提交 SHA；
 - 官方 Windows x86_64 Release 文件名、大小、SHA-256；
@@ -114,6 +119,8 @@ $PublicParentDirectory = [System.IO.Path]::GetFullPath('<NEW_VERIFIED_PUBLIC_PAR
 - 所有已有输入路径用 `Resolve-Path -LiteralPath` 固定为绝对路径；尚不存在的输出目录用 `[System.IO.Path]::GetFullPath(...)` 固定，并确认其父目录正确且目标不存在。
 - 其余尖括号值也先绑定为变量。PowerShell 变量作为独立参数传入，确保含空格的路径或标题不会被拆分。
 
+普通源码更新只需固定开发基线、已验证脚本与解释器、公开仓库、预期远端 `main`、选定公开父提交、提交说明、提交日期、输出目录和本次明确提交清单。沿用以上绝对路径和授权要求，按实际改动复核来源、许可证和相关验证，不要求准备与本次源码变化无关的完整包输入。提交清单记入已有批次证据，按父子顺序记录 SHA 与实际变化，不另建平行状态台账。
+
 ## 6. SOURCE_VERIFIED：隔离同步与源码验证
 
 1. 从已提交基线创建独立工作树和发布分支；共享脏工作树只读保护。
@@ -127,7 +134,9 @@ $PublicParentDirectory = [System.IO.Path]::GetFullPath('<NEW_VERIFIED_PUBLIC_PAR
 
 ## 7. PUBLIC_SNAPSHOT_VERIFIED：生成公开源码快照
 
-先实时读取远端 `main`，并把它完整取得到一个不带 remote 的独立父仓库。禁止使用浅克隆、开发仓库或开发仓库的 linked worktree 充当公开父仓库：
+### 7.1 固定公开父历史
+
+首次准备本次提交链时实时读取远端 `main`，并把它完整取得到一个不带 remote 的独立父仓库。禁止使用浅克隆、开发仓库或开发仓库的 linked worktree 充当公开父仓库：
 
 ```powershell
 $RemoteMain = @(git ls-remote --exit-code $Repository 'refs/heads/main')
@@ -148,11 +157,45 @@ if ($LASTEXITCODE -ne 0) { throw 'Full public-parent fetch failed' }
 git -C $PublicParentDirectory update-ref refs/heads/main `
   $ExpectedRemoteMainSha ('0' * 40)
 git -C $PublicParentDirectory checkout -q -f main
+$PublicParentSha = $ExpectedRemoteMainSha
 ```
 
-如果保留了上一批构建器生成的独立公开快照，也可直接复用；但其 `HEAD`、`refs/heads/main` 必须同时等于实时远端 `main`，且仍须通过构建器的完整父历史验证。
+如果保留了构建器生成的独立公开快照，也可直接复用。其 `HEAD`、`refs/heads/main` 必须同时等于选定的 `$PublicParentSha`，且仍须通过构建器的完整父历史验证。父快照可以等于已冻结的远端 `main`，也可以包含本次尚未推送的已验证普通提交；后一种情况须证明 `$ExpectedRemoteMainSha` 是其祖先，并把新增提交按顺序列入本次明确提交清单。远端发生变化时停止重新核对，不静默替换已冻结基线。
 
-以下命令使用第 5 节已经固定的变量：
+### 7.2 普通源码提交
+
+每次先固定一个只包含本项逻辑变化的开发提交与新的输出目录，再准备无字节顺序标记 (Byte Order Mark, BOM) 的 UTF-8 提交说明文件。首行为 `type(scope): summary` 格式的具体标题，`scope` 可省略；可以空一行后写正文说明根因、行为和验证范围。例如标题 `fix(arena): 结果页就绪后再计入识别次数` 或 `docs(support): 补充反馈所需的日志信息`；只有确实包含对应变化时才使用这些说明。普通提交不得使用冒充发版的消息，`release` scope 保留给发版。`--message-file` 必须与 `--source-update` 同用。
+
+将说明文件绝对路径绑定为 `$CommitMessageFile`，父公开提交的版本绑定为 `$CurrentPublicVersion`，日期绑定为 `$CommitDate`，再执行：
+
+```powershell
+& $Python (Join-Path $ReleaseWorktree 'tools\deployment\build_public_source_snapshot.py') `
+  --source-root $DevelopmentWorktree `
+  --source-revision $DevelopmentSha `
+  --output $PublicSnapshotDirectory `
+  --version $CurrentPublicVersion `
+  --source-update `
+  --message-file $CommitMessageFile `
+  --commit-date $CommitDate `
+  --repository $Repository `
+  --public-parent-root $PublicParentDirectory `
+  --public-parent-revision $PublicParentSha
+```
+
+`--source-update` 必须有已验证公开父提交，不能创建初始根。版本必须等于父版；不会生成本次发布公告。`--commit-date` 是 `--release-date` 的同义参数，日期仍为 `YYYY-MM-DD`，不能用自由格式时间。一次生成只增加一个真实逻辑提交；下一项变化可以把已生成快照作为父仓库再次生成，依次更新 `$PublicParentDirectory`、`$PublicParentSha`、开发提交、说明文件和独立输出目录。
+
+普通提交完成下文共用核对和相关测试后，可以按第 10 节的源码推送预检逐次或成批推送：
+
+```powershell
+git -C $PublicSnapshotDirectory push --dry-run $Repository HEAD:refs/heads/main
+git -C $PublicSnapshotDirectory push $Repository HEAD:refs/heads/main
+```
+
+dry-run 必须通过；正式推送前再次确认远端预期 SHA。成功后读取远端 `main` 并确认等于此次最后一个公开提交。推送失败或连接中断时先查询远端再决定后续动作；不创建 tag、不运行候选或资产构建、不创建 Release。
+
+### 7.3 版本发布提交
+
+版本发布才使用更高 SemVer、生成版本公告，并继续第 8—13 节的构建和发布流程。以下命令使用第 5 节固定的批次变量和上文选定的公开父提交：
 
 ```powershell
 & $Python (Join-Path $ReleaseWorktree 'tools\deployment\build_public_source_snapshot.py') `
@@ -163,19 +206,21 @@ git -C $PublicParentDirectory checkout -q -f main
   --release-date $ReleaseDate `
   --repository $Repository `
   --public-parent-root $PublicParentDirectory `
-  --public-parent-revision $ExpectedRemoteMainSha
+  --public-parent-revision $PublicParentSha
 ```
+
+### 7.4 每次生成的共用核对
 
 生成后必须确认：
 
-- 独立 Git 仓库、仅有 `refs/heads/main`、无 remote，`HEAD` 的唯一父提交精确等于 `$ExpectedRemoteMainSha`；
-- `$ExpectedRemoteMainSha..HEAD` 恰好一个提交，完整可达历史只有一个根、无 merge，且开发提交对象不存在；
+- 独立 Git 仓库、仅有 `refs/heads/main`、无 remote，`HEAD` 的唯一父提交精确等于本次生成选定的 `$PublicParentSha`；
+- `$PublicParentSha..HEAD` 恰好一个提交，完整可达历史只有一个根、无 merge，且开发提交对象不存在；远端基线到 `HEAD` 可以有多笔新增提交，数量、顺序和 SHA 必须与本次明确提交清单完全一致；
 - 工作树干净，`git fsck --full --strict --no-reflogs` 通过且无不可达对象；
 - 每个可达提交的原始 Git tree 路径与 blob 都通过公开允许清单和隐私扫描；空树、Windows 设备名、路径大小写碰撞、路径个人标识、伪装或嵌套 ZIP，以及归档成员路径、内容、comment/extra 元数据均失败关闭；不能以 `.gitattributes` 的 `export-ignore` 或 `export-subst` 隐藏内容；
 - 无本机运行态、用户数据、凭据、链接/重解析点、内部任务标识或开发历史；
-- 每个可达提交都使用固定通用作者、单行版本消息和该批次显式 `--release-date` 对应的提交日期，不含签名或额外提交头；新提交消息固定为 `chore(release): 发布 <版本> 并同步更新文档与公告`；
+- 每个可达提交都使用固定通用作者和显式日期，不含签名或额外提交头。普通提交保留经核验的 UTF-8 具体标题及可选正文，版本保持父版；发版提交使用发布消息并提高版本。既有历史消息原样验证和保留，不因采用普通提交流程而更名或重写历史；
 - `README.md`、`assets/interface.json`、`pyproject.toml` 的版本、仓库和许可证元数据正确；
-- 使用已冻结解释器在公开快照内执行测试并返回 0：
+- 普通源码提交运行与实际变化相关的现有测试和检查；版本发布使用已冻结解释器在公开快照内执行测试并返回 0：
 
 ```powershell
 Push-Location -LiteralPath $PublicSnapshotDirectory
@@ -188,7 +233,7 @@ finally {
 }
 ```
 
-记录生成的公开提交 SHA。后续候选必须从这个公开提交构建，不能再从开发提交或可变工作树构建。
+记录生成的公开提交 SHA，并追加到本次明确提交清单。版本发布的后续候选必须从最终发版公开提交构建，不能再从开发提交或可变工作树构建。
 
 ## 8. CANDIDATE_VERIFIED：从公开提交构建候选
 
@@ -262,16 +307,20 @@ finally {
 
 ## 10. REMOTE_PREFLIGHT_PASSED：远端写入前检查
 
-远端写入前必须实时确认：
+普通源码推送与版本发布都必须实时确认：
 
 - 当前默认分支仍为 `main`；
 - 远端 `main` 精确 SHA 与本批次记录的预期值一致；
+- GitHub 登录身份和仓库权限正确；
+- 本地公开快照工作树干净，`HEAD` 等于 `<PUBLIC_SHA>`；
+- 预期远端 `main` 是本地 `HEAD` 的祖先，`git merge-base --is-ancestor` 返回 0；
+- `$ExpectedRemoteMainSha..HEAD` 的新增链为线性，`git rev-list --count` 的结果等于本次明确提交清单的条数，使用 `git rev-list --reverse` 按父子顺序列出的每个 SHA 和提交内容也与清单一致；该链可以包含多笔普通提交，以及版本发布批次末尾的发版提交；不得把 `HEAD^ == 远端 main` 当成通用条件。
+
+版本发布还必须确认：
+
 - 目标 tag 不存在；
 - 同版本 Release（包括 draft）不存在；
 - 未认证 `/releases` 与认证维护者视角均已枚举；按安装态 MFA 的 Stable／Beta／Alpha 过滤与 SemVer 规则计算候选，并模拟加入本次 Release 后的结果。正式版支持的 Stable 必须选中新版本；旧组合 prerelease 仍占优的 Beta／Alpha 在说明中明确不受支持。纯手动迁移 prerelease 则必须证明默认 Stable 会过滤全部 prerelease；GitHub Latest 标志不代替 MFA 通道排序核验；
-- GitHub 登录身份和仓库权限正确；
-- 本地公开快照工作树干净，`HEAD` 等于 `<PUBLIC_SHA>`；
-- 本地公开快照 `HEAD^` 等于远端预期 SHA，且两者之间恰好一个提交；
 - 三个本地资产的最终大小和 SHA-256 已记录。
 - `$ReleaseTitle` 和 `$ReleaseNotes` 仍等于已冻结值，说明文件 SHA-256 未变化。
 
@@ -279,7 +328,7 @@ finally {
 
 ## 11. REFS_ALIGNED：原子同步 `main` 与 tag
 
-公开快照已经以已验证的远端 `main` 为唯一父提交。只允许普通快进，并把 `main` 与新 tag 放进同一个原子 push：
+版本发布的公开快照已经通过远端祖先关系与本次提交清单核对，末尾发版提交对应本次制品；中间可以包含尚未推送的普通提交。只允许普通快进，并把 `main` 与新 tag 放进同一个原子 push：
 
 ```powershell
 git -C $PublicSnapshotDirectory push --dry-run --atomic `
@@ -301,7 +350,7 @@ git -C $PublicSnapshotDirectory push --atomic `
 - 若远端不支持 `--atomic`，命令必须失败，不得自动降级为部分写入；
 - push 返回非零或连接中断后，先重新查询远端引用，再决定是否重试；不得根据“看起来已上传”猜测结果；
 - 成功后立即确认远端 `main` 与新 tag 都等于 `<PUBLIC_SHA>`。
-- 原子 push 首次成功即为本流程的版本消费点；此后即使 draft 或资产阶段失败，同一版本也不得复用。
+- 新版本原子 push 首次成功即为本流程的版本消费点；此后即使 draft 或资产阶段失败，同一版本也不得重新发版。日常源码更新可以继续使用父版本号，不能借此覆盖该版本的 tag 或资产。
 
 旧版本 tag 和 Release 不移动、不删除。线性规则启用后创建的新 tag 必须指向 `main` 上对应的公开提交；迁移前已存在且不在 `main` 祖先链上的不可变 tag/Release 作为历史例外保留，不得为对齐新规则而重写。
 
@@ -356,7 +405,7 @@ if ($Qualification -eq 'arena_release') {
 - 三个资产仍为 `uploaded`，大小和 digest 不变；
 - 旧 tag 和旧 Release 仍可用于公开版本回滚；本机旧安装目录的保留与核对属于独立安装批次，不作为本次公开发布完成门。
 
-只有这些检查全部通过后才能宣布发布完成。
+只有这些检查全部通过后才能宣布发布完成。之后普通源码提交可以让 `main` 前进；复查旧 Release 时以该版本不可变 tag、发布源码 SHA 和资产来源为准，不要求移动中的 `main` 永远停在旧发布提交。
 
 ## 14. 失败与回滚边界
 
@@ -387,11 +436,12 @@ if ($Qualification -eq 'arena_release') {
 ## 16. 公开历史不变量
 
 - 初次建库必须显式使用 `--initial-public-root`；已有公开 `main` 后禁止再次生成根提交。
-- 后续每版只以上一版实时核验的公开 `main` 为唯一父提交，并只增加一个脱敏提交。开发仓库、开发 worktree、浅历史、merge、replace、graft、alternate、额外 ref 和任意历史隐私门失败都必须拒绝。
-- 完整公开链中的 GKH 版本必须唯一，显式发布日期不得回退。既有 `vMAJOR.MINOR.PATCH+gkh.*` 组合版本仅在迁移前作为兼容历史接受；出现首个独立 GKH SemVer 后，后续版本必须按 SemVer 严格递增且不得重新出现旧命名空间，重复或倒序版本失败关闭。各提交记录的上游 Maa 标签仍须作为独立来源字段通过验证。
+- 每次生成只以上一个已验证公开提交为唯一父提交，并增加一个对应真实逻辑变化的脱敏提交；父提交可以是实时核验的远端 `main`，也可以是本次已验证但尚未推送的公开提交。一次发版之前允许多次普通提交，也允许多次或一次快进推送。开发仓库、开发 worktree、浅历史、merge、replace、graft、alternate、额外 ref 和任意历史隐私门失败都必须拒绝。
+- 普通提交保持父版，因此完整公开链可以有多个相同版本的提交；发版提交才要求版本严格递增。显式提交日期不得回退，消息必须描述本次实际变化。既有 `vMAJOR.MINOR.PATCH+gkh.*` 组合版本仅在迁移前作为兼容历史接受；出现首个独立 GKH SemVer 后不得重新出现旧命名空间，也不得版本倒退。各提交记录的上游 Maa 标签仍须作为独立来源字段通过验证。
 - 构建器逐提交读取原始 Git blob 验证完整公开链；公开历史不得依赖导出属性隐藏内容。
-- 推送只使用普通 fast-forward。远端 SHA 漂移时停止并重新生成，不通过 force、临时 merge 或父提交替换补救。
-- 生成的新公开快照本身就是下一版可复用的父仓库；应保留到下一版成功发布并完成远端复核。
+- 推送只使用普通 fast-forward。远端 SHA 漂移时停止并重新核对已公开状态和未推清单，必要时从新的已验证基线重新生成，不通过 force、临时 merge 或父提交替换补救。
+- 生成的新公开快照本身就是下一次普通更新或发版可复用的父仓库；应保留到后续快照通过验证并完成相应远端复核。
+- 已发 tag 和 Release 资产保持不变。已批准的初始提交标题更名仅按构建器中固定的旧根对象兼容，全部文件树、作者和日期仍须与原历史一致；既有 tag 和下载包继续指向迁移前的源码，不要求迁移后的 `main` 包含这些旧 tag。该一次性历史兼容不改变后续普通快进规则，也不允许任意根改名。
 
 ## 17. 维护规则
 

@@ -141,6 +141,10 @@ KNOWN_LEGACY_PUBLIC_VERSIONS = {
     "v1.4.8+gkh.260823",
     "v1.4.9+gkh.260824",
 }
+# Approved message-only migration of the original public root. The object ID
+# binds its tree, identity and date as well as its title; other roots stay invalid.
+RENAMED_LEGACY_PUBLIC_ROOT = "68ba22280553a144578663bf29952ad0597cab9f"
+RENAMED_LEGACY_PUBLIC_ROOT_MESSAGE = "chore(project): 初始化 MaaGakumasu 派生源码与工具"
 MINIMUM_INDEPENDENT_PROJECT_VERSION = "v0.1.0"
 FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION = "v0.1.1"
 RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS = frozenset({"v0.1.0"})
@@ -578,10 +582,12 @@ def _project_version_key(version: str) -> tuple[int, int, int]:
 
 
 def _release_commit_message(version: str) -> str:
-    return f"chore(release): 发布 {version} 并同步更新文档与公告"
+    return f"chore(release): 准备 {version}"
 
 
-def _release_version_from_message(message: str) -> str | None:
+def _release_version_from_message(message: str, *, commit: str | None = None) -> str | None:
+    if commit == RENAMED_LEGACY_PUBLIC_ROOT and message == RENAMED_LEGACY_PUBLIC_ROOT_MESSAGE:
+        return "v1.4.8+gkh.260823"
     legacy_prefix = "release: "
     if message.startswith(legacy_prefix):
         version = message.removeprefix(legacy_prefix)
@@ -592,7 +598,32 @@ def _release_version_from_message(message: str) -> str | None:
         version = message[len(prefix) : -len(suffix)]
         if PROJECT_VERSION_PATTERN.fullmatch(version) is not None:
             return version
+    prefix = "chore(release): 准备 "
+    if message.startswith(prefix):
+        version = message.removeprefix(prefix)
+        if PROJECT_VERSION_PATTERN.fullmatch(version) is not None:
+            return version
     return None
+
+
+def _validate_source_commit_message(message: str) -> None:
+    lines = message.split("\n")
+    if (
+        not message
+        or message != message.strip()
+        or any(ord(char) < 32 and char not in "\n\t" for char in message)
+        or re.fullmatch(
+            r"(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
+            r"(?:\([a-z0-9][a-z0-9_./-]*\))?!?: \S.*",
+            lines[0],
+        ) is None
+        or "(release)" in lines[0].split(":", 1)[0]
+        or (len(lines) > 1 and (lines[1] or len(lines) < 3))
+    ):
+        raise PublicSnapshotError(
+            "source commit message must describe a change using type(scope): summary, "
+            "with an optional body after a blank line; release scope is reserved"
+        )
 
 
 def _render_release_changelog(
@@ -777,6 +808,8 @@ def _validate_public_history(
     previous_legacy_revision: int | None = None
     previous_project_version: tuple[int, int, int] | None = None
     independent_namespace_started = False
+    previous_public_version: str | None = None
+    previous_changelog: bytes | None = None
     for index, commit in enumerate(commits):
         metadata = _run(
             ("git", "show", "-s", "--format=%an|%ae|%cn|%ce%n%s%n%aI%n%cI", commit),
@@ -785,10 +818,14 @@ def _validate_public_history(
         ).splitlines()
         if len(metadata) != 4 or metadata[0] != expected_identity:
             raise PublicSnapshotError(f"public history commit identity is not fixed: {commit}")
-        public_version = _release_version_from_message(metadata[1])
-        if public_version is None:
-            raise PublicSnapshotError(f"public history commit message is invalid: {commit}")
-        if public_version in seen_versions:
+        public_version = _release_version_from_message(metadata[1], commit=commit)
+        source_update = public_version is None
+        if source_update:
+            _validate_source_commit_message(metadata[1])
+            if previous_project_version is None or previous_public_version is None:
+                raise PublicSnapshotError("source update requires an independent public release parent")
+            public_version = previous_public_version
+        if not source_update and public_version in seen_versions:
             raise PublicSnapshotError(
                 f"public history contains a duplicate version: {public_version}"
             )
@@ -797,7 +834,10 @@ def _validate_public_history(
                 f"public history contains permanently reserved version: {public_version}"
             )
         legacy_match = LEGACY_PUBLIC_VERSION_PATTERN.fullmatch(public_version)
-        if legacy_match is not None:
+        if source_update:
+            expected_date = _release_commit_date(metadata[2].removesuffix("T00:00:00Z"))
+            expected_message = None
+        elif legacy_match is not None:
             if independent_namespace_started:
                 raise PublicSnapshotError(
                     "legacy upstream-based versions cannot follow independent GKH SemVer"
@@ -829,7 +869,11 @@ def _validate_public_history(
             previous_legacy_core = core_version
             previous_legacy_date = legacy_date
             previous_legacy_revision = local_revision
-            expected_message = f"release: {public_version}\n"
+            expected_message = (
+                f"{RENAMED_LEGACY_PUBLIC_ROOT_MESSAGE}\n"
+                if commit == RENAMED_LEGACY_PUBLIC_ROOT
+                else f"release: {public_version}\n"
+            )
         else:
             independent_namespace_started = True
             project_version = _project_version_key(public_version)
@@ -852,7 +896,7 @@ def _validate_public_history(
             if metadata[2] != metadata[3]:
                 raise PublicSnapshotError(f"public history commit date is inconsistent: {commit}")
             expected_date = _release_commit_date(metadata[2].removesuffix("T00:00:00Z"))
-            expected_message = f"{_release_commit_message(public_version)}\n"
+            expected_message = f"{metadata[1]}\n"
         if metadata[2:] != [expected_date, expected_date]:
             raise PublicSnapshotError(f"public history commit date is inconsistent: {commit}")
         if previous_commit_date is not None and expected_date < previous_commit_date:
@@ -878,7 +922,22 @@ def _validate_public_history(
             raise PublicSnapshotError(
                 f"public history commit contains unsupported headers or a signature: {commit}"
             )
-        if decoded_message != expected_message:
+        if source_update:
+            message = decoded_message.removesuffix("\n")
+            _validate_source_commit_message(message)
+            message_path = history_root / "commit-message.txt"
+            message_path.write_text(message, encoding="utf-8")
+            _reject_internal_task_identifiers(history_root)
+            try:
+                validate_tree(
+                    history_root,
+                    project_path_predicate=lambda _relative: True,
+                    allowed_emails={PUBLIC_AUTHOR_EMAIL},
+                )
+            except PrivacyGateError as error:
+                raise PublicSnapshotError(str(error)) from error
+            message_path.unlink()
+        elif decoded_message != expected_message:
             raise PublicSnapshotError(f"public history commit message must be one line: {commit}")
 
         tree = history_root / f"{index:04d}-{commit}"
@@ -895,11 +954,27 @@ def _validate_public_history(
             raise PublicSnapshotError(
                 f"public history version does not match its commit message: {commit}"
             )
+        changelog_path = tree / "assets" / "resource" / "Changelog.md"
+        changelog = changelog_path.read_bytes() if changelog_path.exists() else None
+        if source_update:
+            if changelog != previous_changelog:
+                raise PublicSnapshotError("source update must preserve the published changelog")
+            project = tomllib.loads((tree / "pyproject.toml").read_text(encoding="utf-8"))
+            if project.get("project", {}).get("version") != public_version.removeprefix("v"):
+                raise PublicSnapshotError("source update must preserve the published project version")
+            if _run(
+                ("git", "rev-parse", f"{commit}^{{tree}}"), cwd=parent_root, env=env
+            ) == _run(
+                ("git", "rev-parse", f"{commits[index - 1]}^{{tree}}"), cwd=parent_root, env=env
+            ):
+                raise PublicSnapshotError("source update must contain a real file change")
         if interface.get("github") != repository:
             raise PublicSnapshotError(
                 f"public history repository does not match the target repository: {commit}"
             )
         shutil.rmtree(tree)
+        previous_public_version = public_version
+        previous_changelog = changelog
     history_root.rmdir()
     return tuple(commits)
 
@@ -915,6 +990,8 @@ def build_public_snapshot(
     initial_public_root: bool = False,
     public_parent_root: Path | None = None,
     public_parent_revision: str | None = None,
+    source_update: bool = False,
+    commit_message: str | None = None,
 ) -> dict[str, object]:
     source_root = source_root.resolve()
     output = output.resolve()
@@ -928,6 +1005,14 @@ def build_public_snapshot(
             f"{FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION}"
         )
     commit_date = _release_commit_date(release_date)
+    if source_update:
+        if initial_public_root or public_parent_root is None:
+            raise PublicSnapshotError("source update requires a verified public parent")
+        if commit_message is None:
+            raise PublicSnapshotError("source update requires an explicit commit message")
+        _validate_source_commit_message(commit_message)
+    elif commit_message is not None:
+        raise PublicSnapshotError("custom commit messages require source-update mode")
     if REPOSITORY_PATTERN.fullmatch(repository) is None:
         raise PublicSnapshotError("public repository must be a GitHub repository URL without a trailing slash")
     has_parent_root = public_parent_root is not None
@@ -973,6 +1058,14 @@ def build_public_snapshot(
                 temporary=temporary,
                 env=release_git_environment,
             )
+            if source_update:
+                parent_interface = json.loads(_run_bytes(
+                    ("git", "show", f"{public_parent_revision}:assets/interface.json"),
+                    cwd=public_parent_root,
+                    env=release_git_environment,
+                ))
+                if parent_interface.get("version") != version:
+                    raise PublicSnapshotError("source update must keep the parent public version")
         if _run(
             ("git", "cat-file", "-t", source_revision),
             cwd=source_root,
@@ -1009,14 +1102,22 @@ def build_public_snapshot(
             release_notes_path = output / "tools" / "deployment" / "public" / "RELEASE_NOTES.md"
             release_notes_template = release_notes_path.read_text(encoding="utf-8")
             changelog_path = output / "assets" / "resource" / "Changelog.md"
-            changelog_path.write_text(
-                _render_release_changelog(
-                    release_notes_template,
-                    version=version,
-                    repository=repository,
-                ),
-                encoding="utf-8",
-            )
+            if source_update:
+                assert public_parent_root is not None
+                changelog_path.write_bytes(_run_bytes(
+                    ("git", "show", f"{public_parent_revision}:assets/resource/Changelog.md"),
+                    cwd=public_parent_root,
+                    env=release_git_environment,
+                ))
+            else:
+                changelog_path.write_text(
+                    _render_release_changelog(
+                        release_notes_template,
+                        version=version,
+                        repository=repository,
+                    ),
+                    encoding="utf-8",
+                )
             interface_path = output / "assets" / "interface.json"
             interface = json.loads(interface_path.read_text(encoding="utf-8"))
             upstream_version = interface.get("version")
@@ -1109,7 +1210,7 @@ def build_public_snapshot(
             commit_arguments = ["git", *git_isolation, "commit-tree", tree_revision]
             if public_parent_revision is not None:
                 commit_arguments.extend(("-p", public_parent_revision))
-            commit_arguments.extend(("-m", _release_commit_message(version)))
+            commit_arguments.extend(("-m", commit_message or _release_commit_message(version)))
             revision = _run(
                 tuple(commit_arguments),
                 cwd=output,
@@ -1222,6 +1323,8 @@ def build_public_snapshot(
                 "revision": revision,
                 "version": version,
                 "release_date": release_date,
+                "change_kind": "source_update" if source_update else "release",
+                "commit_message": commit_message or _release_commit_message(version),
                 "upstream_version": upstream_version,
                 "repository": repository,
                 "lineage_mode": "initial_public_root" if initial_public_root else "linear_public_history",
@@ -1243,7 +1346,9 @@ def main() -> int:
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--version", required=True)
-    parser.add_argument("--release-date", required=True)
+    parser.add_argument("--release-date", "--commit-date", dest="release_date", required=True)
+    parser.add_argument("--source-update", action="store_true")
+    parser.add_argument("--message-file", type=Path, help="UTF-8 source commit title and optional body")
     parser.add_argument("--repository", required=True)
     history_mode = parser.add_mutually_exclusive_group(required=True)
     history_mode.add_argument("--initial-public-root", action="store_true")
@@ -1257,6 +1362,11 @@ def main() -> int:
         version=args.version,
         release_date=args.release_date,
         repository=args.repository,
+        source_update=args.source_update,
+        commit_message=(
+            args.message_file.read_text(encoding="utf-8").rstrip("\n")
+            if args.message_file is not None else None
+        ),
         initial_public_root=args.initial_public_root,
         public_parent_root=args.public_parent_root,
         public_parent_revision=args.public_parent_revision,
