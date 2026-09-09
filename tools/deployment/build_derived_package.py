@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import os
 import re
+import csv
 import json
 import stat
+import base64
 import shutil
 import hashlib
 import zipfile
@@ -20,9 +22,16 @@ import tempfile
 import subprocess
 from typing import Any
 from pathlib import Path
+from email.parser import Parser
 
 SCHEMA_VERSION = 1
 UPSTREAM_REPOSITORY = "https://github.com/SuperWaterGod/MaaGakumasu"
+FRAMEWORK_REPOSITORY = "https://github.com/MaaXYZ/MaaFramework"
+FRAMEWORK_NATIVE_PATH = "runtimes/win-x64/native"
+FRAMEWORK_PYTHON_NATIVE_PATH = "python/Lib/site-packages/maa/bin"
+FRAMEWORK_NOTICE_PATH = "THIRD_PARTY_NOTICES/MaaFramework-LICENSE"
+FRAMEWORK_AGENT_PATHS = ("MaaAgentBinary", "libs/MaaAgentBinary", "share/MaaAgentBinary")
+FRAMEWORK_REQUIRED_DLLS = ("MaaFramework.dll", "MaaAgentClient.dll", "MaaAgentServer.dll")
 MFA_CORE_BUNDLE_SCHEMA_VERSION = 1
 MFA_CORE_COMPONENT = "mfaavalonia_core"
 MFA_CORE_STATUS = "READY"
@@ -347,9 +356,39 @@ def _normalize_python_dependency_sources(site_packages: Path) -> dict[str, str]:
         raise BuildError(f"Python dependency contains multiple profile examples: {relative.as_posix()}")
     if replacements == 0:
         return {}
-    with path.open("w", encoding="utf-8", newline="") as stream:
-        stream.write(normalized)
-    return {relative.as_posix(): "replace_nonfunctional_user_profile_example_with_relative_log_path"}
+    records = tuple(
+        record for record in site_packages.glob("*.dist-info/RECORD")
+        if record.parent.name.casefold().startswith("maafw-")
+    )
+    if len(records) != 1:
+        raise BuildError("Python source normalization requires exactly one maafw RECORD")
+    record = records[0]
+    record_relative = record.relative_to(site_packages).as_posix()
+    with record.open("r", encoding="utf-8", newline="") as stream:
+        rows = list(csv.reader(stream))
+    if any(len(row) != 3 for row in rows):
+        raise BuildError("Python source normalization found a malformed maafw RECORD")
+    source_rows = [row for row in rows if row[0] == relative.as_posix()]
+    record_rows = [row for row in rows if row[0] == record_relative]
+    original_bytes = path.read_bytes()
+    original_hash = base64.urlsafe_b64encode(hashlib.sha256(original_bytes).digest()).rstrip(b"=").decode("ascii")
+    if (
+        len(source_rows) != 1
+        or source_rows[0][1:] != [f"sha256={original_hash}", str(len(original_bytes))]
+        or len(record_rows) != 1
+        or record_rows[0][1:] != ["", ""]
+    ):
+        raise BuildError("Python source normalization maafw RECORD does not match the original source")
+    normalized_bytes = normalized.encode("utf-8")
+    normalized_hash = base64.urlsafe_b64encode(hashlib.sha256(normalized_bytes).digest()).rstrip(b"=").decode("ascii")
+    source_rows[0][1:] = [f"sha256={normalized_hash}", str(len(normalized_bytes))]
+    path.write_bytes(normalized_bytes)
+    with record.open("w", encoding="utf-8", newline="") as stream:
+        csv.writer(stream, lineterminator="\n").writerows(rows)
+    return {
+        relative.as_posix(): "replace_nonfunctional_user_profile_example_with_relative_log_path",
+        record_relative: "refresh_normalized_source_hash_and_size",
+    }
 
 
 def _is_link_or_reparse(path: Path) -> bool:
@@ -717,10 +756,165 @@ def _validate_candidate(root: Path, *, version: str, update_repository: str) -> 
     return {relative: sha256_file(root / relative) for relative in REQUIRED_FILES}
 
 
-def _validate_python_runtime(root: Path) -> dict[str, str]:
+def _required_maafw_version(root: Path) -> str:
+    try:
+        requirements = (root / "requirements.txt").read_text(encoding="utf-8-sig").splitlines()
+    except OSError as error:
+        raise BuildError("candidate requirements.txt is unavailable") from error
+    versions = []
+    for line in requirements:
+        requirement = line.partition("#")[0].strip()
+        if re.match(r"maafw(?:\s|[=<>!~;\[]|$)", requirement, flags=re.IGNORECASE):
+            match = re.fullmatch(r"maafw\s*==\s*(\d+\.\d+\.\d+)", requirement, flags=re.IGNORECASE)
+            if match is None:
+                raise BuildError("candidate requirements.txt must pin exactly one maafw version")
+            versions.append(match.group(1))
+    if len(versions) != 1:
+        raise BuildError("candidate requirements.txt must pin exactly one maafw version")
+    return versions[0]
+
+
+def _framework_archive_hash(
+    archive: Path | None, expected_hash: str | None, version: str | None,
+) -> str | None:
+    if archive is None and expected_hash is None and version is None:
+        return None
+    if archive is None or expected_hash is None or version is None:
+        raise BuildError("framework archive, SHA-256 and version must be supplied together")
+    if re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+        raise BuildError("framework version must use MAJOR.MINOR.PATCH")
+    if archive.name != f"MAA-win-x86_64-v{version}.zip":
+        raise BuildError("framework archive must name the matching official Windows x64 release")
+    if not archive.is_file() or re.fullmatch(r"[0-9A-Fa-f]{64}", expected_hash) is None:
+        raise BuildError("framework archive or SHA-256 is invalid")
+    actual_hash = sha256_file(archive)
+    if actual_hash.casefold() != expected_hash.casefold():
+        raise BuildError("framework archive SHA-256 mismatch")
+    return actual_hash
+
+
+def _paired_runtime_files(candidate: Path) -> dict[str, str]:
+    version = _required_maafw_version(candidate)
+    site_packages = candidate / "python/Lib/site-packages"
+    metadata_files = tuple(
+        path for path in site_packages.glob("*.dist-info/METADATA")
+        if path.parent.name.casefold().startswith("maafw-")
+    )
+    if len(metadata_files) != 1:
+        raise BuildError("candidate requires exactly one maafw package metadata file")
+    package = Parser().parsestr(metadata_files[0].read_text(encoding="utf-8"))
+    if package.get("Name", "").casefold() != "maafw" or package.get("Version") != version:
+        raise BuildError("candidate maafw package and requirements version mismatch")
+    native = candidate / FRAMEWORK_NATIVE_PATH
+    python_native = candidate / FRAMEWORK_PYTHON_NATIVE_PATH
+    for name in FRAMEWORK_REQUIRED_DLLS:
+        if not all((root / name).is_file() for root in (native, python_native)):
+            raise BuildError(f"candidate is missing a paired framework DLL: {name}")
+        if sha256_file(native / name) != sha256_file(python_native / name):
+            raise BuildError(f"candidate host/Python native payload mismatch: {name}")
+    # Existing upstream bundles can use different control-component builds.
+    # Bind every file, but compare only the three core IPC libraries here.
+    # An explicit SDK overlay separately compares its entire Python payload.
+    paths = [candidate / "requirements.txt", metadata_files[0]]
+    paths.extend(path for root in (native, python_native) for path in root.rglob("*") if path.is_file())
+    return {path.relative_to(candidate).as_posix(): sha256_file(path) for path in paths}
+
+
+def _overlay_framework(
+    candidate: Path, sdk: Path, *, archive: Path, archive_hash: str, version: str,
+) -> dict[str, Any]:
+    """Update the existing host layout and bind the Python/native pairing."""
+
+    if _required_maafw_version(candidate) != version:
+        raise BuildError("framework version differs from the candidate maafw pin")
+    site_packages = candidate / "python/Lib/site-packages"
+    metadata_files = tuple(
+        path for path in site_packages.glob("*.dist-info/METADATA")
+        if path.parent.name.casefold().startswith("maafw-")
+    )
+    if len(metadata_files) != 1:
+        raise BuildError("framework update requires exactly one maafw package metadata file")
+    metadata_path = metadata_files[0]
+    package = Parser().parsestr(metadata_path.read_text(encoding="utf-8"))
+    if package.get("Name", "").casefold() != "maafw" or package.get("Version") != version:
+        raise BuildError("framework update Python package version mismatch")
+    native = candidate / FRAMEWORK_NATIVE_PATH
+    python_native = candidate / FRAMEWORK_PYTHON_NATIVE_PATH
+    sdk_native = sdk / "bin"
+    if not native.is_dir() or not python_native.is_dir() or not sdk_native.is_dir():
+        raise BuildError("framework update requires the existing host and Python native directories")
+    for name in FRAMEWORK_REQUIRED_DLLS:
+        if not all((root / name).is_file() for root in (native, python_native, sdk_native)):
+            raise BuildError(f"framework update is missing a required DLL: {name}")
+    files: dict[str, str] = {}
+
+    def record(path: Path) -> None:
+        files[path.relative_to(candidate).as_posix()] = sha256_file(path)
+
+    # Retain the host layout, including its existing plugin and Node entrypoints.
+    # New top-level DLLs are runtime dependencies; SDK examples are not added.
+    native_targets = {path.relative_to(native) for path in native.rglob("*") if path.is_file()}
+    native_targets.update(path.relative_to(sdk_native) for path in sdk_native.glob("*.dll"))
+    for relative in sorted(native_targets):
+        source = sdk_native / relative
+        if not source.is_file():
+            raise BuildError(f"framework archive does not cover an existing host native file: {relative}")
+        target = native / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        record(target)
+    for path in sorted(python_native.rglob("*")):
+        if not path.is_file():
+            continue
+        source = sdk_native / path.relative_to(python_native)
+        if not source.is_file() or sha256_file(source) != sha256_file(path):
+            raise BuildError(f"framework host/Python native payload mismatch: {path.name}")
+        record(path)
+    sdk_agents = sdk / "share/MaaAgentBinary"
+    for relative_root in FRAMEWORK_AGENT_PATHS:
+        target_root = candidate / relative_root
+        if not target_root.is_dir():
+            continue
+        if not sdk_agents.is_dir():
+            raise BuildError("framework archive lacks the existing MaaAgentBinary tools")
+        # Keep host-only legacy helpers, such as minicap; replace only supplied files.
+        for source in sorted(sdk_agents.rglob("*")):
+            if source.is_file():
+                target = target_root / source.relative_to(sdk_agents)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                record(target)
+    license_source = sdk / "LICENSE.md"
+    if not license_source.is_file():
+        raise BuildError("framework archive is missing its LICENSE.md")
+    notice = candidate / FRAMEWORK_NOTICE_PATH
+    notice.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(license_source, notice)
+    for path in (notice, metadata_path, candidate / "requirements.txt"):
+        record(path)
+    files.update(_paired_runtime_files(candidate))
+    return {
+        "repository": FRAMEWORK_REPOSITORY,
+        "version": version,
+        "archive": archive.name,
+        "sha256": archive_hash,
+        "files": files,
+        "license": {
+            "spdx": "LGPL-3.0",
+            "upstream_file": "LICENSE.md",
+            "install_path": FRAMEWORK_NOTICE_PATH,
+            "sha256": files[FRAMEWORK_NOTICE_PATH],
+        },
+    }
+
+
+def _validate_python_runtime(root: Path, *, framework_version: str | None = None) -> dict[str, str]:
     executable = root / "python" / "python.exe"
     if not executable.is_file():
         raise BuildError("candidate embedded Python is missing")
+    required_maafw = _required_maafw_version(root)
+    if framework_version is not None and framework_version != required_maafw:
+        raise BuildError("framework runtime version differs from the candidate maafw pin")
     import_script = (
         "import json, sys; "
         f"sys.path.insert(0, {str(root)!r}); "
@@ -735,13 +929,34 @@ def _validate_python_runtime(root: Path) -> dict[str, str]:
         "'pyyaml': yaml.__version__}))"
     )
     agent_client_script = (
-        "import json; "
+        "import json\n"
+        "from importlib import metadata\n"
+        f"required_maafw = {required_maafw!r}\n"
+        "installed_maafw = metadata.version('maafw')\n"
+        "if installed_maafw != required_maafw:\n"
+        "    raise RuntimeError(f'maafw version mismatch: installed={installed_maafw}, required={required_maafw}')\n"
         "from maa.agent_client import AgentClient; "
         "agent_client = AgentClient('gkh-build-smoke'); "
         "agent_identifier = agent_client.identifier; "
         "del agent_client; "
         "assert isinstance(agent_identifier, str) and agent_identifier; "
         "print(json.dumps({'agent-client-construction': 'ok'}))"
+    )
+    native_check = (
+        "import ctypes, os\n"
+        f"native_directory = {str(root / FRAMEWORK_NATIVE_PATH)!r}\n"
+        "native_search = os.add_dll_directory(native_directory)\n"
+        f"native_framework = ctypes.WinDLL({str(root / FRAMEWORK_NATIVE_PATH / 'MaaFramework.dll')!r})\n"
+        "native_framework.MaaVersion.restype = ctypes.c_char_p\n"
+        "native_framework.MaaVersion.argtypes = []\n"
+        "native_version = native_framework.MaaVersion().decode().removeprefix('v')\n"
+        f"if native_version != {required_maafw!r}:\n"
+        "    raise RuntimeError(f'host MaaFramework version mismatch: {native_version}')\n"
+    )
+    agent_client_script = agent_client_script.replace(
+        "from maa.agent_client import AgentClient; ",
+        native_check + "from maa.agent_client import AgentClient; ",
+        1,
     )
     inventory_before = _tree_snapshot(root)
     short_temp_parent = Path(root.anchor) / "Temp"
@@ -818,6 +1033,7 @@ def _validate_python_runtime(root: Path) -> dict[str, str]:
                 )
             continue
         versions.update(process_versions)
+    versions["maafw"] = required_maafw
     return versions
 
 
@@ -838,6 +1054,9 @@ def build_derived_package(
     previous_channel_version: str | None = None,
     release_channel: str = "beta",
     validate_python_runtime: bool = True,
+    framework_archive: Path | None = None,
+    framework_sha256: str | None = None,
+    framework_version: str | None = None,
 ) -> Path:
     source_root = source_root.resolve()
     upstream_archive = upstream_archive.resolve()
@@ -845,6 +1064,8 @@ def build_derived_package(
     mfa_core_bundle = mfa_core_bundle.resolve()
     python_site_packages = python_site_packages.resolve()
     output = output.resolve()
+    framework_archive = None if framework_archive is None else framework_archive.resolve()
+    actual_framework_hash = _framework_archive_hash(framework_archive, framework_sha256, framework_version)
 
     if release_channel not in {"beta", "stable"}:
         raise BuildError("release channel must be beta or stable")
@@ -993,12 +1214,31 @@ def build_derived_package(
         _remove_non_runtime_python_entrypoints(python_target)
         python_source_normalizations = _normalize_python_dependency_sources(python_target)
 
+        framework = None
+        if framework_archive is not None:
+            assert actual_framework_hash is not None and framework_version is not None
+            framework_sdk = staging / "framework"
+            framework_sdk.mkdir()
+            _safe_extract(framework_archive, framework_sdk)
+            _validate_input_tree(framework_sdk, label="MaaFramework archive", reject_private_names=False)
+            framework = _overlay_framework(
+                candidate, framework_sdk, archive=framework_archive,
+                archive_hash=actual_framework_hash, version=framework_version,
+            )
+
         critical_hashes = _validate_candidate(
             candidate,
             version=derived_version,
             update_repository=update_repository,
         )
-        python_packages = _validate_python_runtime(candidate) if validate_python_runtime else {}
+        if framework is not None:
+            critical_hashes.update(framework["files"])
+        if validate_python_runtime:
+            critical_hashes.update(_paired_runtime_files(candidate))
+        python_packages = (
+            _validate_python_runtime(candidate, **({"framework_version": framework_version} if framework else {}))
+            if validate_python_runtime else {}
+        )
         update_mode = (
             "upstream_equal_precedence_trial"
             if update_repository == UPSTREAM_REPOSITORY
@@ -1063,6 +1303,8 @@ def build_derived_package(
             },
             "critical_files": critical_hashes,
         }
+        if framework is not None:
+            manifest["framework"] = framework
         (candidate / "GAKUMAS_HELPER_BUILD.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -1084,6 +1326,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--engine-bundle", type=Path, required=True)
     parser.add_argument("--mfa-core-bundle", type=Path, required=True)
     parser.add_argument("--python-site-packages", type=Path, required=True)
+    parser.add_argument("--framework-archive", type=Path)
+    parser.add_argument("--framework-sha256")
+    parser.add_argument("--framework-version")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--update-repository", default=UPSTREAM_REPOSITORY)
     parser.add_argument("--allow-upstream-trial-channel", action="store_true")
@@ -1110,6 +1355,9 @@ def main() -> int:
         derived_version=args.derived_version,
         previous_channel_version=args.previous_channel_version,
         release_channel=args.release_channel,
+        framework_archive=args.framework_archive,
+        framework_sha256=args.framework_sha256,
+        framework_version=args.framework_version,
     )
     print(result)
     return 0

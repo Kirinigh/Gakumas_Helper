@@ -1,9 +1,15 @@
 import os
+import re
+import csv
 import sys
 import json
+import base64
+import shutil
+import hashlib
 import subprocess
 from typing import Optional
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from importlib import util, metadata, invalidate_caches
 
 # 获取当前main.py所在路径并设置上级目录为工作目录
 current_file_path = os.path.abspath(__file__)
@@ -107,6 +113,10 @@ def install_requirements(req_file="requirements.txt", pip_config=None) -> bool:
         logger.error(f"requirements.txt 不存在")
         return False
 
+    return _install_pip_packages(["-r", str(req_path)], pip_config)
+
+
+def _install_pip_packages(arguments: list[str], pip_config=None) -> bool:
     # 获取可用的镜像源
     mirror = get_available_mirror(pip_config)
     if not mirror:
@@ -121,8 +131,7 @@ def install_requirements(req_file="requirements.txt", pip_config=None) -> bool:
             "pip",
             "install",
             "-U",
-            "-r",
-            str(req_path),
+            *arguments,
             "--no-warn-script-location",
             "-i",
             mirror,
@@ -192,13 +201,112 @@ def update_pip(pip_config=None):
         return False
 
 
+def read_required_maafw_version(req_file="requirements.txt") -> str:
+    """以随包依赖声明为准；客户端升级时必须同步更新这一配套版本。"""
+    requirements = Path(req_file).read_text(encoding="utf-8-sig").splitlines()
+    versions = []
+    for line in requirements:
+        requirement = line.partition("#")[0].strip()
+        if re.match(r"maafw(?:\s|[=<>!~;\[]|$)", requirement, flags=re.IGNORECASE):
+            match = re.fullmatch(r"maafw\s*==\s*(\d+\.\d+\.\d+)", requirement, flags=re.IGNORECASE)
+            if match is None:
+                raise RuntimeError("随包 requirements.txt 必须明确指定配套的 maafw 版本")
+            versions.append(match.group(1))
+    if len(versions) != 1:
+        raise RuntimeError("随包 requirements.txt 必须且只能声明一个配套的 maafw 版本")
+    return versions[0]
+
+
+def read_installed_maafw_version() -> str | None:
+    # 不导入 maa，避免校正依赖前加载待替换的 MaaAgentServer.dll。
+    try:
+        return metadata.version("maafw")
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def reconcile_overlaid_maafw(required_version: str) -> str | None:
+    """完整包覆盖会保留旧版本记录；仅在重复时核对目标 wheel 并清理旧记录。"""
+    spec = util.find_spec("maa")
+    if spec is None or spec.origin is None:
+        return None
+    site_root = Path(spec.origin).resolve().parent.parent
+    records = list(site_root.glob("maafw-*.dist-info"))
+    if len(records) < 2:
+        return None
+    target = site_root / f"maafw-{required_version}.dist-info"
+    try:
+        if target not in records:
+            raise ValueError("覆盖包缺少目标版本记录")
+        for directory in records:
+            if directory.is_symlink() or directory.resolve().parent != site_root:
+                raise ValueError("版本记录目录位置异常")
+            distribution = metadata.PathDistribution(directory)
+            if distribution.metadata.get("Name", "").lower() != "maafw":
+                raise ValueError("版本记录的包名不一致")
+            if directory == target and distribution.version != required_version:
+                raise ValueError("目标版本记录不一致")
+        seen = set()
+        with (target / "RECORD").open(encoding="utf-8", newline="") as stream:
+            for row in csv.reader(stream):
+                if len(row) != 3:
+                    raise ValueError("文件记录格式错误")
+                name, digest, size = row
+                relative = PurePosixPath(name)
+                if (name in seen or "\\" in name or relative.is_absolute()
+                        or ".." in relative.parts or not relative.parts
+                        or relative.parts[0] not in {"maa", target.name}):
+                    raise ValueError("文件记录路径错误或重复")
+                seen.add(name)
+                file = site_root.joinpath(*relative.parts)
+                if not file.resolve().is_relative_to(site_root) or not file.is_file():
+                    raise ValueError("覆盖包文件缺失")
+                if name == f"{target.name}/RECORD":
+                    if digest or size:
+                        raise ValueError("文件记录自身应保留空摘要")
+                    continue
+                if not digest.startswith("sha256="):
+                    raise ValueError("覆盖包缺少文件摘要")
+                actual = base64.urlsafe_b64encode(hashlib.sha256(file.read_bytes()).digest()).decode().rstrip("=")
+                if digest != f"sha256={actual}" or str(file.stat().st_size) != size:
+                    raise ValueError("覆盖包文件与目标版本不一致")
+        required = {"maa/__init__.py", "maa/define.py", f"{target.name}/METADATA", f"{target.name}/RECORD"}
+        required.update(f"maa/bin/{name}.dll" for name in ("MaaFramework", "MaaAgentClient", "MaaAgentServer"))
+        if not required.issubset(seen):
+            raise ValueError("覆盖包记录不完整")
+        # 不按旧 RECORD 卸载：它与新版共用 maa 文件，卸载会破坏已经覆盖的新版。
+        for directory in records:
+            if directory != target:
+                shutil.rmtree(directory)
+        invalidate_caches()
+        logger.info(f"已整理覆盖更新遗留的 maafw 版本记录，当前 {required_version}")
+        return required_version
+    except (OSError, ValueError, AttributeError, KeyError) as error:
+        raise RuntimeError(f"maafw 覆盖更新尚未完整应用：{error}") from error
+
+
 def check_and_install_dependencies():
     """
     检查并安装依赖
     """
+    required_maafw = read_required_maafw_version()
+    overlay_error = None
+    try:
+        installed_maafw = reconcile_overlaid_maafw(required_maafw) or read_installed_maafw_version()
+    except RuntimeError as error:
+        overlay_error = error
+        installed_maafw = None
+    maafw_mismatch = installed_maafw != required_maafw
     pip_config = read_pip_config()
     enable_pip_update = pip_config.get("enable_pip_update", True)
     enable_pip_install = pip_config.get("enable_pip_install", True)
+
+    if maafw_mismatch and not enable_pip_install:
+        raise RuntimeError(
+            (f"{overlay_error}。" if overlay_error else "") +
+            f"maafw 配套版本不匹配：当前 {installed_maafw or '未安装'}，需要 {required_maafw}。"
+            "已禁用依赖安装，请启用后重试，或恢复完整客户端包中的配套依赖。"
+        )
 
     if enable_pip_update:
         if not update_pip(pip_config=pip_config):
@@ -210,14 +318,30 @@ def check_and_install_dependencies():
     logger.info(f"启用 pip 安装依赖: {enable_pip_install}")
     logger.info(f"当前版本: {current_version}, 上次运行版本: {last_version}")
 
-    if enable_pip_install and (current_version != last_version or current_version == "unknown"):
-        if install_requirements(pip_config=pip_config):
-            update_pip_config(current_version)
-            logger.info("依赖检查完成")
-        else:
-            logger.warning("依赖安装失败，程序可能无法正常运行")
+    full_install = enable_pip_install and (current_version != last_version or current_version == "unknown")
+    if overlay_error:
+        logger.warning(f"{overlay_error}；重新安装配套依赖")
+        installed = _install_pip_packages(["--force-reinstall", f"maafw=={required_maafw}"], pip_config)
+        full_install = False
+    elif full_install:
+        installed = install_requirements(pip_config=pip_config)
+    elif maafw_mismatch:
+        logger.warning(f"校正 maafw 配套版本：{installed_maafw or '未安装'} → {required_maafw}")
+        installed = _install_pip_packages([f"maafw=={required_maafw}"], pip_config)
     else:
         logger.info("跳过依赖安装")
+        return
+
+    if not installed:
+        raise RuntimeError("依赖安装失败，已停止启动；请检查网络后重试")
+    actual_maafw = reconcile_overlaid_maafw(required_maafw) or read_installed_maafw_version()
+    if actual_maafw != required_maafw:
+        raise RuntimeError(
+            f"依赖安装后 maafw 仍不匹配：当前 {actual_maafw or '未安装'}，需要 {required_maafw}；已停止启动"
+        )
+    if full_install and not update_pip_config(current_version):
+        raise RuntimeError("依赖已安装，但无法保存依赖检查状态；请检查配置目录权限后重试")
+    logger.info("依赖检查完成")
 
 
 def read_interface_version(interface_file="./interface.json") -> str:

@@ -52,6 +52,7 @@
           "additionalProperties": false
         },
         "mfa_core": { "$ref": "#/$defs/mfa_core" },
+        "framework": { "$ref": "#/$defs/framework" },
         "python_packages": {
           "type": "object",
           "required": ["numpy", "onnxruntime", "opencv-python-headless", "pillow", "pyyaml"],
@@ -60,7 +61,8 @@
             "onnxruntime": { "type": "string", "minLength": 1 },
             "opencv-python-headless": { "type": "string", "minLength": 1 },
             "pillow": { "type": "string", "minLength": 1 },
-            "pyyaml": { "type": "string", "minLength": 1 }
+            "pyyaml": { "type": "string", "minLength": 1 },
+            "maafw": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" }
           },
           "additionalProperties": false
         }
@@ -176,6 +178,11 @@
               "const": "replace_nonfunctional_user_profile_example_with_relative_log_path"
             }
           },
+          "patternProperties": {
+            "^maafw-[0-9]+\\.[0-9]+\\.[0-9]+\\.dist-info/RECORD$": {
+              "const": "refresh_normalized_source_hash_and_size"
+            }
+          },
           "additionalProperties": false
         }
       },
@@ -212,6 +219,36 @@
       "properties": {
         "manifest": { "type": "string", "minLength": 1 },
         "manifest_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "framework": {
+      "type": "object",
+      "required": ["repository", "version", "archive", "sha256", "files", "license"],
+      "properties": {
+        "repository": { "const": "https://github.com/MaaXYZ/MaaFramework" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "archive": { "type": "string", "pattern": "^MAA-win-x86_64-v[0-9]+\\.[0-9]+\\.[0-9]+\\.zip$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "files": {
+          "type": "object",
+          "minProperties": 9,
+          "propertyNames": {
+            "pattern": "^(runtimes/win-x64/native/.+|python/Lib/site-packages/maa/bin/.+|python/Lib/site-packages/maafw-[0-9]+\\.[0-9]+\\.[0-9]+\\.dist-info/METADATA|MaaAgentBinary/.+|libs/MaaAgentBinary/.+|share/MaaAgentBinary/.+|requirements\\.txt|THIRD_PARTY_NOTICES/MaaFramework-LICENSE)$"
+          },
+          "additionalProperties": { "$ref": "#/$defs/sha256" }
+        },
+        "license": {
+          "type": "object",
+          "required": ["spdx", "upstream_file", "install_path", "sha256"],
+          "properties": {
+            "spdx": { "const": "LGPL-3.0" },
+            "upstream_file": { "const": "LICENSE.md" },
+            "install_path": { "const": "THIRD_PARTY_NOTICES/MaaFramework-LICENSE" },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

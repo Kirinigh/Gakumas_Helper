@@ -86,6 +86,7 @@ PREPARE
 - 本地 build/run ID；它只进入 `.local` 目录名和任务证据，不进入产品版本、`interface.json` 或公开 manifest；
 - 竞技场引擎、Python 依赖、模型、图库和数据的固定 revision/schema；
 - MFAAvalonia Core 正式 bundle、固定上游 `v2.15.2` 来源、manifest/DLL 散列及许可证通知；
+- 单独升级 MaaFramework 时，固定官方平台 ZIP、版本与 SHA-256，以及同版 Python wheel 的官方来源与 SHA-256；不能只升级 Python 包而保留旧宿主框架；
 - 许可证、再分发状态和所需人工复核；
 - 本批次允许的联网、远端写入、发布和本机安装边界。
 
@@ -237,6 +238,8 @@ finally {
 
 ## 8. CANDIDATE_VERIFIED：从公开提交构建候选
 
+本批单独升级框架时，先将已核验的官方 ZIP、散列与版本绑定为 `$FrameworkArchive`、`$FrameworkSha256`、`$FrameworkVersion`，在下列构建命令追加 `--framework-archive $FrameworkArchive --framework-sha256 $FrameworkSha256 --framework-version $FrameworkVersion`。`requirements.txt`、Python 依赖输入与宿主实际加载的框架版本必须一致；MFA 应用与 Core 仍使用各自固定输入。
+
 ```powershell
 & $Python (Join-Path $ReleaseWorktree 'tools\deployment\build_derived_package.py') `
   --source-root $PublicSnapshotDirectory `
@@ -263,6 +266,7 @@ finally {
 - 候选 `interface.json` 不含 `mirrorchyan_rid` 或 `mirrorchyan_multiplatform`；pip 依赖更新及 RIS engine/data 独立组件更新契约保持不变；
 - 构建器的内嵌 Python 冒烟使用隔离工作目录，且候选完整文件树在运行前后无新增、删除或内容变化；
 - 内嵌 Python 与生产模块可导入；
+- 单独升级框架时，构建清单记录官方 ZIP 来源与实际覆盖文件；宿主与 Python 共有的框架库逐字节一致，并以实际加载结果核验版本。客户端与 Python Agent 的真实通信必须通过，不以包版本声明或单端构造成功代替。此验证无需创建游戏控制器或执行游戏任务；
 - 正式候选不得直接用于图形界面启动冒烟；本阶段如需验证窗口行为，只能启动候选的可丢弃完整副本，完成后再次确认原候选文件树散列未变化；
 - 候选目录 Defender 扫描无目标检测；
 - 冒烟只验证启动/退出，不执行游戏任务或发送游戏输入；

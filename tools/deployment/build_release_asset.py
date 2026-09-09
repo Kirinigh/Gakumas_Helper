@@ -17,9 +17,15 @@ import argparse
 import tempfile
 from typing import Any
 from pathlib import Path
+from email.parser import Parser
 from collections.abc import Mapping
 
 import numpy as np
+
+try:
+    from tools.deployment import build_derived_package as derived_package
+except ModuleNotFoundError:  # Direct script execution from tools/deployment.
+    import build_derived_package as derived_package
 
 try:
     from tools.deployment.privacy_gate import PrivacyGateError, validate_tree
@@ -1940,6 +1946,110 @@ def _validate_mfa_core_build_binding(
         )
 
 
+def _validate_framework_build_binding(
+    candidate: Path, build: Mapping[str, Any], critical_files: Mapping[str, Any],
+) -> None:
+    # A host archive can already contain the right framework. An optional
+    # override records its source; it must never enable or disable pairing checks.
+    try:
+        runtime_files = derived_package._paired_runtime_files(candidate)
+        required_version = derived_package._required_maafw_version(candidate)
+    except (OSError, UnicodeError, derived_package.BuildError) as error:
+        raise ReleaseBuildError(f"candidate framework runtime pairing failed: {error}") from error
+    for relative, actual_hash in runtime_files.items():
+        if (
+            not isinstance(critical_files.get(relative), str)
+            or critical_files[relative].casefold() != actual_hash.casefold()
+        ):
+            raise ReleaseBuildError("candidate framework runtime is not bound to the critical inventory")
+    if not isinstance(build.get("python_packages"), dict) or build["python_packages"].get("maafw") != required_version:
+        raise ReleaseBuildError("candidate framework runtime version inventory is not paired")
+    framework = build.get("framework")
+    if framework is None:
+        return
+    if not isinstance(framework, dict) or set(framework) != {
+        "repository", "version", "archive", "sha256", "files", "license",
+    }:
+        raise ReleaseBuildError("candidate framework provenance is invalid")
+    version = framework.get("version")
+    if (
+        framework.get("repository") != "https://github.com/MaaXYZ/MaaFramework"
+        or not isinstance(version, str)
+        or re.fullmatch(r"\d+\.\d+\.\d+", version) is None
+        or framework.get("archive") != f"MAA-win-x86_64-v{version}.zip"
+        or not isinstance(framework.get("sha256"), str)
+        or SHA256_PATTERN.fullmatch(framework["sha256"]) is None
+    ):
+        raise ReleaseBuildError("candidate framework archive identity is invalid")
+    files = framework.get("files")
+    native_root = "runtimes/win-x64/native"
+    python_native_root = "python/Lib/site-packages/maa/bin"
+    metadata_relative = f"python/Lib/site-packages/maafw-{version}.dist-info/METADATA"
+    notice_relative = "THIRD_PARTY_NOTICES/MaaFramework-LICENSE"
+    roots = (
+        native_root + "/", python_native_root + "/",
+        "MaaAgentBinary/", "libs/MaaAgentBinary/", "share/MaaAgentBinary/",
+    )
+    required = {"requirements.txt", metadata_relative, notice_relative}
+    for name in ("MaaFramework.dll", "MaaAgentClient.dll", "MaaAgentServer.dll"):
+        required.update((f"{native_root}/{name}", f"{python_native_root}/{name}"))
+    if not isinstance(files, dict) or not required.issubset(files):
+        raise ReleaseBuildError("candidate framework paired file inventory is incomplete")
+    for relative, expected_hash in files.items():
+        if (
+            not isinstance(relative, str)
+            or "\\" in relative
+            or (relative not in required and not relative.startswith(roots))
+            or not isinstance(expected_hash, str)
+            or SHA256_PATTERN.fullmatch(expected_hash) is None
+            or not isinstance(critical_files.get(relative), str)
+            or critical_files[relative].casefold() != expected_hash.casefold()
+        ):
+            raise ReleaseBuildError("candidate framework file is not bound to the critical inventory")
+        path = _resolve_inside(candidate, relative)
+        if not path.is_file() or sha256_file(path).casefold() != expected_hash.casefold():
+            raise ReleaseBuildError(f"candidate framework payload hash mismatch: {relative}")
+    for root_text in (native_root, python_native_root):
+        root = candidate / root_text
+        for path in root.rglob("*"):
+            if path.is_file() and path.relative_to(candidate).as_posix() not in files:
+                raise ReleaseBuildError("candidate framework inventory omits a native payload")
+    for relative in files:
+        if relative.startswith(python_native_root + "/"):
+            host_relative = native_root + relative[len(python_native_root):]
+            if host_relative in files and files[host_relative].casefold() != files[relative].casefold():
+                raise ReleaseBuildError("candidate framework host/Python DLL versions differ")
+    metadata_files = tuple(
+        path for path in (candidate / "python/Lib/site-packages").glob("*.dist-info/METADATA")
+        if path.parent.name.casefold().startswith("maafw-")
+    )
+    if len(metadata_files) != 1 or metadata_files[0] != candidate / metadata_relative:
+        raise ReleaseBuildError("candidate framework maafw metadata is missing or ambiguous")
+    package = Parser().parsestr(metadata_files[0].read_text(encoding="utf-8"))
+    requirements = (candidate / "requirements.txt").read_text(encoding="utf-8-sig").splitlines()
+    maafw_lines = [
+        line.partition("#")[0].strip() for line in requirements
+        if re.match(r"\s*maafw(?:\s|[=<>!~;\[]|$)", line, flags=re.IGNORECASE)
+    ]
+    if (
+        package.get("Name", "").casefold() != "maafw"
+        or package.get("Version") != version
+        or len(maafw_lines) != 1
+        or re.fullmatch(r"maafw\s*==\s*" + re.escape(version), maafw_lines[0], flags=re.IGNORECASE) is None
+        or not isinstance(build.get("python_packages"), dict)
+        or build["python_packages"].get("maafw") != version
+    ):
+        raise ReleaseBuildError("candidate framework, Python package and maafw pin are not paired")
+    license_record = framework.get("license")
+    if license_record != {
+        "spdx": "LGPL-3.0",
+        "upstream_file": "LICENSE.md",
+        "install_path": notice_relative,
+        "sha256": files[notice_relative],
+    }:
+        raise ReleaseBuildError("candidate framework license provenance is invalid")
+
+
 def _validate_candidate(
     candidate: Path,
     expected_version: str,
@@ -2026,6 +2136,7 @@ def _validate_candidate(
     if not isinstance(critical_files, dict) or not critical_files:
         raise ReleaseBuildError("candidate build manifest has no critical file inventory")
     _validate_mfa_core_build_binding(candidate, build, critical_files)
+    _validate_framework_build_binding(candidate, build, critical_files)
     for relative, expected_hash in critical_files.items():
         if not isinstance(relative, str) or not isinstance(expected_hash, str):
             raise ReleaseBuildError("candidate critical file inventory is invalid")
@@ -2468,6 +2579,7 @@ def build_release_assets(
                 "upstream": build["upstream"],
                 "mfa_core": build["mfa_core"],
                 "python_packages": build.get("python_packages", {}),
+                **({"framework": build["framework"]} if build.get("framework") is not None else {}),
             },
             "compatibility": {
                 "card_business_id_count": card["source"]["business_card_id_count"],

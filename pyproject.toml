@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "maafw",
+    "maafw==5.13.0",
     "loguru",
     "Pillow",
     "numpy",
