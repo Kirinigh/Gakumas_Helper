@@ -1,6 +1,6 @@
-# MFAAvalonia 资源更新补丁
+# MFAAvalonia 客户端补丁
 
-Gakumas Helper 的客户端更新继续复用 MFAAvalonia 原生资源更新，不增加第二套更新器。本目录只保存固定上游源码上的最小差分及可复核的构建契约。
+Gakumas Helper 复用 MFAAvalonia 的资源更新和日志导出入口。本目录保存固定上游源码上的差分、离线回归和构建契约。
 
 ## 固定输入
 
@@ -10,6 +10,7 @@ Gakumas Helper 的客户端更新继续复用 MFAAvalonia 原生资源更新，�
 - 源码 ZIP：`MFAAvalonia-2.15.2.zip`
 - 源码 ZIP SHA-256：`76DD02AFE4B1529B1D4F6416B3442E1BD7E64F13B72D8A3B428F955B5E26F67A`
 - `MFAAvalonia/Helper/VersionChecker.cs` 原始 Git blob：`6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7`
+- `MFAAvalonia/Helper/FileLogExporter.cs` 原始 Git blob：`689a4f592e24dd85b95ff3fc198aa38803c7306a`
 - .NET SDK 版本组件：`10 / 0 / 400`，Windows x64 ZIP；实际版本号由三个组件以 `.` 连接
 - SDK ZIP SHA-512：`9B8B88590E4DA131BFD0DA7AA089D0FC04D5418D5F8607EC13D55DC5A17B4399AFD54D496C12657FA05C6C6546DC5EAB930F26AC6C50F2D3A7712C0FB378C366`
 - 上游许可证：GPL-3.0-only；固定源码根 `LICENSE` SHA-256：`3972DC9744F6499F0F9B2DBF76696F2AE7AD8AF9B23DDE66D6AF86C9DFB36986`，原文随包保存在 `THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE`
@@ -33,6 +34,15 @@ GKH 的 `interface.json` 同时不得携带 `mirrorchyan_rid` 或 `mirrorchyan_m
 - `MaaProcessor` 的任务初始化不再清理资源更新器拥有的 `temp_res`，避免后台下载与任务启动争用目录；其它任务初始化行为保持原样。
 
 没有长度头的合法响应仍可下载；其传输结束本身不能证明归档完整，后续原有摘要校验、解压及资源包结构验证继续负责拒绝损坏内容。没有新增更新器、断点续传、用户设置或版本自动递增行为。
+
+日志导出补丁修改 `FileLogExporter.cs` 和导出窗口的自定义日志标签，补上精简界面后反馈包缺少详细记录的问题：
+
+- 原“自定义日志”选项同时收集 `.local/runtime-data/logs` 中的日期日志、标准库回退日志和轮转 ZIP，以及 `.local/arena-win-rate/reader-failures` 中的 `evidence.json`。已有 `custom.log*` 仍可导出，不收集其它缓存或对局结果。
+- 失败事务中的已有图片归入错误图片，使用相同的图片开关及时间筛选。旧无选项入口共用这份目录清单，并保留最近五天和排除识别图片的规则。正常窗口入口的原日志选择规则保持不变。
+- 使用共享读取复制原文件，ZIP 不作为文本处理；不裁剪长日志。导出包内的 `export-report.txt` 列出所选范围、已包含文件及无法读取的相对路径。它仅随本次导出生成，不写入运行目录。
+- 部分文件或选中的日志根无法读取时，返回 `Partial` 并显示“部分导出”；全部无法读取时返回 `Failed` 并说明读取失败。不存在可选失败目录不算错误，未选择的目录不可读也不影响结果。失败图片存在但所选元数据没有生成时，报告缺失；主动取消自定义日志时说明元数据未被选择。
+
+这一层不采集新截图、不追加识别，也不把详细 JSON 重新显示到任务界面。包内“完整导出”仅表示所选文件已复制，不能据此认定所有失败现场都已留存。Core 清单的补丁范围需包含 `diagnostic_log_export`；旧 Core 不能作为本修复已生效的证据。
 
 ## 复核与构建
 
@@ -66,3 +76,13 @@ python tools/deployment/mfa/test_download_transport.py --source-zip "<固定源�
 测试先核对源码 ZIP SHA-256 和原始 `VersionChecker.cs` Git 对象，随后应用本补丁，从实际源码提取下载、重试、资源下载/摘要校验和更新队列代码编译执行。只替代界面、代理环境和解压出口，不复制下载算法；不运行 Maa 或更新安装。模拟 HTTP 仅监听本机回环地址，覆盖完整下载、断流后成功、HTTP 错误后成功、耗尽三次、短响应、空响应、无长度响应、分块传输中断、文件名扩展名调整、失败状态传播和任务清理期间保持活动下载。
 
 编译直接使用 SDK 内置编译器与标准库引用，不执行依赖恢复或网络安装。测试目录保留编译日志、实际传输断言日志、生成的源码和 `result.json`。它证明固定源码中的传输及失败分支行为；正式 Core 仍须遵守上面的完整构建和双次复建契约。修改补丁会使既有 bundle 的补丁散列绑定失效，必须重新构建、验证新的 bundle 后才能纳入将来的发行包，不能把旧 DLL 当作本补丁已部署。
+
+## 离线日志导出回归
+
+```powershell
+python tools/deployment/mfa/test_log_export.py --source-zip "<固定源码 ZIP>" --dotnet "<现有 SDK>\dotnet.exe" --work-dir "<尚不存在的测试目录>"
+```
+
+测试校验固定源码 ZIP 和原始 `FileLogExporter.cs` Git 对象，应用同一补丁，然后编译完整的实际导出器源码；只替代界面通知和文件选择器接口。两种入口均实际生成 ZIP，并逐项核对文件清单和原字节。
+
+回归覆盖两种 Python 日志后端的文件命名、轮转 ZIP、错误元数据、图片开关及时间范围、活动日志共享读取、独占文件、真实目录访问控制、部分导出提示、空目录和超过 42,000 行的日志。目录访问控制用例只在新测试目录内临时拒绝读取并恢复原权限，需要能设置该目录权限的执行端；不接触正式安装或游戏。日志和实际 ZIP 留在测试目录，整个测试不联网、不恢复依赖。

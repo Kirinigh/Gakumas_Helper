@@ -94,6 +94,7 @@ MFA_CORE_PATCH_SCOPE = [
     "resource_update_check",
     "resource_update_apply",
     "deterministic_build_path",
+    "diagnostic_log_export",
 ]
 FORBIDDEN_DERIVED_UPDATE_KEYS = frozenset(
     {"mirrorchyan_rid", "mirrorchyan_multiplatform"}

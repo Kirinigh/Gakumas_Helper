@@ -1118,6 +1118,14 @@ class ArenaLineupReader:
             "stages": stages,
         }
 
+    def _member_diagnostic(self, method: str, *args: Any, **kwargs: Any) -> None:
+        recorder = getattr(self.backend, method, None)
+        if callable(recorder):
+            try:
+                recorder(*args, **kwargs)
+            except Exception:
+                logging.getLogger(__name__).exception("Could not record member diagnostics: %s", method)
+
     def read_member_observation(
         self,
         target: TeamTarget,
@@ -1131,6 +1139,7 @@ class ArenaLineupReader:
 
         for reopened in (False, True):
             started = time.perf_counter()
+            self._member_diagnostic("begin_member_read_diagnostics", target, stage_number, member_slot)
             succeeded = False
             failure: Exception | None = None
             sample_cursor = None
@@ -1153,6 +1162,7 @@ class ArenaLineupReader:
                 return observation
             except Exception as error:
                 failure = error
+                self._member_diagnostic("persist_member_read_failure", error)
                 recovery_code = self._member_reopen_error_code(
                     error, during_close=self._member_attempt_closing,
                 )
@@ -1221,6 +1231,7 @@ class ArenaLineupReader:
                             "Could not record member read attempt for %s/stage-%s/member-%s",
                             target.team_id, stage_number, member_slot,
                         )
+                self._member_diagnostic("end_member_read_diagnostics")
         raise AssertionError("member reopen budget exhausted without a result")
 
     @staticmethod
@@ -1278,17 +1289,21 @@ class ArenaLineupReader:
         observation_id = f"member-{uuid4().hex}"
         observation_started = time.perf_counter()
         self.backend.open_member(target, stage_number, member_slot)
+        self._member_diagnostic("set_member_read_phase", "support_bonus")
         support_bonus = (
             self.backend.read_support_bonus(target) if include_support_bonus else None
         )
         params: tuple[int, ...] | None = None
         p_item_ids: tuple[int, ...] | None = None
         if scope is MemberObservationScope.COMPLETE:
+            self._member_diagnostic("set_member_read_phase", "member_params")
             params = tuple(self.backend.read_params(target, stage_number, member_slot))
+            self._member_diagnostic("set_member_read_phase", "p_item_identity", kind="p_item")
             p_item_ids = tuple(
                 self.backend.read_p_item_ids(target, stage_number, member_slot)
             )
             if len(params) != 4:
+                self._member_diagnostic("set_member_read_phase", "member_params")
                 raise ArenaReaderError(
                     "params_count_mismatch",
                     f"{target.team_id}/stage-{stage_number}/member-{member_slot} yielded {len(params)} parameters",
@@ -1309,6 +1324,10 @@ class ArenaLineupReader:
         # shared post-swipe generation for both physical rows.  The subsequent
         # upper-row request reuses that same frozen twelve-card generation.
         for group_index in group_order:
+            self._member_diagnostic(
+                "set_member_read_phase", "skill_card_layout", kind="skill_card",
+                group_index=group_index,
+            )
             self.backend.prepare_skill_card_group(target, stage_number, member_slot, group_index)
 
         # Classify physical blanks and duplicate markers for both rows before
@@ -1316,6 +1335,10 @@ class ArenaLineupReader:
         # on the same stable three-frame generation and skips non-interactive
         # slots before identity or customization work.
         for group_index in group_order:
+            self._member_diagnostic(
+                "set_member_read_phase", "skill_card_slot_state", kind="skill_card",
+                group_index=group_index,
+            )
             empty_flags = tuple(
                 self.backend.read_skill_card_empty_flags(
                     target,
@@ -1363,6 +1386,10 @@ class ArenaLineupReader:
 
         # Index assignment below preserves the engine's group-0/group-1 order.
         for group_index in group_order:
+            self._member_diagnostic(
+                "set_member_read_phase", "skill_card_customization", kind="skill_card",
+                group_index=group_index,
+            )
             excluded_duplicate_flags = tuple(excluded_duplicate_groups[group_index])
             empty_flags = tuple(empty_groups[group_index])
             customization_counts = tuple(
@@ -1435,6 +1462,10 @@ class ArenaLineupReader:
                     strict=True,
                 )
             )
+            self._member_diagnostic(
+                "set_member_read_phase", "skill_card_identity", kind="skill_card",
+                group_index=group_index,
+            )
             cards = list(
                 self.backend.read_skill_card_id_hints(
                     target,
@@ -1457,6 +1488,10 @@ class ArenaLineupReader:
             ):
                 if customization_count == 0:
                     continue
+                self._member_diagnostic(
+                    "set_member_read_phase", "skill_card_detail", kind="skill_card",
+                    group_index=group_index, card_slot=card_slot,
+                )
                 self.backend.open_skill_card(
                     target,
                     stage_number,
@@ -1473,6 +1508,12 @@ class ArenaLineupReader:
                     card_slot,
                     customization_count,
                 )
+                # Only an already confirmed detail can supply its display name.
+                catalog = getattr(self.backend, "catalog", None)
+                if catalog is not None:
+                    self._member_diagnostic(
+                        "note_member_confirmed_card", clicked.card_id,
+                    )
                 self.backend.close_skill_card(
                     target,
                     stage_number,
@@ -1550,6 +1591,11 @@ class ArenaLineupReader:
                 or (not excluded and not empty and card_id < 1)
             )
             if invalid_cards:
+                self._member_diagnostic(
+                    "set_member_read_phase", "skill_card_identity", kind="skill_card",
+                    group_index=group_index,
+                    card_slot=invalid_cards[0] if len(invalid_cards) == 1 else None,
+                )
                 raise ArenaReaderError(
                     "skill_card_id_count_mismatch",
                     f"group {group_index} yielded invalid card IDs {cards!r} at slots {invalid_cards!r}",
@@ -1575,6 +1621,7 @@ class ArenaLineupReader:
                 strict=True,
             )
         )
+        self._member_diagnostic("set_member_read_phase", "member_evidence")
         evidence_reader = getattr(self.backend, "member_observation_evidence", None)
         backend_evidence = (
             dict(evidence_reader(target, stage_number, member_slot))
@@ -1582,6 +1629,7 @@ class ArenaLineupReader:
             else {}
         )
         self._member_attempt_closing = True
+        self._member_diagnostic("set_member_read_phase", "member_close")
         self.backend.close_member(target, stage_number)
         self._member_attempt_closing = False
         evidence = {

@@ -302,10 +302,11 @@
               "prefixItems": [
                 { "const": "resource_update_check" },
                 { "const": "resource_update_apply" },
-                { "const": "deterministic_build_path" }
+                { "const": "deterministic_build_path" },
+                { "const": "diagnostic_log_export" }
               ],
-              "minItems": 3,
-              "maxItems": 3
+              "minItems": 4,
+              "maxItems": 4
             }
           },
           "additionalProperties": false

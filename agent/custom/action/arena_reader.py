@@ -755,20 +755,103 @@ class MaaArenaReaderBackend:
             "started": time.perf_counter(),
         }
 
-    def _record_detail_action(self, kind: str, box: Sequence[int], *, succeeded: bool) -> None:
-        diagnostic = getattr(self, "_detail_failure_frames", None)
+    def begin_member_read_diagnostics(
+        self, target: TeamTarget, stage_number: int, member_slot: int,
+    ) -> None:
+        """Keep references to existing observations until this attempt finishes."""
+        self._last_detail_failure_location = None
+        previous = getattr(self, "_detail_failure_frames", None)
+        if previous is not None and any(
+            previous["position"].get(key) not in (None, value)
+            for key, value in (
+                ("team_id", target.team_id), ("stage_number", stage_number),
+                ("member_slot", member_slot),
+            )
+        ):
+            self._detail_failure_frames = None
+        self._member_failure_frames = {
+            "position": {
+                "team_id": target.team_id,
+                "opponent_position": target.opponent_position,
+                "stage_number": stage_number,
+                "member_slot": member_slot,
+                "member_name": None,
+            },
+            "source": None, "frames": deque(maxlen=6),
+            "actions": deque(maxlen=16), "started": time.perf_counter(),
+            "persisted": False,
+        }
+        self.set_member_read_phase("member_open")
+
+    def set_member_read_phase(self, phase: str, **position: Any) -> None:
+        diagnostic = getattr(self, "_member_failure_frames", None)
         if diagnostic is not None:
-            diagnostic["actions"].append({
-                "kind": kind, "box": list(box), "succeeded": succeeded,
-                "seconds": round(time.perf_counter() - diagnostic["started"], 6),
+            # Coordinates from a completed card must not name a later failure.
+            diagnostic["position"].update(
+                phase=phase, kind=None, group_index=None, card_slot=None,
+                screen_slot=None, card_name=None, p_item_name=None,
+            )
+            diagnostic["position"].update(position)
+
+    def end_member_read_diagnostics(self) -> None:
+        self._member_failure_frames = None
+
+    def note_member_confirmed_card(self, card_id: int) -> None:
+        diagnostic = getattr(self, "_member_failure_frames", None)
+        if diagnostic is not None:
+            diagnostic["position"]["card_name"] = self.catalog.skill_card_title(card_id)
+
+    def persist_member_read_failure(self, error: Exception) -> None:
+        """Freeze the original failure before any recovery can leave its page."""
+        diagnostic = getattr(self, "_member_failure_frames", None)
+        if diagnostic is None or diagnostic["persisted"]:
+            return
+        diagnostic["persisted"] = True
+        detail = getattr(self, "_detail_failure_frames", None)
+        selected = detail if detail is not None else diagnostic
+        causes = []
+        cause: BaseException | None = error
+        seen: set[int] = set()
+        while cause is not None and id(cause) not in seen:
+            seen.add(id(cause))
+            causes.append({
+                "type": type(cause).__name__, "code": getattr(cause, "code", None),
+                "error": str(cause),
             })
+            cause = cause.__cause__ or cause.__context__
+        selected["error_chain"] = causes
+        if detail is not None:
+            # Freeze evidence only. Recovery and the original attempt recorder
+            # retain ownership of identity state and transaction accounting.
+            detail["persisted"] = True
+            self._save_failure_evidence(detail, str(error), event="arena_detail_failure")
+        else:
+            self._save_failure_evidence(diagnostic, str(error), event="arena_reader_failure")
+
+    def _record_detail_action(self, kind: str, box: Sequence[int], *, succeeded: bool) -> None:
+        for name in ("_detail_failure_frames", "_member_failure_frames"):
+            diagnostic = getattr(self, name, None)
+            if diagnostic is not None and not diagnostic.get("persisted", False):
+                diagnostic["actions"].append({
+                    "kind": kind, "box": list(box), "succeeded": succeeded,
+                    "seconds": round(time.perf_counter() - diagnostic["started"], 6),
+                })
 
     def _persist_detail_failure(self, error: str) -> None:
         """Save at most six already captured frames; never capture for logging."""
         diagnostic = getattr(self, "_detail_failure_frames", None)
         self._detail_failure_frames = None
-        if diagnostic is None:
+        if diagnostic is None or diagnostic.get("persisted", False):
             return
+        member = getattr(self, "_member_failure_frames", None)
+        if member is not None:
+            member["persisted"] = True
+        self._save_failure_evidence(diagnostic, error, event="arena_detail_failure")
+
+    def _save_failure_evidence(
+        self, diagnostic: dict[str, Any], error: str, *, event: str,
+    ) -> None:
+        """The shared writer never observes or operates the game."""
         self._last_detail_failure_location = (error, dict(diagnostic["position"]))
         save_started = time.perf_counter()
         try:
@@ -790,26 +873,43 @@ class MaaArenaReaderBackend:
             else:
                 frames.extend(diagnostic["frames"])
             saved = []
+            unsaved = []
             for index, (captured_at, image) in enumerate(frames[:6]):
                 name = f"{index:02d}.png"
                 # imencode + write_bytes supports Windows non-ASCII paths.
-                ok, encoded = cv2.imencode(".png", image)
-                if ok:
+                try:
+                    ok, encoded = cv2.imencode(".png", image)
+                    if not ok:
+                        raise ValueError("PNG encoding failed")
                     (folder / name).write_bytes(encoded.tobytes())
                     saved.append({"file": name, "seconds": round(captured_at - diagnostic["started"], 6)})
                     if confirmed_open is not None and image is confirmed_open[1]:
                         saved[-1]["role"] = "title_confirmed_open"
+                except Exception as frame_error:
+                    unsaved.append({"file": name, "error": str(frame_error)})
             evidence = {
-                "event": "arena_detail_failure", **diagnostic["position"],
+                "event": event, **diagnostic["position"],
                 "error": error, "actions": list(diagnostic["actions"]),
                 "frames": saved, "folder": str(folder),
             }
+            if unsaved:
+                evidence["unsaved_frames"] = unsaved
+            if event == "arena_reader_failure":
+                evidence["unconfirmed_fields"] = [
+                    key for key in ("member_name", "group_index", "card_slot", "card_name", "screen_slot", "p_item_name")
+                    if diagnostic["position"].get(key) is None
+                ]
+            if diagnostic.get("error_chain") is not None:
+                evidence["error_chain"] = diagnostic["error_chain"]
             if diagnostic.get("p_item_text") is not None:
                 evidence["p_item_text"] = diagnostic["p_item_text"]
             (folder / "evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
             logger.warning(json.dumps(evidence, ensure_ascii=False, sort_keys=True))
         except Exception as diagnostic_error:
-            logger.warning(f"arena failure evidence could not be saved: {diagnostic_error}")
+            logger.warning(json.dumps({
+                "event": "arena_failure_evidence_save_failed", **diagnostic["position"],
+                "error": error, "diagnostic_error": str(diagnostic_error),
+            }, ensure_ascii=False, sort_keys=True))
         finally:
             self._record_duration_sample("detail_failure_evidence_save", time.perf_counter() - save_started)
 
@@ -11897,9 +11997,10 @@ class MaaArenaReaderBackend:
         try:
             image = self.context.tasker.controller.post_screencap().wait().get()
             self._check_cancelled()
-            diagnostic = getattr(self, "_detail_failure_frames", None)
-            if diagnostic is not None:
-                diagnostic["frames"].append((time.perf_counter(), image))
+            for name in ("_detail_failure_frames", "_member_failure_frames"):
+                diagnostic = getattr(self, name, None)
+                if diagnostic is not None and not diagnostic.get("persisted", False):
+                    diagnostic["frames"].append((time.perf_counter(), image))
             return image
         finally:
             self._increment("screenshots")
@@ -12363,6 +12464,7 @@ class MaaArenaReaderBackend:
         self._add_timing("controller_direct_long_press_actions", elapsed)
         self._increment("long_press_actions")
         self._increment("controller_direct_long_press_actions")
+        self._record_detail_action("long_press", box, succeeded=down_succeeded and up_succeeded)
         self._check_cancelled()
         if interaction_error is not None or not down_succeeded or not up_succeeded:
             detail = (
@@ -12472,6 +12574,7 @@ class MaaArenaReaderBackend:
         self._add_timing("controller_direct_swipe_actions", elapsed)
         self._increment("swipe_actions")
         self._increment("controller_direct_swipe_actions")
+        self._record_detail_action("swipe", (*begin[:2], *end[:2]), succeeded=bool(job.succeeded))
         self._check_cancelled()
         if not job.succeeded:
             raise ArenaReaderError("maa_swipe_failed", f"Maa could not swipe {vertical}")

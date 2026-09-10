@@ -219,3 +219,455 @@ index 0000000..54699de
 +    </PropertyGroup>
 +  </Target>
 +</Project>
+diff --git a/MFAAvalonia/ViewModels/UsersControls/ExportLogDialogViewModel.cs b/MFAAvalonia/ViewModels/UsersControls/ExportLogDialogViewModel.cs
+--- a/MFAAvalonia/ViewModels/UsersControls/ExportLogDialogViewModel.cs
++++ b/MFAAvalonia/ViewModels/UsersControls/ExportLogDialogViewModel.cs
+@@ -46,7 +46,7 @@
+ 
+     public string MaaLogLabel => "maa.log";
+     public string GuiLogLabel => "gui.log";
+-    public string CustomLogLabel => "custom.log";
++    public string CustomLogLabel => "custom.log / Agent";
+     public string OnErrorFolderLabel => "on_error";
+     public string VisionFolderLabel => "vision";
+ 
+diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogExporter.cs
+--- a/MFAAvalonia/Helper/FileLogExporter.cs
++++ b/MFAAvalonia/Helper/FileLogExporter.cs
+@@ -86,12 +86,20 @@
+                 string baseDirectory = AppPaths.DataRoot;
+ 
+                 // 获取符合条件的日志文件和图片文件
++                var issues = new List<string>();
+                 var eligibleFiles = await Task.Run(() => options == null
+-                    ? GetEligibleFiles(baseDirectory)
+-                    : GetEligibleFiles(baseDirectory, options));
++                    ? GetEligibleFiles(baseDirectory, issues)
++                    : GetEligibleFiles(baseDirectory, options, issues));
+ 
+                 if (!eligibleFiles.Any())
+                 {
++                    if (issues.Count > 0)
++                    {
++                        var message = $"日志读取失败：{issues[0]}";
++                        LoggerHelper.Error(message);
++                        ToastHelper.Error(LangKeys.ExportLog.ToLocalization(), message);
++                        return ExportLogResult.Failed;
++                    }
+                     LoggerHelper.Warning("未找到符合条件的日志文件或图片。");
+                     ToastHelper.Warn(LangKeys.ExportLog.ToLocalization(), LangKeys.ExportLogNoEligibleFiles.ToLocalization());
+                     return ExportLogResult.NoEligibleFiles;
+@@ -104,7 +112,7 @@
+                 try
+                 {
+                     var copiedCount = 0;
+-                    var skippedCount = 0;
++                    var copiedPaths = new List<string>();
+ 
+                     await Task.Run(() =>
+                     {
+@@ -113,7 +121,7 @@
+                         {
+                             if (string.IsNullOrWhiteSpace(file.FullName))
+                             {
+-                                skippedCount++;
++                                issues.Add("无有效源路径的文件未导出。");
+                                 continue;
+                             }
+ 
+@@ -125,11 +133,11 @@
+ 
+                                 CopyFileSnapshot(file.FullName, destPath);
+                                 copiedCount++;
++                                copiedPaths.Add(Path.GetRelativePath(baseDirectory, file.FullName));
+                             }
+                             catch (Exception ex)
+                             {
+-                                skippedCount++;
+-                                LoggerHelper.Warning($"导出日志时跳过文件（可能正在占用）: {file.FullName}\n{ex.Message}");
++                                RecordExportIssue(issues, baseDirectory, file.FullName, ex);
+                             }
+                         }
+                     });
+@@ -141,12 +149,16 @@
+                         return ExportLogResult.Failed;
+                     }
+ 
++                    WriteExportReport(tempDir, baseDirectory, options, copiedPaths, issues);
+                     var archiveFiles = await Task.Run(() => CreateArchiveVolumes(tempDir));
+                     await PublishArchiveVolumesAsync(saveFile, archiveFiles);
+ 
+-                    if (skippedCount > 0)
++                    if (issues.Count > 0)
+                     {
+-                        LoggerHelper.Warning($"日志导出完成，但有 {skippedCount} 个文件未导出（可能正在占用）。");
++                        var message = $"日志已部分导出，有 {issues.Count} 项未能读取。请查看包内 export-report.txt。";
++                        LoggerHelper.Warning(message);
++                        ToastHelper.Warn(LangKeys.ExportLog.ToLocalization(), message);
++                        return ExportLogResult.Partial;
+                     }
+                     LoggerHelper.Info(archiveFiles.Count == 1
+                         ? $"日志和图片已成功压缩到：\n{saveFile.Name}"
+@@ -183,149 +195,198 @@
+         }
+     }
+ 
+-    // 获取符合条件的文件（日志+图片）
+-    private static List<FileInfoEx> GetEligibleFiles(string baseDirectory)
+-    {
+-        var eligibleFiles = new List<FileInfoEx>();
+-        var twoDaysAgo = DateTime.Now.AddDays(-5); // 日期限制：仅保留两天内的文件
+-
+-        // 1. 获取日志文件（.log 和 .txt）
+-        var debugDir = Path.Combine(baseDirectory, "debug");
+-        var logFiles = Directory.Exists(debugDir)
+-            ? Directory.GetFiles(debugDir, "*.log", SearchOption.AllDirectories)
+-                .Where(file => !file.Contains(ExcludedFolder, StringComparison.OrdinalIgnoreCase)) // 排除vision路径
+-            : [];
+-
+-        var logsDir = Path.Combine(baseDirectory, "logs");
+-        var txtFiles = Directory.Exists(logsDir)
+-            ? Directory.GetFiles(logsDir, "*.log", SearchOption.AllDirectories)
+-            : [];
+-
+-        // 2. 获取 debug 目录下的图片文件（指定扩展名）
+-        var imageFiles = Directory.Exists(debugDir)
+-            ? Directory.GetFiles(debugDir, "*.*", SearchOption.AllDirectories)
+-                .Where(file =>
+-                    ImageExtensions.Contains(Path.GetExtension(file).ToLowerInvariant()) && !file.Contains(ExcludedFolder, StringComparison.OrdinalIgnoreCase)) // 排除vision路径
+-            : [];
+-
+-
+-        // 合并所有文件并处理
+-        var allFiles = logFiles.Concat(txtFiles).Concat(imageFiles).Distinct().ToArray();
+-
+-        foreach (var file in allFiles)
+-        {
+-            try
+-            {
+-                var fileInfo = new FileInfo(file);
+-
+-                // 过滤：仅保留两天内修改的文件
+-                if (fileInfo.LastWriteTime < twoDaysAgo)
+-                    continue;
+-
+-                // 计算相对路径（相对于应用基目录）
+-                var relativePath = (Path.GetDirectoryName(file) ?? string.Empty)
+-                    .Replace(baseDirectory, "")
+-                    .TrimStart(Path.DirectorySeparatorChar);
+-
+-                // 判断是否为图片文件
+-                var isImage = ImageExtensions.Contains(Path.GetExtension(file).ToLowerInvariant());
+-
+-                // 日志文件需要计算行数，图片文件无需计算
+-                var lineCount = isImage ? 0 : CountLines(file);
+-
+-                eligibleFiles.Add(new FileInfoEx
+-                {
+-                    FullName = file,
+-                    RelativePath = relativePath,
+-                    LineCount = lineCount,
+-                    IsImage = isImage
+-                });
+-            }
+-            catch (Exception ex)
+-            {
+-                LoggerHelper.Error($"处理文件 {file} 时出错: {ex}");
+-                // 继续处理其他文件
+-            }
+-        }
+-
+-        return eligibleFiles;
+-    }
+-
+-    private static List<FileInfoEx> GetEligibleFiles(string baseDirectory, ExportLogPackageOptions options)
++    // The legacy entry keeps its five-day limit; both entries share diagnostics.
++    private static List<FileInfoEx> GetEligibleFiles(string baseDirectory, List<string>? issues = null)
++    {
++        return CollectEligibleFiles(baseDirectory, new ExportLogPackageOptions(), true, issues);
++    }
++
++    private static List<FileInfoEx> GetEligibleFiles(
++        string baseDirectory, ExportLogPackageOptions options, List<string>? issues = null)
++    {
++        return CollectEligibleFiles(baseDirectory, options, false, issues);
++    }
++
++    private static List<FileInfoEx> CollectEligibleFiles(
++        string baseDirectory, ExportLogPackageOptions options, bool legacy, List<string>? issues)
+     {
+         var eligibleFiles = new List<FileInfoEx>();
+         var candidateFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+         var debugDir = Path.Combine(baseDirectory, "debug");
+         var logsDir = Path.Combine(baseDirectory, "logs");
++        var failuresDir = Path.Combine(baseDirectory, ".local", "arena-win-rate", "reader-failures");
+ 
+         if (options.IncludeMaaLog)
+         {
+-            foreach (var file in GetMaaLogFiles(debugDir))
+-                candidateFiles.Add(file);
+-        }
+-
+-        if (options.IncludeGuiLog && Directory.Exists(logsDir))
+-        {
+-            foreach (var file in Directory.GetFiles(logsDir, "*.log", SearchOption.AllDirectories))
+-                candidateFiles.Add(file);
+-        }
+-
++            var debugFiles = FindExportFiles(baseDirectory, debugDir, issues,
++                directory => !IsPathUnderFolder(Path.Combine(directory, "_"), ExcludedFolder)).ToArray();
++            var namedMaaLogs = debugFiles.Where(file =>
++                Path.GetFileName(file).StartsWith("maa.log", StringComparison.OrdinalIgnoreCase)).ToArray();
++            var maaLogs = !legacy && namedMaaLogs.Length > 0 ? namedMaaLogs : debugFiles.Where(file =>
++                Path.GetExtension(file).Equals(".log", StringComparison.OrdinalIgnoreCase)
++                && (legacy || !Path.GetFileName(file).StartsWith("custom.log", StringComparison.OrdinalIgnoreCase))
++                && !IsPathUnderFolder(file, ExcludedFolder));
++            candidateFiles.UnionWith(maaLogs);
++        }
++        if (options.IncludeGuiLog)
++            candidateFiles.UnionWith(FindExportFiles(baseDirectory, logsDir, issues)
++                .Where(file => Path.GetExtension(file).Equals(".log", StringComparison.OrdinalIgnoreCase)));
+         if (options.IncludeCustomLog)
+         {
+-            foreach (var file in GetCustomLogFiles(baseDirectory))
+-                candidateFiles.Add(file);
+-        }
+-
+-        if (Directory.Exists(debugDir))
+-        {
+-            foreach (var file in Directory.GetFiles(debugDir, "*.*", SearchOption.AllDirectories)
+-                         .Where(IsImageFile))
+-            {
+-                if (!ShouldIncludeImage(file, options))
++            // Keep upstream custom.log discovery. The two GKH roots below are
++            // allowlisted; caches, results and arbitrary .local files stay out.
++            candidateFiles.UnionWith(FindExportFiles(baseDirectory, baseDirectory, null)
++                .Where(file => Path.GetFileName(file).StartsWith("custom.log", StringComparison.OrdinalIgnoreCase)));
++            var agentLogs = Path.Combine(baseDirectory, ".local", "runtime-data", "logs");
++            candidateFiles.UnionWith(FindExportFiles(baseDirectory, agentLogs, issues).Where(file =>
++            {
++                var name = Path.GetFileName(file);
++                return name.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
++                    || (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
++                        && name.Contains(".log", StringComparison.OrdinalIgnoreCase));
++            }));
++            var failureFiles = FindExportFiles(baseDirectory, failuresDir, issues).ToArray();
++            candidateFiles.UnionWith(failureFiles
++                .Where(file => Path.GetFileName(file).Equals("evidence.json", StringComparison.OrdinalIgnoreCase)));
++            foreach (var image in failureFiles.Where(IsImageFile))
++            {
++                if (legacy && File.GetLastWriteTime(image) < DateTime.Now.AddDays(-5))
+                     continue;
+-
+-                candidateFiles.Add(file);
+-            }
+-        }
+-
++                var metadata = Path.Combine(Path.GetDirectoryName(image)!, "evidence.json");
++                if (!failureFiles.Contains(metadata, StringComparer.OrdinalIgnoreCase))
++                    RecordExportIssue(issues, baseDirectory, metadata, new FileNotFoundException());
++            }
++        }
++        var imageDirectories = options.IncludeOnErrorImages ? new[] { debugDir, failuresDir } : new[] { debugDir };
++        foreach (var directory in imageDirectories)
++        {
++            if (!options.IncludeOnErrorImages && !options.IncludeVisionImages && !options.IncludeOtherImages)
++                break;
++            Func<string, bool>? visitDirectory = directory == failuresDir ? null : child =>
++                GetImageCategory(Path.Combine(child, "_")) switch
++                {
++                    ExportImageCategory.OnError => options.IncludeOnErrorImages,
++                    ExportImageCategory.Vision => options.IncludeVisionImages,
++                    _ => true
++                };
++            foreach (var file in FindExportFiles(baseDirectory, directory, issues, visitDirectory).Where(IsImageFile))
++            {
++                try
++                {
++                    var category = directory == failuresDir ? ExportImageCategory.OnError : GetImageCategory(file);
++                    if (ShouldIncludeImage(file, options, category))
++                        candidateFiles.Add(file);
++                }
++                catch (Exception ex) { RecordExportIssue(issues, baseDirectory, file, ex); }
++            }
++        }
+         foreach (var file in candidateFiles)
+         {
+-            TryAddEligibleFile(eligibleFiles, baseDirectory, file);
+-        }
+-
++            try
++            {
++                if (legacy && File.GetLastWriteTime(file) < DateTime.Now.AddDays(-5))
++                    continue;
++                TryAddEligibleFile(eligibleFiles, baseDirectory, file, issues);
++            }
++            catch (Exception ex) { RecordExportIssue(issues, baseDirectory, file, ex); }
++        }
+         return eligibleFiles;
+     }
+ 
+-    private static IEnumerable<string> GetMaaLogFiles(string debugDir)
+-    {
+-        if (!Directory.Exists(debugDir))
+-            return [];
+-
+-        var allFiles = Directory.GetFiles(debugDir, "*", SearchOption.AllDirectories);
+-        var namedMaaLogs = allFiles.Where(file =>
+-            Path.GetFileName(file).StartsWith("maa.log", StringComparison.OrdinalIgnoreCase));
+-
+-        if (namedMaaLogs.Any())
+-            return namedMaaLogs;
+-
+-        return allFiles.Where(file =>
+-            Path.GetExtension(file).Equals(".log", StringComparison.OrdinalIgnoreCase)
+-            && !Path.GetFileName(file).StartsWith("custom.log", StringComparison.OrdinalIgnoreCase)
+-            && !IsPathUnderFolder(file, ExcludedFolder));
+-    }
+-
+-    private static IEnumerable<string> GetCustomLogFiles(string baseDirectory)
+-    {
+-        if (!Directory.Exists(baseDirectory))
+-            return [];
+-
+-        return Directory.GetFiles(baseDirectory, "*", SearchOption.AllDirectories)
+-            .Where(file => Path.GetFileName(file).StartsWith("custom.log", StringComparison.OrdinalIgnoreCase));
+-    }
+-
+-    private static bool ShouldIncludeImage(string file, ExportLogPackageOptions options)
+-    {
+-        var category = GetImageCategory(file);
++    private static IEnumerable<string> FindExportFiles(
++        string baseDirectory, string root, List<string>? issues, Func<string, bool>? visitDirectory = null)
++    {
++        bool exists;
++        try { exists = (File.GetAttributes(root) & FileAttributes.Directory) != 0; }
++        catch (DirectoryNotFoundException) { exists = false; }
++        catch (FileNotFoundException) { exists = false; }
++        catch (Exception ex)
++        {
++            RecordExportIssue(issues, baseDirectory, root, ex);
++            exists = false;
++        }
++        if (!exists) yield break;
++        var pending = new Stack<string>();
++        pending.Push(root);
++        while (pending.Count > 0)
++        {
++            var directory = pending.Pop();
++            string[] files;
++            string[] directories;
++            try
++            {
++                files = Directory.GetFiles(directory);
++                directories = Directory.GetDirectories(directory);
++            }
++            catch (Exception ex)
++            {
++                RecordExportIssue(issues, baseDirectory, directory, ex);
++                continue;
++            }
++            foreach (var file in files)
++                yield return file;
++            foreach (var child in directories)
++            {
++                if (visitDirectory != null && !visitDirectory(child))
++                    continue;
++                try
++                {
++                    if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0)
++                        pending.Push(child);
++                }
++                catch (Exception ex) { RecordExportIssue(issues, baseDirectory, child, ex); }
++            }
++        }
++    }
++
++    private static void RecordExportIssue(List<string>? issues, string baseDirectory, string path, Exception error)
++    {
++        // Compatibility discovery of custom.log can cross unrelated folders;
++        // only failures in a selected, known diagnostic root are actionable.
++        if (issues == null) return;
++        var message = $"{Path.GetRelativePath(baseDirectory, path)}: {error.GetType().Name}";
++        if (!issues.Contains(message))
++            issues.Add(message);
++        LoggerHelper.Warning($"未能导出日志或图片：{message}");
++    }
++
++    private static void WriteExportReport(
++        string destination, string baseDirectory, ExportLogPackageOptions? options,
++        List<string> copiedPaths, List<string> issues)
++    {
++        var selected = options ?? new ExportLogPackageOptions();
++        var lines = new List<string>
++        {
++            $"导出结果：{(issues.Count == 0 ? "完整" : "部分导出")}",
++            options == null ? "范围：旧入口，最近五天。" : "范围：按导出窗口所选项目。",
++            $"框架日志：{selected.IncludeMaaLog}；界面日志：{selected.IncludeGuiLog}；自定义详细日志：{selected.IncludeCustomLog}",
++            $"失败图片：{selected.IncludeOnErrorImages} / {selected.OnErrorImageTimeRange}；识别图片：{selected.IncludeVisionImages} / {selected.VisionImageTimeRange}；其它图片：{selected.IncludeOtherImages} / {selected.OtherImageTimeRange}",
++            "Agent 详细日志位于 .local/runtime-data/logs；失败元数据位于 .local/arena-win-rate/reader-failures。",
++            "未生成失败证据目录是正常情况；未勾选或超出时间范围的项目不在包内。",
++            "完整导出仅表示所选文件已复制，不表示失败现场信息完整；图片本身不含错误码和成员位置。",
++            $"Agent 日志目录存在：{Directory.Exists(Path.Combine(baseDirectory, ".local", "runtime-data", "logs"))}",
++            $"失败证据目录存在：{Directory.Exists(Path.Combine(baseDirectory, ".local", "arena-win-rate", "reader-failures"))}",
++            "",
++            $"已包含文件（{copiedPaths.Count}）："
++        };
++        lines.AddRange(copiedPaths.OrderBy(path => path, StringComparer.Ordinal));
++        var failurePrefix = Path.Combine(".local", "arena-win-rate", "reader-failures") + Path.DirectorySeparatorChar;
++        foreach (var imageFolder in copiedPaths.Where(path => path.StartsWith(failurePrefix, StringComparison.OrdinalIgnoreCase)
++                     && IsImageFile(path)).Select(Path.GetDirectoryName).Distinct())
++        {
++            var metadata = Path.Combine(imageFolder!, "evidence.json");
++            if (!copiedPaths.Contains(metadata, StringComparer.OrdinalIgnoreCase))
++                lines.Add($"现场元数据未包含：{metadata}；{(selected.IncludeCustomLog ? "请核对时间范围及下方缺失项" : "未勾选自定义详细日志")}");
++        }
++        lines.Add("");
++        lines.Add($"未能读取的项目（{issues.Count}）：");
++        lines.AddRange(issues);
++        File.WriteAllLines(Path.Combine(destination, "export-report.txt"), lines, new System.Text.UTF8Encoding(false));
++    }
++
++    private static bool ShouldIncludeImage(
++        string file, ExportLogPackageOptions options, ExportImageCategory category)
++    {
+         var fileInfo = new FileInfo(file);
+         var now = DateTime.Now;
+ 
+@@ -382,7 +443,7 @@
+             .Any(segment => segment.Equals(folderName, StringComparison.OrdinalIgnoreCase));
+     }
+ 
+-    private static void TryAddEligibleFile(List<FileInfoEx> eligibleFiles, string baseDirectory, string file)
++    private static void TryAddEligibleFile(List<FileInfoEx> eligibleFiles, string baseDirectory, string file, List<string>? issues)
+     {
+         try
+         {
+@@ -391,7 +452,7 @@
+                 .Replace(baseDirectory, "")
+                 .TrimStart(Path.DirectorySeparatorChar);
+             var isImage = IsImageFile(file);
+-            var lineCount = isImage ? 0 : CountLines(file);
++            var lineCount = Path.GetExtension(file).Equals(".log", StringComparison.OrdinalIgnoreCase) ? CountLines(file) : 0;
+ 
+             eligibleFiles.Add(new FileInfoEx
+             {
+@@ -403,7 +464,7 @@
+         }
+         catch (Exception ex)
+         {
+-            LoggerHelper.Error($"处理文件 {file} 时出错: {ex}");
++            RecordExportIssue(issues, baseDirectory, file, ex);
+         }
+     }
+ 
+@@ -656,7 +717,8 @@
+     NoEligibleFiles,
+     Failed,
+     Blocked,
+-    InProgress
++    InProgress,
++    Partial
+ }
+ 
+ public enum ExportImageCategory

@@ -61,7 +61,7 @@ def _raw_location(raw: str) -> dict[str, object]:
     """Read only explicit reader coordinates, never IDs or unscoped slot numbers."""
 
     members = set(re.findall(
-        r"(?<![\w-])(own|opponent-[0-2])/stage-([1-3])/member-([1-3])(?!\d)", raw,
+        r"(?<![\w-])(own|self|opponent-[0-2])/stage-([1-3])/member-([1-3])(?!\d)", raw,
     ))
     if len(members) > 1:
         return {}
@@ -99,7 +99,7 @@ def _location_text(location: Mapping[str, object], raw: str) -> str:
     team = location.get("team_id")
     opponent = _index(location.get("opponent_position"), 0, 2)
     team_match = re.fullmatch(r"opponent-([0-2])", team) if isinstance(team, str) else None
-    if team == "own" and opponent is None:
+    if team in ("own", "self") and opponent is None:
         parts.append("己方")
     elif team_match and opponent in (None, int(team_match[1])):
         parts.append(f"第{int(team_match[1]) + 1}位对手")
