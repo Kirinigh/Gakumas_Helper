@@ -13,19 +13,19 @@
   "component": "task410_arena_card_reference",
   "evaluation": {
     "path": "hard_negative_evaluation.json",
-    "sha256": "FBFDB902CA96FF83E51FCFBF593E5070C3BF9635A8574531E211756B93646A4E",
+    "sha256": "A3DDD5B61A9B28B7094DB6A0A6DF9338A823F52298958640DDB222CDFD1ED601",
     "status": "PASS",
     "tool_contract": "task095-card-badge-hard-negative-evaluation-v1"
   },
   "gallery": {
-    "business_card_id_count": 870,
+    "business_card_id_count": 874,
     "normalization_size": [
       96,
       96
     ],
     "path": "badge_reference_gallery.npz",
-    "sha256": "4CC5CBBDF481487A71F388E9A25C2E4FA3C6CF155D1F4465A62A9A92B038FB0F",
-    "visual_group_count": 446
+    "sha256": "CC110F7B1740B6F3EF5FB9222F13251545C2A925A64182B326117A8FBD471287",
+    "visual_group_count": 448
   },
   "production_handoff": {
     "reason": "private-live target, inherited rows, geometry stress, and authoritative hard negatives passed offline; independent live holdout remains PENDING",
@@ -42,20 +42,20 @@
   "source": {
     "added_reference_file_count": 1,
     "arena_component": "arena_custom_card_embedding",
-    "arena_component_manifest_sha256": "6972F9CCB962EF2547640AFE24464D9B15B64CD47EFAFB069EC2E3B19B4DC42E",
-    "arena_gallery_sha256": "325ABDBED5FE5A404E9C9287D2078C027A621DC5EF77C1EAFB2D03188D22787D",
-    "base_manifest_sha256": "EC87BADD7E0C6C3915B48EEBD1356DA12FC25B0F4BDA4972190826EE29635213",
-    "base_reference_file_count": 3402,
+    "arena_component_manifest_sha256": "CF74F717097C9589B8493D3744DA39CD5E7C5D23FDF97927AD61B171A11A1BF2",
+    "arena_gallery_sha256": "304CFE0F413EA7F274B7E704EDA810B0FBADC1624D086290CC2617FD067484FE",
+    "base_manifest_sha256": "67309D8FF39C67BBAB56FE6FA9AC50F1C29F8E6FE62D6A11AC4B0C28628C76D4",
+    "base_reference_file_count": 3406,
     "catalog_license": "BSD-3-Clause",
     "catalog_repository": "https://github.com/surisuririsu/gakumas-tools",
-    "catalog_revision": "6c3d00648c32ea72a05086a18c63ab62e0d0c7e5",
-    "extension_dataset_id": "task095-skill-card-extension-pc-705100-0051-6c3d-published-ui",
-    "extension_dataset_manifest_sha256": "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
-    "fixed_icon_provenance_sha256": "6CD0C25DE520A15B0B2DAF934E8FFDB1E1809C977752C3249FEFEEAD8A239584",
+    "catalog_revision": "2b1621ea0ef458de6b363143d6dab90b5335c812",
+    "extension_dataset_id": "task095-skill-card-extension-pc-705100-0054-2b1621-published-ui",
+    "extension_dataset_manifest_sha256": "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
+    "fixed_icon_provenance_sha256": "FD02C63D7753A6D127BB41D5A7AFC9A87833D35CF1BB96D361885283E80F79B8",
     "fixed_icons": {
       "references": {
-        "865": {
-          "business_id": 865,
+        "871": {
+          "business_id": 871,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
@@ -67,59 +67,59 @@
             130,
             130
           ],
-          "frozen_at": "2026-09-05",
+          "frozen_at": "2026-09-10",
           "kind": "skill_card",
-          "name": "受け止める光",
+          "name": "光り輝く道しるべ",
           "original_dimensions": [
             240,
             239
           ],
-          "original_file": "g8-card-865.webp",
-          "original_sha256": "0598D26A4DC48D8C43CCBEE3D9117466B2647AA743455988205685B83DAC4F8E",
-          "original_size": 8712,
-          "original_url": "https://img.game8.jp/12941186/37bd6b1d172f52defaf706ed9d64ad5d.webp/original",
-          "page_url": "https://game8.jp/gakuen-idolmaster/813841",
-          "png_sha256": "2B1C240B9D0129EF8C9EC8BEB258A2DA137E82B849D9611B94EA324797AACD54",
+          "original_file": "game8-card-871.webp",
+          "original_sha256": "7D3346E831EADCA4B7B2601E69EFC7058E19C8EB93CE671CA25FEAE885882F99",
+          "original_size": 9658,
+          "original_url": "https://img.game8.jp/12987301/056ee789f23235b7bb9d2538469e275e.webp/original",
+          "page_url": "https://game8.jp/gakuen-idolmaster/815128",
+          "png_sha256": "E7F9ED3904F0259F50671CD591E049050EB7EA5761399B8F6F5A75C7AF3323A6",
           "publisher": "Game8",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "1E4AD7E419065F294F2484470708180A1AE9CF4E4B1B9BB1710B54E5C251C8D1",
-          "size": 29975,
+          "rgb_pixel_sha256": "5827B366CBC34F474D930D2411EAE2CB8351C792152A136C4E39B332B1C5C5A6",
+          "size": 30430,
           "upgraded": false
         },
-        "866": {
-          "business_id": 866,
+        "872": {
+          "business_id": 872,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
-            25,
-            24,
-            250,
-            250
+            1616,
+            149,
+            1769,
+            302
           ],
           "dimensions": [
             130,
             130
           ],
-          "frozen_at": "2026-09-05",
+          "frozen_at": "2026-09-10",
           "kind": "skill_card",
-          "name": "受け止める光",
+          "name": "光り輝く道しるべ",
           "original_dimensions": [
-            882,
-            652
+            1920,
+            1080
           ],
-          "original_file": "mao-plus-panel.png",
-          "original_sha256": "FD1FBB1B04FDC27DC20F4977A1E9ECFA72DEF3E21E2BF68363D69DDF6E5A44C8",
-          "original_size": 238851,
-          "original_url": "https://skypenguin.net/wp/wp-content/uploads/2026/09/%E5%8F%97%E3%81%91%E6%AD%A2%E3%82%81%E3%82%8B%E5%85%89%EF%BC%8B.png",
-          "page_url": "https://skypenguin.net/2026/09/03/post-165312/",
-          "png_sha256": "C0705093F1AE108577CE11909BF7C018EAA00EEA75314FCC0AF79D412927BCFD",
-          "publisher": "人鳥日記 (Skypenguin)",
+          "original_file": "sena-performance-slide.jpg",
+          "original_sha256": "B7395385B78C7749E22DB8563F4077A7AE8DB17551E07EE2618597571790F78C",
+          "original_size": 341912,
+          "original_url": "https://appgamelog.com/wp-content/uploads/gkmas-livestreaming-matome-260909-22.jpg",
+          "page_url": "https://appgamelog.com/gkmas-livestreaming-matome/",
+          "png_sha256": "8C5F24ED2F0CC6A34BCAEE3A69399B4A8D854BA07C202AD147D9D4A2347C3CEA",
+          "publisher": "AppGameLog",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "7BB25F6907DA68C91AA8A455A22A366A767A7A96A9CB0452394A2A6B137502DC",
-          "size": 26590,
+          "rgb_pixel_sha256": "FD3178946344611A19A52D37193BE0B4BDD00CC08EAA82E5BAA9F2E0E0267DCA",
+          "size": 31492,
           "upgraded": true
         },
-        "867": {
-          "business_id": 867,
+        "873": {
+          "business_id": 873,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
@@ -131,119 +131,55 @@
             130,
             130
           ],
-          "frozen_at": "2026-09-05",
+          "frozen_at": "2026-09-10",
           "kind": "skill_card",
-          "name": "出発進行ですわ～♪",
+          "name": "先へ進む姿",
           "original_dimensions": [
             240,
             239
           ],
-          "original_file": "g8-card-867.webp",
-          "original_sha256": "4CFEBD12EAF2C74BD61A78B055182348EA25BC4620336A0441020A3E837D1198",
-          "original_size": 10108,
-          "original_url": "https://img.game8.jp/12941184/a63adf8158a4cbaf6b69766f48ebe7f9.webp/original",
-          "page_url": "https://game8.jp/gakuen-idolmaster/813838",
-          "png_sha256": "A568DA05FD33B5E1D61ED38CD2CD3E30BD4F06BA5861F9E22B61F0166A82A023",
+          "original_file": "game8-card-873.webp",
+          "original_sha256": "F5E99A294133D22EA8643B057FD1978BEFD7414DF0C20CD6C88F14924B23F0DF",
+          "original_size": 9442,
+          "original_url": "https://img.game8.jp/12987302/34c43c91fd7d73e3ece044236e067e39.webp/original",
+          "page_url": "https://game8.jp/gakuen-idolmaster/815128",
+          "png_sha256": "FB45086A027E903F81FA049956081A0BBE0E050EA53AD48348257C8CDAC61189",
           "publisher": "Game8",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "F9C106294CD12C5A3DC07E9AC14BBD7166454B4C764849B1EBE0E03732627305",
-          "size": 32353,
+          "rgb_pixel_sha256": "36973D102EFEB73C458EF36AFA0A941DBF9C77372922283144F5EE0577125591",
+          "size": 31133,
           "upgraded": false
         },
-        "868": {
-          "business_id": 868,
+        "874": {
+          "business_id": 874,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
-            14,
-            20,
-            240,
-            246
+            1616,
+            409,
+            1769,
+            563
           ],
           "dimensions": [
             130,
             130
           ],
-          "frozen_at": "2026-09-05",
+          "frozen_at": "2026-09-10",
           "kind": "skill_card",
-          "name": "出発進行ですわ～♪",
+          "name": "先へ進む姿",
           "original_dimensions": [
-            871,
-            631
+            1920,
+            1080
           ],
-          "original_file": "china-plus-panel.png",
-          "original_sha256": "3959F7F69CD6A8938B7D76A784DF5AC9EA14591FE745F6BFB7B5184C046D2675",
-          "original_size": 254216,
-          "original_url": "https://skypenguin.net/wp/wp-content/uploads/2026/09/%E5%87%BA%E7%99%BA%E9%80%B2%E8%A1%8C%E3%81%A7%E3%81%99%E3%82%8F%EF%BD%9E.png",
-          "page_url": "https://skypenguin.net/2026/09/03/post-165312/",
-          "png_sha256": "45807D84BEB689DE1C1A34956845C6F3324755DF8D57889BC155E674A7697F55",
-          "publisher": "人鳥日記 (Skypenguin)",
+          "original_file": "sena-performance-slide.jpg",
+          "original_sha256": "B7395385B78C7749E22DB8563F4077A7AE8DB17551E07EE2618597571790F78C",
+          "original_size": 341912,
+          "original_url": "https://appgamelog.com/wp-content/uploads/gkmas-livestreaming-matome-260909-22.jpg",
+          "page_url": "https://appgamelog.com/gkmas-livestreaming-matome/",
+          "png_sha256": "92C9F155685128B824D6EA696A58E765F9CCBEDF2F2DE9F11A647F7C5B38C26E",
+          "publisher": "AppGameLog",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "BAC1AD589DBC38CD4F7C8A6C111A20312713B8D4DF5C7EF31D940910C4E071BE",
-          "size": 29037,
-          "upgraded": true
-        },
-        "869": {
-          "business_id": 869,
-          "capture_provenance": "UNKNOWN",
-          "crop_box": [
-            0,
-            0,
-            240,
-            239
-          ],
-          "dimensions": [
-            130,
-            130
-          ],
-          "frozen_at": "2026-09-05",
-          "kind": "skill_card",
-          "name": "応えたい気持ち",
-          "original_dimensions": [
-            240,
-            239
-          ],
-          "original_file": "g8-card-869.webp",
-          "original_sha256": "4A16D2C72ACA18B31BFFE9214B0839C32E5408701F6F2C381A0D39C9DAB92BFC",
-          "original_size": 11158,
-          "original_url": "https://img.game8.jp/12941185/092077881b1c544d82cac6e3ce67724d.webp/original",
-          "page_url": "https://game8.jp/gakuen-idolmaster/813839",
-          "png_sha256": "2E4E56B4AB953CDA70017D4EC166795ADD0578F8A0B72A01EC926E8261CB87F4",
-          "publisher": "Game8",
-          "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "C27AF54A6B0EEFD63FB3B93B7A229DE8FD9FE90C33F2359D897DE70E8E9A1D2D",
-          "size": 34100,
-          "upgraded": false
-        },
-        "870": {
-          "business_id": 870,
-          "capture_provenance": "UNKNOWN",
-          "crop_box": [
-            20,
-            24,
-            245,
-            250
-          ],
-          "dimensions": [
-            130,
-            130
-          ],
-          "frozen_at": "2026-09-05",
-          "kind": "skill_card",
-          "name": "応えたい気持ち",
-          "original_dimensions": [
-            873,
-            624
-          ],
-          "original_file": "sumika-plus-panel.png",
-          "original_sha256": "F43D508D238B717FB9F517EAD909EA942522406A817732167D30ABBF24139044",
-          "original_size": 245724,
-          "original_url": "https://skypenguin.net/wp/wp-content/uploads/2026/09/%E5%BF%9C%E3%81%88%E3%81%9F%E3%81%84%E6%B0%97%E6%8C%81%E3%81%A1.png",
-          "page_url": "https://skypenguin.net/2026/09/03/post-165312/",
-          "png_sha256": "D0FAA1573FBCE692FE60E51FBC3BA153AE98B2FCFA6BEA4D53A5F8E6CB340E04",
-          "publisher": "人鳥日記 (Skypenguin)",
-          "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "397264A2DB082BAC7D2277A6DAB28D3B572D8902A10E2682204075F55A224C24",
-          "size": 30669,
+          "rgb_pixel_sha256": "14696A05FD9D0C48EB16A63439BB726B15D512B15159F82C06AB4FC132D1BFB0",
+          "size": 31794,
           "upgraded": true
         }
       },
@@ -273,10 +209,10 @@
         ]
       }
     ],
-    "reference_file_count": 3403,
+    "reference_file_count": 3407,
     "reference_set_digest_contract": "sha256(base_reference_set_sha256 || public_dataset_id || NUL || public_dataset_revision || NUL || ordered(public_reference_name || NUL || business_id || NUL || visual_group_id || NUL || top_coarse_bytes || reused_green_mask_bytes))",
-    "reference_set_sha256": "9B588D01083F240ACF29FAF373F8D28A610E604669597320C7FEFEEC40A46DAE",
+    "reference_set_sha256": "08817B7FE70320C643AE926A7A47E80FBB2FB648CDDAC47A5BDB5498067A75E3",
     "replaced_reference_file_count": 0,
-    "retained_reference_file_count": 3402
+    "retained_reference_file_count": 3406
   }
 }

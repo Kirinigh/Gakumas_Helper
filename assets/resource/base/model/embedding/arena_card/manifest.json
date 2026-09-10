@@ -2,10 +2,11 @@
   "build": {
     "base_dataset_lineage_manifest_sha256s": [
       "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
-      "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667"
+      "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
+      "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28"
     ],
-    "base_dataset_manifest_sha256": "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
-    "base_gallery_sha256": "0B66ADCFFDDD0738B0A1837DAB15F5D7A6C97C4E6EF468901EE1744944D9B92B",
+    "base_dataset_manifest_sha256": "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
+    "base_gallery_sha256": "325ABDBED5FE5A404E9C9287D2078C027A621DC5EF77C1EAFB2D03188D22787D",
     "cache_key_fields": [
       "model_sha256",
       "preprocess_contract",
@@ -19,21 +20,21 @@
     "pillow_version": "12.3.0",
     "preprocess_contract": "task075-raw-art-focus-96-lanczos-64-bilinear-rgb-v1",
     "python_version": "3.12.7",
-    "regenerated_embedding_row_count": 6,
-    "reused_embedding_row_count": 4164,
+    "regenerated_embedding_row_count": 4,
+    "reused_embedding_row_count": 4170,
     "tool_contract": "task095-card-embedding-gallery-v1",
     "zlib_runtime_version": "1.3.1"
   },
   "component": "arena_custom_card_embedding",
   "gallery": {
-    "bytes": 4861840,
-    "class_table_bytes": 58930,
+    "bytes": 4872578,
+    "class_table_bytes": 58970,
     "class_table_path": "arena_card_embedding_classes.json",
-    "class_table_sha256": "1BDCB019081AB2A5754614C19DE80CED9B36431A759BDB4D8C2179C4D16BA2C6",
+    "class_table_sha256": "DDF14230EA396099C6A13480656FB40191C22CE3EF62725FC5D7BDB51F6F5000",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "arena_card_embedding_gallery.npz",
-    "sha256": "325ABDBED5FE5A404E9C9287D2078C027A621DC5EF77C1EAFB2D03188D22787D"
+    "sha256": "304CFE0F413EA7F274B7E704EDA810B0FBADC1624D086290CC2617FD067484FE"
   },
   "model": {
     "bytes": 441780,
@@ -48,14 +49,14 @@
   },
   "promotion": {
     "artifact_bindings": {
-      "class_table_sha256": "1BDCB019081AB2A5754614C19DE80CED9B36431A759BDB4D8C2179C4D16BA2C6",
-      "gallery_sha256": "325ABDBED5FE5A404E9C9287D2078C027A621DC5EF77C1EAFB2D03188D22787D",
-      "manifest_sha256": "4F5C390CD67D3C0B2A7FF2238D5781A65B8F965C8084B4BE8529CBADAE9DF259",
+      "class_table_sha256": "DDF14230EA396099C6A13480656FB40191C22CE3EF62725FC5D7BDB51F6F5000",
+      "gallery_sha256": "304CFE0F413EA7F274B7E704EDA810B0FBADC1624D086290CC2617FD067484FE",
+      "manifest_sha256": "DEAC645AE8A669BAECE1A15D137D2E51E1BBC73AA83C359088E7035553245B77",
       "model_sha256": "2D19B2BB64980094BC41725C6B586755D47AFA41D005877649BF26656A0F8404"
     },
     "fixed_rendered_policy": "DIAGNOSTIC_ONLY",
-    "offline_evaluation_sha256": "2BEA0E6AB3696E24B67F313721B019838F3EAD43ACE929417D63E4A64C456D06",
-    "pending_manifest_sha256": "4F5C390CD67D3C0B2A7FF2238D5781A65B8F965C8084B4BE8529CBADAE9DF259",
+    "offline_evaluation_sha256": "F1D18D76583F03C26CBBF4304A7EFDC28C4AFACD40764B844FA1B34AC720F531",
+    "pending_manifest_sha256": "DEAC645AE8A669BAECE1A15D137D2E51E1BBC73AA83C359088E7035553245B77",
     "tool_contract": "task095-card-embedding-gallery-promotion-v1"
   },
   "runtime": {
@@ -68,8 +69,8 @@
   },
   "schema_version": 1,
   "source": {
-    "business_card_id_count": 870,
-    "business_card_id_set_sha256": "34E25CA8E19A185C1C35F737AE336BB4AC4B5874922899BA9705CDBD838CAB8F",
+    "business_card_id_count": 874,
+    "business_card_id_set_sha256": "137390620E9A656886F66D86528E21BA1F6A8FB6F66C892A097FA2E2FDA5D7BB",
     "business_card_ids": [
       1,
       2,
@@ -940,90 +941,88 @@
       867,
       868,
       869,
-      870
+      870,
+      871,
+      872,
+      873,
+      874
     ],
-    "dataset_id": "task095-skill-card-extension-pc-705100-0051-6c3d-published-ui",
+    "dataset_id": "task095-skill-card-extension-pc-705100-0054-2b1621-published-ui",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
-    "dataset_revision": "pc-705100-0051-6c3d-published-ui",
-    "extension_business_card_id_count": 6,
+    "dataset_manifest_sha256": "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
+    "dataset_revision": "pc-705100-0054-2b1621-published-ui",
+    "extension_business_card_id_count": 4,
     "extension_business_card_ids": [
-      865,
-      866,
-      867,
-      868,
-      869,
-      870
+      871,
+      872,
+      873,
+      874
     ],
-    "image_class_count": 4170,
+    "image_class_count": 4174,
     "source_domain": "OFFICIAL_RAW_CARD_ART",
     "training_target": "official raw card art only",
-    "visual_identity_count": 446
+    "visual_identity_count": 448
   },
   "validation": {
     "gates": {
       "candidate": {
-        "class_table_sha256": "1BDCB019081AB2A5754614C19DE80CED9B36431A759BDB4D8C2179C4D16BA2C6",
-        "gallery_sha256": "325ABDBED5FE5A404E9C9287D2078C027A621DC5EF77C1EAFB2D03188D22787D",
-        "manifest_sha256": "4F5C390CD67D3C0B2A7FF2238D5781A65B8F965C8084B4BE8529CBADAE9DF259",
+        "class_table_sha256": "DDF14230EA396099C6A13480656FB40191C22CE3EF62725FC5D7BDB51F6F5000",
+        "gallery_sha256": "304CFE0F413EA7F274B7E704EDA810B0FBADC1624D086290CC2617FD067484FE",
+        "manifest_sha256": "DEAC645AE8A669BAECE1A15D137D2E51E1BBC73AA83C359088E7035553245B77",
         "model_sha256": "2D19B2BB64980094BC41725C6B586755D47AFA41D005877649BF26656A0F8404"
       },
       "extension": {
         "business_ids": [
-          865,
-          866,
-          867,
-          868,
-          869,
-          870
+          871,
+          872,
+          873,
+          874
         ],
-        "query_count": 6,
-        "visual_group_count": 3
+        "query_count": 4,
+        "visual_group_count": 2
       },
       "fixed_rendered_diagnostic": {
         "acceptance_role": "DIAGNOSTIC_ONLY",
         "historical_full": {
-          "exact_id_correct": 3274,
-          "query_count": 4164,
-          "upgrade_correct": 3750,
-          "upgrade_query_count": 3958,
-          "visual_top1_correct": 3274,
-          "visual_top5_correct": 3876
+          "exact_id_correct": 3280,
+          "query_count": 4170,
+          "upgrade_correct": 3756,
+          "upgrade_query_count": 3964,
+          "visual_top1_correct": 3280,
+          "visual_top5_correct": 3882
         },
         "historical_tail": {
           "business_ids": [
-            859,
-            860,
-            861,
-            862,
-            863,
-            864
+            867,
+            868,
+            869,
+            870
           ],
-          "exact_id_correct": 6,
-          "query_count": 6,
-          "upgrade_correct": 6,
-          "upgrade_query_count": 6,
-          "visual_top1_correct": 6,
-          "visual_top5_correct": 6
+          "exact_id_correct": 4,
+          "query_count": 4,
+          "upgrade_correct": 4,
+          "upgrade_query_count": 4,
+          "visual_top1_correct": 4,
+          "visual_top5_correct": 4
         },
         "new": {
-          "exact_id_correct": 6,
+          "exact_id_correct": 4,
           "queries": [
             {
-              "business_id": 865,
+              "business_id": 871,
               "exact_id_correct": true,
-              "expected_group": "p_card-01-ido-3_244",
+              "expected_group": "p_card-02-ido-3_203",
               "predicted_upgraded": false,
-              "resolved_business_id": 865,
-              "top1_group": "p_card-01-ido-3_244",
-              "top1_margin": 0.10260707139968872,
-              "top1_similarity": 0.7892367243766785,
+              "resolved_business_id": 871,
+              "top1_group": "p_card-02-ido-3_203",
+              "top1_margin": 0.13468718528747559,
+              "top1_similarity": 0.8140008449554443,
               "top5_groups": [
-                "p_card-01-ido-3_244",
-                "p_card-01-sup-3_160",
-                "p_card-03-sup-2_093",
-                "p_card-02-sup-3_156",
-                "p_card-01-sup-3_157"
+                "p_card-02-ido-3_203",
+                "p_card-03-act-3_055",
+                "p_card-01-men-1_034",
+                "p_card-03-ido-3_084",
+                "p_card-02-act-1_037"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1031,20 +1030,20 @@
               "visual_top5_correct": true
             },
             {
-              "business_id": 866,
+              "business_id": 872,
               "exact_id_correct": true,
-              "expected_group": "p_card-01-ido-3_244",
+              "expected_group": "p_card-02-ido-3_203",
               "predicted_upgraded": true,
-              "resolved_business_id": 866,
-              "top1_group": "p_card-01-ido-3_244",
-              "top1_margin": 0.01301729679107666,
-              "top1_similarity": 0.6792161464691162,
+              "resolved_business_id": 872,
+              "top1_group": "p_card-02-ido-3_203",
+              "top1_margin": 0.132452130317688,
+              "top1_similarity": 0.769097089767456,
               "top5_groups": [
-                "p_card-01-ido-3_244",
-                "p_card-01-sup-3_090",
-                "p_card-00-sup-3_037",
-                "p_card-02-sup-3_156",
-                "p_card-01-sup-3_047"
+                "p_card-02-ido-3_203",
+                "p_card-03-act-3_055",
+                "p_card-03-ido-3_235",
+                "p_card-02-act-1_037",
+                "p_card-03-ido-3_084"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1052,62 +1051,20 @@
               "visual_top5_correct": true
             },
             {
-              "business_id": 867,
+              "business_id": 873,
               "exact_id_correct": true,
-              "expected_group": "p_card-02-ido-3_243",
+              "expected_group": "p_card-02-ido-3_216",
               "predicted_upgraded": false,
-              "resolved_business_id": 867,
-              "top1_group": "p_card-02-ido-3_243",
-              "top1_margin": 0.18715423345565796,
-              "top1_similarity": 0.8224325776100159,
+              "resolved_business_id": 873,
+              "top1_group": "p_card-02-ido-3_216",
+              "top1_margin": 0.13159656524658203,
+              "top1_similarity": 0.7852582931518555,
               "top5_groups": [
-                "p_card-02-ido-3_243",
-                "p_card-01-ido-3_075",
-                "april-fools-asari",
-                "p_card-01-ido-3_168",
-                "p_card-01-ido-3_150"
-              ],
-              "upgrade_applicable": true,
-              "upgrade_correct": true,
-              "visual_top1_correct": true,
-              "visual_top5_correct": true
-            },
-            {
-              "business_id": 868,
-              "exact_id_correct": true,
-              "expected_group": "p_card-02-ido-3_243",
-              "predicted_upgraded": true,
-              "resolved_business_id": 868,
-              "top1_group": "p_card-02-ido-3_243",
-              "top1_margin": 0.014075696468353271,
-              "top1_similarity": 0.6469234228134155,
-              "top5_groups": [
-                "p_card-02-ido-3_243",
-                "p_card-01-ido-3_075",
-                "p_card-01-ido-3_150",
-                "p_card-00-sup-3_037",
-                "p_card-01-sup-3_047"
-              ],
-              "upgrade_applicable": true,
-              "upgrade_correct": true,
-              "visual_top1_correct": true,
-              "visual_top5_correct": true
-            },
-            {
-              "business_id": 869,
-              "exact_id_correct": true,
-              "expected_group": "p_card-01-ido-3_242",
-              "predicted_upgraded": false,
-              "resolved_business_id": 869,
-              "top1_group": "p_card-01-ido-3_242",
-              "top1_margin": 0.2068735957145691,
-              "top1_similarity": 0.8197309970855713,
-              "top5_groups": [
-                "p_card-01-ido-3_242",
+                "p_card-02-ido-3_216",
                 "p_card-03-ido-3_116",
-                "p_card-02-ido-3_069",
-                "p_card-03-sup-3_196",
-                "p_card-02-sup-3_181"
+                "p_card-03-ido-3_235",
+                "p_card-01-ido-3_108",
+                "p_card-02-ido-3_069"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1115,20 +1072,20 @@
               "visual_top5_correct": true
             },
             {
-              "business_id": 870,
+              "business_id": 874,
               "exact_id_correct": true,
-              "expected_group": "p_card-01-ido-3_242",
+              "expected_group": "p_card-02-ido-3_216",
               "predicted_upgraded": true,
-              "resolved_business_id": 870,
-              "top1_group": "p_card-01-ido-3_242",
-              "top1_margin": 0.0842166543006897,
-              "top1_similarity": 0.7461954355239868,
+              "resolved_business_id": 874,
+              "top1_group": "p_card-02-ido-3_216",
+              "top1_margin": 0.0983039140701294,
+              "top1_similarity": 0.7341824769973755,
               "top5_groups": [
-                "p_card-01-ido-3_242",
-                "p_card-02-ido-3_069",
-                "p_card-03-sup-3_196",
-                "p_card-01-ido-3_066",
-                "p_card-03-ido-3_116"
+                "p_card-02-ido-3_216",
+                "p_card-03-ido-3_116",
+                "p_card-01-ido-3_147",
+                "p_card-03-ido-3_235",
+                "p_card-01-ido-3_070"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1136,44 +1093,42 @@
               "visual_top5_correct": true
             }
           ],
-          "query_count": 6,
-          "upgrade_correct": 6,
-          "upgrade_query_count": 6,
-          "visual_top1_correct": 6,
-          "visual_top5_correct": 6
+          "query_count": 4,
+          "upgrade_correct": 4,
+          "upgrade_query_count": 4,
+          "visual_top1_correct": 4,
+          "visual_top5_correct": 4
         },
         "note": "card-art acceptance uses official raw-art augmentation and frozen DMM ROI evidence; fixed renders remain diagnostic and upgrade-marker sources"
       },
       "inheritance": {
         "array_count": 6,
-        "row_count": 4164,
+        "row_count": 4170,
         "status": "BITWISE_EQUAL"
       },
       "new_visual_group_separation": {
-        "minimum_margin": 0.29233884811401367,
+        "minimum_margin": 0.2579265832901001,
         "required_minimum_margin": 0.01,
         "status": "PASS"
       },
       "raw_art": {
-        "query_count": 3,
+        "query_count": 2,
         "status": "PASS",
-        "top1_correct": 3,
-        "top5_correct": 3
+        "top1_correct": 2,
+        "top5_correct": 2
       },
       "real_dmm_samples": {
         "business_ids": [
-          865,
-          866,
-          867,
-          868,
-          869,
-          870
+          871,
+          872,
+          873,
+          874
         ],
         "status": "PENDING"
       }
     },
     "note": "authoritative offline gates passed; real DMM samples remain explicitly pending",
-    "offline_evaluation_sha256": "2BEA0E6AB3696E24B67F313721B019838F3EAD43ACE929417D63E4A64C456D06",
+    "offline_evaluation_sha256": "F1D18D76583F03C26CBBF4304A7EFDC28C4AFACD40764B844FA1B34AC720F531",
     "state": "READY_WITH_REAL_SAMPLES_PENDING"
   }
 }
