@@ -129,7 +129,7 @@ $PublicParentDirectory = [System.IO.Path]::GetFullPath('<NEW_VERIFIED_PUBLIC_PAR
 3. 先比较上游版本差异和本地修改重叠，再合并固定上游标签。
 4. 对发现的问题分别记录为上游原生、本地派生、混合或正常行为；正常行为只补必要说明，不伪装为代码缺陷。
 5. 更新所有受影响的源码、资源、任务、数据、依赖、版本元数据、来源和用户说明。
-6. 运行相关测试、全量 pytest、相关 Ruff、JSON/YAML 解析和 `git diff --check`。
+6. 运行相关测试、全量 pytest、相关 Ruff、JSON/YAML 解析和 `git diff --check`。同一冻结输入已有通过记录时直接引用；后续变化只重跑受影响检查，不因输出目录变化重复全仓测试。最终公开快照测试仍按第 7.4 节执行。
 7. 仅在仓库已存在可离线复用的 Node/npm 与 `maa-tools` 时运行其检查；不得为单次发布临时下载工具链。
 8. 将发布输入固定为一个完整、已验证的开发提交 SHA。
 
@@ -185,6 +185,16 @@ $PublicParentSha = $ExpectedRemoteMainSha
 
 `--source-update` 必须有已验证公开父提交，不能创建初始根。版本必须等于父版；不会生成本次发布公告。`--commit-date` 是 `--release-date` 的同义参数，日期仍为 `YYYY-MM-DD`，不能用自由格式时间。一次生成只增加一个真实逻辑提交；下一项变化可以把已生成快照作为父仓库再次生成，依次更新 `$PublicParentDirectory`、`$PublicParentSha`、开发提交、说明文件和独立输出目录。
 
+同批多笔提交可在一个 Python 进程中调用现有导出函数，共享内存中的历史检查结果：
+
+```python
+history_cache = PublicHistoryValidationCache()
+for options in frozen_commits:
+    result = build_public_snapshot(**options, history_cache=history_cache)
+```
+
+每笔仍使用明确的源提交、父仓库、父提交和独立输出目录，按实际结果承接下一笔。仅复用同一完整路径与 Git blob 的成功文件检查；新路径、新内容和版本、公告、配置元数据照常读取。所有历史的 Git 对象、路径、提交关系与最终 HEAD 完整扫描保持执行。缓存只活在本次进程内，不保存为文件；耗时和返回的 `history_validation` 计数记入既有批次记录。
+
 普通提交完成下文共用核对和相关测试后，可以按第 10 节的源码推送预检逐次或成批推送：
 
 ```powershell
@@ -237,6 +247,8 @@ finally {
 记录生成的公开提交 SHA，并追加到本次明确提交清单。版本发布的后续候选必须从最终发版公开提交构建，不能再从开发提交或可变工作树构建。
 
 ## 8. CANDIDATE_VERIFIED：从公开提交构建候选
+
+已完成双构建、来源核对和扫描的 MFA Core READY，在固定源码、补丁、SDK 与依赖输入均未变化时直接复用，保留原证据；项目版本或打包目录变化不要求重建 Core。最终发布包仍须从本批最终公开提交组装并核对。
 
 本批单独升级框架时，先将已核验的官方 ZIP、散列与版本绑定为 `$FrameworkArchive`、`$FrameworkSha256`、`$FrameworkVersion`，在下列构建命令追加 `--framework-archive $FrameworkArchive --framework-sha256 $FrameworkSha256 --framework-version $FrameworkVersion`。`requirements.txt`、Python 依赖输入与宿主实际加载的框架版本必须一致；MFA 应用与 Core 仍使用各自固定输入。
 

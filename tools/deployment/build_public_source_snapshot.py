@@ -176,6 +176,32 @@ class PublicSnapshotError(RuntimeError):
     """Raised when a public source snapshot would violate the release boundary."""
 
 
+class PublicHistoryValidationCache:
+    """Reuse successful immutable file checks within one Python release batch.
+
+    Git structure, paths, commit metadata and release lineage are still checked
+    for every history traversal. The final HEAD is always scanned in full.
+    """
+
+    def __init__(self) -> None:
+        self._files: set[tuple[str, str]] = set()
+        self._machine_markers: tuple[bytes, ...] | None = None
+        self.files_scanned = 0
+        self.bytes_scanned = 0
+        self.file_checks_reused = 0
+
+    def _prepare(self) -> None:
+        markers = private_machine_markers()
+        if markers != self._machine_markers:
+            self._files.clear()
+            self._machine_markers = markers
+
+
+HISTORY_METADATA_PATHS = frozenset({
+    "assets/interface.json", "assets/resource/Changelog.md", "pyproject.toml",
+})
+
+
 def _remove_tree(path: Path) -> None:
     if not path.exists():
         return
@@ -327,6 +353,8 @@ def _materialize_git_tree(
     destination: Path,
     *,
     env: dict[str, str],
+    verified_files: set[tuple[str, str]] | None = None,
+    listed_files: dict[str, str] | None = None,
 ) -> int:
     if destination.exists():
         raise PublicSnapshotError(f"Git tree destination already exists: {destination}")
@@ -405,6 +433,14 @@ def _materialize_git_tree(
             tree_paths.add(git_path)
             continue
         blob_paths.add(git_path)
+        if listed_files is not None:
+            listed_files[git_path] = object_sha
+        if (
+            verified_files is not None
+            and (git_path, object_sha) in verified_files
+            and git_path not in HISTORY_METADATA_PATHS
+        ):
+            continue
         blob_targets.setdefault(object_sha, []).append(destination.joinpath(*parts))
     nonempty_tree_paths = {
         "/".join(blob_path.split("/")[:length])
@@ -782,7 +818,10 @@ def _validate_public_history(
     repository: str,
     temporary: Path,
     env: dict[str, str],
+    history_cache: PublicHistoryValidationCache | None = None,
 ) -> tuple[str, ...]:
+    history_cache = history_cache if history_cache is not None else PublicHistoryValidationCache()
+    history_cache._prepare()
     parent_root = parent_root.resolve()
     if not parent_root.is_dir():
         raise PublicSnapshotError(f"public parent repository is missing: {parent_root}")
@@ -1001,8 +1040,12 @@ def _validate_public_history(
             raise PublicSnapshotError(f"public history commit message must be one line: {commit}")
 
         tree = history_root / f"{index:04d}-{commit}"
-        _materialize_git_tree(parent_root, commit, tree, env=env)
-        _validate_snapshot(tree)
+        listed_files: dict[str, str] = {}
+        _materialize_git_tree(
+            parent_root, commit, tree, env=env,
+            verified_files=history_cache._files, listed_files=listed_files,
+        )
+        privacy = _validate_snapshot(tree)
         interface_path = tree / "assets" / "interface.json"
         try:
             interface = json.loads(interface_path.read_text(encoding="utf-8"))
@@ -1032,6 +1075,12 @@ def _validate_public_history(
             raise PublicSnapshotError(
                 f"public history repository does not match the target repository: {commit}"
             )
+        # Only successful path-sensitive checks enter the batch cache. A new
+        # path or changed blob is materialized and scanned before it is reused.
+        history_cache._files.update(listed_files.items())
+        history_cache.files_scanned += privacy["files_scanned"]
+        history_cache.bytes_scanned += privacy["bytes_scanned"]
+        history_cache.file_checks_reused += len(listed_files) - privacy["files_scanned"]
         shutil.rmtree(tree)
         previous_public_version = public_version
         previous_changelog = changelog
@@ -1052,7 +1101,12 @@ def build_public_snapshot(
     public_parent_revision: str | None = None,
     source_update: bool = False,
     commit_message: str | None = None,
+    history_cache: PublicHistoryValidationCache | None = None,
 ) -> dict[str, object]:
+    history_cache = history_cache if history_cache is not None else PublicHistoryValidationCache()
+    history_counts_before = (
+        history_cache.files_scanned, history_cache.bytes_scanned, history_cache.file_checks_reused,
+    )
     source_root = source_root.resolve()
     output = output.resolve()
     if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
@@ -1117,6 +1171,7 @@ def build_public_snapshot(
                 repository=repository,
                 temporary=temporary,
                 env=release_git_environment,
+                history_cache=history_cache,
             )
             if source_update:
                 parent_interface = json.loads(_run_bytes(
@@ -1364,6 +1419,7 @@ def build_public_snapshot(
                 repository=repository,
                 temporary=temporary,
                 env=release_git_environment,
+                history_cache=history_cache,
             )
             if len(verified_history) != expected_commit_count:
                 raise PublicSnapshotError("verified public history count is inconsistent")
@@ -1392,6 +1448,11 @@ def build_public_snapshot(
                 "history_commit_count": len(verified_history),
                 "files_scanned": privacy["files_scanned"],
                 "bytes_scanned": privacy["bytes_scanned"],
+                "history_validation": {
+                    "files_scanned": history_cache.files_scanned - history_counts_before[0],
+                    "bytes_scanned": history_cache.bytes_scanned - history_counts_before[1],
+                    "file_checks_reused": history_cache.file_checks_reused - history_counts_before[2],
+                },
             }
         except Exception:
             _remove_tree(output)
