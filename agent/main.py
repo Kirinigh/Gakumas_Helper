@@ -388,6 +388,9 @@ def agent():
         from arena_winrate import DEFAULT_OWN_SCORE_CACHE, OwnScoreCacheStore
         from arena_winrate.task_log import register_arena_log_sinks
         from maa.agent.agent_server import AgentServer
+        from arena_winrate.upstream_component import sync_arena_season_ui_on_startup
+
+        sync_arena_season_ui_on_startup()
 
         try:
             OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE).ensure_summary()

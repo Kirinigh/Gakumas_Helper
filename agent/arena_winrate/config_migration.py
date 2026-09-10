@@ -82,6 +82,26 @@ class ArenaPeriodSelectionCatalog:
             index_by_value[selection] = index
         if default_index is None:
             raise ArenaPeriodMigrationError("fixed arena period default case is absent")
+        value_by_index = tuple(index_by_value)
+        for index, case in enumerate(cases):
+            replacement = case.get("replacement_case")
+            if replacement is None:
+                continue
+            targets = [
+                target for target, candidate in enumerate(cases)
+                if candidate.get("name") == replacement
+            ]
+            if not isinstance(replacement, str) or not replacement or len(targets) != 1:
+                raise ArenaPeriodMigrationError("arena period replacement case is absent or invalid")
+            target = targets[0]
+            if (
+                target == index
+                or cases[target].get("replacement_case") is not None
+                or type(value_by_index[target]) is not int
+            ):
+                raise ArenaPeriodMigrationError("arena period replacement must be a concrete season")
+            index_by_value[value_by_index[index]] = target
+        default_index = index_by_value[value_by_index[default_index]]
         timeout_defaults: dict[str, str] = {}
         for timeout_field, option_name in TIMEOUT_OPTIONS.items():
             option = options.get(option_name)
@@ -97,7 +117,7 @@ class ArenaPeriodSelectionCatalog:
                 timeout_defaults[timeout_field] = str(defaults[0])
         return cls(
             index_by_value=index_by_value,
-            value_by_index=tuple(index_by_value),
+            value_by_index=value_by_index,
             default_index=default_index,
             timeout_defaults=timeout_defaults,
         )
@@ -235,6 +255,13 @@ def _migrate_option_list(
         result.changed = True
         result.selectors_repaired += 1
         result.warnings.append("已用旧期数修复无效的竞技场期数选择索引")
+        return
+
+    remapped_index = catalog.index_by_value[catalog.value_by_index[current_index]]
+    if remapped_index != current_index:
+        existing_selector[index_key] = remapped_index
+        result.changed = True
+        result.selectors_remapped += 1
 
 
 def migrate_instance_value(

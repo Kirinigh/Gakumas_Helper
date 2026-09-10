@@ -30,6 +30,7 @@ class RunDisplay:
     started_at: float = field(default_factory=time.monotonic)
     enabled: bool = False
     background_shown: bool = False
+    season_shown: bool = False
     starts: set[str] = field(default_factory=set)
     results: dict[str, str] = field(default_factory=dict)
     returned: set[str] = field(default_factory=set)
@@ -75,6 +76,25 @@ class ArenaTaskLog:
             if not state.background_shown:
                 state.background_shown = True
                 logger.info(message)
+
+    def season_selected(self, context, season, selection, logger, *, standalone=False):
+        """Show the resolved RIS season before reading, once in the daily task."""
+        with self._lock:
+            state = self.current(context)
+            if state is None:
+                if not standalone:
+                    return
+            elif state.season_shown:
+                return
+            else:
+                state.season_shown = True
+            status = "RIS预览" if season.preview else "RIS正式"
+            source = "latest" if selection == "latest" else "手动选择"
+            message = (
+                f"本次使用第{season.season}期（{status}，{source}）。"
+                "请核对游戏当期；不一致时停止任务，并在“竞技场期数”中手动选择。"
+            )
+            getattr(logger, "warning" if season.preview else "info")(message)
 
     def failed(self, context, message):
         with self._lock:

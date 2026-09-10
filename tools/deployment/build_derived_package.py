@@ -95,6 +95,7 @@ MFA_CORE_PATCH_SCOPE = [
     "resource_update_apply",
     "deterministic_build_path",
     "diagnostic_log_export",
+    "dynamic_option_cases",
 ]
 FORBIDDEN_DERIVED_UPDATE_KEYS = frozenset(
     {"mirrorchyan_rid", "mirrorchyan_multiplatform"}
@@ -632,17 +633,33 @@ def _expected_arena_period_cases(
     contest_stages: dict[int, dict[int, bool]],
 ) -> list[dict[str, Any]]:
     latest_season = max(contest_stages)
+    recent_formal = max(
+        (season for season, flags in contest_stages.items() if not any(flags.values())),
+        default=None,
+    ) if any(contest_stages[latest_season].values()) else None
 
     def make_case(selection: str | int, *, season: int) -> dict[str, Any]:
+        preview = any(contest_stages[season].values())
+        if selection == "latest":
+            label_key = "竞技场最新预览期格式" if preview else "竞技场最新期格式"
+        elif preview:
+            label_key = "竞技场固定预览期格式"
+        elif season == recent_formal:
+            label_key = "竞技场最近正式期格式"
+        else:
+            label_key = "竞技场固定期格式"
         case: dict[str, Any] = {
             "name": "latest" if selection == "latest" else f"season-{selection}",
-            "label": "$竞技场目录最新" if selection == "latest" else f"第 {selection} 期",
+            "label": f"${label_key}",
+            "label_args": {"season": str(season)},
             "pipeline_override": {
                 "ChallengeSeasonConfig": {"attach": {"season": selection}}
             },
         }
-        if any(contest_stages[season].values()):
+        if preview:
             case["description"] = "$竞技场预览期说明"
+        if selection == "latest":
+            case["replacement_case"] = f"season-{latest_season}"
         return case
 
     return [
@@ -652,6 +669,8 @@ def _expected_arena_period_cases(
             for season in sorted(contest_stages, reverse=True)
             if season != latest_season
         ),
+        # Keep previous indices; the hidden legacy choice resolves to this case.
+        make_case(latest_season, season=latest_season),
     ]
 
 
@@ -668,13 +687,24 @@ def _synchronize_arena_period_selector(
     period = options.get("竞技场期数") if isinstance(options, dict) else None
     if period is None or period.get("type") != "select":
         raise BuildError("candidate fixed arena period selector is missing")
-    period["default_case"] = "latest"
-    period["cases"] = _expected_arena_period_cases(contest_stages)
+    expected = {case["name"]: case for case in _expected_arena_period_cases(contest_stages)}
+    existing = period.get("cases", [])
+    names = [case.get("name") for case in existing if isinstance(case, dict)]
+    if (len(names) != len(existing) or not names or names[0] != "latest"
+            or len(set(names)) != len(names) or any(name not in expected for name in names)):
+        raise BuildError("candidate arena period selector cannot preserve existing indices")
+    # Runtime RIS updates append missing seasons in ascending order. Preserve that
+    # same order in release packages, whose updater does not migrate saved indices.
+    cases = [expected.pop(name) for name in names]
+    cases.extend(sorted(expected.values(), key=lambda case: int(case["name"].removeprefix("season-"))))
+    period["default_case"] = f"season-{max(contest_stages)}"
+    period["dynamic_cases"] = True
+    period["cases"] = cases
 
     latest_season = max(contest_stages)
     latest_labels = {
-        "zh-CN.json": f"最新（第 {latest_season} 期，推荐）",
-        "zh-Hant.json": f"最新（第 {latest_season} 期，建議）",
+        "zh-CN.json": f"最新（第 {latest_season} 期" + ("，预览）" if any(contest_stages[latest_season].values()) else "）"),
+        "zh-Hant.json": f"最新（第 {latest_season} 期" + ("，預覽）" if any(contest_stages[latest_season].values()) else "）"),
     }
     for file_name, label in latest_labels.items():
         language_path = root / "lang" / file_name
@@ -707,13 +737,19 @@ def _validate_arena_period_selector(root: Path, interface: dict[str, Any]) -> No
     if period is None or period.get("type") != "select" or not isinstance(cases, list):
         raise BuildError("candidate fixed arena period selector is missing")
     expected_cases = _expected_arena_period_cases(contest_stages)
-    if cases != expected_cases or period.get("default_case") != "latest":
+    if (not all(isinstance(case, dict) for case in cases)
+            or len(cases) != len(expected_cases)
+            or not cases or cases[0].get("name") != "latest"
+            or {case.get("name"): case for case in cases}
+            != {case["name"]: case for case in expected_cases}
+            or period.get("default_case") != f"season-{max(contest_stages)}"
+            or period.get("dynamic_cases") is not True):
         raise BuildError("candidate arena period selector differs from the engine catalog")
 
     latest_season = max(contest_stages)
     expected_labels = {
-        "zh-CN.json": f"最新（第 {latest_season} 期，推荐）",
-        "zh-Hant.json": f"最新（第 {latest_season} 期，建議）",
+        "zh-CN.json": f"最新（第 {latest_season} 期" + ("，预览）" if any(contest_stages[latest_season].values()) else "）"),
+        "zh-Hant.json": f"最新（第 {latest_season} 期" + ("，預覽）" if any(contest_stages[latest_season].values()) else "）"),
     }
     for file_name, expected_label in expected_labels.items():
         language = _load_json(root / "lang" / file_name)

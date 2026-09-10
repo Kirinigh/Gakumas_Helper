@@ -245,6 +245,7 @@ class ArenaOwnScoreRecalculate(CustomAction):
             logger.info("正在解析竞技场组件；默认目录在本进程首次使用时会检查 RIS 生产版本")
             component = resolve_arena_component(config.bundle_dir, config.season)
             season = component.season
+            arena_task_log.season_selected(context, season, config.season, user_logger, standalone=True)
             for warning in component.warnings:
                 logger.warning(warning)
             logger.info(
@@ -488,6 +489,7 @@ class ChallengePrepareOwnScore(CustomAction):
             logger.info("正在解析竞技场组件；默认目录在本进程首次使用时会检查 RIS 生产版本")
             component = resolve_arena_component(config.bundle_dir, config.season)
             season = component.season
+            arena_task_log.season_selected(context, season, config.season, user_logger)
             for warning in component.warnings:
                 logger.warning(warning)
             logger.info(
@@ -700,6 +702,10 @@ class ChallengeAuto(CustomAction):
                 logger.info("正在解析竞技场组件；默认目录在本进程首次使用时会检查 RIS 生产版本")
                 component = resolve_arena_component(config.bundle_dir, config.season)
                 season = component.season
+                arena_task_log.season_selected(
+                    context, season, config.season, user_logger,
+                    standalone=mode == "win_rate_recalculate_own",
+                )
                 for warning in component.warnings:
                     logger.warning(warning)
                 logger.info(
@@ -850,7 +856,7 @@ class ChallengeAuto(CustomAction):
                 )
                 arena_task_log.background(
                     context,
-                    f"竞技场日常：第 {season.season} 期，Grade {effective_grade}；"
+                    f"竞技场日常：Grade {effective_grade}；"
                     f"胜率门槛 {config.threshold_percent}%，模拟 {config.simulations} 次，超时 {config.timeout_seconds} 秒；"
                     + ("本轮已刷新己方数据" if auto_recalculate_own else "使用已保存的己方数据"),
                     user_logger,

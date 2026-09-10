@@ -217,25 +217,33 @@
   "option": {
     "竞技场期数": {
       "type": "select",
+      "dynamic_cases": true,
       "label": "$竞技场赛季",
       "description": "$竞技场期数选择说明",
-      "default_case": "latest",
+      "default_case": "season-51",
       "cases": [
         {
           "name": "latest",
-          "label": "$竞技场目录最新",
-          "description": "$竞技场预览期说明",
+          "replacement_case": "season-51",
+          "label": "$竞技场最新预览期格式",
+          "label_args": {
+            "season": "51"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
                 "season": "latest"
               }
             }
-          }
+          },
+          "description": "$竞技场预览期说明"
         },
         {
           "name": "season-50",
-          "label": "第 50 期",
+          "label": "$竞技场最近正式期格式",
+          "label_args": {
+            "season": "50"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -246,7 +254,10 @@
         },
         {
           "name": "season-49",
-          "label": "第 49 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "49"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -257,7 +268,10 @@
         },
         {
           "name": "season-48",
-          "label": "第 48 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "48"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -268,7 +282,10 @@
         },
         {
           "name": "season-47",
-          "label": "第 47 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "47"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -279,7 +296,10 @@
         },
         {
           "name": "season-46",
-          "label": "第 46 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "46"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -290,7 +310,10 @@
         },
         {
           "name": "season-45",
-          "label": "第 45 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "45"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -301,7 +324,10 @@
         },
         {
           "name": "season-44",
-          "label": "第 44 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "44"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -312,7 +338,10 @@
         },
         {
           "name": "season-43",
-          "label": "第 43 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "43"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -323,7 +352,10 @@
         },
         {
           "name": "season-42",
-          "label": "第 42 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "42"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -334,7 +366,10 @@
         },
         {
           "name": "season-41",
-          "label": "第 41 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "41"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -345,7 +380,10 @@
         },
         {
           "name": "season-40",
-          "label": "第 40 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "40"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -356,7 +394,10 @@
         },
         {
           "name": "season-39",
-          "label": "第 39 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "39"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -367,7 +408,10 @@
         },
         {
           "name": "season-38",
-          "label": "第 38 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "38"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -378,7 +422,10 @@
         },
         {
           "name": "season-37",
-          "label": "第 37 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "37"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -389,7 +436,10 @@
         },
         {
           "name": "season-36",
-          "label": "第 36 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "36"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -400,7 +450,10 @@
         },
         {
           "name": "season-35",
-          "label": "第 35 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "35"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -411,7 +464,10 @@
         },
         {
           "name": "season-34",
-          "label": "第 34 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "34"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -422,7 +478,10 @@
         },
         {
           "name": "season-33",
-          "label": "第 33 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "33"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -433,7 +492,10 @@
         },
         {
           "name": "season-32",
-          "label": "第 32 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "32"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -444,7 +506,10 @@
         },
         {
           "name": "season-31",
-          "label": "第 31 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "31"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -455,7 +520,10 @@
         },
         {
           "name": "season-30",
-          "label": "第 30 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "30"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -466,7 +534,10 @@
         },
         {
           "name": "season-29",
-          "label": "第 29 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "29"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -477,7 +548,10 @@
         },
         {
           "name": "season-28",
-          "label": "第 28 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "28"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -488,7 +562,10 @@
         },
         {
           "name": "season-27",
-          "label": "第 27 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "27"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -499,7 +576,10 @@
         },
         {
           "name": "season-26",
-          "label": "第 26 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "26"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -510,7 +590,10 @@
         },
         {
           "name": "season-25",
-          "label": "第 25 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "25"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -521,7 +604,10 @@
         },
         {
           "name": "season-24",
-          "label": "第 24 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "24"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -532,7 +618,10 @@
         },
         {
           "name": "season-23",
-          "label": "第 23 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "23"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -543,7 +632,10 @@
         },
         {
           "name": "season-22",
-          "label": "第 22 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "22"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -554,7 +646,10 @@
         },
         {
           "name": "season-21",
-          "label": "第 21 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "21"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -565,7 +660,10 @@
         },
         {
           "name": "season-20",
-          "label": "第 20 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "20"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -576,7 +674,10 @@
         },
         {
           "name": "season-19",
-          "label": "第 19 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "19"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -587,7 +688,10 @@
         },
         {
           "name": "season-18",
-          "label": "第 18 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "18"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -598,7 +702,10 @@
         },
         {
           "name": "season-17",
-          "label": "第 17 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "17"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -609,7 +716,10 @@
         },
         {
           "name": "season-16",
-          "label": "第 16 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "16"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -620,7 +730,10 @@
         },
         {
           "name": "season-15",
-          "label": "第 15 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "15"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -631,7 +744,10 @@
         },
         {
           "name": "season-14",
-          "label": "第 14 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "14"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -642,7 +758,10 @@
         },
         {
           "name": "season-13",
-          "label": "第 13 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "13"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -653,7 +772,10 @@
         },
         {
           "name": "season-12",
-          "label": "第 12 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "12"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -664,7 +786,10 @@
         },
         {
           "name": "season-11",
-          "label": "第 11 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "11"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -675,7 +800,10 @@
         },
         {
           "name": "season-10",
-          "label": "第 10 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "10"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -686,7 +814,10 @@
         },
         {
           "name": "season-9",
-          "label": "第 9 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "9"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -697,7 +828,10 @@
         },
         {
           "name": "season-8",
-          "label": "第 8 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "8"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -708,7 +842,10 @@
         },
         {
           "name": "season-7",
-          "label": "第 7 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "7"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -719,7 +856,10 @@
         },
         {
           "name": "season-6",
-          "label": "第 6 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "6"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -730,7 +870,10 @@
         },
         {
           "name": "season-5",
-          "label": "第 5 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "5"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -741,7 +884,10 @@
         },
         {
           "name": "season-4",
-          "label": "第 4 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "4"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -752,7 +898,10 @@
         },
         {
           "name": "season-3",
-          "label": "第 3 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "3"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -763,7 +912,10 @@
         },
         {
           "name": "season-2",
-          "label": "第 2 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "2"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -774,7 +926,10 @@
         },
         {
           "name": "season-1",
-          "label": "第 1 期",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "1"
+          },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
               "attach": {
@@ -782,6 +937,21 @@
               }
             }
           }
+        },
+        {
+          "name": "season-51",
+          "label": "$竞技场固定预览期格式",
+          "label_args": {
+            "season": "51"
+          },
+          "pipeline_override": {
+            "ChallengeSeasonConfig": {
+              "attach": {
+                "season": 51
+              }
+            }
+          },
+          "description": "$竞技场预览期说明"
         }
       ]
     },

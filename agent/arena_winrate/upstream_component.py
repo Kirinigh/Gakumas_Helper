@@ -31,6 +31,7 @@ from .adapter import (
     SubprocessArenaAdapter,
 )
 from .catalog import ArenaCatalogError, ArenaEntityCatalog
+from .season_ui import ArenaSeasonUiSynchronizer
 from .badge_reference import BadgeReferenceError, BadgeReferenceGallery
 from .component_builder import build_runtime_component
 
@@ -1076,12 +1077,37 @@ def _resolve_selection(outcome: _CheckOutcome, selection: str | int) -> ArenaCom
 
 
 _DEFAULT_MANAGER = ArenaComponentManager()
+_DEFAULT_SEASON_UI = ArenaSeasonUiSynchronizer(PROJECT_ROOT / "interface.json")
+
+
+def _sync_default_season_ui(info: _BundleInfo) -> None:
+    try:
+        _DEFAULT_SEASON_UI.sync(
+            info.catalog,
+            (str(info.path), info.commit, _DEFAULT_MANAGER.host_revision),
+            on_error=lambda error: _log_component_failure("season_ui_sync", error, component=info.path),
+        )
+    except Exception as error:
+        _log_component_failure("season_ui_sync", error, component=info.path)
+
+
+def sync_arena_season_ui_on_startup() -> None:
+    """Use local activated metadata only; never check upstream or execute Node."""
+
+    try:
+        if not _DEFAULT_SEASON_UI.interface_path.is_file():
+            return
+        info = _DEFAULT_MANAGER._load_active() or _inspect_bundle(DEFAULT_BUNDLE_DIR)
+        _sync_default_season_ui(info)
+    except Exception as error:
+        _log_component_failure("season_ui_startup", error)
 
 
 def reset_failed_arena_component_checks() -> None:
     """Called once at the existing new-task entry; successful checks remain cached."""
 
     _DEFAULT_MANAGER.reset_failed_checks()
+    _DEFAULT_SEASON_UI.reset_failed()
 
 
 def resolve_arena_component(
@@ -1091,8 +1117,14 @@ def resolve_arena_component(
     """Resolve one version-matched runtime bundle, checking RIS only for the default bundle."""
 
     baseline = bundle_dir.resolve()
-    return _DEFAULT_MANAGER.resolve(
+    is_default = baseline == DEFAULT_BUNDLE_DIR.resolve()
+    result = _DEFAULT_MANAGER.resolve(
         baseline,
         selection,
-        check_updates=baseline == DEFAULT_BUNDLE_DIR.resolve(),
+        check_updates=is_default,
     )
+    if is_default:
+        outcome = _DEFAULT_MANAGER._checks.get(baseline)
+        if outcome is not None:
+            _sync_default_season_ui(outcome.bundle)
+    return result
