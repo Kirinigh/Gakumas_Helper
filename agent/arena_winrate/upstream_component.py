@@ -11,6 +11,7 @@ import shutil
 import hashlib
 import tempfile
 import threading
+import traceback
 import subprocess
 import urllib.error
 import urllib.parse
@@ -60,6 +61,8 @@ MAX_SOURCE_TOTAL_BYTES = 64 * 1024 * 1024
 MAX_SOURCE_FILES = 2000
 MAX_PRODUCTION_DEPLOYMENTS = 100
 HTTP_ATTEMPTS = 3
+FAILED_CHECK_RETRIES = 1
+DIRECTORY_MOVE_RETRY_DELAYS = (0.1, 0.3, 0.6)
 SOURCE_PREFIXES = (
     "packages/gakumas-engine/",
     "packages/gakumas-data/",
@@ -78,6 +81,65 @@ class ArenaComponentError(RuntimeError):
 
 class ArenaPItemCoverageError(ArenaComponentError):
     """Raised when engine P-item reachability and the host gallery disagree."""
+
+
+def _log_component_failure(stage: str, error: BaseException, **details: object) -> None:
+    """Keep the original chain in the existing detailed log, away from the GUI."""
+
+    try:
+        from utils import logger
+
+        context = json.dumps(details, ensure_ascii=False, default=str)
+        chain = "".join(traceback.format_exception(error))
+        logger.bind(ui_visible=False).error(f"RIS_COMPONENT_FAILURE stage={stage} details={context}\n{chain}")
+    except Exception as logging_error:
+        error.add_note(f"Component diagnostic logging failed: {logging_error!r}")
+
+
+def _recoverable_component_failure(error: Exception) -> bool:
+    """Retry I/O failures, never unsupported or contradictory catalog semantics."""
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if getattr(current, "_arena_component_retry_exhausted", False):
+            return False
+        if isinstance(current, ArenaPItemCoverageError):
+            return False
+        if isinstance(current, urllib.error.HTTPError):
+            return current.code >= 500 or current.code in {408, 429}
+        if isinstance(current, (OSError, subprocess.TimeoutExpired)):
+            return True
+        current = current.__cause__
+    return False
+
+
+def _promote_component_directory(source: Path, destination: Path) -> None:
+    """Retry only a failed Windows move, without rebuilding a validated bundle."""
+
+    for attempt in range(len(DIRECTORY_MOVE_RETRY_DELAYS) + 1):
+        if destination.exists():
+            raise FileExistsError(f"component destination already exists: {destination}")
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as error:
+            if destination.exists():
+                raise FileExistsError(f"component destination already exists: {destination}") from error
+            if (
+                getattr(error, "winerror", None) not in {5, 32, 33}
+                or attempt == len(DIRECTORY_MOVE_RETRY_DELAYS)
+            ):
+                error._arena_component_retry_exhausted = True
+                error.add_note(f"Directory move stopped after {attempt + 1} attempt(s); do not rebuild to renew this budget")
+                raise
+            delay = DIRECTORY_MOVE_RETRY_DELAYS[attempt]
+            _log_component_failure(
+                "promote_retry", error, source=source, destination=destination,
+                failed_attempt=attempt + 1, delay_seconds=delay,
+            )
+            time.sleep(delay)
 
 
 def _resolve_host_p_item_reference_root() -> Path:
@@ -153,6 +215,7 @@ class _CheckOutcome:
     update_activated: bool
     warnings: tuple[str, ...]
     p_item_coverage_update_failed: bool = False
+    failure: Exception | None = None
 
 
 class GitHubProductionSource:
@@ -201,9 +264,11 @@ class GitHubProductionSource:
                 last_error = error
             if attempt < HTTP_ATTEMPTS:
                 time.sleep(0.25 * attempt)
-        raise ArenaComponentError(
+        failure = ArenaComponentError(
             f"RIS request failed after {attempts_made} attempt(s): {url}: {last_error}"
-        ) from last_error
+        )
+        failure._arena_component_retry_exhausted = True
+        raise failure from last_error
 
     @classmethod
     def _request_json(cls, url: str, *, timeout: float) -> object:
@@ -357,7 +422,7 @@ class GitHubProductionSource:
 
 
 class ArenaComponentManager:
-    """Check RIS once per process and atomically preserve the last usable bundle."""
+    """Cache successful checks and bound automatic recovery of failed updates."""
 
     def __init__(
         self,
@@ -376,6 +441,12 @@ class ArenaComponentManager:
         self.validator = validator or _validate_component_bundle
         self._lock = threading.Lock()
         self._checks: dict[Path, _CheckOutcome] = {}
+
+    def reset_failed_checks(self) -> None:
+        """Start a new task's failure budget while retaining successful checks."""
+
+        with self._lock:
+            self._checks = {path: outcome for path, outcome in self._checks.items() if outcome.failure is None}
 
     def resolve(
         self,
@@ -402,6 +473,10 @@ class ArenaComponentManager:
             outcome = self._checks.get(baseline)
             if outcome is None:
                 outcome = self._check_once(baseline)
+                for _ in range(FAILED_CHECK_RETRIES):
+                    if outcome.failure is None or not _recoverable_component_failure(outcome.failure):
+                        break
+                    outcome = self._check_once(baseline)
                 self._checks[baseline] = outcome
         return _resolve_selection(outcome, selection)
 
@@ -422,6 +497,7 @@ class ArenaComponentManager:
         try:
             remote_commit = self.source.discover_production_commit()
         except Exception as error:
+            _log_component_failure("discover_production", error, active_commit=active.commit)
             warnings.append(f"RIS 生产版本检查失败，继续使用 {active.commit[:12]}：{error}")
             return _CheckOutcome(
                 bundle=active,
@@ -430,6 +506,7 @@ class ArenaComponentManager:
                 status="check_failed_using_active",
                 update_activated=False,
                 warnings=tuple(warnings),
+                failure=error,
             )
 
         if remote_commit == active.commit:
@@ -446,6 +523,7 @@ class ArenaComponentManager:
             remote_catalog = ContestStageCatalog.from_rows(self.source.fetch_stage_rows(remote_commit))
             remote_latest = remote_catalog.resolve("latest").season
         except Exception as error:
+            _log_component_failure("fetch_stage_catalog", error, commit=remote_commit)
             warnings.append(
                 f"RIS 生产版本 {remote_commit[:12]} 的场地目录读取失败，继续使用 {active.commit[:12]}：{error}"
             )
@@ -456,14 +534,11 @@ class ArenaComponentManager:
                 status="catalog_check_failed_using_active",
                 update_activated=False,
                 warnings=tuple(warnings),
+                failure=error,
             )
 
         try:
-            installed = self._install(remote_commit, baseline_bundle)
-            if installed.latest_season != remote_latest:
-                raise ArenaComponentError(
-                    "activated component stage catalog differs from the immutable production catalog"
-                )
+            installed = self._install(remote_commit, baseline_bundle, expected_latest_season=remote_latest)
         except Exception as error:
             p_item_coverage_update_failed = isinstance(
                 error,
@@ -480,6 +555,7 @@ class ArenaComponentManager:
                 update_activated=False,
                 warnings=tuple(warnings),
                 p_item_coverage_update_failed=p_item_coverage_update_failed,
+                failure=error,
             )
 
         return _CheckOutcome(
@@ -518,51 +594,81 @@ class ArenaComponentManager:
             return None
         return info
 
-    def _install(self, commit: str, baseline_bundle: Path) -> _BundleInfo:
+    def _install(
+        self, commit: str, baseline_bundle: Path, *, expected_latest_season: int | None = None,
+    ) -> _BundleInfo:
         versions = self.cache_root / "versions"
         version_key = _component_version_key(commit, self.host_revision)
         destination = versions / version_key
-        if destination.is_dir():
-            try:
-                existing = self.validator(destination, commit)
-            except ArenaPItemCoverageError:
-                raise
-            except Exception:
-                raise ArenaComponentError(
-                    "cached component directory is invalid; the immutable version was not overwritten"
-                )
-            else:
-                if existing.host_revision == self.host_revision:
-                    self._activate(existing)
-                    return existing
-                raise ArenaComponentError("cached component host revision is incompatible")
+        stage = "cached_validation"
 
-        self.cache_root.mkdir(parents=True, exist_ok=True)
-        versions.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix=".candidate-", dir=self.cache_root) as temporary:
-            temporary_root = Path(temporary)
-            source_root = temporary_root / "source"
-            output = temporary_root / "bundle"
-            self.source.materialize_source(commit, source_root)
-            self.builder(
-                source_root,
-                output,
-                baseline_bundle,
-                upstream_commit=commit,
-                host_revision=self.host_revision,
-            )
-            candidate = self.validator(output, commit)
-            if candidate.host_revision != self.host_revision:
-                raise ArenaComponentError("candidate component host revision is invalid")
-            try:
-                os.replace(output, destination)
-            except FileExistsError:
-                existing = self.validator(destination, commit)
-                if existing.host_revision != self.host_revision:
-                    raise ArenaComponentError("concurrent component candidate is incompatible")
-            installed = self.validator(destination, commit)
-        self._activate(installed)
-        return installed
+        def validate_identity(info: _BundleInfo) -> None:
+            if info.host_revision != self.host_revision:
+                raise ArenaComponentError("component host revision is incompatible")
+            if expected_latest_season is not None and info.latest_season != expected_latest_season:
+                raise ArenaComponentError("component stage catalog differs from the immutable production catalog")
+
+        try:
+            if destination.exists():
+                try:
+                    installed = self.validator(destination, commit)
+                except ArenaPItemCoverageError:
+                    raise
+                except Exception as error:
+                    raise ArenaComponentError(
+                        "cached component directory is invalid; the immutable version was not overwritten"
+                    ) from error
+                validate_identity(installed)
+            else:
+                stage = "create_temporary_directory"
+                self.cache_root.mkdir(parents=True, exist_ok=True)
+                versions.mkdir(parents=True, exist_ok=True)
+                temporary = tempfile.TemporaryDirectory(prefix=".candidate-", dir=self.cache_root)
+                primary_error: BaseException | None = None
+                try:
+                    source_root = Path(temporary.name) / "source"
+                    output = Path(temporary.name) / "bundle"
+                    stage = "materialize_source"
+                    self.source.materialize_source(commit, source_root)
+                    stage = "build"
+                    self.builder(
+                        source_root, output, baseline_bundle,
+                        upstream_commit=commit, host_revision=self.host_revision,
+                    )
+                    stage = "validate_candidate"
+                    candidate = self.validator(output, commit)
+                    validate_identity(candidate)
+                    stage = "promote"
+                    try:
+                        _promote_component_directory(output, destination)
+                    except FileExistsError:
+                        # A concurrent immutable version is validated below, never overwritten.
+                        pass
+                    stage = "validate_installed"
+                    installed = self.validator(destination, commit)
+                    validate_identity(installed)
+                except BaseException as error:
+                    primary_error = error
+                    raise
+                finally:
+                    try:
+                        temporary.cleanup()
+                    except Exception as cleanup_error:
+                        if primary_error is None:
+                            stage = "cleanup"
+                            raise
+                        primary_error.add_note(f"Temporary cleanup also failed: {cleanup_error!r}")
+                        _log_component_failure(
+                            "cleanup_secondary", cleanup_error, commit=commit,
+                            primary_stage=stage, temporary=temporary.name,
+                        )
+            stage = "activate"
+            self._activate(installed)
+            return installed
+        except Exception as error:
+            error.add_note(f"RIS component install stage={stage} commit={commit}")
+            _log_component_failure(stage, error, commit=commit, destination=destination)
+            raise
 
     def _activate(self, bundle: _BundleInfo) -> None:
         self.cache_root.mkdir(parents=True, exist_ok=True)
@@ -573,17 +679,26 @@ class ArenaComponentManager:
             "version_key": _component_version_key(bundle.commit, self.host_revision),
         }
         temporary = self.cache_root / f"active.{uuid.uuid4().hex}.tmp"
+        primary_error: BaseException | None = None
         try:
             temporary.write_text(
                 json.dumps(state, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
             os.replace(temporary, self.cache_root / "active.json")
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
             try:
                 temporary.unlink()
             except FileNotFoundError:
                 pass
+            except OSError as cleanup_error:
+                if primary_error is None:
+                    raise
+                primary_error.add_note(f"Activation temporary cleanup also failed: {cleanup_error!r}")
+                _log_component_failure("activate_cleanup_secondary", cleanup_error, temporary=temporary)
 
 
 def _validate_commit(commit: str) -> None:
@@ -683,24 +798,34 @@ def _validate_component_bundle(bundle: Path, expected_commit: str) -> _BundleInf
         newline="\n",
     )
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    primary_error: BaseException | None = None
     try:
-        completed = subprocess.run(
-            (bundle / "node.exe", smoke_path),
-            cwd=bundle,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=30,
-            check=False,
-            creationflags=creation_flags,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ArenaComponentError(f"arena component import smoke could not complete: {error}") from error
+        try:
+            completed = subprocess.run(
+                (bundle / "node.exe", smoke_path),
+                cwd=bundle,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=30,
+                check=False,
+                creationflags=creation_flags,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ArenaComponentError(f"arena component import smoke could not complete: {error}") from error
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
         try:
             smoke_path.unlink()
         except FileNotFoundError:
             pass
+        except OSError as cleanup_error:
+            if primary_error is None:
+                raise
+            primary_error.add_note(f"Import smoke cleanup also failed: {cleanup_error!r}")
+            _log_component_failure("smoke_cleanup_secondary", cleanup_error, temporary=smoke_path)
     if completed.returncode != 0 or completed.stdout != "ok":
         detail = (completed.stderr or completed.stdout).strip()[-1000:]
         raise ArenaComponentError(f"arena component import smoke failed: {detail}")
@@ -928,7 +1053,7 @@ def _resolve_selection(outcome: _CheckOutcome, selection: str | int) -> ArenaCom
             "RIS production P-item coverage changed, but its complete engine/data "
             "component could not be activated; the current/latest season will not use "
             "the older P-item catalog"
-        )
+        ) from outcome.failure
     if (
         selection == "latest"
         and outcome.remote_latest_season is not None
@@ -937,7 +1062,7 @@ def _resolve_selection(outcome: _CheckOutcome, selection: str | int) -> ArenaCom
         raise ArenaComponentError(
             "RIS production has a newer arena season, but its complete engine/data component could not be activated; "
             "latest will not fall back to the older season"
-        )
+        ) from outcome.failure
     return ArenaComponentResolution(
         bundle_dir=outcome.bundle.path,
         season=season,
@@ -951,6 +1076,12 @@ def _resolve_selection(outcome: _CheckOutcome, selection: str | int) -> ArenaCom
 
 
 _DEFAULT_MANAGER = ArenaComponentManager()
+
+
+def reset_failed_arena_component_checks() -> None:
+    """Called once at the existing new-task entry; successful checks remain cached."""
+
+    _DEFAULT_MANAGER.reset_failed_checks()
 
 
 def resolve_arena_component(

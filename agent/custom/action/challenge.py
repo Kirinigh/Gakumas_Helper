@@ -49,6 +49,7 @@ from arena_winrate.user_messages import (
     own_score_user_status,
     win_rate_stop_user_status,
 )
+from arena_winrate.upstream_component import reset_failed_arena_component_checks
 from arena_winrate.cost_fallback_logging import (
     cost_customization_fallback_log_payloads,
 )
@@ -240,6 +241,7 @@ class ArenaOwnScoreRecalculate(CustomAction):
         except (TypeError, ValueError) as error:
             return _stop_with_error(context, "己方总分重算参数无效，已安全停止", error)
         try:
+            reset_failed_arena_component_checks()
             logger.info("正在解析竞技场组件；默认目录在本进程首次使用时会检查 RIS 生产版本")
             component = resolve_arena_component(config.bundle_dir, config.season)
             season = component.season
@@ -446,6 +448,7 @@ class ChallengeResetOwnScorePreparation(CustomAction):
             logger.exception("竞技场日志模式尚未解析；继续原待办恢复")
         if not resume_pending_challenge(context, argv):
             return _stop_with_error(context, "上次竞技场对局尚未恢复，任务已中断")
+        reset_failed_arena_component_checks()
         reset_prepared_own_score_cache(OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE))
         logger.info("已清除上一任务可能遗留的竞技场己方缓存准备状态")
         return True
