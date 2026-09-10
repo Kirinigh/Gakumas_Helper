@@ -14047,9 +14047,32 @@ class MaaArenaReaderBackend:
         self,
         image: Any,
     ) -> tuple[tuple[int, int, int, int], ...]:
+        import cv2
+
+        # cards.onnx was validated with a stretched 640-square input. Maa 5.13
+        # now letterboxes non-square inputs, so preserve that model contract
+        # here without changing the shared detector or taking another frame.
+        height, width = image.shape[:2]
+        detector_image = cv2.resize(
+            image,
+            (640, 640),
+            interpolation=cv2.INTER_AREA,
+        )
         detail = self._run_recognition(
             "ProduceRecognitionCards",
-            image,
+            detector_image,
         )
         results = (detail.all_results or []) if detail and detail.hit else []
-        return tuple(candidate.box for candidate in isolate_card_candidates(results))
+        # Match Maa's integer rectangle conversion: truncate each coordinate
+        # and extent independently. Keep the source frame's coordinate system
+        # for the existing row geometry and subsequent card crops/clicks.
+        scale_x, scale_y = width / 640, height / 640
+        return tuple(
+            (
+                int(candidate.box[0] * scale_x),
+                int(candidate.box[1] * scale_y),
+                int(candidate.box[2] * scale_x),
+                int(candidate.box[3] * scale_y),
+            )
+            for candidate in isolate_card_candidates(results)
+        )

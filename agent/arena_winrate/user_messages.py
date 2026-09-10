@@ -9,6 +9,13 @@ from collections.abc import Mapping
 
 from .service import ArenaEvaluation, ArenaOwnScoreEvaluation
 
+_SKILL_CARD_LAYOUT_ERRORS = {
+    "skill_card_layout_incomplete": "技能卡布局定位失败",
+    "skill_card_layout_unstable": "技能卡布局尚未稳定",
+    "skill_card_geometry_unstable": "技能卡位置尚未稳定",
+    "skill_card_content_generation_unstable": "技能卡画面内容尚未稳定",
+}
+
 _ERROR_LABELS = (
     ("unsupported_capture_resolution", "截图分辨率不受支持"),
     ("permissionerror", "访问被拒绝，请检查安装目录的写入权限"),
@@ -26,6 +33,7 @@ _ERROR_LABELS = (
     ("skill_card_cost_evidence_conflict", "技能卡费用信息存在矛盾"),
     ("skill_card_detail_", "技能卡详情未能确认"),
     ("p_item_detail_", "P 道具详情未能确认"),
+    *_SKILL_CARD_LAYOUT_ERRORS.items(),
     ("result_save", "对局结果暂时无法保存"),
     ("result_incomplete", "对局结果尚未读全"),
     ("recovery_failed", "失败后未能恢复到竞技场主界面"),
@@ -94,7 +102,7 @@ def _confirmed_name(value: object) -> str:
     return f"「{name}」"
 
 
-def _location_text(location: Mapping[str, object], raw: str) -> str:
+def _location_text(location: Mapping[str, object], raw: str, *, member_only: bool = False) -> str:
     parts = []
     team = location.get("team_id")
     opponent = _index(location.get("opponent_position"), 0, 2)
@@ -109,6 +117,10 @@ def _location_text(location: Mapping[str, object], raw: str) -> str:
         value = _index(location.get(key), 1, 3)
         if value is not None:
             parts.append(f"第{value}{noun}")
+
+    # Layout checks can cover both rows; the requested group is not a failed card.
+    if member_only:
+        return "／".join(parts)
 
     kind = location.get("kind")
     if kind is None:
@@ -149,13 +161,19 @@ def describe_arena_error(
 
     raw = _normalise_error(error)
     lowered = raw.lower()
-    label = next((label for token, label in _ERROR_LABELS if token in lowered), "竞技场处理未完成")
+    error_token, label = next(
+        ((token, label) for token, label in _ERROR_LABELS if token in lowered),
+        ("", "竞技场处理未完成"),
+    )
     if "unsupported_capture_resolution" in lowered:
         sizes = set(re.findall(r"screen_size\s*=\s*\(\s*(\d{2,5})\s*,\s*(\d{2,5})\s*\)", raw))
         if len(sizes) == 1:
             width, height = sizes.pop()
             label += f"（{int(width)}×{int(height)}）"
-    position = _location_text(location if location is not None else _raw_location(raw), raw)
+    position = _location_text(
+        location if location is not None else _raw_location(raw), raw,
+        member_only=error_token in _SKILL_CARD_LAYOUT_ERRORS,
+    )
     prefix = f"{position}：" if position else ""
     return f"{prefix}{label}；请查看详细日志"
 
