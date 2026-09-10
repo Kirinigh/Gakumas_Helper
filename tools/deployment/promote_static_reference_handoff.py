@@ -31,6 +31,7 @@ try:
     from agent.arena_winrate.catalog import ArenaEntityCatalog
     from tools.published_ui_reference import (
         PublishedUiReferenceError,
+        validate_ui_source_origin,
         replay_published_ui_reference,
         validate_published_ui_references,
         validate_published_ui_reference_png,
@@ -50,6 +51,7 @@ except ModuleNotFoundError:  # Direct script execution from tools/deployment.
     from agent.arena_winrate.catalog import ArenaEntityCatalog  # type: ignore[no-redef]
     from tools.published_ui_reference import (  # type: ignore[no-redef]
         PublishedUiReferenceError,
+        validate_ui_source_origin,
         replay_published_ui_reference,
         validate_published_ui_references,
         validate_published_ui_reference_png,
@@ -87,6 +89,7 @@ P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256_ALLOWLIST = frozenset(
         "6B07FC7955420D3B9CAF710CCA46F3DFDB1074F5B49EAA9EAD3CCF64CEE2B887",
         "C05E36FE97458517F22B5CB56CBDE7976A8183D0686F1D81808484ADECECD5AD",
         "BBBA253C9B7C40A7C3A4C1740788AAAF4AA6758465D36BCD15156F65D1B92650",
+        "8BDBD63DEE07115167B96B2675ACE357B2FF50D850F168B2D745A50601DC5EDC",
     }
 )
 P_ITEM_PRODUCTION_REVISION = "d476e78b1d3b9fb8eac61924e3869b647ca82ab2"
@@ -174,6 +177,8 @@ class StaticReferenceHandoffError(RuntimeError):
 
 
 def _p_item_source_key(schema_version: object, *, provenance: bool = False) -> str:
+    if schema_version == (6 if provenance else 5):
+        return "user_provided_ui_crops"
     if schema_version == (5 if provenance else 4):
         return derived_source.SOURCE_KEY
     if schema_version == (4 if provenance else 3):
@@ -183,6 +188,8 @@ def _p_item_source_key(schema_version: object, *, provenance: bool = False) -> s
 
 def _promoted_reason(component: str, manifest: Mapping[str, Any]) -> str:
     provenance = manifest.get("source", {}).get("extension_provenance", {})
+    if component == "p_item_reference" and provenance.get("schema_version") == 6:
+        return "user-provided game UI crops, deterministic lineage, container, and offline ranking gates passed; real JJC calibration remains PENDING"
     if component == "p_item_reference" and provenance.get("schema_version") == 5:
         return derived_source.PROMOTED_REASON
     return _contract(component)["promoted_reason"]
@@ -234,7 +241,7 @@ def _validate_p_item_production_source_evidence(
         raise StaticReferenceHandoffError(
             "P-item production/source evidence schema is invalid"
         )
-    if schema_version in {2, 3, 4}:
+    if schema_version in {2, 3, 4, 5}:
         _validate_p_item_append_source_evidence(evidence)
         return
     if (
@@ -424,11 +431,11 @@ def _ordered_business_ids(
 def _validate_p_item_append_source_evidence(
     evidence: Mapping[str, Any],
 ) -> None:
-    published = evidence.get("schema_version") == 3
+    published = evidence.get("schema_version") in {3, 5}
     derived = evidence.get("schema_version") == 4
     source_key = _p_item_source_key(evidence.get("schema_version"))
     tool_contract = (
-        derived_source.EVIDENCE_TOOL_CONTRACT if derived else P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V3_TOOL_CONTRACT
+        "p-item-production-source-evidence-v5-user-ui" if evidence.get("schema_version") == 5 else derived_source.EVIDENCE_TOOL_CONTRACT if derived else P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V3_TOOL_CONTRACT
         if published else P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V2_TOOL_CONTRACT
     )
     if (
@@ -592,10 +599,12 @@ def _validate_p_item_append_source_evidence(
             raise StaticReferenceHandoffError("P-item derived pairing is outside the source inventory")
         return
     if published:
+        if official.get("source_type") != ("user_provided_ui_crops" if evidence.get("schema_version") == 5 else "third_party_published_ui_crops"):
+            raise StaticReferenceHandoffError("P-item UI evidence schema and source origin disagree")
         _validate_p_item_published_source(
             official, expected_ids=changed, catalog_revision=catalog_revision
         )
-        if source.get("revision") != expected_source_revision + "+published-ui-crops-v1":
+        if source.get("revision") != expected_source_revision + ("+user-provided-ui-crops-v1" if evidence.get("schema_version") == 5 else "+published-ui-crops-v1"):
             raise StaticReferenceHandoffError("P-item published UI source revision is invalid")
         return
     deployment = official.get("production_deployment")
@@ -675,7 +684,7 @@ def _validate_p_item_published_source(
     deployment = published.get("catalog_production_deployment")
     if (
         set(published) != {"source_type", "catalog_production_deployment", "references"}
-        or published.get("source_type") != "third_party_published_ui_crops"
+        or published.get("source_type") not in {"third_party_published_ui_crops", "user_provided_ui_crops"}
         or not isinstance(deployment, Mapping)
         or set(deployment) != {"deployment_id", "revision", "status"}
         or isinstance(deployment.get("deployment_id"), bool)
@@ -692,6 +701,7 @@ def _validate_p_item_published_source(
             catalog_rows=catalog_rows,
             component="p_item",
         )
+        validate_ui_source_origin(published["source_type"], published["references"])
     except PublishedUiReferenceError as error:
         raise StaticReferenceHandoffError("P-item published UI references are invalid") from error
 
@@ -778,7 +788,7 @@ def _validate_p_item_candidate_source_evidence(
         raise StaticReferenceHandoffError(
             "P-item candidate extension provenance schema is invalid"
         )
-    if provenance_schema_version in {3, 4, 5}:
+    if provenance_schema_version in {3, 4, 5, 6}:
         _validate_p_item_append_provenance_public_shape(provenance)
     source_key = _p_item_source_key(evidence_schema_version)
     candidate_source = {
@@ -1491,12 +1501,12 @@ def _evaluate_p_item(
         not isinstance(provenance, Mapping)
         or isinstance(provenance_schema_version, bool)
         or not isinstance(provenance_schema_version, int)
-        or provenance_schema_version not in {2, 3, 4, 5}
+        or provenance_schema_version not in {2, 3, 4, 5, 6}
     ):
         raise StaticReferenceHandoffError("P-item extension provenance is required and invalid")
-    if provenance_schema_version in {3, 4, 5}:
+    if provenance_schema_version in {3, 4, 5, 6}:
         _validate_p_item_append_provenance_public_shape(provenance)
-    published = provenance_schema_version == 4
+    published = provenance_schema_version in {4, 6}
     derived = provenance_schema_version == 5
     source_key = _p_item_source_key(provenance_schema_version, provenance=True)
     base = provenance.get("base_gallery")
@@ -1587,10 +1597,12 @@ def _evaluate_p_item(
             raise StaticReferenceHandoffError(str(error)) from error
         expected_source_revision += derived_source.SOURCE_REVISION_SUFFIX
     elif published:
+        if official.get("source_type") != ("user_provided_ui_crops" if provenance_schema_version == 6 else "third_party_published_ui_crops"):
+            raise StaticReferenceHandoffError("P-item UI provenance schema and source origin disagree")
         _validate_p_item_published_source(
             official, expected_ids=changed_ids, catalog_revision=catalog_revision
         )
-        expected_source_revision += "+published-ui-crops-v1"
+        expected_source_revision += "+user-provided-ui-crops-v1" if provenance_schema_version == 6 else "+published-ui-crops-v1"
     else:
         production_deployment = official.get("production_deployment")
         if (
@@ -1816,7 +1828,7 @@ def _verify_p_item_production_source_files(
 ) -> tuple[tuple[Path, ...], dict[int, np.ndarray], list[Mapping[str, Any]]]:
     base = evidence["base_gallery"]
     catalog = evidence["catalog"]
-    published = evidence.get("schema_version") == 3
+    published = evidence.get("schema_version") in {3, 5}
     derived = evidence.get("schema_version") == 4
     source_key = _p_item_source_key(evidence.get("schema_version"))
     official = evidence[source_key]
@@ -2042,7 +2054,7 @@ def _evaluate_p_item_external_evidence(
         "base_gallery_sha256": str(base["sha256"]).upper(),
         "catalog_git_blob_sha1": str(catalog["p_items_git_blob_sha1"]).upper(),
         "catalog_sha256": str(catalog["p_items_sha256"]).upper(),
-        ("derived_reference_count" if production_source_evidence.get("schema_version") == 4 else "published_ui_reference_count" if production_source_evidence.get("schema_version") == 3 else "official_reference_count"): len(included),
+        ("derived_reference_count" if production_source_evidence.get("schema_version") == 4 else "user_provided_ui_reference_count" if production_source_evidence.get("schema_version") == 5 else "published_ui_reference_count" if production_source_evidence.get("schema_version") == 3 else "official_reference_count"): len(included),
         "production_source_evidence_sha256": hashlib.sha256(
             canonical_json_bytes(production_source_evidence)
         ).hexdigest().upper(),
@@ -2287,7 +2299,7 @@ def _expected_promotion_evidence(
         source = manifest["source"]
         provenance = source["extension_provenance"]
         catalog = provenance["catalog"]
-        published = provenance.get("schema_version") == 4
+        published = provenance.get("schema_version") in {4, 6}
         derived = provenance.get("schema_version") == 5
         official = provenance[_p_item_source_key(provenance.get("schema_version"), provenance=True)]
         count = validation["business_id_count"]
@@ -2295,7 +2307,7 @@ def _expected_promotion_evidence(
             "base_gallery_sha256": str(provenance["base_gallery"]["sha256"]).upper(),
             "catalog_git_blob_sha1": str(catalog["p_items_git_blob_sha1"]).upper(),
             "catalog_sha256": str(catalog["p_items_sha256"]).upper(),
-            ("derived_reference_count" if derived else "published_ui_reference_count" if published else "official_reference_count"): len(official["references"]),
+            ("derived_reference_count" if derived else "user_provided_ui_reference_count" if provenance.get("schema_version") == 6 else "published_ui_reference_count" if published else "official_reference_count"): len(official["references"]),
             "production_source_evidence_sha256": hashlib.sha256(
                 canonical_json_bytes(p_item_production_source_evidence)
             ).hexdigest().upper(),

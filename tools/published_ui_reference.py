@@ -1,4 +1,4 @@
-"""Replay frozen, third-party published UI crops without asserting game capture origin."""
+"""Replay frozen public UI or user-provided game UI crops with distinct origins."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from PIL import Image
 
 SOURCE_TYPE = "third_party_published_ui_crops"
+USER_SOURCE_TYPE = "user_provided_ui_crops"
 REFERENCE_KEYS = frozenset(
     {
         "kind",
@@ -62,7 +63,12 @@ def _validate_reference(reference: Mapping[str, Any], *, component: str) -> None
         raise PublishedUiReferenceError("published UI reference identity is invalid")
     if any(not isinstance(reference[key], str) or not reference[key].strip() for key in ("name", "publisher")):
         raise PublishedUiReferenceError("published UI reference name or publisher is invalid")
-    for key in ("page_url", "original_url"):
+    user_provided = reference["capture_provenance"] == "USER_PROVIDED_GAME_UI"
+    if user_provided and component != "p_item":
+        raise PublishedUiReferenceError("user-provided UI source is supported only for P items")
+    if user_provided and (reference["publisher"] != "USER_PROVIDED" or reference["page_url"] is not None or reference["original_url"] is not None):
+        raise PublishedUiReferenceError("user-provided UI must not claim a publisher or public URL")
+    for key in (() if user_provided else ("page_url", "original_url")):
         try:
             url = urlsplit(reference[key])
             valid = url.scheme == "https" and bool(url.hostname) and not url.username and not url.password
@@ -101,7 +107,7 @@ def _validate_reference(reference: Mapping[str, Any], *, component: str) -> None
             raise ValueError
     except (TypeError, ValueError) as error:
         raise PublishedUiReferenceError("published UI frozen_at must be an ISO date") from error
-    if reference["capture_provenance"] != "UNKNOWN":
+    if reference["capture_provenance"] not in {"UNKNOWN", "USER_PROVIDED_GAME_UI"}:
         raise PublishedUiReferenceError("published UI capture provenance must remain UNKNOWN")
 
 
@@ -203,10 +209,11 @@ def validate_published_ui_source_manifest(
         or set(manifest) != {"schema_version", "source_type", "references"}
         or type(manifest["schema_version"]) is not int
         or manifest["schema_version"] != 1
-        or manifest["source_type"] != SOURCE_TYPE
+        or manifest["source_type"] not in {SOURCE_TYPE, USER_SOURCE_TYPE}
     ):
         raise PublishedUiReferenceError("published UI source manifest contract is invalid")
     validate_published_ui_references(manifest["references"], expected_ids=expected_ids, catalog_rows=catalog_rows, component=component)
+    validate_ui_source_origin(manifest["source_type"], manifest["references"])
     output_directory = Path(output_root).resolve()
     for key, reference in manifest["references"].items():
         replayed = replay_published_ui_reference(reference, original_root)
@@ -214,3 +221,10 @@ def validate_published_ui_source_manifest(
         if not output_path.is_relative_to(output_directory) or not output_path.is_file() or output_path.read_bytes() != replayed:
             raise PublishedUiReferenceError(f"published UI output {key}.png differs from the original crop replay")
     return manifest
+
+
+def validate_ui_source_origin(source_type: str, references: Mapping[str, Any]) -> None:
+    """Keep user screenshots distinct from third-party public images."""
+    expected = {SOURCE_TYPE: "UNKNOWN", USER_SOURCE_TYPE: "USER_PROVIDED_GAME_UI"}.get(source_type)
+    if expected is None or any(ref.get("capture_provenance") != expected for ref in references.values()):
+        raise PublishedUiReferenceError("UI source type and capture provenance disagree")

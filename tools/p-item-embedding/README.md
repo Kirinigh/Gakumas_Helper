@@ -49,6 +49,8 @@ ID 475/476 的目录数据最早已出现在固定的 `gakumas-tools` revision�
 
 公开 UI 裁图使用 `build_append_handoff_evidence.py --published-ui-manifest <来源清单> --published-ui-original-root <冻结原图目录>`；该分支仍要求真实目录 revision／成功 deployment，但不得传图像的 `gk-img`、first-added 或首次图片部署字段。来源清单逐图绑定 ID、名称、强化状态、发布页／原图 URL、冻结日期、原图字节／尺寸、半开裁框、Pillow BICUBIC 130×130 缩放与无元数据 PNG。构建器与晋级器均实际重放裁图，晋级器另传 `--p-item-original-root`。本批独立证据为 `evidence/p_item_production_source_published_ui_20260905.json`；图库由426项原字节继承加6项形成432项，不改变普通／`+` 匹配方案，真实 JJC 保持 `PENDING`。游戏图形权利不继承目录代码的 BSD 许可证。
 
+用户直接提供的游戏 UI 截图使用同一裁图重放入口，但必须显式声明 `source_type=user_provided_ui_crops`，逐图 `capture_provenance=USER_PROVIDED_GAME_UI`、`publisher=USER_PROVIDED`，两个 URL 字段必须为 null；不得伪造公开发布页。该来源生成 evidence schema-v5／provenance-v6，使用独立 `user_provided_ui_crops` 字段和 revision 后缀，旧公开来源不能混入或改标。仍须冻结原图、绑定目录身份、核对全部原字节继承、注册经核验的证据散列、通过正式晋级；缺原图或裁图不一致继续拒绝。原截图只留本地，真实小槽与双窗资格不能从提供图片或旧图库直接继承。2026-09-10 的 485／486 两态图走此来源，434 项图库的旧 432 项原字节保留，新增真实 JJC 校准仍为 PENDING。
+
 聚合报告将可从发行组件重算的 `validation` 与晋级期 `promotion_evidence` 分开保存，并用 `candidate_manifest_sha256` 绑定晋级前候选。Release 会从发布工具源码树实际重新加载同一份固定散列证据，先做 manifest 来源投影比对，再从包内 NPZ／manifest 重算 validation、核对报告并以包内 RIS 的 `p_items.json` 检查竞技场 `stage` 集合覆盖。冻结证据随公开源码保存但不进入用户运行包；未分发的 426 张 builder 源图也不会被冒充为发布时已重新读取。
 
 ## 离线评估

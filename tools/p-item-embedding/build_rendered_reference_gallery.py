@@ -214,7 +214,7 @@ def main() -> int:
     }
     if extension_provenance is not None:
         manifest["source"]["extension_provenance"] = extension_provenance
-        if extension_provenance.get("schema_version") in {3, 4, 5}:
+        if extension_provenance.get("schema_version") in {3, 4, 5, 6}:
             manifest["source"]["business_ids"] = ids
         if extension_provenance.get("schema_version") == 5:
             manifest["validation"] = {

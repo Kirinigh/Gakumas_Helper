@@ -471,6 +471,7 @@ def build_handoff_documents(
                 "size": len(raw),
             }
 
+    user_provided = published and manifest["source_type"] == "user_provided_ui_crops"
     base_sha256 = _sha256_file(base_gallery_path.resolve())
     base_contract = {
         "added_business_ids": list(added),
@@ -512,7 +513,7 @@ def build_handoff_documents(
     }
     if published:
         image_source_contract = {
-            "source_type": "third_party_published_ui_crops",
+            "source_type": manifest["source_type"],
             "catalog_production_deployment": {
                 "deployment_id": production_deployment_id,
                 "revision": deployment_revision,
@@ -523,13 +524,13 @@ def build_handoff_documents(
     if derived:
         assert derived_contract is not None
         image_source_contract = derived_contract
-    source_key = SOURCE_KEY if derived else "published_ui_crops" if published else "official_rendered_source"
+    source_key = "user_provided_ui_crops" if user_provided else SOURCE_KEY if derived else "published_ui_crops" if published else "official_rendered_source"
     source_contract = {
         "business_id_count": len(source_ids),
         "business_ids": list(source_ids),
         "revision": (
             f"base-gallery-sha256@{base_sha256}+gakumas-tools@{catalog_revision}"
-            + (SOURCE_REVISION_SUFFIX if derived else "+published-ui-crops-v1" if published else "")
+            + ("+user-provided-ui-crops-v1" if user_provided else SOURCE_REVISION_SUFFIX if derived else "+published-ui-crops-v1" if published else "")
         ),
         "sanitized_icons_sha256": _sanitized_digest(source_ids, sanitized),
         "source_icons_sha256": _source_digest(source_paths),
@@ -538,17 +539,17 @@ def build_handoff_documents(
         "base_gallery": base_contract,
         "catalog": catalog_contract,
         source_key: image_source_contract,
-        "schema_version": 4 if derived else 3 if published else 2,
+        "schema_version": 5 if user_provided else 4 if derived else 3 if published else 2,
         "source": source_contract,
         "tool_contract": (
-            EVIDENCE_TOOL_CONTRACT if derived else P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V3_TOOL_CONTRACT if published else P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V2_TOOL_CONTRACT
+            "p-item-production-source-evidence-v5-user-ui" if user_provided else EVIDENCE_TOOL_CONTRACT if derived else P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V3_TOOL_CONTRACT if published else P_ITEM_PRODUCTION_SOURCE_EVIDENCE_V2_TOOL_CONTRACT
         ),
     }
     provenance = {
         "base_gallery": base_contract,
         "catalog": catalog_contract,
         source_key: image_source_contract,
-        "schema_version": 5 if derived else 4 if published else 3,
+        "schema_version": 6 if user_provided else 5 if derived else 4 if published else 3,
         "validation": {
             "full_gallery_64px": _full_gallery_rankings(source_ids, source_images, changed),
             "live_jjc_calibration": {
