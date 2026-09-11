@@ -1170,3 +1170,18 @@ diff --git a/MFAAvalonia/Extensions/MaaFW/MaaProcessorManager.cs b/MFAAvalonia/E
              if (existingData.ContainsKey(key)) continue;
  
              if (config.TryGetValue(key, out var value))
+diff --git a/MFAAvalonia/Extensions/MaaFW/FocusHandler.cs b/MFAAvalonia/Extensions/MaaFW/FocusHandler.cs
+--- a/MFAAvalonia/Extensions/MaaFW/FocusHandler.cs
++++ b/MFAAvalonia/Extensions/MaaFW/FocusHandler.cs
+@@ -442,6 +442,11 @@
+             || input.StartsWith("$", StringComparison.Ordinal))
+             return false;
+ 
++        // Color markup is supported inline text; its closing slash is not a path.
++        if (Regex.IsMatch(input, @"\[color:[^\]]+\].*?\[/color\]",
++                RegexOptions.IgnoreCase | RegexOptions.Singleline))
++            return false;
++
+         return input.Contains(Path.DirectorySeparatorChar)
+                || input.Contains(Path.AltDirectorySeparatorChar)
+                || input.StartsWith("./", StringComparison.Ordinal)

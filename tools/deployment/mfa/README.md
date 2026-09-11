@@ -115,3 +115,9 @@ python tools/deployment/mfa/test_dynamic_option_cases.py --source-zip "<固定�
 `--before` 与 `--after` 是可选的成对参数。测试应用当前补丁后，直接编译完整 `DynamicOptionCases.cs`、实际 `CreateComboBoxControl`、开始前迁移和 case 的 `UpdateDisplayName` 方法；只替代渲染、模型生成部分、语言查询、空闲绑定与配置保存回调，不复制刷新和选择算法。覆盖初始化、下拉展开、空闲恢复、共享定义、固定索引、兼容项隐藏及一次性迁移、不展开直接开始、运行中不刷新、标签与描述更新、子选项保留及无效文件的整体拒绝。它读取仓库实际简繁格式模板验证参数渲染，并可使用 Python 生成的真实前后定义核对跨语言合同。
 
 测试使用现有编译器、标准库引用与 Newtonsoft.Json，不启动 Maa、不读取游戏、不恢复依赖。完整 Core 编译及双次复建另行验证 Avalonia 事件和实际模型集成；该方法测试不等同于界面点击验收。
+
+## 离线 Focus 文本诊断回归
+
+`test_focus_content.py --source-zip <固定源码ZIP> --dotnet <现有dotnet.exe> --work-dir <新目录>` 应用当前补丁并编译实际 `LogUnresolvedFocusPath` / `LooksLikeFilePath` 方法，覆盖颜色文本、大小写与换行、普通文本、链接、语言键、真实文件路径和已解析内容。仅日志接收器及路径占位符接口使用适配器，不启动客户端、不改变内容解析或文件访问权限。
+
+Focus 的颜色标记闭合符不再触发文件路径警告；实际文件引用继续保留原诊断。本修改目前是源码补丁，既有 v0.5.0 Core 不包含它；未来纳入客户端前仍须重新构建和验证对应 bundle，不能复用旧补丁散列声明已部署。
