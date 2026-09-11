@@ -95,6 +95,7 @@ DATA_ALLOWLIST = (
     "p_drinks.csv",
     "p_item_detail_text.json",
     "p_items.csv",
+    "skill_card_classification.json",
     "skill_cards.csv",
     "support_cards.json",
 )
