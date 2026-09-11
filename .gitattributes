@@ -15,3 +15,4 @@ tools/p-item-embedding/evidence/*.json -text whitespace=cr-at-eol
 # Preserve the reviewed MFAAvalonia source patch and redistributed GPL text byte-for-byte.
 tools/deployment/mfa/*.patch -text whitespace=-blank-at-eol
 THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE -text
+assets/data/skill_card_classification.json -text whitespace=cr-at-eol

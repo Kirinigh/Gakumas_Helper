@@ -286,3 +286,33 @@ revision or unconstrained positive record, so its existing reports correctly
 produce zero authoritative samples. Digits taken from cost, stamina, parameter, or other
 carriers may be used only as stress tests and must not open the customization
 glyph acceptance gate.
+# 全量技能卡分类索引
+
+`assets/data/skill_card_classification.json` 以 `business_id` 连接三套图库的全部图像变体，保存每张卡的计划、种类、稀有度、普通／＋状态及源字段。索引支持同维度多选取并集、跨维度取交集；空选返回空集，未知标签报错。`select_ids(index, plan=["free", "sense"], rarity="L")` 可用于离线查询。计划筛选不会自动添加共通卡，调用者须显式选择。
+
+- 计划：`free/sense/logic/anomaly`，使用官方主表并核对目录。
+- 稀有度：`L/SSR/SR/R/N`。眠気原目录的 `T` 保留在源字段，分类按官方主表归 `N`。
+- 种类优先级：全部 `L` → `other`；其余按官方固有来源或目录明确的 `pIdol/support` → `p_idol/support`；剩余名称含「基本」→ `basic`；其余 → `other`。官方关联的固有传说卡同样归 `other`，保留归属源字段但不据此划为固有种类。
+- 源数据保留官方计划、稀有度、四类归属字段，以及目录 sourceType、pIdolId、type、rarity 和分类依据。目录固有来源可补足官方归属空值；不从图片外观或 pIdolId 单独推断固有种类。
+- 构建会核对冻结来源、已接受的 ID 映射、三套图库的实际 ID 集合和普通／＋标签一致性。官方名称别名使用已接受 crosswalk。
+
+复建当前 876 张卡索引（在项目根目录，使用项目虚拟环境 Python；下列输入路径须替换为已核验的冻结来源）：
+
+```powershell
+python tools/card-embedding/build_skill_card_classification.py `
+  --catalog .local/classification-inputs/skill_cards.json `
+  --master .local/classification-inputs/catalog-pcard.json `
+  --dataset-manifest .local/classification-inputs/base/dataset_manifest.json `
+  --dataset-manifest .local/classification-inputs/extension-1/dataset_manifest.json `
+  --dataset-manifest .local/classification-inputs/extension-2/dataset_manifest.json `
+  --dataset-manifest .local/classification-inputs/extension-3/dataset_manifest.json `
+  --dataset-manifest .local/classification-inputs/extension-4/dataset_manifest.json `
+  --component-root assets/resource/base/model/classify/card_embedding `
+  --component-root assets/resource/base/model/embedding/arena_card `
+  --component-root assets/resource/base/model/embedding/arena_badge_reference `
+  --catalog-revision 0d0a85145258f700dbbab66d31acf87361297a37 `
+  --revision skill-card-classification-876-v1 `
+  --output assets/data/skill_card_classification.json
+```
+
+冻结输入不随公开源码分发，独立检出需另行取得同一来源文件。新增卡时须重新构建并验证覆盖，不能只修改索引计数。分类索引当前用于离线查询，尚未接入竞技场运行时筛选；这不改变模型或图库向量。
