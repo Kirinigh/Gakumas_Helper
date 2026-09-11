@@ -1045,6 +1045,20 @@ class ArenaEntityCatalog:
 
         return tuple(sorted(self._cards_by_id))
 
+    def arena_skill_card_reference_required_ids(self) -> tuple[int, ...]:
+        """Exclude explicit Legend cards from the arena gallery coverage domain.
+
+        RIS stores live-only Legend cards with rarity ``L`` but sourceType
+        ``produce``. Their presence in the full catalog does not require arena
+        references. Missing or unfamiliar rarity values stay in the domain;
+        this is not a whitelist of currently known playable rarities.
+        """
+
+        return tuple(sorted(
+            card_id for card_id, card in self._cards_by_id.items()
+            if card.get("rarity") != "L"
+        ))
+
     def skill_card_source_type(self, card_id: int) -> str:
         """Return the authoritative deck-source class for one skill card."""
 

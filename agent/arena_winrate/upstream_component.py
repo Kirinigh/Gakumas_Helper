@@ -968,10 +968,10 @@ def _validate_component_skill_card_coverage(
     catalog: ArenaEntityCatalog,
     gallery_ids: Sequence[int],
 ) -> tuple[int, ...]:
-    """Return skill-card IDs supplied by RIS but absent from the host gallery."""
+    """Return arena-relevant RIS skill-card IDs absent from the host gallery."""
 
     represented = frozenset(int(value) for value in gallery_ids)
-    catalog_ids = frozenset(catalog.skill_card_business_ids())
+    catalog_ids = frozenset(catalog.arena_skill_card_reference_required_ids())
     return tuple(sorted(catalog_ids - represented))
 
 

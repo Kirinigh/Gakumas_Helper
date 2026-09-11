@@ -5227,7 +5227,7 @@ class MaaArenaReaderBackend:
         raw_gallery_ids = getattr(gallery, "business_ids", None)
         catalog_ids_resolver = getattr(
             self.catalog,
-            "skill_card_business_ids",
+            "arena_skill_card_reference_required_ids",
             None,
         )
         if raw_gallery_ids is None or catalog_ids_resolver is None:
@@ -5274,7 +5274,7 @@ class MaaArenaReaderBackend:
 
         try:
             candidate_ids = self.catalog.skill_card_candidates_for_plan(
-                self.catalog.skill_card_business_ids(),
+                self.catalog.arena_skill_card_reference_required_ids(),
                 plan=plan,
             )
         except ArenaCatalogError as error:
