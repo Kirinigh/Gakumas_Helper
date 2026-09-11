@@ -60,6 +60,8 @@ from arena_winrate.maa_challenge_actions import (
     ArenaChallengeRetryCurrentBattleAction,
     challenge_result_saved,
     resume_pending_challenge,
+    restore_challenge_action_next,
+    recover_skipped_challenge_result,
 )
 
 from .arena_reader import MaaArenaReaderBackend
@@ -1108,6 +1110,7 @@ class ChallengeAuto(CustomAction):
                     f"（胜率 {float(selected_row['win_rate']) * 100:.2f}%）"
                 )
             record_store = ArenaChallengeRecordStore()
+            display_run = arena_task_log.current(context)
             begun = False
             try:
                 cancellation_for(context).check()
@@ -1116,6 +1119,8 @@ class ChallengeAuto(CustomAction):
                         "capture_id": challenge_id,
                         "source_capture_id": source_capture_id,
                         "start_reservation_required": True,
+                        "origin_task_id": None if display_run is None else display_run.task_id,
+                        "origin_run_id": None if display_run is None else display_run.run_id,
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "contest_day": contest_day,
                         "season": season.season,
@@ -1237,9 +1242,29 @@ class ArenaChallengeStartOnce(CustomAction):
                 # Persist before sending: a lost response cannot rearm Start.
                 cancellation_for(context).check()
                 store.mark_battle_started(str(pending.get("capture_id", "")))
-                arena_task_log.battle_started(context, str(pending.get("capture_id", "")))
             except (ArenaChallengeFlowError, OSError) as error:
                 return _stop_with_error(context, "当前对局已发送开始或无法登记，未重复挑战", error)
+        return _challenge_recognized_click(context, argv)
+
+
+@AgentServer.custom_action("ArenaChallengeConfirmBattleAndSkip")
+class ArenaChallengeConfirmBattleAndSkip(CustomAction):
+    @_report_unexpected_errors
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        if not _administrator_process():
+            return False
+        store = ArenaChallengeRecordStore()
+        pending = store.load_pending()
+        if pending is not None:
+            cancellation_for(context).check()
+            capture_id = str(pending.get("capture_id", ""))
+            # The original Skip recognition proves the battle page. Reuse its
+            # current frame/box and keep exactly the original single click.
+            store.confirm_battle_started(capture_id, evidence={
+                "battle_entered": True,
+                "source": "ChallengeSkip",
+            })
+            arena_task_log.battle_started(context, capture_id)
         return _challenge_recognized_click(context, argv)
 
 
@@ -1249,8 +1274,11 @@ class ArenaChallengeLeaveResult(CustomAction):
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         if not _administrator_process():
             return False
+        restore_challenge_action_next(context, argv)
         store = ArenaChallengeRecordStore()
         if store.load_pending() is not None and not challenge_result_saved(store):
+            if recover_skipped_challenge_result(context, argv, store=store):
+                return True
             return _stop_with_error(context, "竞技场结果尚未保存，保留当前页面继续结果恢复")
         if store.load_pending() is not None and getattr(argv, "node_name", "") == "ChallengeError":
             return resume_pending_challenge(context, argv, store)

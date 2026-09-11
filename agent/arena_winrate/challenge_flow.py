@@ -965,7 +965,7 @@ def serialise_result_observations(observations: Sequence[Any]) -> dict[str, Any]
 
 
 def result_observations_complete(result: Mapping[str, Any]) -> bool:
-    """Return whether a result can release the next challenge gate."""
+    """Return whether all winners are known, independently of round completion."""
 
     stages = result.get("stage_results")
     structurally_complete = bool(
@@ -1153,7 +1153,7 @@ class ArenaChallengeRecordStore:
         return destination
 
     def recorded_result_path(self, capture_id: str) -> Path | None:
-        """Reuse only a complete result bound to this still-pending round."""
+        """Reuse known winners or an explicitly unresolved, observed post-battle result."""
 
         self._pending_for_capture(capture_id)
         path = self.results_root / f"{capture_id}.json"
@@ -1165,7 +1165,10 @@ class ArenaChallengeRecordStore:
         lifecycle = record.get("lifecycle", {})
         if (
             not isinstance(result, Mapping)
-            or not result_observations_complete(result)
+            or not (
+                result_observations_complete(result)
+                or self._unknown_result_record_valid(record)
+            )
             or not isinstance(lifecycle, Mapping)
             or lifecycle.get("state") not in {
                 CHALLENGE_LIFECYCLE_RESULT_RECORDED,
@@ -1177,15 +1180,140 @@ class ArenaChallengeRecordStore:
             raise ArenaChallengeFlowError("stored challenge result is not complete")
         return path
 
+    @staticmethod
+    def _unknown_result_record_valid(record: Mapping[str, Any]) -> bool:
+        """Keep an archived unknown result distinct from an incomplete OCR attempt."""
+
+        result = record.get("result")
+        intent = record.get("intent")
+        if not isinstance(result, Mapping) or not isinstance(intent, Mapping):
+            return False
+        started = intent.get("battle_started")
+        evidence = result.get("evidence")
+        if not isinstance(started, Mapping) or not started or not isinstance(evidence, Mapping):
+            return False
+        verified = started.get("ticket_consumption_verified") is True
+        page = evidence.get("post_battle_page")
+        return bool(
+            result.get("outcome") == "UNKNOWN"
+            and result.get("result_status") == "unknown"
+            and result.get("stage_results") == []
+            and isinstance(result.get("reason_code"), str)
+            and result["reason_code"].strip()
+            and result.get("ticket_consumption_verified") is verified
+            and evidence.get("result_unavailable_verified") is True
+            and page in {"arena", "finish", "reward", "result"}
+            and (
+                (page == "arena" and evidence.get("arena_return_verified") is True)
+                or (page != "arena" and verified)
+            )
+        )
+
+    def _finished_result_path(self, capture_id: str) -> Path | None:
+        """Recognize an already finished call without changing a newer pending round."""
+
+        if not capture_id or not re.fullmatch(r"[A-Za-z0-9._-]+", capture_id):
+            raise ArenaChallengeFlowError("challenge capture_id is missing or unsafe")
+        path = self.results_root / f"{capture_id}.json"
+        if not path.is_file():
+            return None
+        record = self._load_result(path)
+        self._require_result_capture_id(record, capture_id)
+        lifecycle = record.get("lifecycle", {})
+        verification = record.get("return_verification", {})
+        result = record.get("result", {})
+        if (
+            isinstance(lifecycle, Mapping)
+            and lifecycle.get("state") in {
+                CHALLENGE_LIFECYCLE_FINISHED, CHALLENGE_LIFECYCLE_RECOVERED_FINISHED,
+            }
+            and isinstance(verification, Mapping)
+            and verification.get("status") == "verified"
+            and isinstance(result, Mapping)
+            and (result_observations_complete(result) or self._unknown_result_record_valid(record))
+        ):
+            return path
+        return None
+
     def complete_idempotent(self, capture_id: str, result: Mapping[str, Any]) -> Path:
         """Never replace an already valid result, even after an interrupted write."""
 
-        existing = self.recorded_result_path(capture_id)
+        existing = self._finished_result_path(capture_id) or self.recorded_result_path(capture_id)
         if existing is not None:
             return existing
         if not result_observations_complete(result):
             raise ArenaChallengeFlowError("challenge result has incomplete winners")
         return self.complete(result)
+
+    def complete_unknown_result(
+        self,
+        capture_id: str,
+        *,
+        evidence: Mapping[str, Any],
+        reason_code: str = "result_page_skipped_or_unavailable",
+    ) -> Path:
+        """Archive unavailable winners only after observing a post-battle page.
+
+        The start click reservation alone does not verify ticket consumption.
+        Such older or interrupted records may be closed after an observed arena
+        return, while retaining that uncertainty. Other post-battle pages require
+        a separately confirmed battle start before their unknown result is saved.
+        """
+
+        existing = self._finished_result_path(capture_id) or self.recorded_result_path(capture_id)
+        if existing is not None:
+            return existing
+        pending = self._pending_for_capture(capture_id)
+        result = self.recoverable_pending_result(capture_id)
+        if result is None:
+            started = pending.get("battle_started")
+            if not isinstance(started, Mapping) or not started:
+                raise ArenaChallengeFlowError("unknown result has no reserved challenge start")
+            result = {
+                "outcome": "UNKNOWN",
+                "result_status": "unknown",
+                "stage_results": [],
+                "reason_code": str(reason_code),
+                "ticket_consumption_verified": started.get("ticket_consumption_verified") is True,
+                "evidence": dict(evidence),
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "contest_day": pending.get("contest_day", contest_day_key()),
+            }
+            if not self._unknown_result_record_valid({"intent": pending, "result": result}):
+                raise ArenaChallengeFlowError("unknown result requires verified post-battle page evidence")
+            candidate = self._recovery_budget(pending).get("candidate")
+            if self._unknown_result_record_valid({"intent": pending, "result": candidate}):
+                result = dict(candidate)
+        unrecorded_failures = 0
+        last_error = None
+        for _ in range(2):
+            existing = self.recorded_result_path(capture_id)
+            if existing is not None:
+                return existing
+            previous_attempts = self._recovery_budget(self._pending_for_capture(capture_id))["save_attempts"]
+            try:
+                reserved = self.reserve_result_save(
+                    capture_id, result, unrecorded_failures=unrecorded_failures,
+                )
+            except (ArenaChallengeFlowError, OSError) as error:
+                last_error = error
+                current_attempts = self._recovery_budget(self._pending_for_capture(capture_id))["save_attempts"]
+                unrecorded_failures += int(current_attempts == previous_attempts)
+                if max(previous_attempts, current_attempts) + unrecorded_failures >= 2:
+                    break
+                continue
+            if not reserved:
+                break
+            unrecorded_failures = 0
+            try:
+                return self.complete(result)
+            except (ArenaChallengeFlowError, OSError) as error:
+                last_error = error
+        # A failed pending-state write may follow a successfully persisted result.
+        existing = self.recorded_result_path(capture_id)
+        if existing is not None:
+            return existing
+        raise ArenaChallengeFlowError("challenge result save budget exhausted") from last_error
 
     @staticmethod
     def _recovery_budget(pending: Mapping[str, Any]) -> dict[str, Any]:
@@ -1331,7 +1459,10 @@ class ArenaChallengeRecordStore:
         """Keep the same parsed frame for at most one additional save attempt."""
 
         pending = self._pending_for_capture(capture_id)
-        if not result_observations_complete(result):
+        if not (
+            result_observations_complete(result)
+            or self._unknown_result_record_valid({"intent": pending, "result": result})
+        ):
             raise ArenaChallengeFlowError("cannot save an unresolved result candidate")
         budget = self._recovery_budget(pending)
         if type(unrecorded_failures) is not int or not 0 <= unrecorded_failures <= 1:
@@ -1387,6 +1518,33 @@ class ArenaChallengeRecordStore:
             "ticket_consumption_verified": False,
         }
         self._write_atomic(self.pending_path, pending)
+
+    def confirm_battle_started(
+        self, capture_id: str, *, evidence: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Confirm the reserved start from an already recognized in-battle page."""
+
+        pending = self._pending_for_capture(capture_id)
+        started = pending.get("battle_started")
+        if not isinstance(started, Mapping) or not started:
+            raise ArenaChallengeFlowError("battle confirmation has no reserved challenge start")
+        if started.get("ticket_consumption_verified") is True:
+            return pending
+        if evidence.get("battle_entered") is not True:
+            raise ArenaChallengeFlowError("battle confirmation requires in-battle page evidence")
+        if (
+            pending.get("lifecycle_state") != CHALLENGE_LIFECYCLE_INTENT
+            or (self.results_root / f"{capture_id}.json").is_file()
+        ):
+            raise ArenaChallengeFlowError("recorded challenge cannot change start confirmation")
+        pending["battle_started"] = {
+            **started,
+            "ticket_consumption_verified": True,
+            "confirmed_at": datetime.now(timezone.utc).isoformat(),
+            "evidence": dict(evidence),
+        }
+        self._write_atomic(self.pending_path, pending)
+        return pending
 
     def reserve_communication_retry(self, capture_id: str) -> bool:
         pending = self._pending_for_capture(capture_id)
@@ -1509,8 +1667,14 @@ class ArenaChallengeRecordStore:
         *,
         evidence: Mapping[str, Any],
     ) -> Path:
-        """Atomically finish a recorded round only from product return evidence."""
+        """Finish known or explicitly unknown results after product return evidence."""
 
+        finished = self._finished_result_path(capture_id)
+        if finished is not None:
+            pending = self.load_pending()
+            if pending is not None and pending.get("capture_id") == capture_id:
+                self._unlink_pending()
+            return finished
         pending = self._pending_for_capture(capture_id)
         result_path = self.results_root / f"{capture_id}.json"
         if not result_path.is_file():

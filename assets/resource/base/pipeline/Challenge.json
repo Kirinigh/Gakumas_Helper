@@ -372,8 +372,8 @@
       }
     },
     "action": {
-      "type": "Click",
-      "param": {}
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeConfirmBattleAndSkip"}
     },
     "timeout": 60000,
     "on_error": ["ChallengeRetryBeforeResult"],
@@ -405,7 +405,7 @@
     "next": [
       "ChallengeNext"
     ],
-    "on_error": ["ChallengeWinRateStop"]
+    "on_error": ["ChallengeRetryBeforeFinish"]
   },
   "ChallengeNext": {
     "recognition": {

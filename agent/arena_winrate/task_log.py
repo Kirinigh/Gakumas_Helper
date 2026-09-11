@@ -7,6 +7,7 @@ their original severity in the file sink; only concise messages reach the GUI.
 from __future__ import annotations
 
 import time
+from uuid import uuid4
 from functools import wraps
 from threading import RLock
 from dataclasses import field, dataclass
@@ -22,12 +23,14 @@ def diagnostic_logger(logger):
 @dataclass
 class RunDisplay:
     task_id: int
+    run_id: str = field(default_factory=lambda: uuid4().hex)
     started_at: float = field(default_factory=time.monotonic)
     enabled: bool = False
     background_shown: bool = False
     season_shown: bool = False
     gallery_fallback_shown: bool = False
     starts: set[str] = field(default_factory=set)
+    battle_numbers: dict[str, int] = field(default_factory=dict)
     results: dict[str, str] = field(default_factory=dict)
     returned: set[str] = field(default_factory=set)
     failure: str | None = None
@@ -117,21 +120,31 @@ class ArenaTaskLog:
         with self._lock:
             state = self.current(context)
             if state is not None:
+                state.enabled = True
+                if capture_id not in state.starts:
+                    state.battle_numbers[capture_id] = len(state.starts) + 1
                 state.starts.add(capture_id)
 
     def result_saved(self, context, capture_id, result, logger):
         with self._lock:
             state = self.current(context)
-            if state is None or capture_id in state.results:
+            if state is None:
+                return
+            previous = state.results.get(capture_id)
+            outcome = result["outcome"]
+            if previous is not None and (previous != "UNKNOWN" or outcome == "UNKNOWN"):
                 return
             state.enabled = True
-            state.results[capture_id] = result["outcome"]
+            state.results[capture_id] = outcome
+            number = state.battle_numbers.get(capture_id)
+            prefix = f"第 {number} 场" if number is not None else "恢复的对局"
+            if outcome == "UNKNOWN":
+                logger.warning(f"竞技场{prefix}：胜负页面可能被手动跳过，结果不确定。")
+                return
             outcomes = {"WIN": "胜", "LOSS": "负", "TIE": "平"}
             winners = {"OWN": "胜", "OPPONENT": "负", "TIE": "平"}
             stages = "／".join(winners.get(row.get("winner"), "未确认") for row in result.get("stage_results", ()))
-            count = len(state.results.keys() & state.starts)
-            prefix = f"第 {count} 场" if capture_id in state.starts else "恢复的对局"
-            logger.info(f"竞技场{prefix}：{outcomes.get(result['outcome'], '未确认')}；三个舞台：{stages}")
+            logger.info(f"竞技场{prefix}：{outcomes.get(outcome, '未确认')}；三个舞台：{stages}")
 
     def returned(self, context, capture_id, *, exhausted=False):
         with self._lock:
@@ -165,7 +178,8 @@ class ArenaTaskLog:
             losses = outcomes.count("LOSS")
             ties = outcomes.count("TIE")
             missing = len(state.starts - state.results.keys())
-            unreturned = len(state.results.keys() - state.returned)
+            unknown = outcomes.count("UNKNOWN") + missing
+            unreturned = len((state.starts | state.results.keys()) - state.returned)
             recovered = len(state.results.keys() - state.starts)
             completed = succeeded and not state.failure and not missing and not unreturned and bool(state.terminal)
             ending = "完成" if completed else "中断"
@@ -173,10 +187,9 @@ class ArenaTaskLog:
             message = f"竞技场任务{ending}：本轮挑战 {len(state.starts)} 场，{wins} 胜 {losses} 负"
             if ties:
                 message += f" {ties} 平"
+            message += f"，{unknown} 场结果不确定"
             if recovered:
                 message += f"；另恢复此前对局 {recovered} 场"
-            if missing:
-                message += f"，另有 {missing} 场结果未确认"
             if unreturned:
                 message += f"，{unreturned} 场回场未确认"
             message += f"；用时 {elapsed // 60} 分 {elapsed % 60} 秒"
