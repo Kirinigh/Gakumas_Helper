@@ -10,15 +10,25 @@ public static class ConfigurationKeys
 {
     public const string EnableLiveView = "UI.LiveView.EnableLiveView";
     public const string DashboardCardGridLayout = "layout";
+    public static readonly string[] InstanceScopedKeys = [EnableLiveView, "CurrentController", "BeforeTask"];
 }
 public static class LoggerHelper { public static void Info(object value) { } public static void Warning(object value) { } }
 public static class JsonHelper
 {
+    public static T LoadJson<T>(string path, T fallback) => File.Exists(path) ? JsonConvert.DeserializeObject<T>(File.ReadAllText(path))! : fallback;
+    public static void SaveJson(string path, object value, params object[] converters) => File.WriteAllText(path, JsonConvert.SerializeObject(value));
+    public static void SaveConfig(string name, object value, params object[] converters) => SaveJson(Path.Combine(AppPaths.DataRoot, "config", name + ".json"), value);
     public static T LoadConfig<T>(string name, T fallback)
     {
         var path = Path.Combine(AppPaths.DataRoot, "config", name + ".json");
         return File.Exists(path) ? JsonConvert.DeserializeObject<T>(File.ReadAllText(path))! : fallback;
     }
+}
+public class MaaInterfaceSelectAdvancedConverter(bool enabled) { }
+public class MaaInterfaceSelectOptionConverter(bool enabled) { }
+public partial class MaaProcessorManager
+{
+    public void Migrate(string directory) => MigratePlainKeysToDefaultInstance(directory);
 }
 public class MFAConfiguration(string name, string fileName, Dictionary<string, object> config)
 {
@@ -100,6 +110,27 @@ public static class Program
         Check(!ConfigurationManager.Current.GetValue(Key, true), "clean startup uses template");
         Check(!ConfigurationManager.Current.ContainsKey("NoAutoStart"), "unrelated template key ignored");
         Check(File.ReadAllText(Path.Combine(args[0], "config/config.json")) == "{}", "loading does not rewrite user configuration");
+        // First-start migration moves plain instance keys to a temporary default
+        // instance, then discards that instance before creating interface tabs.
+        var instancesDir = Path.Combine(args[0], "config", "instances");
+        Directory.CreateDirectory(instancesDir);
+        var bootstrapPath = Path.Combine(instancesDir, "default.json");
+        new MaaProcessorManager().Migrate(instancesDir);
+        if (File.Exists(bootstrapPath)) File.Delete(bootstrapPath);
+        Check(!new InstanceConfiguration("from-interface", new()).GetValue(Key, true), "template survives discarded bootstrap instance");
+        Check(new InstanceConfiguration("from-interface", new() { [Key] = true }).GetValue(Key, false), "explicit instance choice overrides template after migration");
+        Check(!new InstanceConfiguration("from-interface", new()).GetValue("NoAutoStart", false), "instance fallback ignores unrelated template keys");
+        foreach (var enabled in new[] { false, true })
+        {
+            ConfigurationManager.Current.Config[Key] = enabled;
+            ConfigurationManager.Current.Config["CurrentController"] = "Win32";
+            new MaaProcessorManager().Migrate(instancesDir);
+            Check(!ConfigurationManager.Current.ContainsKey("CurrentController"), "other plain settings keep existing migration");
+            Check(File.ReadAllText(bootstrapPath).Contains("Win32"), "other migrated values are retained");
+            File.Delete(bootstrapPath);
+            Check(new InstanceConfiguration("fresh-tab", new()).GetValue(Key, !enabled) == enabled, "explicit global choice survives bootstrap deletion");
+            Check(new InstanceConfiguration("fresh-tab", new() { [Key] = !enabled }).GetValue(Key, enabled) == !enabled, "explicit local choice still wins after migration");
+        }
         Check(!ConfigurationManager.Add("new-profile").GetValue(Key, true), "new profile uses same default");
         foreach (var enabled in new[] { true, false })
         {

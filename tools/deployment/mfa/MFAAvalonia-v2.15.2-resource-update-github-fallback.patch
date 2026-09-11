@@ -1154,3 +1154,19 @@ diff --git a/MFAAvalonia/Views/UserControls/Dashboard/DashboardCardGrid.cs b/MFA
                  }
              }
          }
+diff --git a/MFAAvalonia/Extensions/MaaFW/MaaProcessorManager.cs b/MFAAvalonia/Extensions/MaaFW/MaaProcessorManager.cs
+--- a/MFAAvalonia/Extensions/MaaFW/MaaProcessorManager.cs
++++ b/MFAAvalonia/Extensions/MaaFW/MaaProcessorManager.cs
+@@ -667,8 +667,12 @@
+         var migrated = false;
+ 
+         foreach (var key in ConfigurationKeys.InstanceScopedKeys)
+         {
++            // Keep the shared view preference available to newly created tabs.
++            // The temporary default instance may be discarded on first startup.
++            if (key == ConfigurationKeys.EnableLiveView) continue;
++
+             // 只迁移实例文件中还没有的 key
+             if (existingData.ContainsKey(key)) continue;
+ 
+             if (config.TryGetValue(key, out var value))

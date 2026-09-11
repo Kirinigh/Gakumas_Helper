@@ -36,6 +36,7 @@ def run(args: argparse.Namespace) -> dict:
     config = (source / "Configuration/ConfigurationManager.cs").read_text(encoding="utf-8-sig")
     layout = (source / "Views/UserControls/Dashboard/DashboardCardGrid.cs").read_text(encoding="utf-8-sig")
     instance = (source / "Configuration/InstanceConfiguration.cs").read_text(encoding="utf-8-sig")
+    manager = (source / "Extensions/MaaFW/MaaProcessorManager.cs").read_text(encoding="utf-8-sig")
     methods = {
         "ConfigurationManager": [extract_method(config, signature) for signature in (
             "    private static AvaloniaList<MFAConfiguration> LoadConfigurations()",
@@ -47,6 +48,7 @@ def run(args: argparse.Namespace) -> dict:
             "    private List<DashboardCardLayout> LoadConfigLayouts(",
         )],
         "InstanceConfiguration": [extract_method(instance, "    public T GetValue<T>(string key, T defaultValue)")],
+        "MaaProcessorManager": [extract_method(manager, "    private void MigratePlainKeysToDefaultInstance(string instancesDir)")],
     }
     production = work / "ProductionMethods.cs"
     production.write_text(
