@@ -131,12 +131,10 @@ def install_chores(maafw_version=None):
         ignore=shutil.ignore_patterns("*.yaml"),
     )
 
-    # 复制默认配置模板，MFAAvalonia 首次启动时会自动将其转换为 config.json
-    config_dir = install_path / "config"
-    config_dir.mkdir(exist_ok=True)
+    # 与固定 MFA Core 的缺键默认加载路径一致；不分发用户 config.json。
     shutil.copy2(
         working_dir / "config.template.json",
-        config_dir / "config.template.json",
+        install_path / "config.template.json",
     )
 
 
