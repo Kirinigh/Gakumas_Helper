@@ -1126,7 +1126,12 @@ class ArenaEntityCatalog:
             full_title_owners[self._skill_card_display_title(card)].add(card_id)
             dropped = title[1:]
             dropped_core = dropped[:-1] if dropped.endswith("+") else dropped
-            if len(dropped_core) >= 4:
+            # OCR can lose the single horizontal stroke of a leading 一 even
+            # in a four-character title. Keep this exception confined to that
+            # glyph; all aliases still need a globally unique complete row.
+            if len(dropped_core) >= 4 or (
+                title.startswith("一") and len(dropped_core) >= 3
+            ):
                 weak_title_owners[dropped].add(card_id)
                 if title.startswith("一"):
                     # A leading horizontal stroke can be rendered by OCR as
