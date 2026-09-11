@@ -1236,6 +1236,9 @@ def build_public_snapshot(
                     ),
                     encoding="utf-8",
                 )
+            announcement_path = output / "assets/resource/announcement/01_更新公告.md"
+            if announcement_path.is_file():
+                announcement_path.write_bytes(changelog_path.read_bytes())
             interface_path = output / "assets" / "interface.json"
             interface = json.loads(interface_path.read_text(encoding="utf-8"))
             upstream_version = interface.get("version")
