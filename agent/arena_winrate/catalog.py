@@ -116,17 +116,26 @@ _ADDED_NUMERIC_EFFECT_LABELS = {
     "turnsRemaining": ("ターン追加+", ""),
     "score": ("スコア+", ""),
 }
+_NUMERIC_EFFECT_MARKERS = tuple(sorted(
+    ("固定元気+", *(value[0] for value in _ADDED_NUMERIC_EFFECT_LABELS.values())),
+    key=len, reverse=True,
+))
 _ADDED_NUMERIC_EFFECT_MARKERS = re.compile(
-    "|".join(
-        re.escape(prefix)
-        for prefix in sorted(
-            # Consume fixedGenki as its own complete marker, so its inner
-            # 元気+ cannot be validated against an ordinary genki domain.
-            ("固定元気+", *(value[0] for value in _ADDED_NUMERIC_EFFECT_LABELS.values())),
-            key=len, reverse=True,
-        )
-    )
+    "|".join(re.escape(prefix) for prefix in _NUMERIC_EFFECT_MARKERS)
 )
+# Use the same longest-label rule for validation and actual value matching.
+# Otherwise 絶好調 also teaches 好調, or 固定元気+ teaches ordinary 元気+.
+_NUMERIC_EFFECT_LABELS = tuple(marker.removesuffix("+") for marker in _NUMERIC_EFFECT_MARKERS)
+_NUMERIC_EFFECT_LABEL_GUARDS = {
+    marker: "".join(
+        rf"(?<!{re.escape(longer[:-len(marker)])})"
+        for longer in _NUMERIC_EFFECT_LABELS
+        if len(longer) > len(marker) and longer.endswith(marker)
+    )
+    for marker in _NUMERIC_EFFECT_LABELS
+    if any(len(longer) > len(marker) and longer.endswith(marker)
+           for longer in _NUMERIC_EFFECT_LABELS)
+}
 _ADDED_NUMERIC_INTEGER = re.compile(r"-?[0-9]+(?!\d|[.,．，。]\d)")
 
 
@@ -170,17 +179,24 @@ def _normalise_effect_text(value: object) -> str:
     return compact
 
 
+def _numeric_effect_label_pattern(prefix: str) -> str:
+    return "".join(
+        guard for marker, guard in _NUMERIC_EFFECT_LABEL_GUARDS.items()
+        if prefix.startswith(marker)
+    ) + re.escape(prefix)
+
+
 def _contains_exact_integer_token(
     compact: str,
     prefix: str,
     value: int,
     suffix: str = "",
 ) -> bool:
-    """Match one rendered integer without accepting it as a longer number."""
+    """Match a complete effect label and integer, including shared suffixes."""
 
     return (
         re.search(
-            rf"{re.escape(prefix)}{re.escape(str(value))}"
+            rf"{_numeric_effect_label_pattern(prefix)}{re.escape(str(value))}"
             rf"(?!\d|[.,．，。]\d){re.escape(suffix)}",
             compact,
         )
@@ -2214,7 +2230,7 @@ class ArenaEntityCatalog:
         if descriptor is None:
             return ()
         label, base_value, deltas = descriptor
-        match = re.search(rf"{re.escape(label)}([0-9]+)", compact)
+        match = re.search(rf"{_numeric_effect_label_pattern(label)}([0-9]+)", compact)
         if match is None:
             return ()
         observed = int(match.group(1))
@@ -3039,7 +3055,7 @@ class ArenaEntityCatalog:
                 "preservationTimes": f"温存になった回数が{threshold}回以上",
                 "genki": f"元気が{threshold}以上",
             }
-            return labels[field] in compact
+            return re.search(_numeric_effect_label_pattern(labels[field]), compact) is not None
 
         trigger_condition_match = re.fullmatch(
             r"@trigger if:(goodImpressionTurns)>=([0-9]+)",
@@ -4829,12 +4845,12 @@ class ArenaEntityCatalog:
             def match_condition_threshold(compact: str, count: int) -> bool:
                 expected = custom_threshold if count > 0 else base_threshold
                 if field == "goodConditionTurns":
-                    return f"好調が{expected}ターン以上" in compact
+                    return _contains_exact_integer_token(compact, "好調が", expected, "ターン以上")
                 if field == "goodImpressionTurns":
                     return f"好印象が{expected}以上" in compact
                 if field == "preservationTimes":
                     return f"温存になった回数が{expected}回以上" in compact
-                return f"元気が{expected}以上" in compact
+                return _contains_exact_integer_token(compact, "元気が", expected, "以上")
 
             return match_condition_threshold
 
