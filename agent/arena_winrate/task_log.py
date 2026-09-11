@@ -19,11 +19,6 @@ def diagnostic_logger(logger):
     return bind(ui_visible=False) if callable(bind) else logger
 
 
-def _tasker_key(tasker):
-    handle = getattr(tasker, "_handle", None)
-    return getattr(handle, "value", handle)
-
-
 @dataclass
 class RunDisplay:
     task_id: int
@@ -40,26 +35,26 @@ class RunDisplay:
 
 class ArenaTaskLog:
     def __init__(self):
-        self._runs: dict[object, RunDisplay] = {}
+        # Maa task IDs are process-wide IDs, shared by the event and action.
+        # AgentServer's tasker handles are temporary RemoteTasker proxies: the
+        # event proxy and each action context have different pointer addresses.
+        self._runs: dict[int, RunDisplay] = {}
         self._lock = RLock()
 
-    def start(self, key, task_id):
+    def start(self, task_id):
         with self._lock:
-            current = self._runs.get(key)
-            if current is None or current.task_id != task_id:
-                self._runs[key] = RunDisplay(task_id)
+            if task_id not in self._runs:
+                self._runs[task_id] = RunDisplay(task_id)
 
     def current(self, context):
         with self._lock:
-            state = self._runs.get(_tasker_key(getattr(context, "tasker", None)))
             get_job = getattr(context, "get_task_job", None)
-            if state is not None and callable(get_job):
+            if callable(get_job):
                 try:
-                    if get_job().job_id != state.task_id:
-                        return None
+                    return self._runs.get(get_job().job_id)
                 except Exception:
-                    return None
-            return state
+                    pass
+            return None
 
     def enable(self, context):
         with self._lock:
@@ -131,10 +126,10 @@ class ArenaTaskLog:
                 if exhausted:
                     state.terminal = "今日次数已用完"
 
-    def node_finished(self, key, name, *, task_id=None):
+    def node_finished(self, task_id, name):
         with self._lock:
-            state = self._runs.get(key)
-            if state is None or (task_id is not None and state.task_id != task_id):
+            state = self._runs.get(task_id)
+            if state is None:
                 return
             normal = {"ChallengeRunOut": "今日次数已用完", "ChallengeReadyPeriod": "当前为准备期"}
             failed = {"ChallengeWinRateStop", "ChallengeEntryStateStop"}
@@ -143,12 +138,11 @@ class ArenaTaskLog:
             elif name in failed:
                 state.failure = state.failure or "流程未能继续"
 
-    def finish(self, key, task_id, *, succeeded, logger):
+    def finish(self, task_id, *, succeeded, logger):
         with self._lock:
-            state = self._runs.get(key)
-            if state is None or state.task_id != task_id:
+            state = self._runs.pop(task_id, None)
+            if state is None:
                 return
-            del self._runs[key]
             if not state.enabled:
                 return
             outcomes = [value for capture_id, value in state.results.items() if capture_id in state.starts]
@@ -181,10 +175,9 @@ class ArenaTaskLog:
         Normal exhausted returns already carry their ending. No context sink
         is registered: parsing every OCR event just for display adds work.
         """
-        key = _tasker_key(tasker)
         with self._lock:
-            state = self._runs.get(key)
-            if (state is None or state.task_id != task_id or not state.enabled
+            state = self._runs.get(task_id)
+            if (state is None or not state.enabled
                     or state.failure or state.terminal):
                 return
         try:
@@ -198,7 +191,7 @@ class ArenaTaskLog:
                 if node is not None and node.completed and node.name == name and node.node_id in positions:
                     endings.append((positions[node.node_id], name))
             if endings:
-                self.node_finished(key, max(endings)[1], task_id=task_id)
+                self.node_finished(task_id, max(endings)[1])
         except Exception:
             diagnostic_logger(logger).exception("竞技场结束状态日志查询失败")
 
@@ -239,13 +232,12 @@ def register_arena_log_sinks(agent_server, logger):
         def on_tasker_task(self, tasker, noti_type, detail):
             if detail.entry != "Challenge":
                 return
-            key = _tasker_key(tasker)
             if noti_type == NotificationType.Starting:
-                arena_task_log.start(key, detail.task_id)
+                arena_task_log.start(detail.task_id)
             elif noti_type in (NotificationType.Succeeded, NotificationType.Failed):
                 if noti_type == NotificationType.Succeeded:
                     arena_task_log.read_terminal(tasker, detail.task_id, logger)
-                arena_task_log.finish(key, detail.task_id, succeeded=noti_type == NotificationType.Succeeded, logger=logger)
+                arena_task_log.finish(detail.task_id, succeeded=noti_type == NotificationType.Succeeded, logger=logger)
 
     sinks = (TaskSink(),)
     agent_server.add_tasker_sink(sinks[0])

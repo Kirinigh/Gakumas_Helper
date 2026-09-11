@@ -1067,6 +1067,14 @@ class ChallengeAuto(CustomAction):
         return _stop_with_error(context, "竞技场任务未进入任何受支持的执行路径，已安全停止")
 
 
+@AgentServer.custom_action("ArenaChallengeFailTask")
+class ArenaChallengeFailTask(CustomAction):
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        # An empty next list or StopTask completes successfully in MaaFramework.
+        # Keep the exhausted recovery path failed without more input or retries.
+        return False
+
+
 @AgentServer.custom_action("ArenaChallengeRecordResult")
 class ArenaChallengeRecordResult(ArenaChallengeRecordResultAction):
     @_report_unexpected_errors

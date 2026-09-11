@@ -215,8 +215,8 @@
       "param": {}
     },
     "action": {
-      "type": "DoNothing",
-      "param": {}
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeFailTask"}
     },
     "next": []
   },
@@ -237,11 +237,11 @@
       "param": {}
     },
     "action": {
-      "type": "DoNothing",
-      "param": {}
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeFailTask"}
     },
     "focus": {
-      "Node.ActionNode.Succeeded": {
+      "Node.Action.Failed": {
         "content": "竞技场任务未开始：未识别到竞技场主界面，也未能从当前页面返回主页。请确认游戏已启动、画面未被弹窗遮挡；本次未点击挑战。",
         "display": [
           "log",
