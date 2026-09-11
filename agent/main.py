@@ -384,6 +384,7 @@ def agent():
     try:
         import custom
         from utils import logger
+        from maa.library import Library
         from maa.toolkit import Toolkit
         from arena_winrate import DEFAULT_OWN_SCORE_CACHE, OwnScoreCacheStore
         from arena_winrate.task_log import register_arena_log_sinks
@@ -399,6 +400,8 @@ def agent():
             logger.warning(f"竞技场己方缓存任务页摘要同步失败，下次启动将重试: {e}")
 
         Toolkit.init_option("./")
+
+        logger.debug(f"maafw Library version: {Library.version()}")
 
         socket_id = sys.argv[-1]
 

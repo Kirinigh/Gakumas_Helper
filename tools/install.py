@@ -7,12 +7,15 @@ from pathlib import Path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(script_dir)
 
+from ci.resolve_framework_version import resolve_framework_version
+
 working_dir = Path(__file__).parent.parent
 install_path = working_dir / Path("install")
 if len(sys.argv) <= 1:
     raise SystemExit("version argument is required")
 version = sys.argv[1]
 platform_tag = len(sys.argv) > 2 and sys.argv[2] or ""
+maafw_version = len(sys.argv) > 3 and sys.argv[3] or None
 
 
 def install_deps(platform: str):
@@ -95,10 +98,30 @@ def install_resource():
         json.dump(interface, f, ensure_ascii=False, indent=4)
 
 
-def install_chores():
-    for file in ["README.md", "LICENSE", "logo.ico", "requirements.txt"]:
+def install_chores(maafw_version=None):
+    paired_version = resolve_framework_version(working_dir)
+    if maafw_version is not None and maafw_version != paired_version:
+        raise ValueError("MaaFramework build version differs from the project maafw pin")
+    for file in ["README.md", "LICENSE", "logo.ico"]:
         shutil.copy2(
             working_dir / file,
+            install_path,
+        )
+
+    if maafw_version:
+        # 发布构建时固定 maafw 版本，使其与打包的 MaaFramework natives 严格一致
+        with open(working_dir / "requirements.txt", encoding="utf-8") as src, open(
+            install_path / "requirements.txt", "w", encoding="utf-8", newline="\n"
+        ) as dst:
+            for line in src:
+                stripped = line.strip()
+                if stripped == "maafw" or stripped.startswith("maafw=="):
+                    dst.write(f"maafw=={maafw_version}\n")
+                else:
+                    dst.write(line)
+    else:
+        shutil.copy2(
+            working_dir / "requirements.txt",
             install_path,
         )
     shutil.copytree(
@@ -106,6 +129,14 @@ def install_chores():
         install_path / "docs",
         dirs_exist_ok=True,
         ignore=shutil.ignore_patterns("*.yaml"),
+    )
+
+    # 复制默认配置模板，MFAAvalonia 首次启动时会自动将其转换为 config.json
+    config_dir = install_path / "config"
+    config_dir.mkdir(exist_ok=True)
+    shutil.copy2(
+        working_dir / "config.template.json",
+        config_dir / "config.template.json",
     )
 
 
@@ -135,7 +166,7 @@ def install_agent():
 if __name__ == "__main__":
     install_deps(platform_tag)
     install_resource()
-    install_chores()
+    install_chores(maafw_version)
     install_agent()
 
     print(f"Install to {install_path} successfully.")

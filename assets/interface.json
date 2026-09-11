@@ -6,7 +6,7 @@
   "contact": "QQ群: 799823681",
   "icon": "./logo.ico",
   "license": "./LICENSE",
-  "welcome": "欢迎使用基于全新架构的 学園アイドルマスター(学マス) 小助手。图像技术 + 模拟控制 + 深度学习，解放双手！由 MaaFramework 强力驱动！",
+  "welcome": "./resource/announcement/04_欢迎使用.md",
   "description": "学園アイドルマスター（学マス）小助手 | Assistant For Gakuen Idolmaster",
   "languages": {
     "zh-CN": "lang/zh-CN.json",
@@ -211,6 +211,10 @@
       ],
       "default_check": true,
       "doc": "$偶像之路说明",
+      "resource": [
+        "官服",
+        "DMM"
+      ],
       "label": "$偶像之路"
     }
   ],
@@ -1336,8 +1340,34 @@
     },
     "迷你演唱会工作时长": {
       "type": "select",
-      "default_case": "12 小时",
+      "default_case": "自动",
       "cases": [
+        {
+          "name": "自动",
+          "label": "$自动",
+          "pipeline_override": {
+            "WorkChooseShowConfirm": {
+              "next": [
+                "WorkTimeAutoFlag"
+              ]
+            },
+            "WorkTimeAutoFlag": {
+              "recognition": {
+                "type": "Custom",
+                "param": {
+                  "custom_recognition": "WorkChooseTimeAuto",
+                  "custom_recognition_param": {
+                    "kind": "show"
+                  }
+                }
+              },
+              "next": [
+                "WorkChooseShowTime",
+                "[JumpBack]DecideButton"
+              ]
+            }
+          }
+        },
         {
           "name": "4 小时",
           "label": "$4 小时",
@@ -1370,8 +1400,34 @@
     },
     "直播活动工作时长": {
       "type": "select",
-      "default_case": "12 小时",
+      "default_case": "自动",
       "cases": [
+        {
+          "name": "自动",
+          "label": "$自动",
+          "pipeline_override": {
+            "WorkChooseLiveConfirm": {
+              "next": [
+                "WorkTimeAutoFlag"
+              ]
+            },
+            "WorkTimeAutoFlag": {
+              "recognition": {
+                "type": "Custom",
+                "param": {
+                  "custom_recognition": "WorkChooseTimeAuto",
+                  "custom_recognition_param": {
+                    "kind": "live"
+                  }
+                }
+              },
+              "next": [
+                "WorkChooseLiveTime",
+                "[JumpBack]DecideButton"
+              ]
+            }
+          }
+        },
         {
           "name": "4 小时",
           "label": "$4 小时",
