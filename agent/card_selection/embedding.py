@@ -317,6 +317,32 @@ class EmbeddingGallery:
         self.upgrade_markers = markers
         self.model_sha256 = model_sha256.upper()
         self.gallery_sha256 = gallery_sha256.upper()
+        self._eligible_scopes: dict[frozenset[int], tuple[Any, Any, dict[str, tuple[tuple[str, int], ...]]]] = {}
+
+    def _eligible_scope(self, eligible_card_ids: frozenset[int]):
+        import numpy as np
+
+        key = frozenset(eligible_card_ids)
+        if not key:
+            raise ValueError("eligible card IDs contain no embedding references")
+        cached = self._eligible_scopes.get(key)
+        if cached is not None:
+            return cached
+        indices = np.asarray([
+            index for index, card_id in enumerate(self.card_ids) if int(card_id) in key
+        ], dtype=np.int32)
+        if not len(indices):
+            raise ValueError("eligible card IDs contain no embedding references")
+        members: dict[str, set[tuple[str, int]]] = {}
+        for index in indices:
+            members.setdefault(self.visual_group_ids[index], set()).add(
+                (self.card_ids[index], self.upgrade_counts[index]),
+            )
+        grouped = {group: tuple(sorted(values, key=lambda item: int(item[0])))
+                   for group, values in members.items()}
+        cached = (indices, np.ascontiguousarray(self.embeddings[indices]), grouped)
+        self._eligible_scopes[key] = cached
+        return cached
 
     @classmethod
     def load(cls, gallery_path: str | Path, manifest_path: str | Path) -> EmbeddingGallery:
@@ -399,8 +425,11 @@ class EmbeddingGallery:
         for upgrade in {0, 1}:
             indices = [
                 index
-                for index, (group, value) in enumerate(zip(self.visual_group_ids, self.upgrade_counts, strict=True))
+                for index, (group, value, card_id) in enumerate(zip(
+                    self.visual_group_ids, self.upgrade_counts, self.card_ids, strict=True,
+                ))
                 if group == hit.visual_group_id and value == upgrade
+                and card_id in (hit.candidate_card_ids or (hit.card_id,))
             ]
             if indices:
                 scores[upgrade] = min(
@@ -416,7 +445,10 @@ class EmbeddingGallery:
             return None
         return best_state == 1
 
-    def search(self, query_embedding: Any, *, top_k: int = 5) -> tuple[EmbeddingHit, ...]:
+    def search(
+        self, query_embedding: Any, *, top_k: int = 5,
+        eligible_card_ids: frozenset[int] | None = None,
+    ) -> tuple[EmbeddingHit, ...]:
         """Return the best gallery variant for each of the top business-card IDs."""
 
         import numpy as np
@@ -429,15 +461,19 @@ class EmbeddingGallery:
         norm = float(np.linalg.norm(query))
         if norm <= 1e-8:
             raise ValueError("query embedding must be non-zero")
-        scores = self.embeddings @ (query / norm)
+        if eligible_card_ids is None:
+            row_indices, vectors, scope_members = None, self.embeddings, None
+        else:
+            row_indices, vectors, scope_members = self._eligible_scope(eligible_card_ids)
+        scores = vectors @ (query / norm)
 
         best_by_group: dict[str, EmbeddingHit] = {}
         for index in np.argsort(-scores, kind="stable"):
-            source_index = int(index)
+            source_index = int(index if row_indices is None else row_indices[index])
             card_id = self.card_ids[source_index]
             group_id = self.visual_group_ids[source_index]
             if group_id not in best_by_group:
-                members = sorted(
+                members = scope_members[group_id] if scope_members is not None else sorted(
                     {
                         (member_id, upgrade)
                         for member_group, member_id, upgrade in zip(
@@ -453,7 +489,7 @@ class EmbeddingGallery:
                 best_by_group[group_id] = EmbeddingHit(
                     card_id=card_id,
                     class_name=self.class_names[source_index],
-                    similarity=float(scores[source_index]),
+                    similarity=float(scores[index]),
                     source_index=source_index,
                     visual_group_id=group_id,
                     candidate_card_ids=tuple(item[0] for item in members),
@@ -639,6 +675,7 @@ class EmbeddingCardRecognizer:
         min_margin: float | None,
         resolve_upgrade_state: bool = True,
         top_k: int = 5,
+        eligible_card_ids: frozenset[int] | None = None,
     ) -> CardPrediction:
         return self.classify_embedding(
             self.embedder.embed(image, candidate.box),
@@ -650,6 +687,7 @@ class EmbeddingCardRecognizer:
             resolve_upgrade_state=resolve_upgrade_state,
             upgrade_image=image,
             top_k=top_k,
+            eligible_card_ids=eligible_card_ids,
         )
 
     def classify_embedding(
@@ -664,6 +702,7 @@ class EmbeddingCardRecognizer:
         resolve_upgrade_state: bool = False,
         upgrade_image: Any | None = None,
         top_k: int = 5,
+        eligible_card_ids: frozenset[int] | None = None,
     ) -> CardPrediction:
         """Classify a canonical embedding while preserving the production audit contract."""
         if acceptance_threshold is not None and not 0.0 < acceptance_threshold <= 1.0:
@@ -672,7 +711,9 @@ class EmbeddingCardRecognizer:
             raise ValueError("min_margin must be in [0,1]")
         if top_k < 2:
             raise ValueError("top_k must be at least 2")
-        hits = self.gallery.search(query_embedding, top_k=top_k)
+        hits = self.gallery.search(query_embedding, top_k=top_k, eligible_card_ids=eligible_card_ids)
+        if eligible_card_ids is not None and len(hits) < 2:
+            raise ValueError("at least two eligible visual groups are required to measure embedding margin")
         similarity = hits[0].similarity
         margin = similarity - hits[1].similarity
         top_k_card_ids = tuple(hit.candidate_card_ids or (hit.card_id,) for hit in hits)

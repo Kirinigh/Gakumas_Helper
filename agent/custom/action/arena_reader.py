@@ -3639,6 +3639,7 @@ class MaaArenaReaderBackend:
                 acceptance_threshold=acceptance_threshold,
                 min_margin=minimum_margin,
                 resolve_upgrade_state=False,
+                **self._skill_card_scope_kwargs(slot_index, plan=plan),
             )
             if not prediction.accepted:
                 continue
@@ -3915,6 +3916,7 @@ class MaaArenaReaderBackend:
         if box is None:
             raise ArenaReaderError("member_slot_missing", f"member slot {slot} has no recognized card")
         self._reset_member_card_state()
+        self._card_stage_plan = self.season.stages[stage_number - 1].plan
         self._member_metric_baseline = (
             dict(self._runtime_timing_seconds),
             dict(self._runtime_counts),
@@ -5259,23 +5261,49 @@ class MaaArenaReaderBackend:
         if not missing:
             return ()
         try:
-            return self.catalog.skill_card_candidates_for_plan(
-                missing,
-                plan=plan,
-            )
+            resolver = getattr(self.catalog, "arena_skill_card_candidates", None)
+            if resolver is not None:
+                eligible = resolver(plan=plan)
+                return tuple(value for value in missing if value in eligible)
+            return self.catalog.skill_card_candidates_for_plan(missing, plan=plan)
         except ArenaCatalogError as error:
             raise ArenaReaderError(
                 "skill_card_reference_catalog_invalid",
                 "active RIS skill-card drift could not be restricted to the stage plan",
             ) from error
 
-    def _skill_card_catalog_candidates_for_plan(self, plan: str) -> tuple[int, ...]:
+    def _skill_card_scope_kwargs(
+        self, slot_index: int, *, plan: str | None = None,
+    ) -> dict[str, Any]:
+        """Share one stage/slot domain across initial, refreshed and restored frames."""
+        plan = plan or getattr(self, "_card_stage_plan", None)
+        resolver = getattr(getattr(self, "catalog", None), "arena_skill_card_candidates", None)
+        if plan is None or resolver is None:
+            # Legacy isolated test doubles have no member stage/catalog context.
+            return {}
+        return {"eligible_card_ids": resolver(plan=plan, slot_index=slot_index)}
+
+    def _skill_card_scoped_candidates(
+        self, candidate_ids: Sequence[int], *, plan: str, slot_index: int,
+    ) -> tuple[int, ...]:
+        scope = self._skill_card_scope_kwargs(slot_index, plan=plan).get("eligible_card_ids")
+        if scope is None:
+            return self.catalog.skill_card_candidates_for_plan(candidate_ids, plan=plan)
+        return tuple(value for value in candidate_ids if value in scope)
+
+    def _skill_card_catalog_candidates_for_plan(
+        self, plan: str, *, slot_index: int | None = None,
+    ) -> tuple[int, ...]:
         """Return the complete active-plan title scope for drift-only recovery."""
 
         try:
-            candidate_ids = self.catalog.skill_card_candidates_for_plan(
-                self.catalog.arena_skill_card_reference_required_ids(),
-                plan=plan,
+            resolver = getattr(getattr(self, "catalog", None), "arena_skill_card_candidates", None)
+            candidate_ids = (
+                tuple(sorted(resolver(plan=plan, slot_index=slot_index)))
+                if resolver is not None else
+                self.catalog.skill_card_candidates_for_plan(
+                    self.catalog.arena_skill_card_reference_required_ids(), plan=plan,
+                )
             )
         except ArenaCatalogError as error:
             raise ArenaReaderError(
@@ -5292,6 +5320,8 @@ class MaaArenaReaderBackend:
     def _skill_card_forward_drift_slot_indices(
         self,
         missing_card_ids: Sequence[int],
+        *,
+        plan: str | None = None,
     ) -> tuple[int, ...]:
         """Map forward catalog drift to the game's fixed deck-order positions.
 
@@ -5304,6 +5334,15 @@ class MaaArenaReaderBackend:
 
         if not missing_card_ids:
             return ()
+        resolver = getattr(getattr(self, "catalog", None), "arena_skill_card_candidates", None)
+        if resolver is not None and plan is not None:
+            slots = tuple(
+                slot for slot in range(6)
+                if resolver(plan=plan, slot_index=slot).intersection(missing_card_ids)
+            )
+            if any(slot >= 2 for slot in slots):
+                self._start_skill_card_gallery_fallback()
+            return slots
         source_type_resolver = getattr(
             self.catalog,
             "skill_card_source_type",
@@ -6438,8 +6477,10 @@ class MaaArenaReaderBackend:
         identities: dict[int, tuple[dict[str, Any], ...]] = {}
         for group_index, row in rows.items():
             measured = tuple(
-                gallery.content_signature_with_identity(image, box)
-                for box in row
+                gallery.content_signature_with_identity(
+                    image, box, **self._skill_card_scope_kwargs(slot_index),
+                )
+                for slot_index, box in enumerate(row)
             )
             signatures[group_index] = tuple(
                 (visual_group, query)
@@ -6763,9 +6804,8 @@ class MaaArenaReaderBackend:
             )
             try:
                 stable_candidates = stable_reference_business_candidates(references)
-                plan_candidates = self.catalog.skill_card_candidates_for_plan(
-                    stable_candidates,
-                    plan=plan,
+                plan_candidates = self._skill_card_scoped_candidates(
+                    stable_candidates, plan=plan, slot_index=slot_index,
                 )
                 embedding_candidates: tuple[int, ...] = ()
                 embedding_detail_candidates: tuple[int, ...] = ()
@@ -6898,6 +6938,7 @@ class MaaArenaReaderBackend:
                 acceptance_threshold=acceptance_threshold,
                 min_margin=minimum_margin,
                 resolve_upgrade_state=False,
+                **self._skill_card_scope_kwargs(slot_index, plan=plan),
             )
             if not prediction.accepted or not prediction.top_k_card_ids:
                 raise BadgeReferenceError(
@@ -6912,9 +6953,8 @@ class MaaArenaReaderBackend:
             eligible_families: list[tuple[int, ...]] = []
             for family in visual_families:
                 try:
-                    eligible_family = self.catalog.skill_card_candidates_for_plan(
-                        family,
-                        plan=plan,
+                    eligible_family = self._skill_card_scoped_candidates(
+                        family, plan=plan, slot_index=slot_index,
                     )
                 except ArenaCatalogError as error:
                     raise BadgeReferenceError(str(error)) from error
@@ -6991,6 +7031,39 @@ class MaaArenaReaderBackend:
         return frames
 
     def _confirm_clicked_skill_card_id(
+        self,
+        detail_text: str,
+        candidate_ids: Sequence[int],
+        *,
+        expected_customization_count: int | None,
+        source_group_index: int | None = None,
+        detail_image: Any | None = None,
+        source_card_box: tuple[int, int, int, int] | None = None,
+        source_card_slot: int | None = None,
+    ) -> int:
+        """A full title may exceed visual Top-K, but must belong to the legal slot."""
+        scope = (
+            self._skill_card_scope_kwargs(source_card_slot - 1).get("eligible_card_ids")
+            if source_card_slot is not None else None
+        )
+        if scope is not None:
+            candidate_ids = tuple(value for value in candidate_ids if value in scope)
+            if not candidate_ids:
+                candidate_ids = tuple(sorted(scope))
+        resolved = self._confirm_clicked_skill_card_id_from_title(
+            detail_text, candidate_ids,
+            expected_customization_count=expected_customization_count,
+            source_group_index=source_group_index, detail_image=detail_image,
+            source_card_box=source_card_box,
+        )
+        if scope is not None and resolved not in scope:
+            raise ArenaCatalogError(
+                f"detail card {resolved} is outside the stage/slot domain "
+                f"for group {source_group_index}/slot {source_card_slot}"
+            )
+        return resolved
+
+    def _confirm_clicked_skill_card_id_from_title(
         self,
         detail_text: str,
         candidate_ids: Sequence[int],
@@ -7750,6 +7823,7 @@ class MaaArenaReaderBackend:
                         source_group_index=group_index,
                         detail_image=detail_image,
                         source_card_box=card_box,
+                        source_card_slot=card_slot,
                     )
                     self._card_detail_texts[key] = last_text
                     self._note_confirmed_detail_name(confirmed_card_id)
@@ -8125,18 +8199,14 @@ class MaaArenaReaderBackend:
             )
         plan = self.season.stages[stage_number - 1].plan
         forward_drift_ids = self._skill_card_forward_drift_for_plan(plan)
-        drift_title_candidates = (
-            self._skill_card_catalog_candidates_for_plan(plan)
-            if forward_drift_ids
-            else ()
-        )
         drift_slot_indices = self._skill_card_forward_drift_slot_indices(
-            forward_drift_ids
+            forward_drift_ids, plan=plan,
         )
-        ordinary_drift = any(
-            self.catalog.skill_card_source_type(value) == "produce"
-            for value in forward_drift_ids
-        )
+        drift_title_candidates = {
+            slot: self._skill_card_catalog_candidates_for_plan(plan, slot_index=slot)
+            for slot in drift_slot_indices
+        }
+        ordinary_drift = any(slot >= 2 for slot in drift_slot_indices)
         if forward_drift_ids:
             self._increment("skill_card_catalog_drift_groups")
         predictions: list[int] = []
@@ -8177,13 +8247,13 @@ class MaaArenaReaderBackend:
             # drift still needs every eligible zero slot's exact detail.
             for slot_index in forced_detail_slot_indices:
                 key = (group_index, slot_index + 1)
-                self._zero_card_detail_candidates[key] = drift_title_candidates
+                self._zero_card_detail_candidates[key] = drift_title_candidates[slot_index]
                 self._zero_card_identity_fusion_diagnostics[key] = {
                     "group_index": group_index,
                     "slot": slot_index + 1,
                     "plan": plan,
                     "missing_catalog_reference_ids": list(forward_drift_ids),
-                    "detail_candidates": list(drift_title_candidates),
+                    "detail_candidates": list(drift_title_candidates[slot_index]),
                     "fallback_slot_indices": list(drift_slot_indices),
                     "mode": "active_catalog_forward_drift_fixed_slots_exact_title",
                 }
@@ -8271,6 +8341,7 @@ class MaaArenaReaderBackend:
                     acceptance_threshold=acceptance_threshold,
                     min_margin=minimum_margin,
                     resolve_upgrade_state=False,
+                    **self._skill_card_scope_kwargs(index - 1, plan=plan),
                 )
                 candidate_ids = (
                     tuple(
@@ -8290,7 +8361,7 @@ class MaaArenaReaderBackend:
                     # authoritative over the complete active-plan catalog: a
                     # high-confidence old-gallery hit cannot exclude a newly
                     # added card in any of the affected deck positions.
-                    candidate_ids = drift_title_candidates
+                    candidate_ids = drift_title_candidates[index - 1]
                     if (
                         prediction.accepted and prediction.card_id.isdigit()
                         and not ordinary_drift
@@ -8308,7 +8379,7 @@ class MaaArenaReaderBackend:
                                 box,
                                 customization_count,
                                 "catalog_drift_positive_identity_transaction",
-                                candidate_ids_override=drift_title_candidates,
+                                candidate_ids_override=drift_title_candidates[index - 1],
                             )
 
                         inferred = self._run_skill_card_gallery_detail(
@@ -8615,17 +8686,13 @@ class MaaArenaReaderBackend:
         plan = self.season.stages[stage_number - 1].plan
         forward_drift_ids = self._skill_card_forward_drift_for_plan(plan)
         drift_slot_indices = self._skill_card_forward_drift_slot_indices(
-            forward_drift_ids
+            forward_drift_ids, plan=plan,
         )
-        ordinary_drift = any(
-            self.catalog.skill_card_source_type(value) == "produce"
-            for value in forward_drift_ids
-        )
-        drift_title_candidates = (
-            self._skill_card_catalog_candidates_for_plan(plan)
-            if forward_drift_ids
-            else ()
-        )
+        ordinary_drift = any(slot >= 2 for slot in drift_slot_indices)
+        drift_title_candidates = {
+            slot: self._skill_card_catalog_candidates_for_plan(plan, slot_index=slot)
+            for slot in drift_slot_indices
+        }
         cached_frames = self._card_count_frames.get(group_index, ())
         if len(cached_frames) == 3:
             frame_samples = list(cached_frames)
@@ -8862,7 +8929,7 @@ class MaaArenaReaderBackend:
                                     "badge_candidate_detail_transaction",
                                     allow_zero_without_badge_count=True,
                                     candidate_ids_override=(
-                                        drift_title_candidates
+                                        drift_title_candidates[index - 1]
                                         if index - 1 in drift_slot_indices
                                         else None
                                     ),
@@ -9028,6 +9095,7 @@ class MaaArenaReaderBackend:
                     else getattr(self, "_card_detail_images", {}).get(key)
                 ),
                 source_card_box=self._skill_card_source_box(key),
+                source_card_slot=None if key is None else key[1],
             )
             generic_cost_frame_values = (
                 self._measure_optional_card_face_generic_cost(key, card_id)
@@ -10129,6 +10197,7 @@ class MaaArenaReaderBackend:
                             source_group_index=key[0],
                             detail_image=detail_image,
                             source_card_box=self._skill_card_source_box(key),
+                            source_card_slot=key[1],
                         )
                         roi_text = (
                             self._skill_card_title_anchored_effect_roi_text(
@@ -11191,6 +11260,7 @@ class MaaArenaReaderBackend:
         source_group_index: int | None = None,
         detail_image: Any | None = None,
         source_card_box: tuple[int, int, int, int] | None = None,
+        source_card_slot: int | None = None,
     ) -> int:
         """Resolve the already-open detail title under the existing bounded gates."""
 
@@ -11202,6 +11272,7 @@ class MaaArenaReaderBackend:
                 source_group_index=source_group_index,
                 detail_image=detail_image,
                 source_card_box=source_card_box,
+                source_card_slot=source_card_slot,
             )
         except ArenaCatalogError as error:
             raise ArenaReaderError(
@@ -12021,6 +12092,7 @@ class MaaArenaReaderBackend:
     def _reset_member_card_state(self) -> None:
         """Discard card geometry, hints and frames that belong to the prior member."""
 
+        self._card_stage_plan = None
         self._card_rows.clear()
         self._card_predictions.clear()
         self._card_candidate_groups.clear()
@@ -13678,6 +13750,7 @@ class MaaArenaReaderBackend:
                             self._card_references().content_signature_with_identity(
                                 image,
                                 row[card_slot - 1],
+                                **self._skill_card_scope_kwargs(card_slot - 1),
                             )
                         )
                     except BadgeReferenceError as error:

@@ -13,6 +13,7 @@ from dataclasses import replace, dataclass
 from collections.abc import Mapping, Sequence
 
 from ._p_item_detail_text import PItemDetailTextIndex, PItemDetailTextResult
+from ._skill_card_eligibility import ArenaSkillCardEligibility
 
 
 class ArenaCatalogError(ValueError):
@@ -324,6 +325,7 @@ class ArenaEntityCatalog:
         p_items: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         self._cards = tuple(dict(row) for row in skill_cards)
+        self._arena_skill_card_eligibility: ArenaSkillCardEligibility | None = None
         self._added_numeric_effect_domain_cache: dict[
             int, tuple[dict[str, tuple[int, ...]], dict[str, str]]
         ] = {}
@@ -1046,18 +1048,30 @@ class ArenaEntityCatalog:
         return tuple(sorted(self._cards_by_id))
 
     def arena_skill_card_reference_required_ids(self) -> tuple[int, ...]:
-        """Exclude explicit Legend cards from the arena gallery coverage domain.
+        """Require arena references for cards outside the explicit L/N/T domain."""
 
-        RIS stores live-only Legend cards with rarity ``L`` but sourceType
-        ``produce``. Their presence in the full catalog does not require arena
-        references. Missing or unfamiliar rarity values stay in the domain;
-        this is not a whitelist of currently known playable rarities.
-        """
+        return self._get_arena_skill_card_eligibility().required_ids
 
-        return tuple(sorted(
-            card_id for card_id, card in self._cards_by_id.items()
-            if card.get("rarity") != "L"
-        ))
+    def _get_arena_skill_card_eligibility(self) -> ArenaSkillCardEligibility:
+        if self._arena_skill_card_eligibility is None:
+            self._arena_skill_card_eligibility = ArenaSkillCardEligibility(self._cards)
+        return self._arena_skill_card_eligibility
+
+    def arena_skill_card_candidates(
+        self, *, plan: str, slot_index: int | None = None,
+    ) -> frozenset[int]:
+        """Combine the stage plan plus free cards with the repeated six-slot roles."""
+
+        if not isinstance(plan, str) or plan not in {"sense", "logic", "anomaly"}:
+            raise ArenaCatalogError(f"unsupported contest plan: {plan!r}")
+        if slot_index is not None and (type(slot_index) is not int or not 0 <= slot_index <= 5):
+            raise ArenaCatalogError(f"invalid arena skill-card slot index: {slot_index!r}")
+        return self._get_arena_skill_card_eligibility().candidate_sets[(plan, slot_index)]
+
+    def arena_skill_card_unknown_classification_ids(self) -> frozenset[int]:
+        """Expose cards retained with at least one unproven classification facet."""
+
+        return self._get_arena_skill_card_eligibility().unknown_ids
 
     def skill_card_source_type(self, card_id: int) -> str:
         """Return the authoritative deck-source class for one skill card."""
