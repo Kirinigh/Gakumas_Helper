@@ -19,7 +19,7 @@ from typing import Any, Protocol, NamedTuple
 from pathlib import Path
 from threading import Lock
 from collections import Counter, deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 from utils import logger as _base_logger
@@ -75,7 +75,7 @@ from p_item_recognition import (
 )
 from card_selection.model import frame_identifier, isolate_card_candidates
 from arena_winrate.recovery import error_retry_box
-from arena_winrate.task_log import diagnostic_logger
+from arena_winrate.task_log import arena_task_log, diagnostic_logger
 from arena_winrate.cancellation import ArenaTaskCancelled, cancellation_for
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
 from arena_winrate._detail_text_layout import (
@@ -5296,10 +5296,10 @@ class MaaArenaReaderBackend:
         """Map forward catalog drift to the game's fixed deck-order positions.
 
         Every six-card row starts with the P-idol's intrinsic card at index 0.
-        A support-provided card, when present, is fixed at index 1.  Ordinary
-        cards can occupy later positions and are deliberately outside this
-        narrow compatibility route: that larger update requires a matching
-        gallery instead of silently widening every member's click surface.
+        A support-provided card, when present, is fixed at index 1. Ordinary
+        cards can occupy indices 1 through 5. Only during catalog drift these
+        positions need an authoritative detail; a closed-set gallery score
+        cannot exclude a missing ordinary card at any of them.
         """
 
         if not missing_card_ids:
@@ -5325,22 +5325,115 @@ class MaaArenaReaderBackend:
                 "active RIS skill-card drift has no reliable source-type mapping",
             ) from error
         unsupported_source_types = tuple(
-            sorted(source_types - {"pIdol", "support"})
+            sorted(source_types - {"pIdol", "support", "produce"})
         )
         if not source_types or unsupported_source_types:
+            gallery_ids = getattr(self, "_skill_card_reference_gallery_ids", ())
+            gallery_id_range = (
+                (min(gallery_ids), max(gallery_ids)) if gallery_ids else ()
+            )
             raise ArenaReaderError(
                 "skill_card_reference_gallery_update_required",
-                "active RIS added ordinary or unknown skill-card sources that "
+                "active RIS added unknown skill-card sources that "
                 "require a matching gallery: "
+                "missing_catalog_reference_ids="
+                f"{getattr(self, '_skill_card_reference_missing_catalog_ids', ())!r}; "
+                f"gallery_id_range={gallery_id_range!r}; "
+                "fallback_status=not_started; "
                 f"ids={tuple(missing_card_ids)!r}; "
                 f"source_types={unsupported_source_types!r}",
             )
-        slots = []
+        slots = set()
         if "pIdol" in source_types:
-            slots.append(0)
+            slots.add(0)
         if "support" in source_types:
-            slots.append(1)
-        return tuple(slots)
+            slots.add(1)
+        if "produce" in source_types:
+            slots.update(range(1, 6))
+            self._start_skill_card_gallery_fallback()
+        return tuple(sorted(slots))
+
+    def _start_skill_card_gallery_fallback(self) -> None:
+        if getattr(self, "_skill_card_gallery_fallback_started", False):
+            return
+        self._skill_card_gallery_fallback_started = True
+        missing_ids = getattr(self, "_skill_card_reference_missing_catalog_ids", ())
+        self._increment("skill_card_gallery_fallback_starts")
+        logger.info(json.dumps({
+            "event": "arena_skill_card_gallery_fallback",
+            "fallback_status": "started",
+            "missing_catalog_reference_ids": list(missing_ids),
+            "maximum_ordinary_slots_per_row": 5,
+            "maximum_detail_transactions_per_slot": 1,
+        }, ensure_ascii=False, sort_keys=True))
+        arena_task_log.gallery_fallback(
+            getattr(self, "context", None), missing_ids, _base_logger,
+        )
+
+    def _run_skill_card_gallery_detail(
+        self,
+        operation: Callable[[], ClickedSkillCard],
+        *,
+        target: TeamTarget,
+        stage_number: int,
+        member_slot: int,
+        group_index: int,
+        card_slot: int,
+        additional_zero_detail: bool = False,
+    ) -> ClickedSkillCard:
+        """Measure one existing detail transaction without granting another retry."""
+        started = time.perf_counter()
+        before = dict(self._runtime_counts)
+        missing_ids = tuple(getattr(self, "_skill_card_reference_missing_catalog_ids", ()))
+        record = {
+            "event": "arena_skill_card_gallery_fallback",
+            "team_id": target.team_id,
+            "stage_number": stage_number, "member_slot": member_slot,
+            "group_index": group_index, "card_slot": card_slot,
+            "missing_catalog_reference_ids": list(missing_ids),
+            "additional_zero_detail": additional_zero_detail,
+            "fallback_status": "attempted",
+        }
+        self._increment("skill_card_gallery_fallback_attempts")
+        if additional_zero_detail:
+            self._increment("skill_card_gallery_fallback_additional_zero_details")
+        logger.info(json.dumps(record, ensure_ascii=False, sort_keys=True))
+        try:
+            resolved = operation()
+        except BaseException as error:
+            cancelled = isinstance(error, ArenaTaskCancelled)
+            record.update(fallback_status="cancelled" if cancelled else "failed", error=str(error))
+            self._increment(
+                "skill_card_gallery_fallback_cancellations" if cancelled
+                else "skill_card_gallery_fallback_failures"
+            )
+            if isinstance(error, ArenaReaderError):
+                annotated = ArenaReaderError(
+                    error.code,
+                    f"{error.detail}; gallery_fallback_status=failed; "
+                    f"missing_catalog_reference_ids={missing_ids!r}",
+                    retry_whole_read=error.retry_whole_read,
+                )
+                failure = getattr(self, "_last_detail_failure_location", None)
+                if failure is not None and str(failure[0]) in str(error):
+                    self._last_detail_failure_location = (str(annotated), failure[1])
+                raise annotated from error
+            raise
+        else:
+            record.update(fallback_status="succeeded", card_id=resolved.card_id)
+            self._increment("skill_card_gallery_fallback_successes")
+            return resolved
+        finally:
+            elapsed = time.perf_counter() - started
+            self._add_timing("skill_card_gallery_fallback", elapsed)
+            self._record_duration_sample("skill_card_gallery_fallback", elapsed)
+            record["wall_seconds"] = round(elapsed, 6)
+            record["operation_counts"] = {
+                name: value - before.get(name, 0)
+                for name, value in self._runtime_counts.items()
+                if value > before.get(name, 0)
+            }
+            logger.info(json.dumps(record, ensure_ascii=False, sort_keys=True))
 
     @staticmethod
     def _p_item_interaction_box(
@@ -7950,7 +8043,7 @@ class MaaArenaReaderBackend:
         card_slot: int,
         candidate_ids: Sequence[int],
     ) -> ClickedSkillCard:
-        """Resolve one rare fixed-reference/embedding conflict by title."""
+        """Resolve one zero-customization card by its exact title and full effects."""
 
         key = (group_index, card_slot)
         self._card_candidate_groups[key] = tuple(candidate_ids)
@@ -8040,6 +8133,10 @@ class MaaArenaReaderBackend:
         drift_slot_indices = self._skill_card_forward_drift_slot_indices(
             forward_drift_ids
         )
+        ordinary_drift = any(
+            self.catalog.skill_card_source_type(value) == "produce"
+            for value in forward_drift_ids
+        )
         if forward_drift_ids:
             self._increment("skill_card_catalog_drift_groups")
         predictions: list[int] = []
@@ -8076,8 +8173,8 @@ class MaaArenaReaderBackend:
         if forced_detail_slot_indices:
             # A closed-set visual gallery cannot prove that a stable unique
             # match is not a newly added RIS card projected onto an older ID.
-            # The game's fixed deck order bounds P-idol/support drift to the
-            # corresponding first or second position of each row.
+            # Fixed deck order narrows the affected positions; ordinary
+            # drift still needs every eligible zero slot's exact detail.
             for slot_index in forced_detail_slot_indices:
                 key = (group_index, slot_index + 1)
                 self._zero_card_detail_candidates[key] = drift_title_candidates
@@ -8139,6 +8236,8 @@ class MaaArenaReaderBackend:
             key = (group_index, index)
             inferred = self._inferred_clicked_cards.get(key)
             if inferred is not None:
+                if ordinary_drift and index - 1 in drift_slot_indices:
+                    self._increment("skill_card_gallery_fallback_cached_detail_reuses")
                 inferred_count = sum(
                     int(value) for value in inferred.customizations.values()
                 )
@@ -8190,23 +8289,34 @@ class MaaArenaReaderBackend:
                     # closed-set prediction.  Keep that mandatory title check
                     # authoritative over the complete active-plan catalog: a
                     # high-confidence old-gallery hit cannot exclude a newly
-                    # added P-idol or support card in its fixed deck position.
+                    # added card in any of the affected deck positions.
                     candidate_ids = drift_title_candidates
-                    if prediction.accepted and prediction.card_id.isdigit():
+                    if (
+                        prediction.accepted and prediction.card_id.isdigit()
+                        and not ordinary_drift
+                    ):
                         resolved_card_id = int(prediction.card_id)
                     else:
-                        inferred = self._infer_badge_card_from_detail(
-                            target,
-                            stage_number,
-                            member_slot,
-                            group_index,
-                            index,
-                            image,
-                            box,
-                            customization_count,
-                            "catalog_drift_positive_identity_transaction",
-                            candidate_ids_override=drift_title_candidates,
-                        )
+                        def infer_positive():
+                            return self._infer_badge_card_from_detail(
+                                target,
+                                stage_number,
+                                member_slot,
+                                group_index,
+                                index,
+                                image,
+                                box,
+                                customization_count,
+                                "catalog_drift_positive_identity_transaction",
+                                candidate_ids_override=drift_title_candidates,
+                            )
+
+                        inferred = self._run_skill_card_gallery_detail(
+                            infer_positive,
+                            target=target, stage_number=stage_number,
+                            member_slot=member_slot, group_index=group_index,
+                            card_slot=index,
+                        ) if ordinary_drift else infer_positive()
                         resolved_card_id = inferred.card_id
                         candidate_ids = (resolved_card_id,)
                         self._increment(
@@ -8245,14 +8355,22 @@ class MaaArenaReaderBackend:
                             "skill_card_zero_identity_candidates_missing",
                             f"group {group_index}/slot {index} has no bounded title candidates",
                         )
-                    inferred = self._infer_zero_card_identity_from_detail(
-                        target,
-                        stage_number,
-                        member_slot,
-                        group_index,
-                        index,
-                        candidate_ids,
-                    )
+                    def infer_zero():
+                        return self._infer_zero_card_identity_from_detail(
+                            target,
+                            stage_number,
+                            member_slot,
+                            group_index,
+                            index,
+                            candidate_ids,
+                        )
+
+                    inferred = self._run_skill_card_gallery_detail(
+                        infer_zero,
+                        target=target, stage_number=stage_number,
+                        member_slot=member_slot, group_index=group_index,
+                        card_slot=index, additional_zero_detail=True,
+                    ) if ordinary_drift and index - 1 in drift_slot_indices else infer_zero()
                     resolved_card_id = inferred.card_id
                     candidate_ids = (resolved_card_id,)
                     if forward_drift_ids:
@@ -8499,6 +8617,10 @@ class MaaArenaReaderBackend:
         drift_slot_indices = self._skill_card_forward_drift_slot_indices(
             forward_drift_ids
         )
+        ordinary_drift = any(
+            self.catalog.skill_card_source_type(value) == "produce"
+            for value in forward_drift_ids
+        )
         drift_title_candidates = (
             self._skill_card_catalog_candidates_for_plan(plan)
             if forward_drift_ids
@@ -8727,23 +8849,31 @@ class MaaArenaReaderBackend:
                             reason=reason,
                         )
                         try:
-                            inferred = self._infer_badge_card_from_detail(
-                                target,
-                                stage_number,
-                                member_slot,
-                                group_index,
-                                index,
-                                frames[0],
-                                frame_rows[0][index - 1],
-                                None,
-                                "badge_candidate_detail_transaction",
-                                allow_zero_without_badge_count=True,
-                                candidate_ids_override=(
-                                    drift_title_candidates
-                                    if index - 1 in drift_slot_indices
-                                    else None
-                                ),
-                            )
+                            def infer_badge():
+                                return self._infer_badge_card_from_detail(
+                                    target,
+                                    stage_number,
+                                    member_slot,
+                                    group_index,
+                                    index,
+                                    frames[0],
+                                    frame_rows[0][index - 1],
+                                    None,
+                                    "badge_candidate_detail_transaction",
+                                    allow_zero_without_badge_count=True,
+                                    candidate_ids_override=(
+                                        drift_title_candidates
+                                        if index - 1 in drift_slot_indices
+                                        else None
+                                    ),
+                                )
+
+                            inferred = self._run_skill_card_gallery_detail(
+                                infer_badge,
+                                target=target, stage_number=stage_number,
+                                member_slot=member_slot, group_index=group_index,
+                                card_slot=index,
+                            ) if ordinary_drift and index - 1 in drift_slot_indices else infer_badge()
                         except ArenaReaderError as error:
                             if error.code == "skill_card_detail_noninteractive":
                                 current_flags = list(

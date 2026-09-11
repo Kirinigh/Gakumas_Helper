@@ -894,6 +894,7 @@ def _validate_component_reference_coverage(
         card_gallery.business_ids,
     )
     fixed_slot_skill_card_ids: list[int] = []
+    ordinary_slot_skill_card_ids: list[int] = []
     gallery_update_required_skill_card_ids: list[int] = []
     for card_id in missing_skill_card_ids:
         try:
@@ -903,6 +904,8 @@ def _validate_component_reference_coverage(
             continue
         if source_type in {"pIdol", "support"}:
             fixed_slot_skill_card_ids.append(card_id)
+        elif source_type == "produce":
+            ordinary_slot_skill_card_ids.append(card_id)
         else:
             gallery_update_required_skill_card_ids.append(card_id)
     warnings: list[str] = []
@@ -916,6 +919,12 @@ def _validate_component_reference_coverage(
             "RIS_RECOGNITION_REFERENCE_LAG "
             f"kind=skill_card ids={tuple(fixed_slot_skill_card_ids)!r} "
             "mode=fixed_slot_exact_title_detail"
+        )
+    if ordinary_slot_skill_card_ids:
+        warnings.append(
+            "RIS_RECOGNITION_REFERENCE_LAG "
+            f"kind=skill_card ids={tuple(ordinary_slot_skill_card_ids)!r} "
+            "mode=bounded_ordinary_slot_exact_title_detail"
         )
     if gallery_update_required_skill_card_ids:
         warnings.append(

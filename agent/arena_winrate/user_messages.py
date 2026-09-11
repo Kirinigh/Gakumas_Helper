@@ -28,6 +28,7 @@ _ERROR_LABELS = (
     ("skill_card_close", "技能卡详情未能正常关闭或返回成员页面"),
     ("member_preview_recovery", "未能返回队伍预览并重新打开成员"),
     ("support_bonus", "支援加成页面未能打开或读取完整"),
+    ("skill_card_reference_gallery_update_required", "技能卡图库尚未覆盖当前目录"),
     ("clicked skill-card text disagrees", "技能卡详情与此前读取的信息不一致"),
     ("skill_card_detail_count_conflict", "技能卡强化信息存在矛盾"),
     ("skill_card_cost_evidence_conflict", "技能卡费用信息存在矛盾"),
@@ -165,6 +166,35 @@ def describe_arena_error(
         ((token, label) for token, label in _ERROR_LABELS if token in lowered),
         ("", "竞技场处理未完成"),
     )
+    gallery_gap = error_token == "skill_card_reference_gallery_update_required"
+    gallery_detail_failed = "gallery_fallback_status=failed" in lowered
+    identifiers = ()
+    if gallery_gap or gallery_detail_failed:
+        missing = re.search(
+            r"missing_catalog_reference_ids\s*=\s*"
+            r"\(\s*((?:\d+\s*,?\s*)+)\)",
+            raw,
+        )
+        if missing is None:
+            missing = re.search(
+                r"(?<![\w_])ids\s*=\s*\(\s*((?:\d+\s*,?\s*)+)\)", raw,
+            )
+        if missing is not None:
+            identifiers = tuple(dict.fromkeys(re.findall(r"\d+", missing.group(1))))
+    if gallery_gap:
+        if identifiers:
+            label += "中的 ID " + "、".join(identifiers)
+        coverage = re.search(r"gallery_id_range=\((\d+),\s*(\d+)\)", raw)
+        if coverage is not None:
+            label += f"（现有图库 ID {coverage[1]}～{coverage[2]}）"
+        if "fallback_status=attempted_unresolved" in raw:
+            label += "；已尝试现有详情兜底，仍有卡槽未能确认"
+        else:
+            label += "；本次在详情确认前停止，尚未执行详情兜底"
+        label += "；目录缺口不代表已在该成员卡组中发现新卡"
+    elif gallery_detail_failed:
+        gap = " ID " + "、".join(identifiers) if identifiers else "部分卡片"
+        label += f"；图库缺少{gap}，本卡已尝试详情兜底，仍未完成"
     if "unsupported_capture_resolution" in lowered:
         sizes = set(re.findall(r"screen_size\s*=\s*\(\s*(\d{2,5})\s*,\s*(\d{2,5})\s*\)", raw))
         if len(sizes) == 1:
@@ -172,7 +202,7 @@ def describe_arena_error(
             label += f"（{int(width)}×{int(height)}）"
     position = _location_text(
         location if location is not None else _raw_location(raw), raw,
-        member_only=error_token in _SKILL_CARD_LAYOUT_ERRORS,
+        member_only=gallery_gap or error_token in _SKILL_CARD_LAYOUT_ERRORS,
     )
     prefix = f"{position}：" if position else ""
     return f"{prefix}{label}；请查看详细日志"
