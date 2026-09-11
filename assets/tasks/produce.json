@@ -736,7 +736,8 @@
             },
             "ProduceNIAFailedFlag": {
               "next": [
-                "ProduceNIAFailedRetry"
+                "ProduceNIAFailedRetry",
+                "ProduceNIAFailedRetryConfirm"
               ]
             }
           }
