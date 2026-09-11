@@ -966,6 +966,8 @@ class MaaArenaReaderBackend:
     def _finish_card_transaction(
         self, key: tuple[int, int], *, failed: bool = False, error: str | None = None,
     ) -> None:
+        if failed:
+            self._retain_failed_skill_detail_identity(key)
         started = self._card_transaction_started.pop(key, None)
         getattr(self, "_detail_identity_proofs", {}).pop(key, None)
         getattr(self, "_card_transaction_tokens", {}).pop(key, None)
@@ -7902,9 +7904,9 @@ class MaaArenaReaderBackend:
             try:
                 if overlay_opened:
                     self._dismiss_skill_card_detail()
-            except Exception:
+            except Exception as error:
                 if key in getattr(self, "_card_transaction_started", {}):
-                    self._finish_card_transaction(key, failed=True)
+                    self._finish_card_transaction(key, failed=True, error=str(error))
                 raise
             finally:
                 if inferred is None and key in getattr(self, "_card_transaction_started", {}):
@@ -7918,9 +7920,9 @@ class MaaArenaReaderBackend:
                 card_slot=card_slot,
                 expected_card_id=inferred.card_id,
             )
-        except Exception:
+        except Exception as error:
             if key in getattr(self, "_card_transaction_started", {}):
-                self._finish_card_transaction(key, failed=True)
+                self._finish_card_transaction(key, failed=True, error=str(error))
             raise
         self._finish_card_transaction(key)
         self._inferred_clicked_cards[key] = inferred
@@ -11729,10 +11731,15 @@ class MaaArenaReaderBackend:
             )
         self._finish_card_transaction(key)
 
-    def close_member(self, target: TeamTarget, stage_number: int) -> None:
-        del stage_number
+    def close_member(
+        self, target: TeamTarget, stage_number: int, *,
+        recovery_image: Any = None, recovery_detail: dict[str, Any] | None = None,
+    ) -> None:
         self._reset_member_card_state()
-        self._back()
+        if recovery_image is None:
+            self._back()
+        else:
+            self._back(image=recovery_image)
         expected_totals = (1, 2, 3) if target.is_own_team else (6,)
         try:
             self._wait_for_stage_member_list(
@@ -11744,15 +11751,83 @@ class MaaArenaReaderBackend:
             # anchors prove that the first back action was dropped. Any other
             # page remains fail-closed rather than issuing another blind back.
             image = self._capture()
-            if not self._ocr(image, r"^体力$") or not self._ocr(image, r"^総合力$"):
-                raise
+            if recovery_detail is None:
+                if not self._ocr(image, r"^体力$") or not self._ocr(image, r"^総合力$"):
+                    raise
+            else:
+                image, items = self._read_member_recovery_page(image)
+                if not self._member_recovery_page_matches(items, stage_number, recovery_detail):
+                    raise
             self._increment("close_member_retries")
-            self._back()
+            if recovery_detail is None:
+                self._back()
+            else:
+                self._back(image=image)
             self._wait_for_stage_member_list(
                 expected_totals,
                 timeout_seconds=2.0,
             )
         self._member_metric_baseline = None
+
+    def _retain_failed_skill_detail_identity(self, key: tuple[int, int]) -> None:
+        """Keep the failed transaction's proven title until its member recovery."""
+        member = getattr(self, "_member_failure_frames", None)
+        proof = getattr(self, "_detail_identity_proofs", {}).get(key)
+        if member is None or not isinstance(proof, _DetailIdentityProof):
+            return
+        if not self._detail_identity_proof_matches(key, proof.card_id, proof.source_card_box):
+            return
+        position = member["position"]
+        member["skill_detail_recovery"] = {
+            "team_id": position.get("team_id"),
+            "stage_number": position.get("stage_number"),
+            "member_slot": position.get("member_slot"),
+            "group_index": key[0], "card_slot": key[1],
+            "card_id": proof.card_id, "title": proof.title,
+        }
+        diagnostic = getattr(self, "_detail_failure_frames", None)
+        if diagnostic is not None:
+            diagnostic["position"].update(group_index=key[0], card_slot=key[1])
+            self._note_confirmed_detail_name(proof.card_id)
+
+    def _member_recovery_page_matches(
+        self, items: Sequence[Any], stage_number: int, detail: dict[str, Any],
+    ) -> bool:
+        """Recognize the member or its already confirmed skill detail on this frame."""
+        stages = self._matching_ocr_items(items, r"^ステージ\s*[123]$")
+        if len(stages) != 1 or not self._matching_ocr_items(stages, rf"^ステージ\s*{stage_number}$"):
+            return False
+        if len(self._matching_ocr_items(items, r"^総合力$")) != 1:
+            return False
+        if len(self._matching_ocr_items(items, r"^体力$")) == 1:
+            return True
+        title_matches = 0
+        for row_text, _box, components in self._spatial_ocr_rows(items):
+            atom_matches = sum(
+                self._same_proven_skill_card_title(text, detail["title"], detail["card_id"])
+                for text, _component_box in components
+            )
+            title_matches += atom_matches or self._same_proven_skill_card_title(
+                row_text, detail["title"], detail["card_id"],
+            )
+        return title_matches == 1
+
+    def _read_member_recovery_page(self, image: Any = None) -> tuple[Any, Sequence[Any]]:
+        deadline = time.monotonic() + 2.0
+        for observation in range(3):
+            if image is None:
+                image = self._capture()
+            items = self._ocr(image, r".+")
+            if not self._retry_transient_communication_items(items):
+                return image, items
+            if observation == 2 or time.monotonic() >= deadline:
+                break
+            self._sleep(0.1)
+            image = None
+        raise ArenaReaderError(
+            "arena_communication_retry_exhausted",
+            "member recovery still sees a communication dialog after its existing Retry opportunity",
+        )
 
     def recover_member_preview(
         self, target: TeamTarget, stage_number: int, member_slot: int, *, error_code: str,
@@ -11764,11 +11839,17 @@ class MaaArenaReaderBackend:
         try:
             # A close may already have returned to the preview. Check before
             # Back so that recovery cannot leave the current opponent.
-            image = self._capture()
-            items = self._ocr(image, r".+")
+            image, items = self._read_member_recovery_page()
             expected_totals = (1, 2, 3) if target.is_own_team else (6,)
             stages = self._matching_ocr_items(items, r"^ステージ\s*[123]$")
             totals = self._matching_ocr_items(items, r"^総合力$")
+            member = getattr(self, "_member_failure_frames", None)
+            detail = member.pop("skill_detail_recovery", None) if member is not None else None
+            detail_matches_member = bool(
+                detail is not None and error_code == "skill_card_close_failed"
+                and (detail["team_id"], detail["stage_number"], detail["member_slot"])
+                == (target.team_id, stage_number, member_slot)
+            )
             if len(stages) >= 3 and len(totals) in expected_totals:
                 self._reset_member_card_state()
                 self._member_metric_baseline = None
@@ -11781,6 +11862,11 @@ class MaaArenaReaderBackend:
                 and len(totals) == 1
             ):
                 self.close_member(target, stage_number)
+            elif detail_matches_member and self._member_recovery_page_matches(items, stage_number, detail):
+                self._increment("member_preview_open_detail_recoveries")
+                self.close_member(
+                    target, stage_number, recovery_image=image, recovery_detail=detail,
+                )
             else:
                 raise ArenaReaderError(
                     "member_preview_recovery_unproven",
@@ -12696,6 +12782,9 @@ class MaaArenaReaderBackend:
     ) -> None:
         """Restore one inferred-card source, retrying one proven dropped dismiss."""
 
+        diagnostic = getattr(self, "_detail_failure_frames", None)
+        if diagnostic is not None:
+            diagnostic["position"]["phase"] = "close"
         try:
             self._assert_card_group_visible(
                 group_index,
