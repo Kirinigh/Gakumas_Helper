@@ -120,7 +120,7 @@
       "[JumpBack]BackHome",
       "[JumpBack]CloseMenu",
       "[JumpBack]CloseRoundButton",
-      "ChallengeEntryStateStop"
+      "ChallengeRecoverEntry"
     ]
   },
   "ChallengeSelector": {
@@ -250,6 +250,22 @@
       }
     },
     "next": []
+  },
+  "ChallengeRecoverEntry": {
+    "recognition": {"type": "DirectHit"},
+    "action": {
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeRecoverEntry"}
+    },
+    "max_hit": 1,
+    "on_error": ["ChallengeEntryStateStop"],
+    "next": [
+      "ChallengePrepareOwnScore",
+      "ChallengeRunOut",
+      "ChallengeReadyPeriod",
+      "ChallengeHomeFlag",
+      "ChallengeEntryStateStop"
+    ]
   },
   "ArenaReaderOCR": {
     "recognition": {

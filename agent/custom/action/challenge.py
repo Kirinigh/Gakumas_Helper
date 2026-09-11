@@ -35,6 +35,7 @@ from arena_winrate import (
 )
 from maa.custom_action import CustomAction
 from arena_winrate.config import resolve_cached_arena_grade
+from arena_winrate.reader import ArenaPageState
 from arena_winrate.decision import HIGHEST_WIN_RATE_FALLBACK_RULE
 from arena_winrate.task_log import arena_task_log, diagnostic_logger, opponent_rates_message
 from maa.agent.agent_server import AgentServer
@@ -453,6 +454,118 @@ class ChallengeResetOwnScorePreparation(CustomAction):
         reset_prepared_own_score_cache(OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE))
         logger.info("已清除上一任务可能遗留的竞技场己方缓存准备状态")
         return True
+
+
+class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
+    """Reuse navigation without loading a season, catalog, or card gallery."""
+
+    def __init__(self, context: Context) -> None:
+        self.context = context
+        self._cancellation = cancellation_for(context)
+        self._runtime_counts = {}
+        self._runtime_timing_seconds = {}
+        self._full_frame_ocr_evidence = {}
+        self._entry_deadline = None
+
+    def _check_cancelled(self) -> None:
+        super()._check_cancelled()
+        if self._entry_deadline is not None and time.monotonic() >= self._entry_deadline:
+            raise ArenaReaderError("arena_entry_recovery_exhausted", "entry recovery reached its time limit")
+
+    def recover_entry(self) -> None:
+        started = time.monotonic()
+        deadline = started + 8.0
+        self._entry_deadline = deadline
+        returns = 0
+        succeeded = False
+        last_page = "unknown"
+        try:
+            for _ in range(6):
+                self._check_cancelled()
+                if time.monotonic() >= deadline:
+                    break
+                image = self._capture()
+                items = self._ocr(image, r".+")
+                matches = lambda pattern: self._matching_ocr_items(items, pattern)
+                result_page = bool(
+                    matches(r"^(?:WIN|LOSE|LOSS|VICTORY|DEFEAT|勝利|敗北|TAP)$")
+                    or self._recognize("ChallengeNext", image)
+                    or self._recognize("ChallengeFinish", image)
+                )
+                if time.monotonic() >= deadline:
+                    break
+                if result_page:
+                    last_page = "result"
+                    store = ArenaChallengeRecordStore()
+                    if store.load_pending() is None:
+                        raise ArenaReaderError(
+                            "arena_entry_result_unowned",
+                            "result page has no matching pending battle; no Back was sent",
+                        )
+                    # The existing result path owns its own durable retry budget
+                    # and only leaves after saving. Never Back from this branch.
+                    if not resume_pending_challenge(self.context, store=store):
+                        raise ArenaReaderError("arena_entry_result_recovery_failed", "pending result recovery did not finish")
+                    succeeded = True
+                    return
+                if self._retry_transient_communication_items(items):
+                    last_page = "communication"
+                    self._sleep(0.25)
+                    continue
+                state, _ = self._arena_page_state(image)
+                if state in (ArenaPageState.READY, ArenaPageState.OPPONENTS_UNAVAILABLE):
+                    last_page = state.value
+                    succeeded = True
+                    return
+                stages = matches(r"^ステージ\s*[123]$")
+                totals = matches(r"^総合力$")
+                stamina = matches(r"^体力$")
+                member = (
+                    len(stages) == 1 and len(totals) == 1 and len(stamina) == 1
+                )
+                preview = (
+                    len(stages) == 3 and len(totals) in (3, 6) and not stamina
+                    and len(matches(r"^サポートボーナス$")) == 1
+                )
+                last_page = "member" if member else "preview" if preview else "unknown"
+                if time.monotonic() >= deadline:
+                    break
+                if member or preview:
+                    if returns >= 3:
+                        break
+                    returns += 1
+                    self._back(image=image)
+                else:
+                    # Loading or an unproven page gets another bounded frame,
+                    # never a Back merely because a back-shaped control exists.
+                    self._sleep(0.25)
+            raise ArenaReaderError(
+                "arena_entry_recovery_exhausted",
+                f"entry remained {last_page} after bounded recovery; back_actions={returns}",
+            )
+        finally:
+            logger.info(json.dumps({
+                "event": "arena_reader_recovery", "action": "entry_return",
+                "succeeded": succeeded, "last_page": last_page, "back_actions": returns,
+                "wall_seconds": round(time.monotonic() - started, 6),
+                "extra_counts": dict(self._runtime_counts),
+            }, ensure_ascii=False, sort_keys=True))
+
+
+@AgentServer.custom_action("ArenaChallengeRecoverEntry")
+class ArenaChallengeRecoverEntry(CustomAction):
+    @_report_unexpected_errors
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        del argv
+        if not _administrator_process():
+            return _stop_with_error(context, "竞技场入口自动返回未执行：Maa 输入进程需要管理员权限")
+        try:
+            _ArenaEntryRecoveryBackend(context).recover_entry()
+            return True
+        except (ArenaReaderError, ArenaChallengeFlowError) as error:
+            logger.warning(f"竞技场入口自动返回未完成: {error}")
+            arena_task_log.failed(context, "未能从当前页面返回竞技场")
+            return False
 
 
 @AgentServer.custom_action("ChallengePrepareOwnScore")

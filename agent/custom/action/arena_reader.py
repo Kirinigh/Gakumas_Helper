@@ -12579,8 +12579,9 @@ class MaaArenaReaderBackend:
         if not job.succeeded:
             raise ArenaReaderError("maa_swipe_failed", f"Maa could not swipe {vertical}")
 
-    def _back(self) -> None:
-        image = self._capture()
+    def _back(self, *, image: Any = None) -> None:
+        if image is None:
+            image = self._capture()
         height, width = image.shape[:2]
         detail = self._run_recognition(
             "ChallengeBack",
