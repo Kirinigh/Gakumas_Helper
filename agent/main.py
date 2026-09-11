@@ -308,10 +308,6 @@ def check_and_install_dependencies():
             "已禁用依赖安装，请启用后重试，或恢复完整客户端包中的配套依赖。"
         )
 
-    if enable_pip_update:
-        if not update_pip(pip_config=pip_config):
-            logger.warning("pip 更新失败，继续尝试安装依赖...")
-
     current_version = read_interface_version()
     last_version = pip_config.get("last_version", "unknown")
 
@@ -319,6 +315,14 @@ def check_and_install_dependencies():
     logger.info(f"当前版本: {current_version}, 上次运行版本: {last_version}")
 
     full_install = enable_pip_install and (current_version != last_version or current_version == "unknown")
+    if not (full_install or maafw_mismatch):
+        logger.info("无需安装依赖，跳过依赖安装与 pip 更新")
+        return
+
+    if enable_pip_update:
+        if not update_pip(pip_config=pip_config):
+            logger.warning("pip 更新失败，继续尝试安装依赖...")
+
     if overlay_error:
         logger.warning(f"{overlay_error}；重新安装配套依赖")
         installed = _install_pip_packages(["--force-reinstall", f"maafw=={required_maafw}"], pip_config)
@@ -328,10 +332,6 @@ def check_and_install_dependencies():
     elif maafw_mismatch:
         logger.warning(f"校正 maafw 配套版本：{installed_maafw or '未安装'} → {required_maafw}")
         installed = _install_pip_packages([f"maafw=={required_maafw}"], pip_config)
-    else:
-        logger.info("跳过依赖安装")
-        return
-
     if not installed:
         raise RuntimeError("依赖安装失败，已停止启动；请检查网络后重试")
     actual_maafw = reconcile_overlaid_maafw(required_maafw) or read_installed_maafw_version()
