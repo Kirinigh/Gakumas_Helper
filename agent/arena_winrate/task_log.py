@@ -198,7 +198,7 @@ class ArenaTaskLog:
             getattr(logger, "info" if completed else "warning")(message)
 
     def read_terminal(self, tasker, task_id, logger):
-        """Read only the existing terminal nodes, once at task completion.
+        """Find the latest completed ending in this task's recorded nodes.
 
         Normal exhausted returns already carry their ending. No context sink
         is registered: parsing every OCR event just for display adds work.
@@ -212,14 +212,14 @@ class ArenaTaskLog:
             task = tasker.get_task_detail(task_id)
             if task is None:
                 return
-            positions = {node_id: index for index, node_id in enumerate(task.node_id_list)}
-            endings = []
-            for name in ("ChallengeRunOut", "ChallengeReadyPeriod", "ChallengeWinRateStop", "ChallengeEntryStateStop"):
-                node = tasker.get_latest_node(name)
-                if node is not None and node.completed and node.name == name and node.node_id in positions:
-                    endings.append((positions[node.node_id], name))
-            if endings:
-                self.node_finished(task_id, max(endings)[1])
+            endings = {"ChallengeRunOut", "ChallengeReadyPeriod", "ChallengeWinRateStop", "ChallengeEntryStateStop"}
+            # Probing absent names makes MaaFramework emit ERR even on a
+            # normal preparation-period exit. Query only recorded node IDs.
+            for node_id in reversed(task.node_id_list):
+                node = tasker.get_node_detail(node_id)
+                if node is not None and node.node_id == node_id and node.completed and node.name in endings:
+                    self.node_finished(task_id, node.name)
+                    break
         except Exception:
             diagnostic_logger(logger).exception("竞技场结束状态日志查询失败")
 
