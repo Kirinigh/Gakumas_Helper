@@ -96,6 +96,7 @@ MFA_CORE_PATCH_SCOPE = [
     "deterministic_build_path",
     "diagnostic_log_export",
     "dynamic_option_cases",
+    "startup_template_and_saved_layout",
 ]
 FORBIDDEN_DERIVED_UPDATE_KEYS = frozenset(
     {"mirrorchyan_rid", "mirrorchyan_multiplatform"}
@@ -129,6 +130,7 @@ REPLACED_TREES = {
 }
 
 ROOT_FILE_SOURCES = {
+    "config.template.json": "config.template.json",
     "README.md": "README.md",
     "LICENSE": "LICENSE",
     "logo.ico": "logo.ico",
@@ -146,6 +148,7 @@ PRIVATE_INPUT_SUFFIXES = {".log", ".dmp", ".dump", ".tmp", ".bak", ".sqlite", ".
 NON_RUNTIME_SITE_PACKAGE_DIRS = ("bin", "Scripts")
 
 REQUIRED_FILES = (
+    "config.template.json",
     "MaaGakumasu.exe",
     MFA_CORE_INSTALL_PATH,
     MFA_CORE_NOTICE_PATH,

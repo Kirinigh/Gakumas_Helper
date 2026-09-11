@@ -988,3 +988,169 @@ new file mode 100644
 +        return long.TryParse(suffix, out var number) ? number : -1;
 +    }
 +}
+diff --git a/MFAAvalonia/Configuration/ConfigurationManager.cs b/MFAAvalonia/Configuration/ConfigurationManager.cs
+--- a/MFAAvalonia/Configuration/ConfigurationManager.cs
++++ b/MFAAvalonia/Configuration/ConfigurationManager.cs
+@@ -181,7 +181,9 @@
+             File.WriteAllText(defaultConfigPath, "{}");
+         if (ConfigName != "Default" && !File.Exists(Path.Combine(configDir, $"mfa_{ConfigName}.json")))
+             ConfigName = "Default";
+-        collection.Add(Current.SetConfig(JsonHelper.LoadConfig("config", new Dictionary<string, object>())));
++        var defaultConfig = JsonHelper.LoadConfig("config", new Dictionary<string, object>());
++        ApplyMissingTemplateDefaults(defaultConfig);
++        collection.Add(Current.SetConfig(defaultConfig));
+         foreach (var file in Directory.EnumerateFiles(configDir, "mfa_*.json"))
+         {
+             var fileName = Path.GetFileNameWithoutExtension(file);
+@@ -190,6 +192,7 @@
+                 ? fileName.Substring("mfa_".Length)
+                 : fileName;
+             var configs = JsonHelper.LoadConfig(fileName, new Dictionary<string, object>());
++            ApplyMissingTemplateDefaults(configs);
+ 
+             var config = new MFAConfiguration(nameWithoutPrefix, fileName, configs);
+ 
+@@ -206,6 +209,29 @@
+         return collection;
+     }
+ 
++    private static void ApplyMissingTemplateDefaults(Dictionary<string, object> config)
++    {
++        // Only the shipped live-view default is supported. Never change a user key.
++        if (config.ContainsKey(ConfigurationKeys.EnableLiveView)) return;
++        var path = Path.Combine(AppPaths.DataRoot, "config.template.json");
++        if (!File.Exists(path)) return;
++        try
++        {
++            using var template = JsonDocument.Parse(File.ReadAllText(path));
++            if (template.RootElement.ValueKind == JsonValueKind.Object
++                && template.RootElement.TryGetProperty(ConfigurationKeys.EnableLiveView, out var value)
++                && value.ValueKind is JsonValueKind.True or JsonValueKind.False)
++            {
++                config[ConfigurationKeys.EnableLiveView] = value.GetBoolean();
++            }
++        }
++        catch (Exception error) when (error is IOException or UnauthorizedAccessException
++            or System.Text.Json.JsonException)
++        {
++            LoggerHelper.Warning($"无法读取可选默认配置模板，保留现有设置: {error.Message}");
++        }
++    }
++
+     public static void SaveConfiguration(string configName)
+     {
+         var config = Configs.FirstOrDefault(c => c.Name == configName);
+@@ -219,7 +245,9 @@
+     {
+         var configPath = ConfigDir;
+         var newConfigPath = Path.Combine(configPath, $"{name}.json");
+-        var newConfig = new MFAConfiguration(name.Equals("config", StringComparison.OrdinalIgnoreCase) ? "Default" : name, name.Equals("config", StringComparison.OrdinalIgnoreCase) ? name : $"mfa_{name}", new Dictionary<string, object>());
++        var defaults = new Dictionary<string, object>();
++        ApplyMissingTemplateDefaults(defaults);
++        var newConfig = new MFAConfiguration(name.Equals("config", StringComparison.OrdinalIgnoreCase) ? "Default" : name, name.Equals("config", StringComparison.OrdinalIgnoreCase) ? name : $"mfa_{name}", defaults);
+         Configs.Add(newConfig);
+         return newConfig;
+     }
+diff --git a/MFAAvalonia/Views/UserControls/Dashboard/DashboardCardGrid.cs b/MFAAvalonia/Views/UserControls/Dashboard/DashboardCardGrid.cs
+--- a/MFAAvalonia/Views/UserControls/Dashboard/DashboardCardGrid.cs
++++ b/MFAAvalonia/Views/UserControls/Dashboard/DashboardCardGrid.cs
+@@ -752,70 +752,28 @@
+         var key = GetLayoutKey();
+         var layouts = LoadConfigLayouts(defaults, key, out var hasConfigLayouts);
+         var layoutMeta = LoadLayoutMeta();
++        // A resource update supplies defaults, not a replacement for saved user layouts.
++        if (hasConfigLayouts)
++        {
++            ApplyLayoutMeta(layoutMeta);
++            ApplyLayouts(layouts);
++            return;
++        }
++
+         var resourceLayout = TryLoadResourceLayout(out var resourceLayoutHash);
+-        var layoutHashKey = GetResourceLayoutHashKey();
+-        var storedLayoutHash = ConfigurationManager.Current.GetValue(layoutHashKey, string.Empty);
+-        var resourceLayoutChanged = !string.IsNullOrWhiteSpace(resourceLayoutHash)
+-            && !string.Equals(resourceLayoutHash, storedLayoutHash, StringComparison.OrdinalIgnoreCase);
+-
+-        if (resourceLayoutChanged && resourceLayout != null)
+-        {
+-            ApplyResourceLayout(resourceLayout, defaults);
+-            SaveLayouts();
+-            ConfigurationManager.Current.SetValue(layoutHashKey, resourceLayoutHash);
+-            ToastHelper.Info(LangKeys.ResourceLayoutUpdatedTitle.ToLocalization(),
+-                LangKeys.ResourceLayoutUpdatedContent.ToLocalization());
+-            return;
+-        }
+-
+-        if (hasConfigLayouts)
+-        {
+-            var effectiveColumns = layoutMeta?.Columns > 0 ? layoutMeta.Columns : Columns;
+-            var effectiveRows = layoutMeta?.Rows > 0 ? layoutMeta.Rows : Rows;
+-
+-            if (HasOverlaps(layouts, effectiveColumns, effectiveRows))
+-            {
+-                layouts = defaults;
+-                hasConfigLayouts = false;
+-            }
+-        }
+-
+-        if (resourceLayout == null && !hasConfigLayouts)
+-        {
+-            ApplyLayouts(defaults);
+-            EnsureResourceLayoutFile(defaults);
+-            return;
+-        }
+-
+-        if (!hasConfigLayouts && resourceLayout != null)
++        if (resourceLayout != null)
+         {
+             ApplyResourceLayout(resourceLayout, defaults);
+             SaveLayouts();
+             if (!string.IsNullOrWhiteSpace(resourceLayoutHash))
+             {
+-                ConfigurationManager.Current.SetValue(layoutHashKey, resourceLayoutHash);
+-            }
+-            return;
+-        }
+-
+-        if (resourceLayout != null
+-            && layoutMeta != null
+-            && layoutMeta.Rows > 0
+-            && layoutMeta.Columns > 0
+-            && (layoutMeta.Rows != resourceLayout.Rows || layoutMeta.Columns != resourceLayout.Columns))
+-        {
+-            ApplyResourceLayout(resourceLayout, defaults);
+-            SaveLayouts();
+-            if (!string.IsNullOrWhiteSpace(resourceLayoutHash))
+-            {
+-                ConfigurationManager.Current.SetValue(layoutHashKey, resourceLayoutHash);
+-            }
+-            return;
+-        }
+-
+-        ApplyLayoutMeta(layoutMeta);
+-        ApplyLayouts(layouts);
+-        ApplyLayouts(layouts);
++                ConfigurationManager.Current.SetValue(GetResourceLayoutHashKey(), resourceLayoutHash);
++            }
++            return;
++        }
++
++        ApplyLayouts(defaults);
++        EnsureResourceLayoutFile(defaults);
+     }
+ 
+     private List<DashboardCardLayout> GetDefaultLayouts()
+@@ -926,9 +884,11 @@
+             if (!string.Equals(key, ConfigurationKeys.DashboardCardGridLayout, StringComparison.OrdinalIgnoreCase))
+             {
+                 var legacy = ConfigurationManager.Current.GetValue(ConfigurationKeys.DashboardCardGridLayout, defaults);
+-                if (legacy != null && legacy.Count > 0)
++                if (ConfigurationManager.Current.ContainsKey(ConfigurationKeys.DashboardCardGridLayout)
++                    && legacy != null && legacy.Count > 0)
+                 {
+                     layouts = legacy;
++                    hasConfigLayouts = true;
+                 }
+             }
+         }

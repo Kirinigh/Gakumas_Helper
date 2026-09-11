@@ -141,6 +141,7 @@ MFA_CORE_PATCH_SCOPE = [
     "deterministic_build_path",
     "diagnostic_log_export",
     "dynamic_option_cases",
+    "startup_template_and_saved_layout",
 ]
 FORBIDDEN_DERIVED_UPDATE_KEYS = frozenset(
     {"mirrorchyan_rid", "mirrorchyan_multiplatform"}
@@ -197,7 +198,7 @@ FORBIDDEN_MUTABLE_PATHS = (
     "appsettings.json",
 )
 PROJECT_TEXT_ROOTS = {"agent", "resource", "tasks", "lang", "data"}
-PROJECT_TEXT_FILES = {"README.md", "interface.json", "GAKUMAS_HELPER_BUILD.json", "requirements.txt"}
+PROJECT_TEXT_FILES = {"README.md", "interface.json", "GAKUMAS_HELPER_BUILD.json", "requirements.txt", "config.template.json"}
 ARENA_PREVIEW_VERSION_PATTERN = re.compile(
     r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$"
 )

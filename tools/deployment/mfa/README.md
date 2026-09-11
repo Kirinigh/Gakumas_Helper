@@ -54,6 +54,14 @@ GKH 的 `interface.json` 同时不得携带 `mirrorchyan_rid` 或 `mirrorchyan_m
 
 此修复对应 Core 清单中的 `dynamic_option_cases`，必须使用包含它的新构建；不新增选季状态文件或修改用户配置格式。
 
+首启默认与布局兼容补丁继续使用现有配置加载路径：
+
+- 公开包根目录的 `config.template.json` 只提供 `UI.LiveView.EnableLiveView` 布尔默认值。配置缺少该键时才补入内存；默认配置、命名配置和新建配置共用此规则。已有值和实例级、旧 scoped 用户选择优先，模板中的其它键不应用。模板缺失、损坏或类型错误时保留既有缺省行为并按需记录诊断，不阻断客户端启动。
+- 加载模板不直接改写用户配置文件；后续保存沿用客户端原路径。`NoAutoStart`、任务参数及自动更新等设置不受模板影响。随包只携带根模板，不携带实际 `config.json` 或 `config` 目录。
+- `resource/mfa_layout.json` 仅在没有已保存布局时提供默认布局。已有布局及尺寸、旧版布局键均优先；资源散列或尺寸变化不再覆盖用户布局。首次默认布局仍使用原有布局键和保存回调，不增加迁移状态文件。
+
+这一层对应 Core 清单的 `startup_template_and_saved_layout`。`test_startup_defaults.py` 从固定源码应用补丁，编译实际配置加载、实例取值及布局选择方法，使用 `startup_defaults_harness.cs` 核对缺键、旧值、命名配置、实例优先级、异常模板、首次布局和重复加载。渲染及保存回调在该离线回归中使用测试替身，完整 Core 构建负责真实类型集成；不能仅据此宣称界面实机验收完成。
+
 ## 复核与构建
 
 在固定源码 ZIP 解压根执行：
