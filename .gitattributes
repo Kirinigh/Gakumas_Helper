@@ -16,3 +16,4 @@ tools/p-item-embedding/evidence/*.json -text whitespace=cr-at-eol
 tools/deployment/mfa/*.patch -text whitespace=-blank-at-eol
 THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE -text
 assets/data/skill_card_classification.json -text whitespace=cr-at-eol
+assets/data/p_item_classification.json -text whitespace=cr-at-eol

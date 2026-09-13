@@ -1,5 +1,36 @@
 # P-item embedding toolchain
 
+## 全量 P 道具分类索引（2026-09-13）
+
+`assets/data/p_item_classification.json` 按业务 ID 保存全目录 486 条源数据标签，并连接现有固定参考图库的 434 个 ID。52 条没有参考图的目录记录仍完整保留标签，`reference_available=false`；这不表示它们已有可用于识别的图像。索引当前用于离线查询，运行时接入另行完成。
+
+分类维度：
+
+- `plan`：共通 `free`、感性 `sense`、逻辑 `logic`、非凡 `anomaly`，分别 49、154、171、112 条。
+- `kind`：P 偶像固有 `p_idol` 307、可继承支援卡 `support_inheritable` 50、不可继承支援卡 `support_non_inheritable` 81、其他 `other` 48。P 偶像和其他按目录来源区分；支援卡使用官方 `isExamEffect`，并核对目录 `mode`。其他来源即使 `mode=stage` 也保持其他类别。新未知来源、模式和未登记冲突均报错，不静默归入其他。
+
+477 条通过官方名称和普通／＋状态唯一映射；其中 8 条名称差异同时由 既有已核对的官方图像 crosswalk 确认。431～439 是目录中的特殊袋类记录，只按明确目录来源标注，官方映射为空并列在 `official_unmapped_business_ids`，不猜测对应的官方袋子。所有记录保留目录计划、模式、来源、偶像 ID、稀有度、福利标记、官方字段及标签依据。
+
+115「ハンターの戦利品」按官方主表标为共通，142「優しさミルクシュガー」标为逻辑；已有视觉 crosswalk 确认其图像身份，原目录的逻辑／共通原值保留在 `source.catalog_plan`，不改运行目录。406～408 保留已登记的感性／逻辑／非凡业务拆分，官方共通字段另行保留。索引包含 152 对普通／＋关系，并校验双向配对和标签一致性。
+
+构建器 `build_p_item_classification.py` 核对既有目录证据、官方主表接收记录、视觉 crosswalk 及实际 NPZ，构建结果使用明确 revision。`select_ids(index, plan=["free", "logic"], kind="support_inheritable")` 支持同维度并集、跨维度交集；共通需显式选择，空选返回空集，未知标签报错。
+
+在项目根目录用项目虚拟环境 Python 复建：
+
+```powershell
+python tools/p-item-embedding/build_p_item_classification.py `
+  --catalog <冻结输入目录>/p_items.json `
+  --master <冻结输入目录>/ProduceItem.yaml `
+  --evidence <冻结输入目录>/pitem-followup/evidence-a.json `
+  --receipt <冻结输入目录>/master-receipt.json `
+  --dataset <固定参考数据集目录>/dataset_manifest.json `
+  --gallery-root assets/resource/base/model/embedding/p_item_reference `
+  --revision task095-p-item-classification-486-v1 `
+  --output assets/data/p_item_classification.json
+```
+
+源文件冻结于本机 `.local`；独立检出需要同一批输入。目录 revision 为 `2b1621ea0ef458de6b363143d6dab90b5335c812`，官方主表镜像 revision 为 `8f3f325edfc18a9db53587f94ae9edea7ad66f86`。本轮不刷新上游、不追加图片、不重训或部署。未来更新应使用新批次冻结来源重新构建，并处理新增来源/官方映射及计划差异，不能只增加计数。
+
 本目录保留 P 道具的历史 64×64 RGB → 128 维 L2 嵌入、Top-5 余弦近邻和普通/+状态解析工具，并提供当前生产固定渲染参考图库的构建、晋级与验证工具。两类制品用途独立，均不复用技能卡图库。
 
 ## 2026-09-05 适用范围更正
