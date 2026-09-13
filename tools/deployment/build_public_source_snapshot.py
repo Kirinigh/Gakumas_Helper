@@ -95,6 +95,7 @@ DATA_ALLOWLIST = (
     "idols_cards.json",
     "live_decision_presets.yaml",
     "p_drinks.csv",
+    "p_item_classification.json",
     "p_item_detail_text.json",
     "p_items.csv",
     "skill_card_classification.json",

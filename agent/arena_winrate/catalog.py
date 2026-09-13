@@ -13,6 +13,7 @@ from dataclasses import replace, dataclass
 from collections.abc import Mapping, Sequence
 
 from ._p_item_detail_text import PItemDetailTextIndex, PItemDetailTextResult
+from ._p_item_eligibility import ArenaPItemEligibility
 from ._skill_card_eligibility import ArenaSkillCardEligibility
 from ._skill_card_title_recovery import SkillCardTitleRecoveryIndex
 
@@ -331,6 +332,7 @@ class ArenaEntityCatalog:
             int, tuple[dict[str, tuple[int, ...]], dict[str, str]]
         ] = {}
         self._p_items = tuple(dict(row) for row in p_items)
+        self._arena_p_item_eligibility: ArenaPItemEligibility | None = None
         self._p_item_detail_text_index: PItemDetailTextIndex | None = None
         self._p_item_detail_text_index_loaded = False
         self._p_item_detail_text_index_error: str | None = None
@@ -502,19 +504,17 @@ class ArenaEntityCatalog:
         contestant P-item reference domain.
         """
 
-        return tuple(
-            sorted(
-                int(item["id"])
-                for item in self._p_items
-                if item.get("sourceType") in {"pIdol", "support"}
-                and item.get("mode") == "stage"
-                and (
-                    plan is None
-                    or plan == "free"
-                    or item.get("plan") in {None, "", "free", plan}
-                )
-            )
-        )
+        return tuple(sorted(self.arena_p_item_candidate_ids(plan=plan)))
+
+    def _get_arena_p_item_eligibility(self) -> ArenaPItemEligibility:
+        if self._arena_p_item_eligibility is None:
+            self._arena_p_item_eligibility = ArenaPItemEligibility(self._p_items)
+        return self._arena_p_item_eligibility
+
+    def arena_p_item_candidate_ids(self, *, plan: str | None = None) -> frozenset[int]:
+        if plan not in (None, "free", "sense", "logic", "anomaly"):
+            raise ArenaCatalogError(f"unsupported arena P-item plan: {plan!r}")
+        return self._get_arena_p_item_eligibility().candidate_sets[plan]
 
     def _get_p_item_detail_text_index(self) -> PItemDetailTextIndex | None:
         """Build the full active-catalog text relation once, only when needed."""
@@ -522,7 +522,10 @@ class ArenaEntityCatalog:
         if not self._p_item_detail_text_index_loaded:
             self._p_item_detail_text_index_loaded = True
             try:
-                self._p_item_detail_text_index = PItemDetailTextIndex(self._p_items)
+                self._p_item_detail_text_index = PItemDetailTextIndex(
+                    self._p_items,
+                    candidate_ids_by_plan=self._get_arena_p_item_eligibility().candidate_sets,
+                )
             except (OSError, ValueError) as error:
                 # A missing asset must not cause repeated filesystem work for
                 # each detail. It also must not invalidate image-only reads.

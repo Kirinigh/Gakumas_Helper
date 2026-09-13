@@ -343,6 +343,7 @@ class PItemRenderedReferenceGallery:
         self._id_to_index = {
             p_item_id: index for index, p_item_id in enumerate(self.p_item_ids)
         }
+        self._candidate_index_cache: dict[frozenset[int], tuple[int, ...]] = {}
         self._resize_cache_lock = threading.Lock()
         self._resize_cache_signature: tuple[int, int] | None = None
         self._resize_cache: dict[int, tuple[np.ndarray, ...]] = {}
@@ -587,11 +588,12 @@ class PItemRenderedReferenceGallery:
         box: tuple[int, int, int, int],
         *,
         profile: PItemReferenceAccelerationProfile | None = None,
+        candidate_indexes: tuple[int, ...] | None = None,
     ) -> tuple[PItemReferenceHit, ...]:
         return self._rank_candidates(
             image,
             box,
-            candidate_indexes=tuple(range(len(self.p_item_ids))),
+            candidate_indexes=(tuple(range(len(self.p_item_ids))) if candidate_indexes is None else candidate_indexes),
             deltas=(-6, -4, -2, 0, 2, 4, 6),
             canonical_slot_size=(
                 None
@@ -606,11 +608,14 @@ class PItemRenderedReferenceGallery:
         box: tuple[int, int, int, int],
         *,
         profile: PItemReferenceAccelerationProfile,
+        candidate_indexes: tuple[int, ...] | None = None,
     ) -> _PItemCoarseFineResult:
+        eligible_ids = (set(self.p_item_ids) if candidate_indexes is None
+                        else {self.p_item_ids[index] for index in candidate_indexes})
         coarse = self._rank_candidates(
             image,
             box,
-            candidate_indexes=tuple(range(len(self.p_item_ids))),
+            candidate_indexes=(tuple(range(len(self.p_item_ids))) if candidate_indexes is None else candidate_indexes),
             deltas=(profile.coarse_delta,),
             canonical_slot_size=(
                 profile.canonical_slot_width,
@@ -621,7 +626,7 @@ class PItemRenderedReferenceGallery:
             hit.p_item_id for hit in coarse[: profile.candidate_limit]
         }
         if candidate_ids & self.PLAN_AMBIGUOUS_IDS:
-            candidate_ids.update(self.PLAN_AMBIGUOUS_IDS)
+            candidate_ids.update(self.PLAN_AMBIGUOUS_IDS & eligible_ids)
         candidate_indexes = tuple(
             self._id_to_index[p_item_id]
             for p_item_id in candidate_ids
@@ -689,6 +694,7 @@ class PItemRenderedReferenceGallery:
         box: tuple[int, int, int, int],
         *,
         plan: str,
+        eligible_p_item_ids: frozenset[int] | None = None,
     ) -> PItemReferenceDecision:
         if len(images) != self.runtime.stable_frame_count:
             raise PItemReferenceError(
@@ -762,6 +768,23 @@ class PItemRenderedReferenceGallery:
                 frames_byte_identical=byte_identical,
                 ranking_route="not_ranked",
             )
+        ranking_scope = {}
+        if eligible_p_item_ids is not None:
+            eligible_p_item_ids = frozenset(eligible_p_item_ids)
+            indexes = self._candidate_index_cache.get(eligible_p_item_ids)
+            if indexes is None:
+                indexes = tuple(index for index, item_id in enumerate(self.p_item_ids)
+                                if item_id in eligible_p_item_ids)
+                self._candidate_index_cache[eligible_p_item_ids] = indexes
+            ranking_scope["candidate_indexes"] = indexes
+            if not indexes:
+                return PItemReferenceDecision(
+                    status="AMBIGUOUS", p_item_id=None, reason="reference_domain_empty",
+                    candidates=tuple(sorted(eligible_p_item_ids)), similarity=None, margin=None,
+                    content_generation_max_mean_abs_error=content_error,
+                    completeness=completeness, top_k=(), frames_byte_identical=byte_identical,
+                    ranking_route="not_ranked",
+                )
         # The low-dimensional content-generation gate above is the temporal
         # identity authority: a different rendered item must fail there before
         # business-ID matching. Rank the first stable frame once and reuse that
@@ -794,7 +817,8 @@ class PItemRenderedReferenceGallery:
                     full_fallback_used=full_fallback_used,
                 )
             rankings_by_frame = tuple(
-                self._effective_rankings(ranking, plan=plan)
+                tuple(hit for hit in self._effective_rankings(ranking, plan=plan)
+                      if eligible_p_item_ids is None or hit.p_item_id in eligible_p_item_ids)
                 for ranking in raw_rankings
             )
             if any(not ranking for ranking in rankings_by_frame):
@@ -885,14 +909,14 @@ class PItemRenderedReferenceGallery:
             )
         if profile is None:
             return decide(
-                self._rank_full(images[0], box),
+                self._rank_full(images[0], box, **ranking_scope),
                 ranking_route="full_rendered_reference",
                 full_fallback_used=False,
             )
-        accelerated = self._rank_coarse_fine(images[0], box, profile=profile)
+        accelerated = self._rank_coarse_fine(images[0], box, profile=profile, **ranking_scope)
         if not accelerated.guard_passed:
             return decide(
-                self._rank_full(images[0], box, profile=profile),
+                self._rank_full(images[0], box, profile=profile, **ranking_scope),
                 ranking_route="fixed_coarse_fine_guard_then_full_fallback",
                 full_fallback_used=True,
             )
@@ -907,7 +931,7 @@ class PItemRenderedReferenceGallery:
         }:
             return decision
         return decide(
-            self._rank_full(images[0], box, profile=profile),
+            self._rank_full(images[0], box, profile=profile, **ranking_scope),
             ranking_route="fixed_coarse_fine_then_full_fallback",
             full_fallback_used=True,
         )

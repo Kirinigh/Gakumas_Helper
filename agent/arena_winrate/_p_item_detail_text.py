@@ -230,12 +230,14 @@ class PItemDetailTextIndex:
         *,
         reference_data: Mapping[str, Any] | None = None,
         reference_path: str | Path | None = None,
+        candidate_ids_by_plan: Mapping[str | None, frozenset[int]] | None = None,
     ) -> None:
         if reference_data is None:
             path = Path(reference_path) if reference_path is not None else _default_reference_path()
             reference_data = json.loads(path.read_text(encoding="utf-8"))
         if reference_data.get("schema_version") != 1 or not isinstance(reference_data.get("rows"), list):
             raise ValueError("P-item text reference schema is invalid")
+        self._candidate_ids_by_plan = candidate_ids_by_plan
         self.revision = str(reference_data.get("revision", ""))
         self._active = {int(row["id"]): dict(row) for row in p_items}
         self._references = {int(row["id"]): row for row in reference_data["rows"]}
@@ -290,6 +292,9 @@ class PItemDetailTextIndex:
             self._family_known_fields[ids] = known
 
     def family_ids_for_title(self, title: str, *, plan: str | None = None) -> tuple[int, ...]:
+        if self._candidate_ids_by_plan is not None and plan in self._candidate_ids_by_plan:
+            eligible = self._candidate_ids_by_plan[plan]
+            return tuple(item_id for item_id in self._title_scopes.get(normalize(title), ()) if item_id in eligible)
         return tuple(item_id for item_id in self._title_scopes.get(normalize(title), ())
                      if plan in (None, "", "free") or self._active[item_id].get("plan") in (None, "", "free", plan))
 

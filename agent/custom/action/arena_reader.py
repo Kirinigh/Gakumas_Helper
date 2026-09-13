@@ -300,6 +300,7 @@ class PItemReader(Protocol):
         boxes: Sequence[tuple[int, int, int, int]],
         *,
         plan: str,
+        eligible_p_item_ids: frozenset[int] | None = None,
     ) -> Sequence[PItemReferenceDecision]: ...
 
 
@@ -362,12 +363,14 @@ class Task085PItemReader:
         boxes: Sequence[tuple[int, int, int, int]],
         *,
         plan: str,
+        eligible_p_item_ids: frozenset[int] | None = None,
     ) -> Sequence[PItemReferenceDecision]:
         def classify(box: tuple[int, int, int, int]) -> PItemReferenceDecision:
             return self.gallery.classify(
                 images,
                 box,
                 plan=plan,
+                eligible_p_item_ids=eligible_p_item_ids,
             )
 
         with ThreadPoolExecutor(max_workers=min(2, len(boxes))) as executor:
@@ -5592,6 +5595,10 @@ class MaaArenaReaderBackend:
             self.p_item_reader = Task085PItemReader.from_model_root()
         plan = self.season.stages[stage_number - 1].plan
         self._assert_p_item_reference_catalog_compatibility()
+        catalog = getattr(self, "catalog", None)
+        scope_resolver = getattr(catalog, "arena_p_item_candidate_ids", None)
+        eligible_ids = scope_resolver(plan=plan) if scope_resolver is not None else None
+        read_scope = {} if eligible_ids is None else {"eligible_p_item_ids": eligible_ids}
         first = self._capture()
         height, width = first.shape[:2]
         icon = int(width * 0.09)
@@ -5619,7 +5626,7 @@ class MaaArenaReaderBackend:
             started = time.perf_counter()
             try:
                 decisions = tuple(
-                    self.p_item_reader.read(images, boxes, plan=plan)
+                    self.p_item_reader.read(images, boxes, plan=plan, **read_scope)
                 )
             except (PItemReferenceError, OSError, KeyError, TypeError, ValueError) as error:
                 raise ArenaReaderError(
@@ -5651,6 +5658,7 @@ class MaaArenaReaderBackend:
             in {
                 "reference_margin_below_threshold",
                 "reference_similarity_below_threshold",
+                "reference_domain_empty",
             }
             and decision.candidates
         )
@@ -5836,6 +5844,13 @@ class MaaArenaReaderBackend:
                     screen_slot=screen_slot,
                 )
             )
+        if eligible_ids is not None:
+            for screen_slot, resolved_id in enumerate(screen_resolved_ids, start=1):
+                if resolved_id != 0 and resolved_id not in eligible_ids:
+                    raise ArenaReaderError(
+                        "p_item_unknown",
+                        f"P-item screen slot {screen_slot}: ID {resolved_id} is outside the {plan} arena domain",
+                    )
         gallery = getattr(self.p_item_reader, "gallery", None)
         resolved_ids = p_item_screen_order_to_engine_order(screen_resolved_ids)
         self._p_item_diagnostics = p_item_screen_order_to_engine_order(screen_diagnostics)
@@ -5853,6 +5868,7 @@ class MaaArenaReaderBackend:
             "content_generation_rejected_windows": (
                 content_generation_rejected_windows
             ),
+            "eligible_candidate_count": None if eligible_ids is None else len(eligible_ids),
             "reference_gallery_sha256": getattr(gallery, "gallery_sha256", None),
             "background_workers": 2,
             "ranking_routes": [decision.ranking_route for decision in decisions],
