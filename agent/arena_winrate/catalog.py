@@ -2799,8 +2799,11 @@ class ArenaEntityCatalog:
         }
         for field, (prefix, suffix) in scalar_labels.items():
             maximum = int(definition["max"])
+            # Only a direct patch changes the action's displayed base value.
+            # A conditional @grow patch can leave that same value visible at
+            # every level; it cannot prove that the growth was not selected.
             if not any(
-                _growth_increment(definition.get("effects"), field, level)
+                _direct_prestage_target_this_increment(definition.get("effects"), field, level)
                 is not None
                 for level in range(1, maximum + 1)
             ):

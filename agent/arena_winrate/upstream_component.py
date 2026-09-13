@@ -116,6 +116,18 @@ def _recoverable_component_failure(error: Exception) -> bool:
     return False
 
 
+def _log_component_update_notice(message: str, *, recovered: bool = False) -> None:
+    """Show a concise update outcome even when arena diagnostics are hidden."""
+
+    from utils import logger
+
+    visible_logger = logger.bind(ui_visible=True)
+    if recovered:
+        visible_logger.info(message)
+    else:
+        visible_logger.warning(message)
+
+
 def _promote_component_directory(source: Path, destination: Path) -> None:
     """Retry only a failed Windows move, without rebuilding a validated bundle."""
 
@@ -268,7 +280,9 @@ class GitHubProductionSource:
         failure = ArenaComponentError(
             f"RIS request failed after {attempts_made} attempt(s): {url}: {last_error}"
         )
-        failure._arena_component_retry_exhausted = True
+        # A request's attempts do not consume the manager's one update retry.
+        # Directory promotion keeps its separate exhausted marker so a locked
+        # destination cannot trigger another complete build.
         raise failure from last_error
 
     @classmethod
@@ -474,11 +488,36 @@ class ArenaComponentManager:
             outcome = self._checks.get(baseline)
             if outcome is None:
                 outcome = self._check_once(baseline)
-                for _ in range(FAILED_CHECK_RETRIES):
+                retried = False
+                for attempt in range(FAILED_CHECK_RETRIES):
                     if outcome.failure is None or not _recoverable_component_failure(outcome.failure):
                         break
+                    _log_component_update_notice(
+                        f"RIS 资源更新未成功，正在重试（{attempt + 1}/{FAILED_CHECK_RETRIES}）；请稍候。"
+                    )
+                    retried = True
                     outcome = self._check_once(baseline)
                 self._checks[baseline] = outcome
+                if outcome.failure is not None:
+                    prefix = "重试后仍未成功" if retried else "未成功"
+                    try:
+                        _resolve_selection(outcome, selection)
+                    except ArenaComponentError:
+                        message = (
+                            f"RIS 资源更新{prefix}，本地组件无法满足所选期数，本次任务停止。"
+                            "请稍后重新启动任务以重试更新。"
+                        )
+                    else:
+                        message = (
+                            f"RIS 资源更新{prefix}，本次继续使用本地组件 {outcome.bundle.commit[:12]}。"
+                            "资源可能不是最新，请核对下方使用期数；稍后重新启动任务可再次检查更新。"
+                        )
+                    _log_component_update_notice(message)
+                elif retried:
+                    _log_component_update_notice(
+                        f"RIS 资源重试成功，当前使用组件 {outcome.bundle.commit[:12]}。",
+                        recovered=True,
+                    )
         return _resolve_selection(outcome, selection)
 
     def _check_once(self, baseline_bundle: Path) -> _CheckOutcome:
