@@ -340,6 +340,42 @@ def _remove_non_runtime_python_entrypoints(site_packages: Path) -> None:
             raise BuildError(f"Python non-runtime entrypoint path is not a directory: {directory_name}")
 
 
+def _prune_dependency_tests(site_packages: Path) -> None:
+    """Keep public testing helpers, headers and metadata; omit only test suites."""
+    directories = [site_packages / "colorama/tests"]
+    numpy = site_packages / "numpy"
+    if numpy.is_dir():
+        directories.extend(path for path in numpy.rglob("tests") if path.is_dir())
+    for path in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+        if path.is_dir():
+            if path.is_symlink() or not path.resolve().is_relative_to(site_packages.resolve()):
+                raise BuildError("dependency test directory escaped site-packages")
+            shutil.rmtree(path)
+
+
+def _prune_unused_video_backend(site_packages: Path) -> None:
+    """The agent processes still images; retain codecs/models, omit the pinned video plugin."""
+    metadata = site_packages / "opencv_python_headless-5.0.0.93.dist-info/METADATA"
+    plugin = site_packages / "cv2/opencv_videoio_ffmpeg500_64.dll"
+    if metadata.is_file() and plugin.is_file():
+        package = Parser().parsestr(metadata.read_text(encoding="utf-8"))
+        if package.get("Name", "").replace("_", "-").lower() == "opencv-python-headless" and package.get("Version") == "5.0.0.93":
+            plugin.unlink()
+
+
+def _remove_obsolete_root_agent_tools(candidate: Path, framework: dict[str, Any]) -> None:
+    """MFA resolves libs/MaaAgentBinary; preserve Python's separate default path."""
+    legacy = candidate / "MaaAgentBinary"
+    active = candidate / "libs/MaaAgentBinary"
+    for path in legacy.rglob("*"):
+        if not path.is_file() or path.name.lower() in {"license", "license.md", "readme", "readme.md"}:
+            continue
+        counterpart = active / path.relative_to(legacy)
+        if counterpart.is_file() and sha256_file(path) == sha256_file(counterpart):
+            path.unlink()
+            framework["files"].pop(path.relative_to(candidate).as_posix(), None)
+
+
 def _normalize_python_dependency_sources(site_packages: Path) -> dict[str, str]:
     """Remove nonfunctional user-profile examples from vendored dependency text."""
 
@@ -833,7 +869,7 @@ def _framework_archive_hash(
     return actual_hash
 
 
-def _paired_runtime_files(candidate: Path) -> dict[str, str]:
+def _paired_runtime_files(candidate: Path, *, shared: bool = False) -> dict[str, str]:
     version = _required_maafw_version(candidate)
     site_packages = candidate / "python/Lib/site-packages"
     metadata_files = tuple(
@@ -848,16 +884,48 @@ def _paired_runtime_files(candidate: Path) -> dict[str, str]:
     native = candidate / FRAMEWORK_NATIVE_PATH
     python_native = candidate / FRAMEWORK_PYTHON_NATIVE_PATH
     for name in FRAMEWORK_REQUIRED_DLLS:
-        if not all((root / name).is_file() for root in (native, python_native)):
+        if not all((root / name).is_file() for root in ((native,) if shared else (native, python_native))):
             raise BuildError(f"candidate is missing a paired framework DLL: {name}")
-        if sha256_file(native / name) != sha256_file(python_native / name):
+        if not shared and sha256_file(native / name) != sha256_file(python_native / name):
             raise BuildError(f"candidate host/Python native payload mismatch: {name}")
     # Existing upstream bundles can use different control-component builds.
     # Bind every file, but compare only the three core IPC libraries here.
     # An explicit SDK overlay separately compares its entire Python payload.
     paths = [candidate / "requirements.txt", metadata_files[0]]
+    if shared:
+        for path in python_native.rglob("*"):
+            if path.is_file() and (native / path.relative_to(python_native)).is_file():
+                raise BuildError("shared framework candidate still contains a duplicate Python native file")
+        paths.append(metadata_files[0].parent / "RECORD")
     paths.extend(path for root in (native, python_native) for path in root.rglob("*") if path.is_file())
     return {path.relative_to(candidate).as_posix(): sha256_file(path) for path in paths}
+
+
+def _share_framework_runtime(candidate: Path, framework: dict[str, Any]) -> None:
+    """Remove only byte-identical native copies after the SDK overlay validated them."""
+    bootstrap = candidate / "agent/main.py"
+    if not bootstrap.is_file() or "def configure_maafw_binary_path(" not in bootstrap.read_text(encoding="utf-8-sig"):
+        raise BuildError("shared framework layout requires the matching agent bootstrap")
+    native = candidate / FRAMEWORK_NATIVE_PATH
+    python_native = candidate / FRAMEWORK_PYTHON_NATIVE_PATH
+    duplicates = []
+    for path in python_native.rglob("*"):
+        if not path.is_file():
+            continue
+        host = native / path.relative_to(python_native)
+        if not host.exists():
+            host.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, host)
+            framework["files"][host.relative_to(candidate).as_posix()] = sha256_file(host)
+        if host.is_file():
+            if sha256_file(host) != sha256_file(path):
+                raise BuildError(f"cannot share differing framework payload: {path.name}")
+            duplicates.append(path)
+    for path in duplicates:
+        path.unlink()
+        framework["files"].pop(path.relative_to(candidate).as_posix(), None)
+    framework["native_layout"] = "shared"
+    framework["files"].update(_paired_runtime_files(candidate, shared=True))
 
 
 def _overlay_framework(
@@ -948,7 +1016,7 @@ def _overlay_framework(
     }
 
 
-def _validate_python_runtime(root: Path, *, framework_version: str | None = None) -> dict[str, str]:
+def _validate_python_runtime(root: Path, *, framework_version: str | None = None, shared: bool = False) -> dict[str, str]:
     executable = root / "python" / "python.exe"
     if not executable.is_file():
         raise BuildError("candidate embedded Python is missing")
@@ -1004,6 +1072,8 @@ def _validate_python_runtime(root: Path, *, framework_version: str | None = None
     with tempfile.TemporaryDirectory(prefix="gkh-runtime-smoke-", dir=runtime_parent) as runtime_text:
         runtime = Path(runtime_text)
         smoke_environment = os.environ.copy()
+        if shared:
+            smoke_environment["MAAFW_BINARY_PATH"] = str(root / FRAMEWORK_NATIVE_PATH)
         for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"):
             smoke_environment[name] = str(runtime)
         agent_client_completed = subprocess.run(
@@ -1252,6 +1322,8 @@ def build_derived_package(
         python_target = candidate / "python" / "Lib" / "site-packages"
         _replace_tree(python_site_packages, python_target)
         _remove_non_runtime_python_entrypoints(python_target)
+        _prune_dependency_tests(python_target)
+        _prune_unused_video_backend(python_target)
         python_source_normalizations = _normalize_python_dependency_sources(python_target)
 
         framework = None
@@ -1265,6 +1337,8 @@ def build_derived_package(
                 candidate, framework_sdk, archive=framework_archive,
                 archive_hash=actual_framework_hash, version=framework_version,
             )
+            _share_framework_runtime(candidate, framework)
+            _remove_obsolete_root_agent_tools(candidate, framework)
 
         critical_hashes = _validate_candidate(
             candidate,
@@ -1274,9 +1348,9 @@ def build_derived_package(
         if framework is not None:
             critical_hashes.update(framework["files"])
         if validate_python_runtime:
-            critical_hashes.update(_paired_runtime_files(candidate))
+            critical_hashes.update(_paired_runtime_files(candidate, shared=framework is not None))
         python_packages = (
-            _validate_python_runtime(candidate, **({"framework_version": framework_version} if framework else {}))
+            _validate_python_runtime(candidate, **({"framework_version": framework_version, "shared": True} if framework else {}))
             if validate_python_runtime else {}
         )
         update_mode = (

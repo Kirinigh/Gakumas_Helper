@@ -227,6 +227,7 @@
       "required": ["repository", "version", "archive", "sha256", "files", "license"],
       "properties": {
         "repository": { "const": "https://github.com/MaaXYZ/MaaFramework" },
+        "native_layout": { "const": "shared" },
         "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
         "archive": { "type": "string", "pattern": "^MAA-win-x86_64-v[0-9]+\\.[0-9]+\\.[0-9]+\\.zip$" },
         "sha256": { "$ref": "#/$defs/sha256" },
@@ -234,7 +235,7 @@
           "type": "object",
           "minProperties": 9,
           "propertyNames": {
-            "pattern": "^(runtimes/win-x64/native/.+|python/Lib/site-packages/maa/bin/.+|python/Lib/site-packages/maafw-[0-9]+\\.[0-9]+\\.[0-9]+\\.dist-info/METADATA|MaaAgentBinary/.+|libs/MaaAgentBinary/.+|share/MaaAgentBinary/.+|requirements\\.txt|THIRD_PARTY_NOTICES/MaaFramework-LICENSE)$"
+            "pattern": "^(runtimes/win-x64/native/.+|python/Lib/site-packages/maa/bin/.+|python/Lib/site-packages/maafw-[0-9]+\\.[0-9]+\\.[0-9]+\\.dist-info/(METADATA|RECORD)|MaaAgentBinary/.+|libs/MaaAgentBinary/.+|share/MaaAgentBinary/.+|requirements\\.txt|THIRD_PARTY_NOTICES/MaaFramework-LICENSE)$"
           },
           "additionalProperties": { "$ref": "#/$defs/sha256" }
         },
@@ -304,10 +305,11 @@
                 { "const": "resource_update_apply" },
                 { "const": "deterministic_build_path" },
                 { "const": "diagnostic_log_export" },
-                { "const": "dynamic_option_cases" }
+                { "const": "dynamic_option_cases" },
+                { "const": "startup_template_and_saved_layout" }
               ],
-              "minItems": 5,
-              "maxItems": 5
+              "minItems": 6,
+              "maxItems": 6
             }
           },
           "additionalProperties": false

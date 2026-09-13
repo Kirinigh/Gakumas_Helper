@@ -1954,8 +1954,10 @@ def _validate_framework_build_binding(
 ) -> None:
     # A host archive can already contain the right framework. An optional
     # override records its source; it must never enable or disable pairing checks.
+    framework_record = build.get("framework")
+    shared = isinstance(framework_record, dict) and framework_record.get("native_layout") == "shared"
     try:
-        runtime_files = derived_package._paired_runtime_files(candidate)
+        runtime_files = derived_package._paired_runtime_files(candidate, **({"shared": True} if shared else {}))
         required_version = derived_package._required_maafw_version(candidate)
     except (OSError, UnicodeError, derived_package.BuildError) as error:
         raise ReleaseBuildError(f"candidate framework runtime pairing failed: {error}") from error
@@ -1972,7 +1974,7 @@ def _validate_framework_build_binding(
         return
     if not isinstance(framework, dict) or set(framework) != {
         "repository", "version", "archive", "sha256", "files", "license",
-    }:
+    } | ({"native_layout"} if shared else set()):
         raise ReleaseBuildError("candidate framework provenance is invalid")
     version = framework.get("version")
     if (
@@ -1994,8 +1996,12 @@ def _validate_framework_build_binding(
         "MaaAgentBinary/", "libs/MaaAgentBinary/", "share/MaaAgentBinary/",
     )
     required = {"requirements.txt", metadata_relative, notice_relative}
+    if shared:
+        required.add(f"python/Lib/site-packages/maafw-{version}.dist-info/RECORD")
     for name in ("MaaFramework.dll", "MaaAgentClient.dll", "MaaAgentServer.dll"):
-        required.update((f"{native_root}/{name}", f"{python_native_root}/{name}"))
+        required.add(f"{native_root}/{name}")
+        if not shared:
+            required.add(f"{python_native_root}/{name}")
     if not isinstance(files, dict) or not required.issubset(files):
         raise ReleaseBuildError("candidate framework paired file inventory is incomplete")
     for relative, expected_hash in files.items():

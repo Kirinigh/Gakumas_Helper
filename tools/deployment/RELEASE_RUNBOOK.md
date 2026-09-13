@@ -183,7 +183,15 @@ $PublicParentSha = $ExpectedRemoteMainSha
   --public-parent-revision $PublicParentSha
 ```
 
-`--source-update` 必须有已验证公开父提交，不能创建初始根。版本必须等于父版；不会生成本次发布公告。`--commit-date` 是 `--release-date` 的同义参数，日期仍为 `YYYY-MM-DD`，不能用自由格式时间。一次生成只增加一个真实逻辑提交；下一项变化可以把已生成快照作为父仓库再次生成，依次更新 `$PublicParentDirectory`、`$PublicParentSha`、开发提交、说明文件和独立输出目录。
+`--source-update` 必须有已验证公开父提交，不能创建初始根。版本必须等于父版；不会生成本次发布公告。`--commit-date` 是 `--release-date` 的同义参数，日期仍为 `YYYY-MM-DD`，不能用自由格式时间。一次生成只增加一个真实逻辑提交；下一项变化可以把已生成快照作为父仓库再次生成，依次更新 `$PublicParentDirectory`、`$PublicParentSha`、开发提交、说明文件和独立输出目录。后续提交标题描述和正文使用中文，保留既有类型/范围前缀，不重写已公开历史。
+
+### 精简完整包的运行库布局
+
+显式固定 SDK 覆盖后，打包器将逐字节相同的 Python 原生库与宿主 `runtimes/win-x64/native` 合并，在既有构建清单的 `framework.native_layout` 记录 `shared`。必须配套包含共享加载入口的 `agent/main.py`，不能只从旧包删除 DLL。Python 使用官方 `MAAFW_BINARY_PATH` 入口；原 wheel 的 `RECORD` 保留，覆盖恢复用其原摘要核对共享宿主文件，忽略旧包遗留的同名 Python DLL。正常匹配安装与覆盖整理不应触发 pip 重装。旧包覆盖会保留新 ZIP 未包含的旧文件，因此下载体积收益不等于已安装目录立即减少同样大小。
+
+裁剪仅限 NumPy/Colorama 的测试用例目录、与 `libs/MaaAgentBinary` 相同的旧根目录工具，以及已验证 OpenCV 5.0.0.93 的 `opencv_videoio_ffmpeg500_64.dll` 视频插件。保留 `numpy.testing`、头文件、元数据、许可证、Node、必要模型、两套不同图库与 Python 默认的 MaaAgentBinary 工具。实际产品处理静态图片，后续若新增视频文件读写功能，必须重新引入并验证相应后端；不要据此扩大到删除其它 OpenCV DLL。
+
+发布前验证仍包含：实际宿主与 AgentServer 库加载、首次依赖检查、旧包覆盖且旧版本记录残留时的恢复、图片编解码和模型推理、隔离 GUI 首启以及实际 ZIP 逐文件核对和扫描。离线模拟器默认路径及工具字节检查不等于模拟器实机验收。本地体积候选可以复用未变 Core；正式包仍须满足源码补丁与 Core bundle 绑定，不能把待构建的其它 Core 修复声明为已包含。
 
 同批多笔提交可在一个 Python 进程中调用现有导出函数，共享内存中的历史检查结果：
 

@@ -225,12 +225,35 @@ def read_installed_maafw_version() -> str | None:
         return None
 
 
+def shared_maafw_binary_path() -> Path | None:
+    """仅完整包声明共享布局时使用宿主 DLL；普通 Python 安装保持原行为。"""
+    root = Path(__file__).resolve().parent.parent
+    manifest = root / "GAKUMAS_HELPER_BUILD.json"
+    if not manifest.is_file():
+        return None
+    build = json.loads(manifest.read_text(encoding="utf-8-sig"))
+    if (build.get("framework") or {}).get("native_layout") != "shared":
+        return None
+    native = root / "runtimes/win-x64/native"
+    for name in ("MaaFramework.dll", "MaaAgentClient.dll", "MaaAgentServer.dll", "MaaToolkit.dll"):
+        if not (native / name).is_file():
+            raise RuntimeError(f"共享 MaaFramework 文件缺失：{name}；请恢复完整客户端包")
+    return native
+
+
+def configure_maafw_binary_path() -> None:
+    native = shared_maafw_binary_path()
+    if native is not None:
+        os.environ["MAAFW_BINARY_PATH"] = str(native)
+
+
 def reconcile_overlaid_maafw(required_version: str) -> str | None:
     """完整包覆盖会保留旧版本记录；仅在重复时核对目标 wheel 并清理旧记录。"""
     spec = util.find_spec("maa")
     if spec is None or spec.origin is None:
         return None
     site_root = Path(spec.origin).resolve().parent.parent
+    shared_native = shared_maafw_binary_path()
     records = list(site_root.glob("maafw-*.dist-info"))
     if len(records) < 2:
         return None
@@ -259,7 +282,13 @@ def reconcile_overlaid_maafw(required_version: str) -> str | None:
                     raise ValueError("文件记录路径错误或重复")
                 seen.add(name)
                 file = site_root.joinpath(*relative.parts)
-                if not file.resolve().is_relative_to(site_root) or not file.is_file():
+                allowed_root = site_root
+                # 保留 wheel 原始 RECORD，使用同一条摘要核对共享的宿主文件。
+                # 即使旧版覆盖遗留 maa/bin，也不能选中那份旧 DLL。
+                if shared_native is not None and relative.parts[:2] == ("maa", "bin"):
+                    file = shared_native.joinpath(*relative.parts[2:])
+                    allowed_root = shared_native
+                if not file.resolve().is_relative_to(allowed_root) or not file.is_file():
                     raise ValueError("覆盖包文件缺失")
                 if name == f"{target.name}/RECORD":
                     if digest or size:
@@ -289,6 +318,7 @@ def check_and_install_dependencies():
     """
     检查并安装依赖
     """
+    configure_maafw_binary_path()
     required_maafw = read_required_maafw_version()
     overlay_error = None
     try:
