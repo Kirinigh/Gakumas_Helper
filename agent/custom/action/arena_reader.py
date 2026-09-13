@@ -222,6 +222,7 @@ class _TrustedSkillCardTitleRowsEvidence(NamedTuple):
 
     image: Any
     rows: tuple[str, ...]
+    unmatched_rows: tuple[tuple[str, tuple[int, int, int, int]], ...] = ()
 
 
 class _DetailIdentityObservation(NamedTuple):
@@ -7135,7 +7136,7 @@ class MaaArenaReaderBackend:
         )
         if exact_resolver is not None and title_text is not None:
             try:
-                return exact_resolver(title_text)
+                return self._resolve_proven_skill_card_title(title_text)
             except ArenaCatalogError as error:
                 exact_title_error = error
 
@@ -7177,30 +7178,48 @@ class MaaArenaReaderBackend:
             assert candidate_error is not None
             raise candidate_error
 
-    def _resolve_proven_skill_card_title(self, title_text: str) -> int:
+    def _resolve_proven_skill_card_title(
+        self, title_text: str, *, allow_one_character: bool = True,
+    ) -> int:
         """Resolve a geometrically proven title without widening other aliases."""
         exact_resolver = getattr(self.catalog, "confirm_clicked_skill_card_by_exact_title", None)
         if exact_resolver is None:
             raise ArenaCatalogError("catalog has no exact title resolver")
         try:
             return exact_resolver(title_text)
-        except ArenaCatalogError:
+        except ArenaCatalogError as exact_error:
+            # A real display title (including duplicate owners) is never
+            # reinterpreted through a lossy correction.
+            normalizer = getattr(self.catalog, "normalize_skill_card_title_text", str)
+            if normalizer(title_text) in getattr(self.catalog, "_cards_by_display_title", {}):
+                raise
             note_resolver = getattr(
                 self.catalog, "confirm_clicked_skill_card_by_terminal_note_title", None,
             )
-            if note_resolver is None:
-                raise
-            return note_resolver(title_text)
+            if note_resolver is not None:
+                try:
+                    return note_resolver(title_text)
+                except ArenaCatalogError:
+                    pass
+            recovery = getattr(self.catalog, "recover_skill_card_title_one_character", None)
+            if allow_one_character and recovery is not None:
+                return recovery(title_text)
+            raise exact_error
 
     def _same_proven_skill_card_title(self, first: str, second: str, card_id: int) -> bool:
         if first == second:
             return True
-        if not any(
-            (note := re.fullmatch(r"([^♪+]{3,})♪(\+?)", complete)) is not None
-            and "".join(note.groups()) == omitted
-            for complete, omitted in ((first, second), (second, first))
-        ):
-            return False
+        exact = getattr(self.catalog, "confirm_clicked_skill_card_by_exact_title", None)
+        if exact is not None:
+            try:
+                exact(first)
+                exact(second)
+            except ArenaCatalogError:
+                pass
+            else:
+                # Distinct exact titles are an identity conflict, never a
+                # correction (even if a caller supplies a faulty resolver).
+                return False
         try:
             return (
                 self._resolve_proven_skill_card_title(first)
@@ -7469,7 +7488,7 @@ class MaaArenaReaderBackend:
             if hasattr(self, "_runtime_counts"):
                 self._increment("skill_card_exact_title_index_queries")
             try:
-                self._resolve_proven_skill_card_title(line)
+                self._resolve_proven_skill_card_title(line, allow_one_character=False)
                 return True
             except ArenaCatalogError:
                 pass
@@ -7490,12 +7509,15 @@ class MaaArenaReaderBackend:
         started = time.perf_counter()
         try:
             rows: list[tuple[int, int, str, tuple[int, int, int, int]]] = []
+            unmatched_rows: list[tuple[str, tuple[int, int, int, int]]] = []
             items = self._ocr(image, r".+")
-            candidates = tuple(
+            original_candidates = tuple(
                 (_text(item).strip(), _box(item))
                 for item in items
                 if _text(item).strip()
-            ) + self._skill_card_title_ocr_segments(items)
+            )
+            candidates = original_candidates + self._skill_card_title_ocr_segments(items)
+            original_candidate_keys = set(original_candidates)
             seen_candidates: set[
                 tuple[str, tuple[int, int, int, int]]
             ] = set()
@@ -7537,6 +7559,11 @@ class MaaArenaReaderBackend:
                 ):
                     continue
                 if not title_row_is_authoritative(line):
+                    # Keep whole original atoms for a failure-only second
+                    # pass. Do not repair a substring manufactured by split
+                    # title processing, or run fuzzy lookup on normal frames.
+                    if candidate_key in original_candidate_keys:
+                        unmatched_rows.append((raw_text, box))
                     continue
                 if not self._skill_card_title_row_has_neutral_ink(image, box):
                     continue
@@ -7569,6 +7596,7 @@ class MaaArenaReaderBackend:
         cache[cache_key] = _TrustedSkillCardTitleRowsEvidence(
             image,
             trusted_rows,
+            tuple(unmatched_rows),
         )
         return trusted_rows
 
@@ -7681,11 +7709,73 @@ class MaaArenaReaderBackend:
             new_rows.append(line)
         if len(new_rows) == 1:
             return new_rows[0]
+        if not new_rows and source_card_box is not None:
+            recovered = self._recover_unmatched_skill_card_title(
+                group_index, detail_image, candidate_card_ids, source_card_box,
+            )
+            if recovered is not None:
+                return recovered
         if new_rows:
             self._increment("skill_card_detail_title_ambiguous")
         else:
             self._increment("skill_card_detail_title_missing")
         return None
+
+    def _recover_unmatched_skill_card_title(
+        self, group_index: int, image: Any, candidate_ids: Sequence[int],
+        source_card_box: tuple[int, int, int, int],
+    ) -> str | None:
+        """Reuse whole native title atoms only after normal title selection fails."""
+        cache_key = (id(image), tuple(sorted(set(candidate_ids))), tuple(source_card_box))
+        cached = getattr(self, "_trusted_skill_card_title_rows_cache", {}).get(cache_key)
+        if cached is None or cached.image is not image:
+            return None
+        recovery = getattr(self.catalog, "recover_skill_card_title_one_character", None)
+        if recovery is None:
+            return None
+        source_counts = self._stable_skill_card_source_ocr_counts(group_index)
+        candidates = []
+        ambiguous = False
+        for raw_text, box in cached.unmatched_rows:
+            (line,) = self._normalized_skill_card_ocr_lines(raw_text)
+            if source_counts.get(line, 0) or not self._skill_card_title_row_has_neutral_ink(image, box):
+                continue
+            self._increment("skill_card_title_one_character_queries")
+            try:
+                card_id = recovery(line)
+            except ArenaCatalogError as error:
+                ambiguous |= "skill_card_title_ambiguous:" in str(error)
+                continue
+            candidates.append((line, box, card_id, raw_text))
+        if ambiguous or len(candidates) != 1:
+            return None
+        line, box, card_id, raw_text = candidates[0]
+        # This is frame-local title evidence, not an accepted card result.
+        # Existing effect, slot-domain and fresh-frame checks still follow.
+        evidence = getattr(self, "_skill_card_recovered_title_frames", None)
+        if evidence is None:
+            evidence = self._skill_card_recovered_title_frames = {}
+        key = (id(image), card_id)
+        if key not in evidence:
+            self._increment("skill_card_title_one_character_recoveries")
+            logger.debug(
+                f"skill-card title one-character recovery: group={group_index} "
+                f"source_box={source_card_box} title_box={box} observed={raw_text!r} "
+                f"resolved={self.catalog.skill_card_title(card_id)!r} card_id={card_id}",
+            )
+        evidence[key] = (image, raw_text)
+        while len(evidence) > 32:
+            evidence.pop(next(iter(evidence)))
+        return line
+
+    def _skill_card_frame_title_pattern(self, image: Any, card_id: int) -> str:
+        pattern = self.catalog.skill_card_title_anchor_pattern(card_id)
+        recovered = getattr(self, "_skill_card_recovered_title_frames", {}).get((id(image), card_id))
+        if recovered is not None and recovered[0] is image:
+            # Quote only this frame's proven original row. Never add a global
+            # wildcard to the catalog or rewrite the effect text.
+            pattern = f"(?:{pattern}|{re.escape(recovered[1])})"
+        return pattern
 
     def _skill_card_source_box(
         self,
@@ -9857,7 +9947,7 @@ class MaaArenaReaderBackend:
             if evidence is None:
                 return None
             atoms = tuple((_text(item), _box(item)) for item in evidence.all_items)
-            pattern = self.catalog.skill_card_title_anchor_pattern(card_id)
+            pattern = self._skill_card_frame_title_pattern(image, card_id)
             titles = tuple(box for value, box in atoms if re.search(pattern, value))
             if len(titles) != 1:
                 return None
@@ -11600,7 +11690,7 @@ class MaaArenaReaderBackend:
         import cv2
 
         try:
-            title_pattern = self.catalog.skill_card_title_anchor_pattern(card_id)
+            title_pattern = self._skill_card_frame_title_pattern(image, card_id)
         except ArenaCatalogError as error:
             raise ArenaReaderError(
                 "skill_card_detail_title_catalog_missing",
@@ -11705,7 +11795,7 @@ class MaaArenaReaderBackend:
         started = time.perf_counter()
         try:
             try:
-                title_pattern = self.catalog.skill_card_title_anchor_pattern(card_id)
+                title_pattern = self._skill_card_frame_title_pattern(image, card_id)
             except ArenaCatalogError as error:
                 raise ArenaReaderError(
                     "skill_card_detail_title_catalog_missing",
@@ -12103,6 +12193,7 @@ class MaaArenaReaderBackend:
         getattr(self, "_full_frame_ocr_evidence", {}).clear()
         getattr(self, "_title_anchor_ocr_evidence", {}).clear()
         getattr(self, "_trusted_skill_card_title_rows_cache", {}).clear()
+        getattr(self, "_skill_card_recovered_title_frames", {}).clear()
         self._card_source_guard_frames.clear()
         getattr(self, "_card_source_guard_signature_cache", {}).clear()
         self._card_restoration_signatures.clear()

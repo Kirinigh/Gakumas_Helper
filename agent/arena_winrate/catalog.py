@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 
 from ._p_item_detail_text import PItemDetailTextIndex, PItemDetailTextResult
 from ._skill_card_eligibility import ArenaSkillCardEligibility
+from ._skill_card_title_recovery import SkillCardTitleRecoveryIndex
 
 
 class ArenaCatalogError(ValueError):
@@ -359,6 +360,7 @@ class ArenaEntityCatalog:
             )) is not None
             and "".join(note.groups()) in self._skill_card_title_aliases[card_id][1:]
         }
+        self._skill_card_title_recovery_index: SkillCardTitleRecoveryIndex | None = None
         self._p_items_by_id = {
             int(row["id"]): row
             for row in self._p_items
@@ -1402,6 +1404,32 @@ class ArenaEntityCatalog:
         raise ArenaCatalogError(
             "clicked skill-card terminal-note title requires one globally unique OCR line"
         )
+
+    def recover_skill_card_title_one_character(self, detail_text: str) -> int:
+        """Recover one unique display title after exact matching has failed.
+
+        This is opt-in and only for a whole, geometrically proven popup title.
+        Do not apply to body text, joined rows, upgrade marks or visual Top-K.
+        """
+        lines = str(detail_text or "").strip().splitlines()
+        if len(lines) != 1:
+            raise ArenaCatalogError("skill_card_title_unrecognized: expected one complete title row")
+        observed = _normalise_skill_card_title_text(lines[0])
+        if observed in self._cards_by_display_title:
+            raise ArenaCatalogError("skill_card_title_unrecognized: exact title must use exact matching")
+        if self._skill_card_title_recovery_index is None:
+            self._skill_card_title_recovery_index = SkillCardTitleRecoveryIndex({
+                title: tuple(int(card["id"]) for card in cards)
+                for title, cards in self._cards_by_display_title.items()
+            })
+        candidates = self._skill_card_title_recovery_index.candidates(observed)
+        if len(candidates) != 1:
+            reason = "ambiguous" if candidates else "unrecognized"
+            raise ArenaCatalogError(
+                f"skill_card_title_{reason}: one-character recovery for {observed!r} "
+                f"has candidates {candidates!r}"
+            )
+        return candidates[0]
 
     def confirm_clicked_customizable_skill_card(
         self,
