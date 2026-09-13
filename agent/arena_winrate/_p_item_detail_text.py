@@ -291,12 +291,17 @@ class PItemDetailTextIndex:
                                 known.setdefault(literals, {}).setdefault(item_id, set()).add(tuple(match.groups()))
             self._family_known_fields[ids] = known
 
-    def family_ids_for_title(self, title: str, *, plan: str | None = None) -> tuple[int, ...]:
+    def family_ids_for_title(
+        self, title: str, *, plan: str | None = None, eligible_ids: frozenset[int] | None = None,
+    ) -> tuple[int, ...]:
+        family = self._title_scopes.get(normalize(title), ())
         if self._candidate_ids_by_plan is not None and plan in self._candidate_ids_by_plan:
-            eligible = self._candidate_ids_by_plan[plan]
-            return tuple(item_id for item_id in self._title_scopes.get(normalize(title), ()) if item_id in eligible)
-        return tuple(item_id for item_id in self._title_scopes.get(normalize(title), ())
-                     if plan in (None, "", "free") or self._active[item_id].get("plan") in (None, "", "free", plan))
+            plan_ids = self._candidate_ids_by_plan[plan]
+            family = tuple(item_id for item_id in family if item_id in plan_ids)
+        else:
+            family = tuple(item_id for item_id in family
+                           if plan in (None, "", "free") or self._active[item_id].get("plan") in (None, "", "free", plan))
+        return tuple(item_id for item_id in family if eligible_ids is None or item_id in eligible_ids)
 
     def _upgraded(self, item_id: int) -> bool:
         row = self._active[item_id]
@@ -305,12 +310,13 @@ class PItemDetailTextIndex:
 
     def _resolve(
         self, title: str, text: str, spans: list[dict], *, plan: str | None,
+        eligible_ids: frozenset[int] | None = None,
         uncertain_atoms: set[int] | None = None,
         layout_diagnostics: Mapping[str, Any] | None = None,
     ) -> PItemDetailTextResult:
         title = normalize(title)
         family = self._title_scopes.get(title, ())
-        scoped = self.family_ids_for_title(title, plan=plan)
+        scoped = self.family_ids_for_title(title, plan=plan, eligible_ids=eligible_ids)
         if not scoped:
             return PItemDetailTextResult("unknown", reason="title_not_in_catalog", diagnostics={"title_family_ids": family})
         uncertain_atoms = uncertain_atoms or set()
@@ -424,6 +430,7 @@ class PItemDetailTextIndex:
         self, atoms: Sequence[Mapping[str, Any]], *, title_index: int,
         source_frames: Sequence[Sequence[Mapping[str, Any]]] | PItemSourceTextFrames = (),
         plan: str | None = None,
+        eligible_ids: frozenset[int] | None = None,
     ) -> PItemDetailTextResult:
         if not isinstance(title_index, int) or isinstance(title_index, bool) or not 0 <= title_index < len(atoms):
             return PItemDetailTextResult("unknown", reason="invalid_title_index")
@@ -432,10 +439,10 @@ class PItemDetailTextIndex:
         layout = body_layout(atom_rows, title_index, sources)
         text, spans = atom_text_view(atom_rows, layout)
         uncertain = {index for entry in layout.get("uncertainty", ()) for index in entry.get("atom_indices", ())}
-        return self._resolve(str(atom_rows[title_index]["text"]), text, spans, plan=plan, uncertain_atoms=uncertain,
+        return self._resolve(str(atom_rows[title_index]["text"]), text, spans, plan=plan, eligible_ids=eligible_ids, uncertain_atoms=uncertain,
                              layout_diagnostics={"status": layout["status"], "reason": layout["reason"], "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": layout.get("uncertainty", ())})
 
-    def match_text(self, title_text: str, detail_text: str, *, plan: str | None = None) -> PItemDetailTextResult:
+    def match_text(self, title_text: str, detail_text: str, *, plan: str | None = None, eligible_ids: frozenset[int] | None = None) -> PItemDetailTextResult:
         """Compatibility core for old text-only mocks; production passes atoms."""
         lines = detail_text.splitlines()
         title_matches = [i for i, line in enumerate(lines) if normalize(line) == normalize(title_text)]
@@ -443,5 +450,5 @@ class PItemDetailTextIndex:
             lines = lines[title_matches[0] + 1:]
         atoms = [{"text": line} for line in lines]
         text, spans = atom_text_view(atoms, {"atoms": [[i] for i in range(len(atoms))]})
-        return self._resolve(title_text, text, spans, plan=plan,
+        return self._resolve(title_text, text, spans, plan=plan, eligible_ids=eligible_ids,
                              layout_diagnostics={"status": "text_only_compatibility", "production_geometry_claim": False})

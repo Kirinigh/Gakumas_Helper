@@ -301,6 +301,7 @@ class PItemReader(Protocol):
         *,
         plan: str,
         eligible_p_item_ids: frozenset[int] | None = None,
+        eligible_p_item_ids_by_slot: Sequence[frozenset[int]] | None = None,
     ) -> Sequence[PItemReferenceDecision]: ...
 
 
@@ -364,17 +365,23 @@ class Task085PItemReader:
         *,
         plan: str,
         eligible_p_item_ids: frozenset[int] | None = None,
+        eligible_p_item_ids_by_slot: Sequence[frozenset[int]] | None = None,
     ) -> Sequence[PItemReferenceDecision]:
-        def classify(box: tuple[int, int, int, int]) -> PItemReferenceDecision:
+        if eligible_p_item_ids_by_slot is not None and len(eligible_p_item_ids_by_slot) != len(boxes):
+            raise PItemReferenceError("P-item candidate domains must match the screen slots")
+
+        def classify(entry: tuple[int, tuple[int, int, int, int]]) -> PItemReferenceDecision:
+            slot_index, box = entry
             return self.gallery.classify(
                 images,
                 box,
                 plan=plan,
-                eligible_p_item_ids=eligible_p_item_ids,
+                eligible_p_item_ids=(eligible_p_item_ids if eligible_p_item_ids_by_slot is None
+                                     else eligible_p_item_ids_by_slot[slot_index]),
             )
 
         with ThreadPoolExecutor(max_workers=min(2, len(boxes))) as executor:
-            return tuple(executor.map(classify, boxes))
+            return tuple(executor.map(classify, enumerate(boxes)))
 
 
 class ArenaReaderDiagnosticPort:
@@ -4253,6 +4260,7 @@ class MaaArenaReaderBackend:
         unrepresented_ids: Sequence[int] = (), source_images: Sequence[Any] = (),
         source_boxes: Sequence[tuple[int, int, int, int]] = (),
         plan: str | None = None,
+        slot_index: int | None = None,
     ) -> int:
         started = time.perf_counter()
         failed_before = len(getattr(self, "_runtime_duration_samples", {}).get("p_item_detail_failed_transaction", ()))
@@ -4264,6 +4272,7 @@ class MaaArenaReaderBackend:
                 visual_tiebreak_ids=visual_tiebreak_ids, unrepresented_ids=unrepresented_ids,
                 source_images=source_images, source_boxes=source_boxes,
                 plan=plan,
+                **({} if slot_index is None else {"slot_index": slot_index}),
             )
         except Exception as error:
             if len(getattr(self, "_runtime_duration_samples", {}).get("p_item_detail_failed_transaction", ())) == failed_before:
@@ -4284,7 +4293,9 @@ class MaaArenaReaderBackend:
         source_images: Sequence[Any] = (),
         source_boxes: Sequence[tuple[int, int, int, int]] = (),
         plan: str | None = None,
+        slot_index: int | None = None,
     ) -> int:
+        slot_scope = {} if slot_index is None else {"slot_index": slot_index}
         if not candidate_ids:
             raise ArenaReaderError(
                 "p_item_detail_candidates_missing",
@@ -4299,10 +4310,10 @@ class MaaArenaReaderBackend:
                     continue
                 family_matcher = getattr(self.catalog, "p_item_detail_title_family_ids", None)
                 if callable(family_matcher):
-                    row_matches = family_matcher(title_row, plan=plan)
+                    row_matches = family_matcher(title_row, plan=plan, **slot_scope)
                     if not row_matches:
                         recovered = family_matcher(
-                            title_row, plan=plan, allow_one_substitution=True,
+                            title_row, plan=plan, allow_one_substitution=True, **slot_scope,
                         )
                         # Preserve the existing visual boundary only for a
                         # one-character OCR repair. An exact complete title
@@ -4335,7 +4346,7 @@ class MaaArenaReaderBackend:
                     continue
                 family_matcher = getattr(self.catalog, "p_item_detail_title_family_ids", None)
                 if callable(family_matcher):
-                    matches.extend(family_matcher(title_row, plan=plan))
+                    matches.extend(family_matcher(title_row, plan=plan, **slot_scope))
                 else:
                     matches.extend(self.catalog.clicked_p_item_global_detail_matches(
                         title_row,
@@ -4927,7 +4938,7 @@ class MaaArenaReaderBackend:
                         text_atoms, title_index=title_index,
                         source_frames=tuple(value[5] for value in source_observations)
                         if source_images else (),
-                        plan=plan, candidate_p_item_ids=candidate_ids,
+                        plan=plan, candidate_p_item_ids=candidate_ids, **slot_scope,
                         visual_tiebreak_p_item_ids=visual_tiebreak_ids,
                         title_text=last_title_text, detail_text=last_text,
                         allow_one_substitution=not bool(match_title_rows_exact(last_title_text)),
@@ -5598,7 +5609,9 @@ class MaaArenaReaderBackend:
         catalog = getattr(self, "catalog", None)
         scope_resolver = getattr(catalog, "arena_p_item_candidate_ids", None)
         eligible_ids = scope_resolver(plan=plan) if scope_resolver is not None else None
-        read_scope = {} if eligible_ids is None else {"eligible_p_item_ids": eligible_ids}
+        slot_domains = (tuple(scope_resolver(plan=plan, slot_index=index) for index in range(4))
+                        if scope_resolver is not None else None)
+        read_scope = {} if slot_domains is None else {"eligible_p_item_ids_by_slot": slot_domains}
         first = self._capture()
         height, width = first.shape[:2]
         icon = int(width * 0.09)
@@ -5779,6 +5792,9 @@ class MaaArenaReaderBackend:
                     if use_global_detail
                     else decision.candidates
                 )
+                if slot_domains is not None:
+                    detail_candidates = tuple(item_id for item_id in detail_candidates
+                                              if item_id in slot_domains[screen_slot - 1])
                 decision_observed_ids = (
                     (decision.p_item_id,)
                     if decision.accepted and decision.p_item_id is not None
@@ -5800,6 +5816,7 @@ class MaaArenaReaderBackend:
                     source_images=images,
                     source_boxes=boxes,
                     plan=plan,
+                    **({} if slot_domains is None else {"slot_index": screen_slot - 1}),
                 )
                 screen_resolved_ids.append(resolved_id)
                 screen_diagnostics.append(
@@ -5846,7 +5863,7 @@ class MaaArenaReaderBackend:
             )
         if eligible_ids is not None:
             for screen_slot, resolved_id in enumerate(screen_resolved_ids, start=1):
-                if resolved_id != 0 and resolved_id not in eligible_ids:
+                if resolved_id != 0 and resolved_id not in slot_domains[screen_slot - 1]:
                     raise ArenaReaderError(
                         "p_item_unknown",
                         f"P-item screen slot {screen_slot}: ID {resolved_id} is outside the {plan} arena domain",
@@ -5869,6 +5886,8 @@ class MaaArenaReaderBackend:
                 content_generation_rejected_windows
             ),
             "eligible_candidate_count": None if eligible_ids is None else len(eligible_ids),
+            "eligible_candidate_counts_by_screen_slot": (None if slot_domains is None
+                                                         else [len(domain) for domain in slot_domains]),
             "reference_gallery_sha256": getattr(gallery, "gallery_sha256", None),
             "background_workers": 2,
             "ranking_routes": [decision.ranking_route for decision in decisions],

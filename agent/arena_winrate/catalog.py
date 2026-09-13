@@ -511,10 +511,17 @@ class ArenaEntityCatalog:
             self._arena_p_item_eligibility = ArenaPItemEligibility(self._p_items)
         return self._arena_p_item_eligibility
 
-    def arena_p_item_candidate_ids(self, *, plan: str | None = None) -> frozenset[int]:
+    def arena_p_item_candidate_ids(
+        self, *, plan: str | None = None, slot_index: int | None = None,
+    ) -> frozenset[int]:
         if plan not in (None, "free", "sense", "logic", "anomaly"):
             raise ArenaCatalogError(f"unsupported arena P-item plan: {plan!r}")
-        return self._get_arena_p_item_eligibility().candidate_sets[plan]
+        eligibility = self._get_arena_p_item_eligibility()
+        if slot_index is None:
+            return eligibility.candidate_sets[plan]
+        if type(slot_index) is not int or not 0 <= slot_index < 4:
+            raise ArenaCatalogError(f"invalid P-item screen slot index: {slot_index!r}")
+        return eligibility.slot_candidate_sets[(plan, slot_index)]
 
     def _get_p_item_detail_text_index(self) -> PItemDetailTextIndex | None:
         """Build the full active-catalog text relation once, only when needed."""
@@ -537,6 +544,7 @@ class ArenaEntityCatalog:
         title_text: str,
         *,
         plan: str | None = None,
+        slot_index: int | None = None,
         allow_one_substitution: bool = False,
     ) -> tuple[int, ...]:
         """Find the complete title family in the active catalog, before images.
@@ -547,14 +555,17 @@ class ArenaEntityCatalog:
         visual boundary for that approximate-title path only.
         """
 
+        scope = {} if slot_index is None else {
+            "eligible_ids": self.arena_p_item_candidate_ids(plan=plan, slot_index=slot_index),
+        }
         index = self._get_p_item_detail_text_index()
         if index is None:
             return ()
-        family = index.family_ids_for_title(title_text, plan=plan)
+        family = index.family_ids_for_title(title_text, plan=plan, **scope)
         if family or not allow_one_substitution:
             return family
         recovered = self._recover_p_item_title_one_substitution(title_text)
-        return index.family_ids_for_title(recovered, plan=plan) if recovered else ()
+        return index.family_ids_for_title(recovered, plan=plan, **scope) if recovered else ()
 
     def _recover_p_item_title_one_substitution(self, title_text: str) -> str | None:
         """Keep the original global title ambiguity rule for legacy recovery."""
@@ -592,6 +603,7 @@ class ArenaEntityCatalog:
         title_index: int,
         source_frames: Any = (),
         plan: str | None = None,
+        slot_index: int | None = None,
         candidate_p_item_ids: Sequence[int] = (),
         visual_tiebreak_p_item_ids: Sequence[int] = (),
         title_text: str | None = None,
@@ -605,6 +617,9 @@ class ArenaEntityCatalog:
         never used to replace failed geometry from a real observation.
         """
 
+        scope = {} if slot_index is None else {
+            "eligible_ids": self.arena_p_item_candidate_ids(plan=plan, slot_index=slot_index),
+        }
         index = self._get_p_item_detail_text_index()
         title_recovery = None
         if index is not None and allow_one_substitution:
@@ -616,9 +631,9 @@ class ArenaEntityCatalog:
                 and 0 <= title_index < len(atoms)
             ):
                 observed_title = str(atoms[title_index].get("text", ""))
-            if observed_title and not index.family_ids_for_title(observed_title, plan=plan):
+            if observed_title and not index.family_ids_for_title(observed_title, plan=plan, **scope):
                 recovered = self._recover_p_item_title_one_substitution(observed_title)
-                if recovered and index.family_ids_for_title(recovered, plan=plan):
+                if recovered and index.family_ids_for_title(recovered, plan=plan, **scope):
                     title_recovery = {"observed": observed_title, "recovered": recovered}
                     if atoms:
                         substituted_atoms = list(atoms)
@@ -637,13 +652,13 @@ class ArenaEntityCatalog:
                 diagnostics={"load_error": self._p_item_detail_text_index_error},
             )
         elif not atoms and title_text is not None and detail_text is not None:
-            result = index.match_text(title_text, detail_text, plan=plan)
+            result = index.match_text(title_text, detail_text, plan=plan, **scope)
         else:
             result = index.match(
                 atoms,
                 title_index=title_index,
                 source_frames=source_frames,
-                plan=plan,
+                plan=plan, **scope,
             )
         return replace(
             result,

@@ -93,3 +93,10 @@ class ArenaPItemEligibility:
             for plan in ("sense", "logic", "anomaly")
         }
         self.candidate_sets[None] = self.candidate_sets["free"] = frozenset(self.required_ids)
+
+        self.slot_candidate_sets = {
+            (plan, slot): frozenset(item_id for item_id in ids
+                                   if self.facets[item_id][1] in {None, kind})
+            for plan, ids in self.candidate_sets.items()
+            for slot, kind in enumerate(("p_idol", "support_inheritable", "support_inheritable", "support_inheritable"))
+        }
