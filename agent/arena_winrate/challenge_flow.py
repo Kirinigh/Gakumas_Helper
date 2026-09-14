@@ -9,6 +9,8 @@ from typing import Any, Mapping, Sequence
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
+from ._skill_card_title_recovery import _one_edit
+
 CHALLENGE_RECORD_SCHEMA_VERSION = 1
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CHALLENGE_RECORD_ROOT = PROJECT_ROOT / ".local" / "arena-win-rate"
@@ -856,9 +858,9 @@ def _result_winner_rows(
     return outcome, wins, banner
 
 
-def battle_outcome_tap_box(
-    observations: Sequence[Any], *, frame_size: tuple[int, int] = (720, 1280),
-) -> tuple[int, int, int, int] | None:
+def _battle_outcome_layout(
+    observations: Sequence[Any], *, frame_size: tuple[int, int] = (720, 1280), recover_labels: bool = False,
+) -> tuple[tuple[int, int, int, int], list[dict[str, Any]]] | None:
     """Locate the three-stage outcome animation's TAP, never infer a result.
 
     The final result has an overall banner plus three smaller side marks.
@@ -871,14 +873,21 @@ def battle_outcome_tap_box(
         return None
     labels = {"WIN", "LOSE", "LOSS", "VICTORY", "DEFEAT", "勝利", "勝ち", "敗北", "負け"}
     marks: list[tuple[int, int, int, int]] = []
+    mark_rows: list[dict[str, Any]] = []
     taps: list[tuple[int, int, int, int]] = []
     for item in observations:
         raw = item.get("text", "") if isinstance(item, Mapping) else getattr(item, "text", "")
         text = str(raw).upper().replace(" ", "").strip()
         if text in {"通信エラー", "通信エラ", "通信中にエラーが発生しました", "リトライ", "タイトルへ"}:
             return None
+        recovered = text
         if text not in labels and text != "TAP":
-            continue
+            if not recover_labels:
+                continue
+            candidates = [label for label in labels if _one_edit(text, label)]
+            if len(candidates) != 1:
+                continue
+            recovered = candidates[0]
         value = item.get("box") if isinstance(item, Mapping) else getattr(item, "box", None)
         try:
             box = tuple(int(round(component)) for component in value)
@@ -889,7 +898,17 @@ def battle_outcome_tap_box(
         x, y, w, h = box
         if x < 0 or y < 0 or x + w > width or y + h > height:
             return None
-        (taps if text == "TAP" else marks).append(box)
+        if recovered != text and not (
+            width * .22 <= w <= width * .70 and height * .055 <= h <= height * .14
+            and abs(x + w / 2 - width / 2) <= width * .12
+            and height * .045 <= y + h / 2 <= height * .78
+        ):
+            continue
+        if text == "TAP":
+            taps.append(box)
+        else:
+            marks.append(box)
+            mark_rows.append({"box": list(box), "text": str(raw), "label": recovered})
     if len(taps) != 1 or len(marks) != 3:
         return None
     tap = taps[0]
@@ -918,7 +937,49 @@ def battle_outcome_tap_box(
         or marks[-1][1] + marks[-1][3] > tap[1] - height * .08
     ):
         return None
-    return tap
+    mark_rows.sort(key=lambda row: row["box"][1] + row["box"][3] / 2)
+    return tap, mark_rows
+
+
+def battle_outcome_tap_box(
+    observations: Sequence[Any], *, frame_size: tuple[int, int] = (720, 1280),
+) -> tuple[int, int, int, int] | None:
+    """Recognize the existing three-stage layout, allowing one edit per label."""
+    layout = (_battle_outcome_layout(observations, frame_size=frame_size)
+              or _battle_outcome_layout(observations, frame_size=frame_size, recover_labels=True))
+    return None if layout is None else layout[0]
+
+
+def recover_battle_outcome_result(
+    observations: Sequence[Any], *, frame_size: tuple[int, int] = (720, 1280),
+) -> dict[str, Any] | None:
+    """Keep a corrected animation's complete same-frame winners and raw atoms.
+
+    Exact animations retain their existing formal-page path. A one-character
+    correction never rewrites the observations or reads scores as winners.
+    """
+    layout = _battle_outcome_layout(observations, frame_size=frame_size, recover_labels=True)
+    if layout is None:
+        return None
+    tap, marks = layout
+    repairs = [row for row in marks if row["text"].upper().replace(" ", "").strip() != row["label"]]
+    if not repairs:
+        return None
+    rows, numbers, _ = _result_observation_data(observations)
+    own_labels = {"WIN", "VICTORY", "勝利", "勝ち"}
+    stages = [{
+        "stage_number": index, "winner": "OWN" if row["label"] in own_labels else "OPPONENT",
+        "own_score": None, "opponent_score": None,
+    } for index, row in enumerate(marks, 1)]
+    return {
+        "outcome": "WIN" if sum(row["winner"] == "OWN" for row in stages) >= 2 else "LOSS",
+        "stage_results": stages, "score_repairs": [], "ocr_observations": rows,
+        "numeric_observations": numbers, "screenshots_persisted": False,
+        "recovery_source": "outcome_label_one_character",
+        "winner_evidence": {"source": "same_frame_outcome_labels", "marks": marks,
+                            "label_repairs": repairs, "tap_box": list(tap),
+                            "frame_size": list(frame_size)},
+    }
 
 
 def serialise_result_observations(observations: Sequence[Any]) -> dict[str, Any]:
@@ -1474,6 +1535,20 @@ class ArenaChallengeRecordStore:
         pending["result_recovery"] = budget
         self._write_atomic(self.pending_path, pending)
         return True
+
+    def retain_outcome_result(self, capture_id: str, result: Mapping[str, Any]) -> None:
+        """Keep one complete navigation frame in the existing result candidate."""
+        pending = self._pending_for_capture(capture_id)
+        if not pending.get("battle_started") or pending.get("lifecycle_state") != CHALLENGE_LIFECYCLE_INTENT:
+            raise ArenaChallengeFlowError("outcome evidence has no unresolved started challenge")
+        if not result_observations_complete(result) or result.get("recovery_source") != "outcome_label_one_character":
+            raise ArenaChallengeFlowError("outcome evidence is incomplete")
+        budget = self._recovery_budget(pending)
+        if isinstance(budget.get("candidate"), Mapping) and result_observations_complete(budget["candidate"]):
+            return
+        budget["candidate"] = dict(result)
+        pending["result_recovery"] = budget
+        self._write_atomic(self.pending_path, pending)
 
     def recoverable_pending_result(self, capture_id: str) -> dict[str, Any] | None:
         """Reparse each retained frame separately; never merge winners across frames."""

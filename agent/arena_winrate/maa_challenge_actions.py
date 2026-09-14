@@ -24,6 +24,7 @@ from .challenge_flow import (
     battle_outcome_tap_box,
     classify_post_challenge_page,
     result_observations_complete,
+    recover_battle_outcome_result,
     serialise_result_observations,
 )
 
@@ -228,7 +229,13 @@ def recover_skipped_challenge_result(
     cancellation_for(context).check()
     if page != "arena":
         _confirm_observed_battle(context, store, pending, source=f"post_battle_{page}")
-    path = store.complete_unknown_result(capture_id, evidence=evidence)
+    candidate = store.recoverable_pending_result(capture_id)
+    if candidate is not None:
+        if not ArenaChallengeRecordResultAction(store)._save(capture_id, candidate, context=context):
+            raise ArenaChallengeFlowError("confirmed result could not be saved")
+        path = store.recorded_result_path(capture_id)
+    else:
+        path = store.complete_unknown_result(capture_id, evidence=evidence)
     _show_saved_result(context, capture_id, store, result_path=path)
     if page == "arena":
         store.complete_return(capture_id, evidence=evidence)
@@ -272,7 +279,13 @@ def _retry_communication(context, store, capture_id: str, box) -> bool:
     return True
 
 
-def _advance_battle_outcome(context, store, capture_id: str, box) -> bool:
+def _advance_battle_outcome(context, store, capture_id: str, box, *, rows=(), frame_size=(720, 1280)) -> bool:
+    result = recover_battle_outcome_result(rows, frame_size=frame_size)
+    if result is not None:
+        pending = store._pending_for_capture(capture_id)
+        result.update({"recorded_at": datetime.now(timezone.utc).isoformat(),
+                       "contest_day": pending.get("contest_day", contest_day_key())})
+        store.retain_outcome_result(capture_id, result)
     if not store.reserve_outcome_tap(capture_id):
         return False
     started = time.monotonic()
@@ -313,7 +326,7 @@ def _await_formal_result(context, store, capture_id: str, *, entry_probe: bool =
         shape = getattr(image, "shape", (1280, 720))
         tap = battle_outcome_tap_box(rows, frame_size=(shape[1], shape[0]))
         if tap is not None:
-            _advance_battle_outcome(context, store, capture_id, tap)
+            _advance_battle_outcome(context, store, capture_id, tap, rows=rows, frame_size=(shape[1], shape[0]))
         else:
             retry = _communication_retry_box(rows)
             if retry is not None:
@@ -480,7 +493,8 @@ def resume_pending_challenge(context: Context, argv=None, store=None) -> bool:
         if state == "result_needed":
             pending = store.load_pending()
             capture_id = str(pending.get("capture_id", ""))
-            if store.recoverable_pending_result(capture_id) is None:
+            candidate = store.recoverable_pending_result(capture_id)
+            if candidate is None or candidate.get("recovery_source") == "outcome_label_one_character":
                 image = _capture(context)
                 rows = _full_ocr(context, image)
                 exhausted = store._remaining_winner_seconds(pending, datetime.now(timezone.utc)) == 0
@@ -504,7 +518,7 @@ def resume_pending_challenge(context: Context, argv=None, store=None) -> bool:
                     tap = battle_outcome_tap_box(rows, frame_size=(shape[1], shape[0]))
                     retry = _communication_retry_box(rows)
                     if tap is not None:
-                        _advance_battle_outcome(context, store, capture_id, tap)
+                        _advance_battle_outcome(context, store, capture_id, tap, rows=rows, frame_size=(shape[1], shape[0]))
                     elif retry is not None:
                         _retry_communication(context, store, capture_id, retry)
                     if not recovered and not _await_formal_result(context, store, capture_id):
@@ -550,6 +564,7 @@ class ArenaChallengeRetryCurrentBattleAction(CustomAction):
         super().__init__()
         self._record_store = ArenaChallengeRecordStore() if record_store is None else record_store
 
+    @report_action_failure("竞技场胜负页面未能继续，自动恢复未完成", user_logger)
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         try:
             restore_challenge_action_next(context, argv)
@@ -593,7 +608,7 @@ class ArenaChallengeRetryCurrentBattleAction(CustomAction):
                     if self._record_store.begin_result_page_wait(capture_id)["remaining_seconds"] <= 0:
                         raise ArenaChallengeFlowError("result page wait budget exhausted")
             if tap is not None:
-                _advance_battle_outcome(context, self._record_store, capture_id, tap)
+                _advance_battle_outcome(context, self._record_store, capture_id, tap, rows=rows, frame_size=(shape[1], shape[0]))
                 return _await_formal_result(context, self._record_store, capture_id, argv=argv)
             _retry_communication(context, self._record_store, capture_id, box)
             if unresolved and "page_wait" in pending.get("result_recovery", {}):
