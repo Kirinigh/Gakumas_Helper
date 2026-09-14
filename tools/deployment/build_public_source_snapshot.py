@@ -201,9 +201,19 @@ class PublicHistoryValidationCache:
             self._machine_markers = markers
 
 
+PUBLIC_ANNOUNCEMENT_PATH = "assets/resource/announcement/01_更新公告.md"
+LEGACY_CHANGELOG_PATH = "assets/resource/Changelog.md"
 HISTORY_METADATA_PATHS = frozenset({
-    "assets/interface.json", "assets/resource/Changelog.md", "pyproject.toml",
+    "assets/interface.json", "pyproject.toml",
+    PUBLIC_ANNOUNCEMENT_PATH, LEGACY_CHANGELOG_PATH,
 })
+
+
+def _published_announcement_path(paths: set[str]) -> str | None:
+    for relative in (PUBLIC_ANNOUNCEMENT_PATH, LEGACY_CHANGELOG_PATH):
+        if relative in paths:
+            return relative
+    return None
 
 
 def _remove_tree(path: Path) -> None:
@@ -1061,8 +1071,8 @@ def _validate_public_history(
             raise PublicSnapshotError(
                 f"public history version does not match its commit message: {commit}"
             )
-        changelog_path = tree / "assets" / "resource" / "Changelog.md"
-        changelog = changelog_path.read_bytes() if changelog_path.exists() else None
+        announcement_relative = _published_announcement_path(set(listed_files))
+        changelog = (tree / announcement_relative).read_bytes() if announcement_relative else None
         if source_update:
             if changelog != previous_changelog:
                 raise PublicSnapshotError("source update must preserve the published changelog")
@@ -1220,16 +1230,26 @@ def build_public_snapshot(
             shutil.copy2(public_provenance, output / "ASSET_PROVENANCE.md")
             release_notes_path = output / "tools" / "deployment" / "public" / "RELEASE_NOTES.md"
             release_notes_template = release_notes_path.read_text(encoding="utf-8")
-            changelog_path = output / "assets" / "resource" / "Changelog.md"
+            announcement_path = output / PUBLIC_ANNOUNCEMENT_PATH
+            announcement_path.parent.mkdir(parents=True, exist_ok=True)
             if source_update:
                 assert public_parent_root is not None
-                changelog_path.write_bytes(_run_bytes(
-                    ("git", "show", f"{public_parent_revision}:assets/resource/Changelog.md"),
+                parent_paths = set(_run_bytes(
+                    ("git", "ls-tree", "-r", "--name-only", "-z", public_parent_revision,
+                     "--", PUBLIC_ANNOUNCEMENT_PATH, LEGACY_CHANGELOG_PATH),
+                    cwd=public_parent_root,
+                    env=release_git_environment,
+                ).decode("utf-8").split("\0"))
+                parent_announcement = _published_announcement_path(parent_paths)
+                if parent_announcement is None:
+                    raise PublicSnapshotError("public parent has no published announcement")
+                announcement_path.write_bytes(_run_bytes(
+                    ("git", "show", f"{public_parent_revision}:{parent_announcement}"),
                     cwd=public_parent_root,
                     env=release_git_environment,
                 ))
             else:
-                changelog_path.write_text(
+                announcement_path.write_text(
                     _render_release_changelog(
                         release_notes_template,
                         version=version,
@@ -1237,9 +1257,7 @@ def build_public_snapshot(
                     ),
                     encoding="utf-8",
                 )
-            announcement_path = output / "assets/resource/announcement/01_更新公告.md"
-            if announcement_path.is_file():
-                announcement_path.write_bytes(changelog_path.read_bytes())
+            (output / LEGACY_CHANGELOG_PATH).unlink(missing_ok=True)
             interface_path = output / "assets" / "interface.json"
             interface = json.loads(interface_path.read_text(encoding="utf-8"))
             upstream_version = interface.get("version")
