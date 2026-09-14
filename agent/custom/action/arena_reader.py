@@ -82,6 +82,7 @@ from arena_winrate._detail_text_layout import (
     recover_distant_number_text,
     recover_wrapped_signed_text,
 )
+from arena_winrate._skill_card_effect_recovery import recover_skill_effect_body
 
 logger = diagnostic_logger(_base_logger)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -10211,6 +10212,44 @@ class MaaArenaReaderBackend:
                 "skill_card_error_numeric_recovery", time.perf_counter() - started,
             )
 
+    def _recover_failed_skill_card_body_text(self, key: tuple[int, int]) -> str | None:
+        """Repair cached body atoms after a failure, without observing the game."""
+        card_id = getattr(self, "_card_detail_open_ids", {}).get(key)
+        if card_id is None:
+            return None
+        image = self._card_detail_images.get(key)
+        evidence = self._cached_full_frame_ocr_evidence(image)
+        if evidence is None:
+            return None
+        started = time.perf_counter()
+        self._increment("skill_card_error_body_attempts")
+        try:
+            atoms = tuple((_text(item), _box(item)) for item in evidence.all_items)
+            pattern = self._skill_card_frame_title_pattern(image, card_id)
+            titles = tuple(box for value, box in atoms if re.search(pattern, value))
+            if len(titles) != 1:
+                return None
+            height, width = image.shape[:2]
+            repaired = recover_skill_effect_body(
+                atoms, titles[0], self._title_anchored_effect_roi(width, height, titles[0]),
+                self._spatial_ocr_rows(evidence.all_items),
+            )
+            if not repaired.changed:
+                return None
+            self._increment("skill_card_error_body_repairs")
+            logger.debug(json.dumps({
+                "event": "arena_skill_body_text_repaired", "key": key, "card_id": card_id,
+                "reordered_indices": repaired.reordered_indices,
+                "replacements": repaired.replacements,
+            }, ensure_ascii=False))
+            return repaired.text
+        except (ArenaCatalogError, ArenaReaderError, ValueError, TypeError) as error:
+            self._increment("skill_card_error_body_failures")
+            logger.debug(f"skill-card cached body repair unavailable: {error}")
+            return None
+        finally:
+            self._record_duration_sample("skill_card_error_body_recovery", time.perf_counter() - started)
+
     def _read_resolved_card_detail(
         self,
         key: tuple[int, int],
@@ -10374,6 +10413,20 @@ class MaaArenaReaderBackend:
         cost_fallback_confirmation_extension_applied = False
         terminal_error: ArenaReaderError | None = None
         numeric_recovery_started = False
+        body_recovery_active = False
+        same_frame_body_recovery_attempted = False
+        frame_confirmation_reads = (0, 0, 0, 0)
+        frame_confirmation_counter_names = (
+            "skill_card_detail_zero_confirmation_reads",
+            "skill_card_detail_zero_confirmations",
+            "skill_card_detail_positive_confirmation_reads",
+            "skill_card_detail_positive_confirmations",
+            "skill_card_cost_fallback_confirmation_reads",
+            "skill_card_cost_fallback_confirmations",
+        )
+        frame_confirmation_counts = {
+            name: self._runtime_counts.get(name) for name in frame_confirmation_counter_names
+        }
         same_frame_effect_roi_attempted = False
         same_frame_enhanced_effect_roi_attempted = False
         generic_cost_fallback_policy = (
@@ -10383,12 +10436,12 @@ class MaaArenaReaderBackend:
             if target.is_own_team
             else "assume_enhanced"
         )
+        same_frame_effect_roi_context: tuple[str, str, int] | None = None
         while True:
             # Provenance is frame-local.  A title-anchored ROI may resolve an
             # otherwise ambiguous detail on the accepted frame itself; keep
             # that exact full/ROI pair so the structural-omission certifier can
             # consume it without a redundant OCR pass or a cross-frame join.
-            same_frame_effect_roi_context: tuple[str, str, int] | None = None
             if text:
                 auxiliary_badge_glyph_allowed = frame_is_settled
                 try:
@@ -11226,6 +11279,38 @@ class MaaArenaReaderBackend:
                     confirmation_candidate = None
                     confirmation_reason = None
                     last_error = str(error)
+                    if (frame_is_settled and not same_frame_body_recovery_attempted
+                            and error.code in {
+                                "skill_card_detail_ambiguous",
+                                "skill_card_badge_glyph_domain_invalid",
+                                "skill_card_badge_glyph_ambiguous",
+                                "skill_card_badge_glyph_exemplar_transition_conflict",
+                            }):
+                        same_frame_body_recovery_attempted = True
+                        repaired_text = self._recover_failed_skill_card_body_text(key)
+                        if repaired_text is not None:
+                            # Re-run this frame through the ordinary parser and
+                            # validators. A prior vote from its unrepaired text
+                            # cannot act as an independent confirmation frame.
+                            zero_candidate = positive_candidate = cost_fallback_candidate = None
+                            (
+                                resolution_reads, zero_confirmation_reads,
+                                positive_confirmation_reads, cost_fallback_confirmation_reads,
+                            ) = frame_confirmation_reads
+                            for name, previous_count in frame_confirmation_counts.items():
+                                if previous_count is None:
+                                    self._runtime_counts.pop(name, None)
+                                else:
+                                    self._runtime_counts[name] = previous_count
+                            body_recovery_active = True
+                            text = repaired_text
+                            self._card_detail_texts[key] = text
+                            if same_frame_effect_roi_context is not None:
+                                same_frame_effect_roi_context = (
+                                    text, same_frame_effect_roi_context[1],
+                                    same_frame_effect_roi_context[2],
+                                )
+                            continue
                     image_evidence = self._cached_full_frame_ocr_evidence(self._card_detail_images.get(key))
                     if image_evidence is not None and self._retry_transient_communication_items(image_evidence.filtered_items):
                         text = ""
@@ -11298,8 +11383,23 @@ class MaaArenaReaderBackend:
                     and frame_capture_started_at
                     >= last_contact_released_at + 0.60
                 )
+                same_frame_body_recovery_attempted = False
+                frame_confirmation_reads = (
+                    resolution_reads, zero_confirmation_reads,
+                    positive_confirmation_reads, cost_fallback_confirmation_reads,
+                )
+                frame_confirmation_counts = {
+                    name: self._runtime_counts.get(name) for name in frame_confirmation_counter_names
+                }
+                if body_recovery_active and frame_is_settled:
+                    same_frame_body_recovery_attempted = True
+                    repaired_text = self._recover_failed_skill_card_body_text(key)
+                    if repaired_text is not None:
+                        text = repaired_text
+                        self._card_detail_texts[key] = text
                 same_frame_effect_roi_attempted = False
                 same_frame_enhanced_effect_roi_attempted = False
+                same_frame_effect_roi_context = None
         self._record_duration_sample(
             "skill_card_detail_failed_resolution_phase",
             time.perf_counter() - resolution_started,
