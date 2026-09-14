@@ -12504,8 +12504,8 @@ class MaaArenaReaderBackend:
             return True
         if self._dismiss_contest_details_items(image, items):
             return True
-        menu_profile = self._ocr(image, r"^プロフィール$")
-        menu_settings = self._ocr(image, r"^設定$")
+        menu_profile = self._matching_ocr_items(items, r"^プロフィール$")
+        menu_settings = self._matching_ocr_items(items, r"^設定$")
         if len(menu_profile) == 1 and len(menu_settings) == 1:
             height, width = image.shape[:2]
             # The upper-centre backdrop is outside the menu's functional grid
@@ -12515,8 +12515,8 @@ class MaaArenaReaderBackend:
             self._increment("arena_menu_overlays_dismissed")
             return True
 
-        error_titles = self._ocr(image, r"^通信エラ(?:ー)?$")
-        failure_details = self._ocr(image, r"^アセット取得に失敗$")
+        error_titles = self._matching_ocr_items(items, r"^通信エラ(?:ー)?$")
+        failure_details = self._matching_ocr_items(items, r"^アセット取得に失敗$")
         if len(error_titles) != 1 or len(failure_details) != 1:
             return False
         close_buttons = self._recognize("CloseRoundButton", image)
