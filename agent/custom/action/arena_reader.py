@@ -2305,7 +2305,15 @@ class MaaArenaReaderBackend:
             key,
             count=count,
             support_frames=support_frames,
+            detail_confirmed=True,
         )
+        if outlier_descriptor is not None:
+            # Detail taught only the exact stable tail. The unused first frame
+            # is not a runtime count claim and must not veto later detail truth.
+            diagnostic["excluded_first_frame_sha256"] = (
+                self._badge_glyph_descriptor_sha256(outlier_descriptor)
+            )
+            self._increment("skill_card_badge_glyph_detail_outliers_excluded")
         if existing is None:
             runtime_labels.pop(descriptor, None)
             runtime_diagnostics.append(diagnostic)
@@ -2315,12 +2323,6 @@ class MaaArenaReaderBackend:
                 "prototypes": {(geometry, support_frames)},
             }
             self._increment("skill_card_badge_glyph_exemplars_registered")
-            self._record_badge_glyph_runtime_label(
-                key,
-                outlier_descriptor,
-                count=count,
-                evidence="bounded first-frame glyph",
-            )
             return True
         geometries = existing.get("geometries")
         prototype_provenance = existing.get("prototypes")
@@ -2341,12 +2343,6 @@ class MaaArenaReaderBackend:
         runtime_diagnostics.append(diagnostic)
         geometries.add(geometry)
         prototype_provenance.add((geometry, support_frames))
-        self._record_badge_glyph_runtime_label(
-            key,
-            outlier_descriptor,
-            count=count,
-            evidence="bounded first-frame glyph",
-        )
         return True
 
     @staticmethod
@@ -2365,8 +2361,15 @@ class MaaArenaReaderBackend:
         *,
         count: int,
         support_frames: int,
+        detail_confirmed: bool = False,
     ) -> tuple[int, ...] | None:
-        """Reject a bounded first-frame outlier with contrary member truth."""
+        """Check first-frame conflicts without turning detail into a glyph vote.
+
+        An independently confirmed detail does not consume its first-frame
+        outlier. Keep exact contradictions and checks against consumed runtime
+        labels, but do not require this unused shape to be far from all samples.
+        Runtime inference still requires the original full separation checks.
+        """
 
         if support_frames == 3:
             return None
@@ -2383,6 +2386,7 @@ class MaaArenaReaderBackend:
             first_descriptor,
             count=count,
             evidence="bounded first-frame glyph",
+            check_nearby_samples=not detail_confirmed,
         )
         return first_descriptor
 
@@ -2446,7 +2450,7 @@ class MaaArenaReaderBackend:
         *,
         count: int,
         evidence: str,
-        check_exemplars: bool = True,
+        check_nearby_samples: bool = True,
     ) -> None:
         """Cross-check any runtime glyph label against all member-local truth."""
 
@@ -2495,7 +2499,7 @@ class MaaArenaReaderBackend:
                 f"{key!r} {evidence} maps to count {conflicting_count}, "
                 f"not count {count}",
             )
-        for polluted_descriptor in polluted:
+        for polluted_descriptor in (polluted if check_nearby_samples else ()):
             if polluted_descriptor == descriptor:
                 continue
             metrics = self._badge_glyph_comparison_metrics(
@@ -2511,7 +2515,7 @@ class MaaArenaReaderBackend:
                     "skill_card_badge_glyph_exemplar_transition_conflict",
                     f"{key!r} {evidence} is too close to a polluted member glyph",
                 )
-        if check_exemplars:
+        if check_nearby_samples:
             for exemplar_descriptor, candidate in getattr(
                 self,
                 "_badge_glyph_exemplars",
