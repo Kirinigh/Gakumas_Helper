@@ -1195,7 +1195,7 @@
       "cases": [
         {
           "name": "未识别",
-          "label": "$未识别",
+          "label": "$竞技场等级自动",
           "pipeline_override": {
             "ChallengeGradeConfig": {
               "attach": {

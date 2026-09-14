@@ -33,12 +33,19 @@ class LocalDataConfigure(CustomAction):
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         try:
             params = json.loads(argv.custom_action_param or "{}")
-            _store, _report, status = configure_runtime(params)
+            store, _report, status = configure_runtime(params)
         except (json.JSONDecodeError, LocalDataError, OSError, TypeError, ValueError) as error:
             status = f"本地采集已停用；配置或清理失败；未写入新图像：{error}"
             logger.error(status)
             _notify_failure(context, status)
             return True
 
-        logger.info(status)
+        logger.bind(ui_visible=False).info(status)
+        if store.config.enabled:
+            mode_labels = {
+                "failure": "仅失败现场",
+                "roi": "局部图像与失败现场",
+                "screenshot": "截图、局部图像与失败现场",
+            }
+            logger.info(f"本地画面保存已开启：{mode_labels[store.config.mode]}；仅保存在本机。")
         return True

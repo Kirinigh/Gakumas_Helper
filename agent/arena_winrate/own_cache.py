@@ -21,7 +21,7 @@ LEGACY_CACHE_SCHEMA_VERSION = 1
 SUPPORTED_CACHE_SCHEMA_VERSIONS = frozenset(
     {LEGACY_CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION}
 )
-SUMMARY_RENDER_VERSION = 2
+SUMMARY_RENDER_VERSION = 3
 MAX_SUMMARY_CACHE_BYTES = 64 * 1024 * 1024
 MAX_SUMMARY_FILE_BYTES = 1024 * 1024
 DEFAULT_OWN_SCORE_CACHE = (
@@ -179,7 +179,7 @@ def _format_local_time(value: str) -> str | None:
 
 def _invalid_summary(reason: str) -> str:
     return (
-        "### 当前己方缓存\n\n"
+        "### 已保存的己方数据\n\n"
         "**状态：缓存不可用**\n\n"
         f"原因：{reason}。请选择正确期数并重新运行“重算竞技场己方总分”。\n\n"
         "> 本页由本地缓存自动生成；不会展示原始模拟样本、截图或内部路径。\n"
@@ -188,7 +188,7 @@ def _invalid_summary(reason: str) -> str:
 
 def _unloaded_summary(reason: str) -> str:
     return (
-        "### 当前己方缓存\n\n"
+        "### 已保存的己方数据\n\n"
         "**状态：摘要未加载**\n\n"
         f"原因：{reason}。权威 JSON 缓存未被删除，实际复用仍由任务运行时校验。\n\n"
         "> 如需查看本页，请用常规模拟次数重新运行“重算竞技场己方总分”。\n"
@@ -205,26 +205,13 @@ def _grade_summary_line(state: OwnGradeState) -> str:
     return f"- 有效 Grade：{grade}（来源：{source_labels[state.source]}）"
 
 
-def _empty_member_average_table() -> list[str]:
-    lines = [
-        "| 舞台/栏位 | 成员分数平均值 |",
-        "| --- | ---: |",
-    ]
-    for stage_number in range(1, 4):
-        for slot in range(1, 4):
-            lines.append(f"| {stage_number}/{slot} | 未识别 |")
-    return lines
-
-
 def _missing_summary() -> str:
     lines = [
-        "### 当前己方缓存",
+        "### 已保存的己方数据",
         "",
         "**状态：尚未生成**",
         "",
         _grade_summary_line(OwnGradeState(None, None, None, "unrecognized")),
-        "",
-        *_empty_member_average_table(),
         "",
         "请先选择正确的竞技场期数，再运行“重算竞技场己方总分”。",
         "",
@@ -391,18 +378,50 @@ def _render_summary(record: Mapping[str, Any], *, cache_mtime: float | None = No
 
     duplicate_summary = f"{total_duplicates} 张" if duplicates_fully_recorded else "未知（缓存未记录）"
     lines = [
-        "### 当前己方缓存",
+        "### 已保存的己方数据",
         "",
-        "**状态：已生成**（是否可复用仍取决于所选期数、模拟器版本、seed 与请求样本数）",
+        f"**第 {season} 期 · 已保存 {total_members} 名成员**",
         "",
-        f"- 竞技场期数：第 {season} 期",
-        f"- 舞台 ID：{' / '.join(str(item) for item in stage_ids)}",
-        f"- 模拟样本：{simulations:,} 次；seed：{seed}",
-        f"- 模拟器版本：{upstream_commit[:12]}",
-        f"- 来源：{source}；支援加成：{support_bonus:.2f}%",
         _grade_summary_line(grade_state),
         time_line,
+        "",
+        "| 舞台 | 成员数 | 预计总分（平均） |",
+        "| --- | ---: | ---: |",
     ]
+    for stage_number, _stage_id, member_count, distribution in stage_rows:
+        lines.append(
+            f"| 舞台 {stage_number} | {member_count} | {_format_score(distribution['mean'])} |"
+        )
+    lines.extend([
+        "",
+        "> 分数为已保存编成的模拟原始分，未计入对战第一名加成，不代表实际赛果。",
+        "",
+        "换期、调整编成或支援后，请运行“重算竞技场己方总分”，或临时开启“自动重算己方数据”。"
+        "日常默认复用；是否适用于本次设置，会在任务开始时校验。",
+        "",
+        "#### 成员平均分",
+        "",
+        "| 舞台 | 栏位 1 | 栏位 2 | 栏位 3 |",
+        "| --- | ---: | ---: | ---: |",
+    ])
+    for stage_number in range(1, 4):
+        scores = [
+            _format_score(member_rows[(stage_number, slot)][-1])
+            if (stage_number, slot) in member_rows else "未记录"
+            for slot in range(1, 4)
+        ]
+        lines.append(f"| 舞台 {stage_number} | {' | '.join(scores)} |")
+    lines.extend([
+        "",
+        "#### 数据详情（排查时参考）",
+        "",
+        "**状态：已生成**（期数、模拟器版本、随机种子与请求样本数仍需运行时匹配）",
+        f"- 竞技场期数：第 {season} 期",
+        f"- 舞台 ID：{' / '.join(str(item) for item in stage_ids)}",
+        f"- 模拟样本：{simulations:,} 次；随机种子（seed）：{seed}",
+        f"- 模拟器版本：{upstream_commit[:12]}",
+        f"- 来源：{source}；支援加成：{support_bonus:.2f}%",
+    ])
     if isinstance(read_seconds, (int, float)) and not isinstance(read_seconds, bool):
         lines.append(f"- 己方读取耗时：{float(read_seconds):.1f} 秒")
     lines.extend(
