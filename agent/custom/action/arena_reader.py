@@ -7876,7 +7876,9 @@ class MaaArenaReaderBackend:
             if rebind is None:
                 rebind = self._card_detail_rebind_ids = {}
             other_slots = self._skill_detail_other_source_slots(key, card_id)
-            accepted = attempt == 1 and rebind.get(key) == card_id and not other_slots
+            # The same ID may legitimately appear in both six-card groups.
+            # Other slots are diagnostic context, not proof of a wrong click.
+            accepted = attempt == 1 and rebind.get(key) == card_id
             diagnostic = getattr(self, "_detail_failure_frames", None)
             if diagnostic is not None:
                 diagnostic["position"].update(
