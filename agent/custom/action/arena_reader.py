@@ -12420,7 +12420,10 @@ class MaaArenaReaderBackend:
         require_opponents: bool,
     ) -> None:
         unavailable_reads = 0
-        for _ in range(maximum_steps):
+        steps = 0
+        loading_reads = 0
+        loading_deadline: float | None = None
+        while steps < maximum_steps:
             image = self._capture()
             self._last_retry_dialog_seen = False
             state, _ = self._arena_page_state(image)
@@ -12429,6 +12432,24 @@ class MaaArenaReaderBackend:
                 require_opponents=require_opponents,
             ):
                 return
+            items = self._ocr(image, r".+")
+            if self._matching_ocr_items(items, r"(?i)^\s*NOW\s*LOADING[.\s…]*$"):
+                loading_reads += 1
+                self._increment("arena_recovery_loading_frames")
+                if loading_deadline is None:
+                    loading_deadline = time.monotonic() + 5.0
+                if loading_reads >= 12 or time.monotonic() >= loading_deadline:
+                    raise ArenaReaderError(
+                        "arena_recovery_loading_timeout",
+                        "arena recovery stayed in NOW LOADING within its 12-frame/5-second budget; no back sent",
+                    )
+                started = time.perf_counter()
+                try:
+                    self._sleep(0.25)
+                finally:
+                    self._add_timing("arena_recovery_loading_wait", time.perf_counter() - started)
+                continue
+            steps += 1
             if state is ArenaPageState.OPPONENTS_UNAVAILABLE:
                 unavailable_reads += 1
                 if unavailable_reads >= 3:
@@ -12439,10 +12460,11 @@ class MaaArenaReaderBackend:
                 self._sleep(0.25)
                 continue
             unavailable_reads = 0
-            if self._dismiss_known_blocking_overlay(image):
+            if self._dismiss_known_blocking_overlay(image, items=items):
                 self._sleep(0.25)
                 continue
-            self._back()
+            # Navigation must use the frame whose page/overlays were checked.
+            self._back(image=image)
         if getattr(self, "_last_retry_dialog_seen", False):
             raise ArenaReaderError(
                 "arena_communication_retry_exhausted",
@@ -12497,11 +12519,12 @@ class MaaArenaReaderBackend:
             }, ensure_ascii=False, sort_keys=True))
         return True
 
-    def _dismiss_known_blocking_overlay(self, image: Any) -> bool:
+    def _dismiss_known_blocking_overlay(self, image: Any, *, items: Sequence[Any] | None = None) -> bool:
         """Dismiss only overlays proven by independent page-specific anchors."""
 
         # Recovery gets one full-frame problem check; reuse the same OCR boxes.
-        items = self._ocr(image, r".+")
+        if items is None:
+            items = self._ocr(image, r".+")
         if self._retry_transient_communication_items(items):
             return True
         if self._dismiss_contest_details_items(image, items):
