@@ -8,7 +8,7 @@ Gakumas Helper 的普通客户端升级只使用 MFAAvalonia 内置 GitHub 资�
 | --- | --- | --- |
 | MFA 内置 GitHub 资源更新 | 完整 Gakumas Helper 派生包 | 正常版本升级的唯一客户端入口 |
 | pip 更新 | pip 本身与 `requirements.txt` 中的 Python 依赖 | 沿用 Maa 现有启动逻辑；不更新模型、图库、引擎、数据或 UI |
-| RIS 竞技场组件更新 | 同一成功 production SHA 的 `gakumas-engine` + `gakumas-data` | 每个 Agent 进程首次需要竞技场模拟器时检查一次；失败保留旧组件 |
+| RIS 竞技场组件更新 | 同一成功 production SHA 的 `gakumas-engine` + `gakumas-data` | 与依赖初始化一起，在 Agent 启动时检查一次；版本未变不重复下载。失败重试后保留可用本地组件，竞技场任务不再联网检查 |
 | 独立识别资产热更新 | 单独更新模型、图库或规则数据 | 当前不提供；这些资产随完整包更新 |
 | MirrorChyan | 上游 Maa 的第三方分发入口 | Gakumas Helper 当前不声明派生版 RID，也不通过它分发完整包 |
 

@@ -1,4 +1,4 @@
-"""Lazy RIS production engine/data component discovery and activation."""
+"""Startup RIS engine/data updates and offline task-time component selection."""
 
 from __future__ import annotations
 
@@ -458,10 +458,30 @@ class ArenaComponentManager:
         self._checks: dict[Path, _CheckOutcome] = {}
 
     def reset_failed_checks(self) -> None:
-        """Start a new task's failure budget while retaining successful checks."""
+        """Explicit maintenance reset; ordinary arena tasks never call this."""
 
         with self._lock:
             self._checks = {path: outcome for path, outcome in self._checks.items() if outcome.failure is None}
+
+    def resolve_local(self, baseline_bundle: Path, selection: str | int) -> ArenaComponentResolution:
+        """Reuse this startup's outcome, including failures, without network I/O."""
+
+        baseline = baseline_bundle.resolve()
+        with self._lock:
+            outcome = self._checks.get(baseline)
+            if outcome is None:
+                # Alternate hosts may omit the startup hook. They still may use
+                # an installed component, but must not silently check upstream.
+                info = self._load_active() or _inspect_bundle(baseline)
+                outcome = _CheckOutcome(
+                    bundle=info,
+                    remote_commit=None,
+                    remote_latest_season=None,
+                    status="local_unchecked",
+                    update_activated=False,
+                    warnings=("RIS 本次启动未完成更新检查，使用本地资源；请核对期数，重启客户端可重新检查。",),
+                )
+        return _resolve_selection(outcome, selection)
 
     def resolve(
         self,
@@ -504,13 +524,13 @@ class ArenaComponentManager:
                         _resolve_selection(outcome, selection)
                     except ArenaComponentError:
                         message = (
-                            f"RIS 资源更新{prefix}，本地组件无法满足所选期数，本次任务停止。"
-                            "请稍后重新启动任务以重试更新。"
+                            f"RIS 资源更新{prefix}，本地组件无法满足所选期数。"
+                            "可选择已有期数；稍后重启客户端可重新检查。"
                         )
                     else:
                         message = (
                             f"RIS 资源更新{prefix}，本次继续使用本地组件 {outcome.bundle.commit[:12]}。"
-                            "资源可能不是最新，请核对下方使用期数；稍后重新启动任务可再次检查更新。"
+                            "资源可能不是最新，请核对使用期数；稍后重启客户端可再次检查更新。"
                         )
                     _log_component_update_notice(message)
                 elif retried:
@@ -1151,10 +1171,41 @@ def sync_arena_season_ui_on_startup() -> None:
         _log_component_failure("season_ui_startup", error)
 
 
-def reset_failed_arena_component_checks() -> None:
-    """Called once at the existing new-task entry; successful checks remain cached."""
+def check_arena_component_on_startup() -> None:
+    """Check once before AgentServer becomes ready, independently of daily tasks.
 
-    _DEFAULT_MANAGER.reset_failed_checks()
+    Keep the existing retry and activation rules. Failure never prevents the
+    Agent from serving other tasks; arena selection later uses the saved
+    outcome and keeps the existing unavailable-season checks.
+    """
+
+    if not _DEFAULT_SEASON_UI.interface_path.is_file():
+        return
+    baseline = DEFAULT_BUNDLE_DIR.resolve()
+    if baseline in _DEFAULT_MANAGER._checks:
+        return
+    started = time.monotonic()
+    try:
+        _log_component_update_notice("正在检查 RIS 竞技场资源；版本未变化时复用本地组件。", recovered=True)
+        result = _DEFAULT_MANAGER.resolve(baseline, "latest")
+        outcome = _DEFAULT_MANAGER._checks[baseline]
+        _sync_default_season_ui(outcome.bundle)
+        if outcome.failure is None:
+            action = "已更新" if result.update_activated else "已是当前生产版本"
+            _log_component_update_notice(
+                f"RIS 竞技场资源{action}，最新第 {result.season.season} 期"
+                f"（{'预览' if result.season.preview else '正式'}）；检查用时 {time.monotonic() - started:.1f} 秒。",
+                recovered=True,
+            )
+    except Exception as error:
+        _log_component_failure("startup_check", error)
+        if baseline not in _DEFAULT_MANAGER._checks:
+            _log_component_update_notice("RIS 启动检查未完成，继续启动客户端；竞技场将尝试已有本地资源。")
+
+
+def reset_failed_arena_component_checks() -> None:
+    """Retry only UI synchronization at task entry, never renew network checks."""
+
     _DEFAULT_SEASON_UI.reset_failed()
 
 
@@ -1162,15 +1213,14 @@ def resolve_arena_component(
     bundle_dir: Path,
     selection: str | int,
 ) -> ArenaComponentResolution:
-    """Resolve one version-matched runtime bundle, checking RIS only for the default bundle."""
+    """Select the startup-checked bundle or an explicit custom bundle offline."""
 
     baseline = bundle_dir.resolve()
     is_default = baseline == DEFAULT_BUNDLE_DIR.resolve()
-    result = _DEFAULT_MANAGER.resolve(
-        baseline,
-        selection,
-        check_updates=is_default,
-    )
+    if is_default:
+        result = _DEFAULT_MANAGER.resolve_local(baseline, selection)
+    else:
+        result = _DEFAULT_MANAGER.resolve(baseline, selection, check_updates=False)
     if is_default:
         outcome = _DEFAULT_MANAGER._checks.get(baseline)
         if outcome is not None:
