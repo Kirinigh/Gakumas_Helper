@@ -1348,10 +1348,10 @@
           "pipeline_override": {
             "WorkChooseShowConfirm": {
               "next": [
-                "WorkTimeAutoFlag"
+                "WorkTimeAutoShowFlag"
               ]
             },
-            "WorkTimeAutoFlag": {
+            "WorkTimeAutoShowFlag": {
               "recognition": {
                 "type": "Custom",
                 "param": {
@@ -1408,10 +1408,10 @@
           "pipeline_override": {
             "WorkChooseLiveConfirm": {
               "next": [
-                "WorkTimeAutoFlag"
+                "WorkTimeAutoLiveFlag"
               ]
             },
-            "WorkTimeAutoFlag": {
+            "WorkTimeAutoLiveFlag": {
               "recognition": {
                 "type": "Custom",
                 "param": {
