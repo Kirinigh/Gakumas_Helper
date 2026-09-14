@@ -940,7 +940,99 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              }
  
              SetText(textBlock, LangKeys.ApplyingUpdate.ToLocalization());
-@@ -3104,6 +3118,8 @@
+@@ -2474,7 +2488,7 @@
+ 
+         var releaseUrl = $"https://api.github.com/repos/{owner}/{repo}/releases";
+         int page = 1;
+-        const int perPage = 30;
++        const int perPage = 100;
+         using var httpClient = CreateHttpClientWithProxy();
+ 
+         if (!string.IsNullOrWhiteSpace(Instances.VersionUpdateSettingsUserControlModel.GitHubToken))
+@@ -2496,7 +2510,7 @@
+             var urlWithParams = $"{releaseUrl}?per_page={perPage}&page={page}";
+             try
+             {
+-                var response = await httpClient.GetAsync(urlWithParams).ConfigureAwait(false);
++                using var response = await GitHubApiRequests.GetAsync(httpClient, urlWithParams).ConfigureAwait(false);
+                 if (response.IsSuccessStatusCode)
+                 {
+                     string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+@@ -2542,7 +2556,7 @@
+                                 if (!onlyCheck && repo != "MFAAvalonia")
+                                     SaveChangelog(tag, "body");
+                             }
+-                            (url, sha256) = await GetDownloadUrlFromGitHubReleaseAsync(latestVersion, owner, repo).ConfigureAwait(false);
++                            (url, sha256) = await GetDownloadUrlFromGitHubReleaseAsync(latestVersion, owner, repo, tag).ConfigureAwait(false);
+                             return (url, latestVersion, sha256);
+                         }
+ 
+@@ -2556,11 +2570,8 @@
+                             }
+                         }
+                     }
+-                }
+-                else if (response.StatusCode == HttpStatusCode.Forbidden && response.ReasonPhrase?.Contains("403") == true)
+-                {
+-                    LoggerHelper.Error("GitHub API 速率限制已超出，请稍后再试。");
+-                    throw new Exception("GitHub API速率限制已超出，请稍后再试。");
++                    // A short final page already proves that there are no more releases.
++                    if (tags.Count < perPage) break;
+                 }
+                 else
+                 {
+@@ -2587,7 +2598,7 @@
+                 if (!onlyCheck && repo != "MFAAvalonia")
+                     SaveChangelog(bestRelease, "body");
+             }
+-            (url, sha256) = await GetDownloadUrlFromGitHubReleaseAsync(latestVersion, owner, repo).ConfigureAwait(false);
++            (url, sha256) = await GetDownloadUrlFromGitHubReleaseAsync(latestVersion, owner, repo, bestRelease).ConfigureAwait(false);
+         }
+         return (url, latestVersion, sha256);
+     }
+@@ -2779,7 +2790,7 @@
+         return $@"\b{osOrFamily}-{arch}\b";
+     }
+ 
+-    private static async Task<(string downloadUrl, string sha256)> GetDownloadUrlFromGitHubReleaseAsync(string version, string owner, string repo)
++    private static async Task<(string downloadUrl, string sha256)> GetDownloadUrlFromGitHubReleaseAsync(string version, string owner, string repo, JToken? releaseData = null)
+     {
+         string downloadUrl = string.Empty;
+         string sha256 = string.Empty;
+@@ -2802,12 +2813,15 @@
+ 
+         try
+         {
+-            var response = await httpClient.GetAsync(releaseUrl).ConfigureAwait(false);
+-            if (response.IsSuccessStatusCode)
+-            {
++            if (releaseData == null)
++            {
++                using var response = await GitHubApiRequests.GetAsync(httpClient, releaseUrl).ConfigureAwait(false);
++                if (!response.IsSuccessStatusCode)
++                    throw new Exception($"请求 GitHub 失败：状态码={(int)response.StatusCode} {response.StatusCode}，原因={response.ReasonPhrase}");
+                 var jsonResponse = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+-                var releaseData = JObject.Parse(jsonResponse);
+-
++                releaseData = JObject.Parse(jsonResponse);
++            }
++            {
+                 if (releaseData["assets"] is JArray { Count: > 0 } assets)
+                 {
+                     var orderedAssets = assets
+@@ -2834,11 +2848,6 @@
+                     downloadUrl = bestAsset?.Url ?? string.Empty;
+                     sha256 = bestAsset?.Sha256 ?? string.Empty;
+                 }
+-            }
+-            else
+-            {
+-                LoggerHelper.Error($"请求 GitHub 失败：状态码={(int)response.StatusCode} {response.StatusCode}，原因={response.ReasonPhrase}");
+-                throw new Exception($"{response.StatusCode} - {response.ReasonPhrase}");
+             }
+         }
+         catch (Exception e) when (e is not OperationCanceledException)
+@@ -3104,6 +3113,8 @@
          TextBlock? downloadSpeedTextBlock = null)
      {
          var targetFilePath = filePath;
@@ -949,7 +1041,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          try
          {
              using var httpClient = CreateHttpClientWithProxy();
-@@ -3147,6 +3163,7 @@
+@@ -3147,6 +3158,7 @@
  
              await using var contentStream = await response.Content.ReadAsStreamAsync();
              await using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
@@ -957,7 +1049,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
  
              var buffer = new byte[8192];
              var stopwatch = Stopwatch.StartNew();
-@@ -3176,7 +3193,7 @@
+@@ -3176,7 +3188,7 @@
                  double progressPercentage;
                  if (totalBytes.HasValue && totalBytes.Value > 0)
                  {
@@ -966,7 +1058,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  }
                  else
                  {
-@@ -3199,6 +3216,11 @@
+@@ -3199,6 +3211,11 @@
                  }
              }
  
@@ -978,7 +1070,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              SetProgress(progressBar, 100);
              SetDownloadInfo(downloadSizeTextBlock, downloadSpeedTextBlock, totalBytesRead, totalBytes ?? totalBytesRead, bytesPerSecond);
              DispatcherHelper.PostOnMainThread(() =>
-@@ -3225,6 +3247,20 @@
+@@ -3225,6 +3242,20 @@
          {
              LoggerHelper.Error($"下载文件时发生未知错误：原因={ex.Message}", ex);
              return (false, targetFilePath);
@@ -1383,3 +1475,82 @@ diff --git a/MFAAvalonia/Extensions/MaaFW/FocusHandler.cs b/MFAAvalonia/Extensio
          return input.Contains(Path.DirectorySeparatorChar)
                 || input.Contains(Path.AltDirectorySeparatorChar)
                 || input.StartsWith("./", StringComparison.Ordinal)
+diff --git a/MFAAvalonia/Helper/GitHubApiRequests.cs b/MFAAvalonia/Helper/GitHubApiRequests.cs
+new file mode 100644
+--- /dev/null
++++ b/MFAAvalonia/Helper/GitHubApiRequests.cs
+@@ -0,0 +1,74 @@
++using System;
++using System.Collections.Generic;
++using System.Globalization;
++using System.Linq;
++using System.Net;
++using System.Net.Http;
++using System.Threading;
++using System.Threading.Tasks;
++
++namespace MFAAvalonia.Helper;
++
++// Only release metadata uses this gate; asset download/retry behavior is unchanged.
++internal static class GitHubApiRequests
++{
++    private static readonly SemaphoreSlim Gate = new(1, 1);
++    // Credentials already live in settings. Never include this key in diagnostics.
++    private static readonly Dictionary<string, DateTimeOffset> ResumeTimes = new();
++
++    internal static async Task<HttpResponseMessage> GetAsync(HttpClient client, string url)
++    {
++        await Gate.WaitAsync().ConfigureAwait(false);
++        try
++        {
++            var key = client.DefaultRequestHeaders.Authorization?.ToString() ?? string.Empty;
++            var now = DateTimeOffset.UtcNow;
++            foreach (var expired in ResumeTimes.Where(item => item.Value <= now).Select(item => item.Key).ToArray())
++                ResumeTimes.Remove(expired);
++            if (ResumeTimes.TryGetValue(key, out var resume))
++                throw RateLimitError(resume);
++
++            var response = await client.GetAsync(url).ConfigureAwait(false);
++            if (response.StatusCode != HttpStatusCode.Forbidden && (int)response.StatusCode != 429)
++                return response;
++            try
++            {
++                var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
++                var exhausted = response.Headers.TryGetValues("X-RateLimit-Remaining", out var remaining)
++                    && remaining.FirstOrDefault() == "0";
++                var retry = response.Headers.RetryAfter;
++                var limited = exhausted || retry != null || (int)response.StatusCode == 429
++                    || body.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
++                    || (response.ReasonPhrase?.Contains("rate limit", StringComparison.OrdinalIgnoreCase) ?? false);
++                if (!limited) return response; // Permission failures must not masquerade as quota exhaustion.
++                now = DateTimeOffset.UtcNow;
++                resume = now.AddMinutes(1);
++                if (retry?.Delta is { } delta && delta > TimeSpan.Zero)
++                    resume = now.Add(delta);
++                else if (retry?.Date is { } date && date > now)
++                    resume = date;
++                if (exhausted && response.Headers.TryGetValues("X-RateLimit-Reset", out var resets)
++                    && long.TryParse(resets.FirstOrDefault(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var epoch)
++                    && epoch >= 0 && epoch <= 253402300799)
++                {
++                    var reset = DateTimeOffset.FromUnixTimeSeconds(epoch);
++                    if (reset > resume) resume = reset;
++                }
++                ResumeTimes[key] = resume;
++                throw RateLimitError(resume);
++            }
++            catch
++            {
++                response.Dispose();
++                throw;
++            }
++        }
++        finally
++        {
++            Gate.Release();
++        }
++    }
++
++    private static Exception RateLimitError(DateTimeOffset resume) => new(
++        $"GitHub 请求额度受限，请在 {resume.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} 后重试。等待期间重复检查不会发送请求；可在更新设置中配置有效的 GitHub Token 后重试。");
++}

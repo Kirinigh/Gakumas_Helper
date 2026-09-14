@@ -122,3 +122,15 @@ python tools/deployment/mfa/test_dynamic_option_cases.py --source-zip "<固定�
 `test_focus_content.py --source-zip <固定源码ZIP> --dotnet <现有dotnet.exe> --work-dir <新目录>` 应用当前补丁并编译实际 `LogUnresolvedFocusPath` / `LooksLikeFilePath` 方法，覆盖颜色文本、大小写与换行、普通文本、链接、语言键、真实文件路径和已解析内容。仅日志接收器及路径占位符接口使用适配器，不启动客户端、不改变内容解析或文件访问权限。
 
 Focus 的颜色标记闭合符不再触发文件路径警告；实际文件引用继续保留原诊断。本修改目前是源码补丁，既有 v0.5.0 Core 不包含它；未来纳入客户端前仍须重新构建和验证对应 bundle，不能复用旧补丁散列声明已部署。
+
+## 离线 GitHub 更新检查回归
+
+```powershell
+python tools/deployment/mfa/test_github_update.py --source-zip "<固定源码 ZIP>" --dotnet "<现有 SDK>\dotnet.exe" --libs "<现有 Newtonsoft.Json.dll 与 Semver.dll 目录>" --work-dir "<尚不存在的测试目录>"
+```
+
+测试应用维护补丁，编译实际版本发现、版本比较、资产选择方法及完整 `GitHubApiRequests.cs`；替代界面、配置和 HTTP 响应，不联网或恢复依赖。覆盖分页、跨页最高版本、稳定/Beta/Alpha 渠道、指定版本、公告保存、资产 URL/摘要、独立详情查询、403/429、服务端恢复时间、冷却期拦截/到期恢复、凭据切换与普通权限失败。`--patch` 可指定旧补丁作相同断言的反向验证：65 个版本时旧实现发出 5 次请求，新实现为 1 次。
+
+版本列表改用每页 100 条，短页停止，列表中已有的 release 资产直接复用。元数据请求按凭据执行进程内限流冷却，识别状态码、限流头和响应正文；`Retry-After` 和额度耗尽时的 `X-RateLimit-Reset` 决定等待时间，没有有效恢复信息时至少等待一分钟。冷却同时覆盖资源和客户端的 GitHub 版本元数据查询，不改变下载重试及校验。更换凭据可重新检查；重启客户端会清空内存冷却记录。普通 403 权限错误仍按请求失败报告。
+
+本次交付为已通过离线回归的源码补丁，不能恢复已消耗的 GitHub 服务端额度。现有安装不会自动获得修复；纳入发行客户端仍需按本文件的 Core 构建、双次复建与制品验证流程生成新 bundle。
