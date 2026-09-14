@@ -631,6 +631,8 @@ class MaaArenaReaderBackend:
         ] = []
         self._inferred_clicked_cards: dict[tuple[int, int], ClickedSkillCard] = {}
         self._active_inferred_clicked_card: tuple[int, int] | None = None
+        self._card_detail_open_ids: dict[tuple[int, int], int] = {}
+        self._card_detail_rebind_ids: dict[tuple[int, int], int] = {}
         self._card_detail_texts: dict[tuple[int, int], str] = {}
         self._card_detail_images: dict[tuple[int, int], Any] = {}
         self._card_detail_last_contact_released_at: dict[
@@ -986,6 +988,8 @@ class MaaArenaReaderBackend:
     ) -> None:
         if failed:
             self._retain_failed_skill_detail_identity(key)
+        getattr(self, "_card_detail_open_ids", {}).pop(key, None)
+        getattr(self, "_card_detail_rebind_ids", {}).pop(key, None)
         started = self._card_transaction_started.pop(key, None)
         getattr(self, "_detail_identity_proofs", {}).pop(key, None)
         getattr(self, "_card_transaction_tokens", {}).pop(key, None)
@@ -7121,6 +7125,8 @@ class MaaArenaReaderBackend:
                 f"detail card {resolved} is outside the stage/slot domain "
                 f"for group {source_group_index}/slot {source_card_slot}"
             )
+        if source_group_index is not None and source_card_slot is not None:
+            self._assert_skill_detail_open_id((source_group_index, source_card_slot), resolved)
         return resolved
 
     def _confirm_clicked_skill_card_id_from_title(
@@ -7836,6 +7842,77 @@ class MaaArenaReaderBackend:
             pattern = f"(?:{pattern}|{re.escape(recovered[1])})"
         return pattern
 
+    def _skill_detail_visual_ids(self, key: tuple[int, int]) -> tuple[int, ...]:
+        # Embeddings only supply candidates. A single first-place ID is not
+        # reliable enough to turn a normal upgraded card into a retry.
+        return getattr(self, "_card_candidate_groups", {}).get(key, ())
+
+    def _skill_detail_other_source_slots(self, key: tuple[int, int], card_id: int) -> list[tuple[int, int]]:
+        """Failure-only lookup of already frozen identities; never re-recognize."""
+        matches = set()
+        for other_key, predicted in getattr(self, "_card_predictions", {}).items():
+            if other_key != key and predicted == card_id:
+                matches.add(other_key)
+        for group, frames in getattr(self, "_card_identity_frames", {}).items():
+            if len(frames) != 3 or any(len(frame) != 6 for frame in frames):
+                continue
+            for slot in range(6):
+                other_key = (group, slot + 1)
+                if other_key == key:
+                    continue
+                try:
+                    ids = stable_reference_business_candidates(tuple(frame[slot] for frame in frames))
+                except BadgeReferenceError:
+                    continue
+                if card_id in ids:
+                    matches.add(other_key)
+        return sorted(matches)
+
+    def _accept_skill_detail_open_id(self, key: tuple[int, int], card_id: int, attempt: int) -> bool:
+        visual_ids = self._skill_detail_visual_ids(key)
+        if visual_ids and card_id not in visual_ids:
+            self._increment("skill_card_detail_id_mismatches")
+            rebind = getattr(self, "_card_detail_rebind_ids", None)
+            if rebind is None:
+                rebind = self._card_detail_rebind_ids = {}
+            other_slots = self._skill_detail_other_source_slots(key, card_id)
+            accepted = attempt == 1 and rebind.get(key) == card_id and not other_slots
+            diagnostic = getattr(self, "_detail_failure_frames", None)
+            if diagnostic is not None:
+                diagnostic["position"].update(
+                    expected_visual_ids=list(visual_ids), actual_detail_id=card_id,
+                    other_source_slots=other_slots,
+                )
+                self._note_confirmed_detail_name(card_id)
+            logger.info(json.dumps({
+                "event": "arena_skill_detail_id_check", "target_slot": key,
+                "expected_visual_ids": visual_ids, "actual_detail_id": card_id,
+                "other_source_slots": other_slots, "contact": attempt + 1,
+                "outcome": "repeated_title_rebind" if accepted else "reopen" if attempt == 0 else "exhausted",
+            }, ensure_ascii=False))
+            if not accepted:
+                rebind[key] = card_id
+                return False
+            # Two independent openings plus the existing source-return and full
+            # body confirmation retain detail priority over an incorrect image ID.
+            self._increment("skill_card_detail_reopened_title_rebinds")
+        if attempt == 1 and key in getattr(self, "_card_detail_rebind_ids", {}):
+            self._increment("skill_card_detail_id_reopen_successes")
+        opened = getattr(self, "_card_detail_open_ids", None)
+        if opened is None:
+            opened = self._card_detail_open_ids = {}
+        opened[key] = card_id
+        return True
+
+    def _assert_skill_detail_open_id(self, key: tuple[int, int] | None, card_id: int) -> None:
+        expected = getattr(self, "_card_detail_open_ids", {}).get(key)
+        if expected is not None and expected != card_id:
+            self._increment("skill_card_detail_id_changes")
+            raise ArenaReaderError(
+                "skill_card_detail_id_changed",
+                f"target {key!r}: opened detail ID {expected}, actual detail ID {card_id}",
+            )
+
     def _skill_card_source_box(
         self,
         key: tuple[int, int] | None,
@@ -7941,6 +8018,7 @@ class MaaArenaReaderBackend:
             contact_counts = {}
             self._card_transaction_contact_counts = contact_counts
         for attempt in range(contact_start_index, 2):
+            getattr(self, "_card_detail_open_ids", {}).pop(key, None)
             contact_counts[key] = attempt + 1
             click_box = primary_click_box if attempt == 0 else retry_click_box
             self._increment("skill_card_detail_clicks")
@@ -7974,6 +8052,11 @@ class MaaArenaReaderBackend:
                         source_card_box=card_box,
                         source_card_slot=card_slot,
                     )
+                    if not self._accept_skill_detail_open_id(key, confirmed_card_id, attempt):
+                        last_error = (f"skill_card_detail_id_mismatch: target {key!r}; "
+                                      f"visual_ids={self._skill_detail_visual_ids(key)!r}; "
+                                      f"actual_detail_id={confirmed_card_id}")
+                        break
                     self._card_detail_texts[key] = last_text
                     self._note_confirmed_detail_name(confirmed_card_id)
                     self._card_detail_images[key] = detail_image
@@ -10152,9 +10235,10 @@ class MaaArenaReaderBackend:
             if diagnostic is not None:
                 diagnostic["error"] = str(error)
             used_contacts = getattr(self, "_card_transaction_contact_counts", {}).get(key)
-            if error.code != "skill_card_detail_disappeared" or used_contacts != 1:
+            if error.code not in {"skill_card_detail_disappeared", "skill_card_detail_id_changed"} or used_contacts != 1:
                 raise
             original_error = str(error)
+            error_code = error.code
         except Exception as error:
             diagnostic = getattr(self, "_detail_failure_frames", None)
             if diagnostic is not None:
@@ -10165,7 +10249,11 @@ class MaaArenaReaderBackend:
         succeeded = False
         self._increment("skill_card_detail_reopen_attempts")
         try:
-            # The final failure already proved two source frames before any
+            if error_code == "skill_card_detail_id_changed":
+                self._dismiss_skill_card_detail()
+                self._assert_card_group_visible(key[0], card_slot=key[1])
+                self._increment("skill_card_detail_source_resets")
+            # A disappeared detail already proved two source frames before any
             # dismissal. Reuse the original retry contact, never a new budget.
             self._open_skill_card_once(
                 target, stage_number, member_slot, key[0], key[1],
@@ -11142,6 +11230,7 @@ class MaaArenaReaderBackend:
                         zero_candidate = positive_candidate = cost_fallback_candidate = None
                         continue
                     if error.code in {
+                        "skill_card_detail_id_changed",
                         "skill_card_cost_fallback_changed",
                         "skill_card_cost_fallback_contract_invalid",
                         "skill_card_cost_fallback_frame_conflict",
@@ -12243,6 +12332,8 @@ class MaaArenaReaderBackend:
 
         self._card_stage_plan = None
         self._card_rows.clear()
+        getattr(self, "_card_detail_open_ids", {}).clear()
+        getattr(self, "_card_detail_rebind_ids", {}).clear()
         self._card_predictions.clear()
         self._card_candidate_groups.clear()
         self._card_images.clear()
