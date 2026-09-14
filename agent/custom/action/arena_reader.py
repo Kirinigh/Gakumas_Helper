@@ -12257,12 +12257,19 @@ class MaaArenaReaderBackend:
             if image is None:
                 image = self._capture()
             items = self._ocr(image, r".+")
-            if not self._retry_transient_communication_items(items):
+            communication = self._retry_transient_communication_items(items)
+            contest_details = not communication and self._dismiss_contest_details_items(image, items)
+            if not communication and not contest_details:
                 return image, items
             if observation == 2 or time.monotonic() >= deadline:
                 break
             self._sleep(0.1)
             image = None
+        if contest_details:
+            raise ArenaReaderError(
+                "arena_contest_details_close_failed",
+                "contest details did not return within the member recovery observations; no back sent",
+            )
         raise ArenaReaderError(
             "arena_communication_retry_exhausted",
             "member recovery still sees a communication dialog after its existing Retry opportunity",
@@ -12445,11 +12452,57 @@ class MaaArenaReaderBackend:
             f"back navigation did not reach an arena main page {required_state}",
         )
 
+    def _dismiss_contest_details_items(self, image: Any, items: Sequence[Any]) -> bool:
+        """Close a proven contest overlay using recovery's existing OCR frame."""
+        self._check_cancelled()
+        titles = self._matching_ocr_items(items, r"^コンテスト\s*詳細$")
+        if not titles:
+            return False
+        height, width = image.shape[:2]
+        closes = self._matching_ocr_items(items, r"^閉じる$")
+        if (
+            len(titles) != 1 or len(closes) != 1
+            or not 0 <= _box(titles[0])[1] < height * 0.25
+            or not height * 0.75 <= _box(closes[0])[1] < height
+            or not 0 <= _box(closes[0])[0] < width
+        ):
+            raise ArenaReaderError(
+                "arena_contest_details_close_ambiguous",
+                "contest details is open but its title/close anchors are not unique; no back sent",
+            )
+        attempts = getattr(self, "_contest_details_close_attempts", 0)
+        if attempts >= 2:
+            raise ArenaReaderError(
+                "arena_contest_details_close_failed",
+                "contest details remains after two close attempts shared by member and arena recovery; no back sent",
+            )
+        # Consume before input. Member cleanup and outer recovery must not renew it.
+        self._contest_details_close_attempts = attempts + 1
+        self._increment("arena_contest_details_close_attempts")
+        started = time.perf_counter()
+        sent = False
+        try:
+            self._click(_box(closes[0]), settle_seconds=0)
+            sent = True
+        finally:
+            elapsed = time.perf_counter() - started
+            self._record_duration_sample("arena_contest_details_close", elapsed)
+            logger.info(json.dumps({
+                "event": "arena_reader_recovery", "action": "contest_details_close",
+                "attempt": attempts + 1, "click_sent": sent,
+                "extra_ocr": 0, "extra_clicks": 1,
+                "wall_seconds": round(elapsed, 6),
+            }, ensure_ascii=False, sort_keys=True))
+        return True
+
     def _dismiss_known_blocking_overlay(self, image: Any) -> bool:
         """Dismiss only overlays proven by independent page-specific anchors."""
 
         # Recovery gets one full-frame problem check; reuse the same OCR boxes.
-        if self._retry_transient_communication_items(self._ocr(image, r".+")):
+        items = self._ocr(image, r".+")
+        if self._retry_transient_communication_items(items):
+            return True
+        if self._dismiss_contest_details_items(image, items):
             return True
         menu_profile = self._ocr(image, r"^プロフィール$")
         menu_settings = self._ocr(image, r"^設定$")
