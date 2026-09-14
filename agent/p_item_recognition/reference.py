@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import time
 import hashlib
 import threading
 from typing import Any
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import replace, dataclass
 from collections.abc import Mapping, Sequence
 
 import numpy as np
@@ -156,6 +157,7 @@ class PItemReferenceDecision:
     frames_byte_identical: bool = False
     ranking_route: str = "full_rendered_reference"
     full_fallback_used: bool = False
+    scale_fallback: Mapping[str, Any] | None = None
 
     @property
     def accepted(self) -> bool:
@@ -347,6 +349,8 @@ class PItemRenderedReferenceGallery:
         self._resize_cache_lock = threading.Lock()
         self._resize_cache_signature: tuple[int, int] | None = None
         self._resize_cache: dict[int, tuple[np.ndarray, ...]] = {}
+        self._scale_resize_signature: tuple[int, int] | None = None
+        self._scale_resize_cache: dict[tuple[int, tuple[int, ...]], dict[int, np.ndarray]] = {}
 
     @classmethod
     def load(cls, root: str | Path) -> "PItemRenderedReferenceGallery":
@@ -499,6 +503,28 @@ class PItemRenderedReferenceGallery:
                 self._resize_cache[delta] = cached
             return cached
 
+    def _resized_scale_candidates(
+        self, width: int, height: int, delta: int, indexes: Sequence[int],
+    ) -> Mapping[int, np.ndarray]:
+        import cv2
+
+        key = (delta, tuple(indexes))
+        with self._resize_cache_lock:
+            if self._scale_resize_signature != (width, height):
+                self._scale_resize_signature = (width, height)
+                self._scale_resize_cache.clear()
+            cached = self._scale_resize_cache.get(key)
+            if cached is None:
+                if min(width + delta, height + delta) < 8:
+                    raise PItemReferenceError("P-item fallback scale is invalid")
+                cached = {
+                    index: cv2.resize(self.rendered_bgr[index], (width + delta, height + delta),
+                                      interpolation=cv2.INTER_AREA)
+                    for index in indexes
+                }
+                self._scale_resize_cache[key] = cached
+            return cached
+
     def _rank_candidates(
         self,
         image: Any,
@@ -507,6 +533,7 @@ class PItemRenderedReferenceGallery:
         candidate_indexes: Sequence[int],
         deltas: Sequence[int],
         canonical_slot_size: tuple[int, int] | None = None,
+        resize_candidates_only: bool = False,
     ) -> tuple[PItemReferenceHit, ...]:
         import cv2
 
@@ -539,7 +566,8 @@ class PItemRenderedReferenceGallery:
         pad_x = max(4, reference_width // 8)
         pad_y = max(4, reference_height // 8)
         templates = {
-            delta: self._resized_references(reference_width, reference_height, delta)
+            delta: (self._resized_scale_candidates(reference_width, reference_height, delta, candidate_indexes)
+                    if resize_candidates_only else self._resized_references(reference_width, reference_height, delta))
             for delta in deltas
         }
         rankings: list[PItemReferenceHit] = []
@@ -695,6 +723,7 @@ class PItemRenderedReferenceGallery:
         *,
         plan: str,
         eligible_p_item_ids: frozenset[int] | None = None,
+        allow_scale_fallback: bool = True,
     ) -> PItemReferenceDecision:
         if len(images) != self.runtime.stable_frame_count:
             raise PItemReferenceError(
@@ -907,15 +936,69 @@ class PItemRenderedReferenceGallery:
                 frames_byte_identical=byte_identical,
                 ranking_route="not_ranked",
             )
+        def finish_full(
+            ranking: tuple[PItemReferenceHit, ...], *, ranking_route: str, full_fallback_used: bool,
+        ) -> PItemReferenceDecision:
+            original = decide(ranking, ranking_route=ranking_route, full_fallback_used=full_fallback_used)
+            if (not allow_scale_fallback or original.reason not in {
+                    "reference_similarity_below_threshold", "reference_margin_below_threshold",
+                } or not original.top_k):
+                return original
+            reference_size = (box[2], box[3]) if profile is None else (
+                profile.canonical_slot_width, profile.canonical_slot_height,
+            )
+            # Only the researched lower scale boundary gets one extra batch.
+            # Existing successful reads and upper-boundary failures keep their path.
+            if (original.top_k[0].size != tuple(size - 6 for size in reference_size)
+                    or min(reference_size) - 12 < 8):
+                return original
+            import cv2
+
+            started = time.perf_counter()
+            diagnostics = {"deltas": [-12, -10, -8], "original_id": original.top_k[0].p_item_id,
+                           "original_similarity": original.similarity, "original_margin": original.margin}
+            try:
+                indexes = ranking_scope.get("candidate_indexes", tuple(range(len(self.p_item_ids))))
+                diagnostics["candidate_count"] = len(indexes)
+                extra = self._rank_candidates(
+                    images[0], box, candidate_indexes=indexes, deltas=(-12, -10, -8),
+                    canonical_slot_size=None if profile is None else reference_size,
+                    resize_candidates_only=True,
+                )
+                merged = {hit.p_item_id: hit for hit in ranking}
+                for hit in extra:
+                    previous = merged.get(hit.p_item_id)
+                    if previous is None or hit.similarity > previous.similarity:
+                        merged[hit.p_item_id] = hit
+                expanded = tuple(sorted(merged.values(), key=lambda hit: (-hit.similarity, hit.p_item_id)))
+                result = decide(expanded, ranking_route=ranking_route + "_then_bounded_scale",
+                                full_fallback_used=full_fallback_used)
+                diagnostics.update(expanded_id=result.top_k[0].p_item_id,
+                                   expanded_similarity=result.similarity, expanded_margin=result.margin,
+                                   expanded_size=list(result.top_k[0].size))
+                at_boundary = result.top_k[0].size in (
+                    tuple(size - 12 for size in reference_size), tuple(size + 6 for size in reference_size),
+                )
+                if at_boundary:
+                    diagnostics["outcome"] = "boundary_unresolved"
+                    result = original
+                else:
+                    diagnostics["outcome"] = "accepted" if result.accepted else "threshold_unresolved"
+            except (PItemReferenceError, OSError, ValueError, KeyError, IndexError, cv2.error) as error:
+                diagnostics.update(outcome="error", error=f"{type(error).__name__}: {error}")
+                result = original
+            diagnostics["duration_seconds"] = time.perf_counter() - started
+            return replace(result, scale_fallback=diagnostics)
+
         if profile is None:
-            return decide(
+            return finish_full(
                 self._rank_full(images[0], box, **ranking_scope),
                 ranking_route="full_rendered_reference",
                 full_fallback_used=False,
             )
         accelerated = self._rank_coarse_fine(images[0], box, profile=profile, **ranking_scope)
         if not accelerated.guard_passed:
-            return decide(
+            return finish_full(
                 self._rank_full(images[0], box, profile=profile, **ranking_scope),
                 ranking_route="fixed_coarse_fine_guard_then_full_fallback",
                 full_fallback_used=True,
@@ -930,7 +1013,7 @@ class PItemRenderedReferenceGallery:
             "reference_similarity_below_threshold",
         }:
             return decision
-        return decide(
+        return finish_full(
             self._rank_full(images[0], box, profile=profile, **ranking_scope),
             ranking_route="fixed_coarse_fine_then_full_fallback",
             full_fallback_used=True,

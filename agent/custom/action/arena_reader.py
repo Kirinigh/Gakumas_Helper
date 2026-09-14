@@ -302,6 +302,7 @@ class PItemReader(Protocol):
         plan: str,
         eligible_p_item_ids: frozenset[int] | None = None,
         eligible_p_item_ids_by_slot: Sequence[frozenset[int]] | None = None,
+        scale_fallback_allowed_by_slot: Sequence[bool] | None = None,
     ) -> Sequence[PItemReferenceDecision]: ...
 
 
@@ -366,9 +367,13 @@ class Task085PItemReader:
         plan: str,
         eligible_p_item_ids: frozenset[int] | None = None,
         eligible_p_item_ids_by_slot: Sequence[frozenset[int]] | None = None,
+        scale_fallback_allowed_by_slot: Sequence[bool] | None = None,
     ) -> Sequence[PItemReferenceDecision]:
         if eligible_p_item_ids_by_slot is not None and len(eligible_p_item_ids_by_slot) != len(boxes):
             raise PItemReferenceError("P-item candidate domains must match the screen slots")
+
+        if scale_fallback_allowed_by_slot is not None and len(scale_fallback_allowed_by_slot) != len(boxes):
+            raise PItemReferenceError("P-item scale budgets must match the screen slots")
 
         def classify(entry: tuple[int, tuple[int, int, int, int]]) -> PItemReferenceDecision:
             slot_index, box = entry
@@ -376,6 +381,8 @@ class Task085PItemReader:
                 images,
                 box,
                 plan=plan,
+                allow_scale_fallback=(True if scale_fallback_allowed_by_slot is None
+                                      else scale_fallback_allowed_by_slot[slot_index]),
                 eligible_p_item_ids=(eligible_p_item_ids if eligible_p_item_ids_by_slot is None
                                      else eligible_p_item_ids_by_slot[slot_index]),
             )
@@ -4230,6 +4237,7 @@ class MaaArenaReaderBackend:
             "frames_byte_identical": decision.frames_byte_identical,
             "ranking_route": decision.ranking_route,
             "full_fallback_used": decision.full_fallback_used,
+            "scale_fallback": decision.scale_fallback,
             "completeness": [
                 {
                     "foreground_fraction": round(item.foreground_fraction, 6),
@@ -5621,6 +5629,8 @@ class MaaArenaReaderBackend:
         )
         decisions: tuple[PItemReferenceDecision, ...] = ()
         images: tuple[Any, ...] = ()
+        scale_budget = [True] * 4
+        scale_history: list[dict[str, Any]] = []
         generation_attempt = 0
         matching_seconds = 0.0
         content_generation_errors: tuple[float, ...] = ()
@@ -5636,6 +5646,8 @@ class MaaArenaReaderBackend:
                 initial_image=first if generation_attempt == 1 else None,
             )
             content_generation_rejected_windows += rejected_windows
+            if slot_domains is not None:
+                read_scope["scale_fallback_allowed_by_slot"] = tuple(scale_budget)
             started = time.perf_counter()
             try:
                 decisions = tuple(
@@ -5652,6 +5664,17 @@ class MaaArenaReaderBackend:
                     "p_item_count_mismatch",
                     f"P-item reference reader returned {len(decisions)} slots",
                 )
+            for index, decision in enumerate(decisions):
+                if decision.scale_fallback is not None:
+                    scale_budget[index] = False
+                    diagnostics = decision.scale_fallback
+                    scale_history.append({"generation": generation_attempt, "screen_slot": index + 1,
+                                          **diagnostics})
+                    self._increment("p_item_scale_fallback_attempts")
+                    self._increment("p_item_scale_fallback_" + str(diagnostics["outcome"]))
+                    elapsed = float(diagnostics["duration_seconds"])
+                    self._add_timing("p_item_scale_fallback", elapsed)
+                    self._record_duration_sample("p_item_scale_fallback", elapsed)
             if all(decision.accepted for decision in decisions):
                 break
             if generation_attempt == 1:
@@ -5886,6 +5909,7 @@ class MaaArenaReaderBackend:
                 content_generation_rejected_windows
             ),
             "eligible_candidate_count": None if eligible_ids is None else len(eligible_ids),
+            "scale_fallbacks": scale_history,
             "eligible_candidate_counts_by_screen_slot": (None if slot_domains is None
                                                          else [len(domain) for domain in slot_domains]),
             "reference_gallery_sha256": getattr(gallery, "gallery_sha256", None),
