@@ -107,7 +107,16 @@ diff --git a/MFAAvalonia/Extensions/MaaFW/TaskLoader.cs b/MFAAvalonia/Extensions
 diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogExporter.cs
 --- a/MFAAvalonia/Helper/FileLogExporter.cs
 +++ b/MFAAvalonia/Helper/FileLogExporter.cs
-@@ -86,12 +86,20 @@
+@@ -14,8 +14,6 @@
+ public static class FileLogExporter
+ {
+     public const int MAX_LINES = 42000;
+-    private const long MaxArchiveVolumeBytes = 24_500_000;
+-    private const long ZipEntryOverheadBytes = 128;
+     private static readonly SemaphoreSlim ExportSemaphore = new(1, 1);
+     // 定义需要处理的图片文件扩展名
+     private static readonly string[] ImageExtensions =
+@@ -86,12 +84,20 @@
                  string baseDirectory = AppPaths.DataRoot;
  
                  // 获取符合条件的日志文件和图片文件
@@ -130,7 +139,7 @@ diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogE
                      LoggerHelper.Warning("未找到符合条件的日志文件或图片。");
                      ToastHelper.Warn(LangKeys.ExportLog.ToLocalization(), LangKeys.ExportLogNoEligibleFiles.ToLocalization());
                      return ExportLogResult.NoEligibleFiles;
-@@ -104,7 +112,7 @@
+@@ -104,7 +110,7 @@
                  try
                  {
                      var copiedCount = 0;
@@ -139,7 +148,7 @@ diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogE
  
                      await Task.Run(() =>
                      {
-@@ -113,7 +121,7 @@
+@@ -113,7 +119,7 @@
                          {
                              if (string.IsNullOrWhiteSpace(file.FullName))
                              {
@@ -148,7 +157,7 @@ diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogE
                                  continue;
                              }
  
-@@ -125,11 +133,11 @@
+@@ -125,11 +131,11 @@
  
                                  CopyFileSnapshot(file.FullName, destPath);
                                  copiedCount++;
@@ -162,15 +171,18 @@ diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogE
                              }
                          }
                      });
-@@ -141,12 +149,16 @@
+@@ -141,16 +147,18 @@
                          return ExportLogResult.Failed;
                      }
  
-+                    WriteExportReport(tempDir, baseDirectory, options, copiedPaths, issues);
-                     var archiveFiles = await Task.Run(() => CreateArchiveVolumes(tempDir));
-                     await PublishArchiveVolumesAsync(saveFile, archiveFiles);
- 
+-                    var archiveFiles = await Task.Run(() => CreateArchiveVolumes(tempDir));
+-                    await PublishArchiveVolumesAsync(saveFile, archiveFiles);
+-
 -                    if (skippedCount > 0)
++                    WriteExportReport(tempDir, baseDirectory, options, copiedPaths, issues);
++                    var archiveFile = await Task.Run(() => CreateArchive(tempDir));
++                    await PublishArchiveAsync(saveFile, archiveFile);
++
 +                    if (issues.Count > 0)
                      {
 -                        LoggerHelper.Warning($"日志导出完成，但有 {skippedCount} 个文件未导出（可能正在占用）。");
@@ -179,9 +191,14 @@ diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogE
 +                        ToastHelper.Warn(LangKeys.ExportLog.ToLocalization(), message);
 +                        return ExportLogResult.Partial;
                      }
-                     LoggerHelper.Info(archiveFiles.Count == 1
-                         ? $"日志和图片已成功压缩到：\n{saveFile.Name}"
-@@ -183,149 +195,198 @@
+-                    LoggerHelper.Info(archiveFiles.Count == 1
+-                        ? $"日志和图片已成功压缩到：\n{saveFile.Name}"
+-                        : $"日志和图片已成功压缩为 {archiveFiles.Count} 个分卷：\n{GetVolumeFileName(saveFile.Name, 1, archiveFiles.Count)}");
++                    LoggerHelper.Info($"日志和图片已成功压缩到：\n{saveFile.Name}");
+                     ToastHelper.Success(LangKeys.ExportLog.ToLocalization(), LangKeys.ExportLogSuccess.ToLocalization());
+                     return ExportLogResult.Success;
+                 }
+@@ -183,149 +191,198 @@
          }
      }
  
@@ -507,7 +524,7 @@ diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogE
          var fileInfo = new FileInfo(file);
          var now = DateTime.Now;
  
-@@ -382,7 +443,7 @@
+@@ -382,7 +439,7 @@
              .Any(segment => segment.Equals(folderName, StringComparison.OrdinalIgnoreCase));
      }
  
@@ -516,7 +533,7 @@ diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogE
      {
          try
          {
-@@ -391,7 +452,7 @@
+@@ -391,7 +448,7 @@
                  .Replace(baseDirectory, "")
                  .TrimStart(Path.DirectorySeparatorChar);
              var isImage = IsImageFile(file);
@@ -525,7 +542,7 @@ diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogE
  
              eligibleFiles.Add(new FileInfoEx
              {
-@@ -403,7 +464,7 @@
+@@ -403,7 +460,7 @@
          }
          catch (Exception ex)
          {
@@ -534,7 +551,188 @@ diff --git a/MFAAvalonia/Helper/FileLogExporter.cs b/MFAAvalonia/Helper/FileLogE
          }
      }
  
-@@ -656,7 +717,8 @@
+@@ -452,7 +509,7 @@
+         source.CopyTo(destination);
+     }
+ 
+-    private static List<string> CreateArchiveVolumes(string sourceDirectory)
++    private static string CreateArchive(string sourceDirectory)
+     {
+         var files = Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories)
+             .OrderBy(file => Path.GetRelativePath(sourceDirectory, file), StringComparer.Ordinal)
+@@ -462,26 +519,9 @@
+ 
+         try
+         {
+-            var singleArchive = Path.Combine(archiveDirectory, "archive.zip");
+-            CreateArchive(singleArchive, sourceDirectory, files);
+-            if (new FileInfo(singleArchive).Length <= MaxArchiveVolumeBytes)
+-                return [singleArchive];
+-
+-            File.Delete(singleArchive);
+-            var groups = GroupFilesIntoVolumes(sourceDirectory, files);
+-            var width = groups.Count >= 100 ? 3 : 2;
+-            var volumes = new List<string>(groups.Count);
+-
+-            for (var index = 0; index < groups.Count; index++)
+-            {
+-                var volumePath = Path.Combine(
+-                    archiveDirectory,
+-                    $"archive-part{(index + 1).ToString($"D{width}")}.zip");
+-                CreateArchive(volumePath, sourceDirectory, groups[index]);
+-                volumes.Add(volumePath);
+-            }
+-
+-            return volumes;
++            var archivePath = Path.Combine(archiveDirectory, "archive.zip");
++            CreateArchive(archivePath, sourceDirectory, files);
++            return archivePath;
+         }
+         catch
+         {
+@@ -491,47 +531,6 @@
+         }
+     }
+ 
+-    private static List<List<string>> GroupFilesIntoVolumes(string sourceDirectory, IEnumerable<string> files)
+-    {
+-        var groups = new List<List<string>>();
+-        var currentGroup = new List<string>();
+-        long currentSize = 22;
+-
+-        foreach (var file in files)
+-        {
+-            var entryName = Path.GetRelativePath(sourceDirectory, file).Replace('\\', '/');
+-            var estimatedSize = MeasureCompressedSize(file)
+-                                + ZipEntryOverheadBytes
+-                                + System.Text.Encoding.UTF8.GetByteCount(entryName) * 2L;
+-
+-            if (currentGroup.Count > 0 && currentSize + estimatedSize > MaxArchiveVolumeBytes)
+-            {
+-                groups.Add(currentGroup);
+-                currentGroup = [];
+-                currentSize = 22;
+-            }
+-
+-            currentGroup.Add(file);
+-            currentSize += estimatedSize;
+-        }
+-
+-        if (currentGroup.Count > 0)
+-            groups.Add(currentGroup);
+-
+-        return groups;
+-    }
+-
+-    private static long MeasureCompressedSize(string file)
+-    {
+-        using var source = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+-        using var target = new CountingWriteStream();
+-        using (var compressor = new DeflateStream(target, CompressionLevel.Optimal, leaveOpen: true))
+-        {
+-            source.CopyTo(compressor);
+-        }
+-        return target.BytesWritten;
+-    }
+-
+     private static void CreateArchive(string archivePath, string sourceDirectory, IEnumerable<string> files)
+     {
+         using var stream = new FileStream(archivePath, FileMode.Create, FileAccess.Write, FileShare.None);
+@@ -543,51 +542,15 @@
+         }
+     }
+ 
+-    private static async Task PublishArchiveVolumesAsync(IStorageFile saveFile, IReadOnlyList<string> archiveFiles)
+-    {
+-        var archiveDirectory = Path.GetDirectoryName(archiveFiles[0]);
++    private static async Task PublishArchiveAsync(IStorageFile saveFile, string archiveFile)
++    {
++        var archiveDirectory = Path.GetDirectoryName(archiveFile);
+         try
+         {
+-            if (archiveFiles.Count == 1)
+-            {
+-                await using var source = new FileStream(archiveFiles[0], FileMode.Open, FileAccess.Read, FileShare.Read);
+-                await using var destination = await saveFile.OpenWriteAsync();
+-                destination.SetLength(0);
+-                await source.CopyToAsync(destination);
+-                return;
+-            }
+-
+-            if (!saveFile.Path.IsFile)
+-                throw new IOException("The selected storage provider does not support writing split archives.");
+-
+-            var selectedPath = saveFile.Path.LocalPath;
+-            var outputDirectory = Path.GetDirectoryName(selectedPath)
+-                ?? throw new IOException("Unable to determine the export directory.");
+-            var createdFiles = new List<string>();
+-
+-            try
+-            {
+-                for (var index = 0; index < archiveFiles.Count; index++)
+-                {
+-                    var outputPath = Path.Combine(
+-                        outputDirectory,
+-                        GetVolumeFileName(saveFile.Name, index + 1, archiveFiles.Count));
+-                    File.Copy(archiveFiles[index], outputPath, overwrite: true);
+-                    createdFiles.Add(outputPath);
+-                }
+-
+-                if (File.Exists(selectedPath))
+-                    File.Delete(selectedPath);
+-            }
+-            catch
+-            {
+-                foreach (var createdFile in createdFiles)
+-                {
+-                    try { File.Delete(createdFile); }
+-                    catch { /* ignore cleanup errors */ }
+-                }
+-                throw;
+-            }
++            await using var source = new FileStream(archiveFile, FileMode.Open, FileAccess.Read, FileShare.Read);
++            await using var destination = await saveFile.OpenWriteAsync();
++            destination.SetLength(0);
++            await source.CopyToAsync(destination);
+         }
+         finally
+         {
+@@ -597,34 +560,6 @@
+                 catch { /* ignore cleanup errors */ }
+             }
+         }
+-    }
+-
+-    private static string GetVolumeFileName(string selectedFileName, int volumeNumber, int volumeCount)
+-    {
+-        var baseName = Path.GetFileNameWithoutExtension(selectedFileName);
+-        var width = volumeCount >= 100 ? 3 : 2;
+-        return $"{baseName}-part{volumeNumber.ToString($"D{width}")}.zip";
+-    }
+-
+-    private sealed class CountingWriteStream : Stream
+-    {
+-        public long BytesWritten { get; private set; }
+-        public override bool CanRead => false;
+-        public override bool CanSeek => false;
+-        public override bool CanWrite => true;
+-        public override long Length => BytesWritten;
+-        public override long Position
+-        {
+-            get => BytesWritten;
+-            set => throw new NotSupportedException();
+-        }
+-
+-        public override void Flush() { }
+-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+-        public override void SetLength(long value) => throw new NotSupportedException();
+-        public override void Write(byte[] buffer, int offset, int count) => BytesWritten += count;
+-        public override void Write(ReadOnlySpan<byte> buffer) => BytesWritten += buffer.Length;
+     }
+ }
+ 
+@@ -656,7 +591,8 @@
      NoEligibleFiles,
      Failed,
      Blocked,

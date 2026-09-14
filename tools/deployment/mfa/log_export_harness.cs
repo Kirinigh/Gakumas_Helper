@@ -356,6 +356,35 @@ internal static class Program
             Assert(result == ExportLogResult.Success, "Large log failed");
             Exact(entries, input, path);
         });
+        foreach (var legacy in new[] { false, true })
+        {
+            await Case("large_single_archive_" + (legacy ? "legacy" : "default"), async input =>
+            {
+                // Each file fits the former volume limit; their compressed total does not.
+                // A fixed seed keeps the three source payloads reproducible for replay.
+                var random = new Random(410);
+                var paths = new[] { Agent + "current.log", Agent + "2026-09-13.log", Agent + "2026-09-14.log" };
+                foreach (var path in paths)
+                {
+                    var payload = new byte[9 * 1024 * 1024];
+                    random.NextBytes(payload);
+                    Write(input, path, Convert.ToBase64String(payload));
+                }
+                Write(input, Failure + "evidence.json", "{\"event\":\"arena_detail_failure\"}");
+                Write(input, Failure + "00.png", Png);
+                var (result, entries) = await Export(input, legacy ? null : new());
+                Assert(result == ExportLogResult.Success, "Large export failed");
+                var outputDirectory = Path.GetDirectoryName(input)!;
+                var archives = Directory.GetFiles(outputDirectory, "*.zip", SearchOption.TopDirectoryOnly);
+                Assert(archives.Length == 1 && Path.GetFileName(archives[0]) == "output.zip",
+                    "Export must keep the selected single ZIP filename instead of creating volumes");
+                var size = new FileInfo(archives[0]).Length;
+                Assert(size > 24_500_000, "Fixture does not cross the former compressed volume limit");
+                Exact(entries, input, paths.Concat(new[] { Failure + "evidence.json", Failure + "00.png" }).ToArray());
+                Assert(!LoggerHelper.Messages.Any(message => message.Contains("分卷")), "Obsolete split-volume success message");
+                Console.WriteLine($"Single ZIP bytes={size}; entries={entries.Count}; legacy={legacy}");
+            });
+        }
         await Case("legacy_native_selection_preserved", async input =>
         {
             Write(input, "debug/maa.log", "named");
