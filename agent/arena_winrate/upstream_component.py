@@ -13,6 +13,7 @@ import tempfile
 import threading
 import traceback
 import subprocess
+import http.client
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -34,6 +35,7 @@ from .catalog import ArenaCatalogError, ArenaEntityCatalog
 from .season_ui import ArenaSeasonUiSynchronizer
 from .badge_reference import BadgeReferenceError, BadgeReferenceGallery
 from .component_builder import build_runtime_component
+from .github_rate_limit import GitHubRateLimit, GitHubRateLimitError
 
 REPOSITORY = "surisuririsu/gakumas-tools"
 API_BASE = f"https://api.github.com/repos/{REPOSITORY}"
@@ -61,6 +63,7 @@ MAX_SOURCE_FILE_BYTES = 32 * 1024 * 1024
 MAX_SOURCE_TOTAL_BYTES = 64 * 1024 * 1024
 MAX_SOURCE_FILES = 2000
 MAX_PRODUCTION_DEPLOYMENTS = 100
+PRODUCTION_DEPLOYMENT_PAGE_SIZE = 10
 HTTP_ATTEMPTS = 3
 FAILED_CHECK_RETRIES = 1
 DIRECTORY_MOVE_RETRY_DELAYS = (0.1, 0.3, 0.6)
@@ -110,10 +113,16 @@ def _recoverable_component_failure(error: Exception) -> bool:
             return False
         if isinstance(current, urllib.error.HTTPError):
             return current.code >= 500 or current.code in {408, 429}
-        if isinstance(current, (OSError, subprocess.TimeoutExpired)):
+        if isinstance(current, (OSError, subprocess.TimeoutExpired, http.client.IncompleteRead, http.client.RemoteDisconnected)):
             return True
         current = current.__cause__
     return False
+
+
+_GITHUB_RATE_LIMIT = GitHubRateLimit(
+    PROJECT_ROOT / ".local/runtime-data/github-api-rate-limit.json",
+    on_error=lambda error: _log_component_failure("github_cooldown_state", error),
+)
 
 
 def _log_component_update_notice(message: str, *, recovered: bool = False) -> None:
@@ -251,6 +260,7 @@ class GitHubProductionSource:
 
     @staticmethod
     def _request_bytes(url: str, *, timeout: float, maximum: int) -> bytes:
+        is_api = urllib.parse.urlsplit(url).hostname == "api.github.com"
         request = urllib.request.Request(
             url,
             headers={
@@ -262,6 +272,8 @@ class GitHubProductionSource:
         last_error: Exception | None = None
         attempts_made = 0
         for attempt in range(1, HTTP_ATTEMPTS + 1):
+            if is_api:
+                _GITHUB_RATE_LIMIT.check()
             attempts_made = attempt
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -270,10 +282,19 @@ class GitHubProductionSource:
                     raise ArenaComponentError(f"RIS response exceeds the accepted size: {url}")
                 return data
             except urllib.error.HTTPError as error:
+                if is_api and error.code in (403, 429):
+                    try:
+                        try:
+                            body = error.read(8192).decode("utf-8", errors="replace")
+                        except (OSError, http.client.HTTPException):
+                            body = ""
+                        _GITHUB_RATE_LIMIT.reject(error.code, error.headers, f"{error.reason} {body}")
+                    finally:
+                        error.close()
                 last_error = error
                 if error.code < 500 and error.code not in {408, 429}:
                     break
-            except (OSError, urllib.error.URLError) as error:
+            except (OSError, urllib.error.URLError, http.client.IncompleteRead, http.client.RemoteDisconnected) as error:
                 last_error = error
             if attempt < HTTP_ATTEMPTS:
                 time.sleep(0.25 * attempt)
@@ -294,10 +315,20 @@ class GitHubProductionSource:
             raise ArenaComponentError(f"RIS response is not valid JSON: {url}") from error
 
     def discover_production_commit(self) -> str:
-        deployments = self._request_json(
-            f"{API_BASE}/deployments?environment=production&per_page={MAX_PRODUCTION_DEPLOYMENTS}",
-            timeout=self.check_timeout_seconds,
-        )
+        seen: set[int] = set()
+        for page in range(1, MAX_PRODUCTION_DEPLOYMENTS // PRODUCTION_DEPLOYMENT_PAGE_SIZE + 1):
+            deployments = self._request_json(
+                f"{API_BASE}/deployments?environment=production&per_page={PRODUCTION_DEPLOYMENT_PAGE_SIZE}&page={page}",
+                timeout=self.check_timeout_seconds,
+            )
+            commit = self._successful_deployment_on_page(deployments, seen)
+            if commit is not None:
+                return commit
+            if len(deployments) < PRODUCTION_DEPLOYMENT_PAGE_SIZE:
+                break
+        raise ArenaComponentError("RIS has no successful production deployment in the checked window")
+
+    def _successful_deployment_on_page(self, deployments: object, seen: set[int]) -> str | None:
         if not isinstance(deployments, list):
             raise ArenaComponentError("RIS production deployment response is invalid")
         production_deployments = sorted(
@@ -320,8 +351,10 @@ class GitHubProductionSource:
                 or not isinstance(deployment_id, int)
                 or not isinstance(commit, str)
                 or COMMIT_PATTERN.fullmatch(commit) is None
+                or deployment_id in seen
             ):
                 continue
+            seen.add(deployment_id)
             statuses = self._request_json(
                 f"{API_BASE}/deployments/{deployment_id}/statuses?per_page=1",
                 timeout=self.check_timeout_seconds,
@@ -344,7 +377,7 @@ class GitHubProductionSource:
             )
             if isinstance(latest_status, Mapping) and latest_status.get("state") == "success":
                 return commit
-        raise ArenaComponentError("RIS has no successful production deployment in the checked window")
+        return None
 
     def fetch_stage_rows(self, commit: str) -> object:
         _validate_commit(commit)
@@ -519,6 +552,14 @@ class ArenaComponentManager:
                     outcome = self._check_once(baseline)
                 self._checks[baseline] = outcome
                 if outcome.failure is not None:
+                    limited = outcome.failure
+                    seen_errors: set[int] = set()
+                    while limited is not None and not isinstance(limited, GitHubRateLimitError):
+                        if id(limited) in seen_errors:
+                            limited = None
+                            break
+                        seen_errors.add(id(limited))
+                        limited = limited.__cause__
                     prefix = "重试后仍未成功" if retried else "未成功"
                     try:
                         _resolve_selection(outcome, selection)
@@ -531,6 +572,11 @@ class ArenaComponentManager:
                         message = (
                             f"RIS 资源更新{prefix}，本次继续使用本地组件 {outcome.bundle.commit[:12]}。"
                             "资源可能不是最新，请核对使用期数；稍后重启客户端可再次检查更新。"
+                        )
+                    if limited is not None:
+                        message = (
+                            f"RIS 更新暂缓：{limited} 本地组件 {outcome.bundle.commit[:12]} 保留，"
+                            "请核对使用期数；到期后重启客户端可再次检查。"
                         )
                     _log_component_update_notice(message)
                 elif retried:
