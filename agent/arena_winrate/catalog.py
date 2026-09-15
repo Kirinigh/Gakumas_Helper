@@ -64,6 +64,7 @@ class CustomizationEvidenceInventoryEntry:
     group: tuple[tuple[str, int], ...]
     carriers: tuple[str, ...]
     unsupported_customization_ids: tuple[int, ...] = ()
+    legacy_partial_customization_ids: tuple[int, ...] = ()
 
 
 _TEXT_NORMALIZATION_REPLACEMENTS = {
@@ -251,6 +252,46 @@ def _selected_level_patch(value: object, level: int) -> str:
 def _first_integer_increment(value: object, field: str) -> int | None:
     match = re.search(rf"(?<![.A-Za-z]){re.escape(field)}\+=(-?[0-9]+)", str(value or ""))
     return int(match.group(1)) if match else None
+
+
+# These existing compound carriers have not yet been independently verified
+# against complete detail text. Preserve their exact catalog structures while
+# preventing a changed/new DSL from borrowing a coincidental integer witness.
+# This is a migration boundary, not a grammar for arbitrary compound actions.
+_LEGACY_PARTIAL_ADDED_ACTIONS = {
+    "at:endOfTurn{score+=5;fixedStamina-=1;limit:4}": ("score", 5),
+    "at:turn{score+=5;limit:2}": ("score", 5),
+    "motivationMultiplier=1.5;genki+=3": ("genki", 3),
+    "@baseat:startOfTurn{if:stamina>=maxStamina*0.5{concentration+=2}}": ("concentration", 2),
+    "@baseat:cardUsed[active]{effectCounter+=1};+at:cardUsed[active]"
+    "{if:effectCounter%3==2{genki+=12*cardsUsed+2};limit:2}": ("genki", 12),
+    "@baseat:motivationIncreased{if:isDirectEffect{motivation+=3};limit:5}": ("motivation", 3),
+    "@triggerat:cardUsed{score+=goodImpressionTurns*0.5;goodImpressionTurns+=1}": ("goodImpressionTurns", 1),
+    "@baseat:afterCardUsed{if:cardHasEffect(genki){goodImpressionTurns+=2}}": ("goodImpressionTurns", 2),
+}
+
+
+def _added_action_contract(definition: Mapping[str, Any]) -> tuple[str, int, str] | None:
+    """Admit complete single additions or explicitly unmigrated structures."""
+
+    if (
+        type(definition.get("max")) is not int
+        or definition.get("max") != 1
+        or any(
+            definition.get(key) not in (None, "")
+            for key in ("conditions", "cost", "effects", "limit")
+        )
+        or definition.get("forceInitialHand") not in (None, "", False)
+    ):
+        return None
+    actions = _normalise_text(definition.get("actions"))
+    scalar = re.fullmatch(r"([A-Za-z]+)\+=([0-9]+);?", actions)
+    if scalar is not None:
+        return scalar[1], int(scalar[2]), "literal_addition"
+    legacy = _LEGACY_PARTIAL_ADDED_ACTIONS.get(actions.rstrip(";"))
+    if legacy is not None:
+        return *legacy, "legacy_partial"
+    return None
 
 
 def _all_integer_increments(value: object, field: str) -> tuple[int, ...]:
@@ -1665,6 +1706,12 @@ class ArenaEntityCatalog:
                 for customization_id in available
                 if self._effective_detail_matcher(card, customization_id) is None
             )
+            legacy_partial = tuple(
+                customization_id
+                for customization_id in available
+                if (contract := _added_action_contract(self._customizations[customization_id]))
+                is not None and contract[2] == "legacy_partial"
+            )
             for expected_count in range(maximum_total + 1):
                 legal_groups = self.legal_customization_groups(
                     card_id,
@@ -1691,6 +1738,7 @@ class ArenaEntityCatalog:
                             group=tuple(sorted(group.items())),
                             carriers=tuple(sorted(carriers)),
                             unsupported_customization_ids=unsupported,
+                            legacy_partial_customization_ids=legacy_partial,
                         )
                     )
         return tuple(entries)
@@ -1705,6 +1753,14 @@ class ArenaEntityCatalog:
         definition = self._customizations[customization_id]
         if self._effective_detail_matcher(card, customization_id) is None:
             return "unsupported_fail_closed"
+        addition = _added_action_contract(definition)
+        if (
+            addition is not None and addition[2] == "literal_addition"
+            and addition[1] in _all_literal_integer_increments(card.get("actions"), addition[0])
+        ):
+            # Identical added/base text is a genuine unresolved carrier. Its
+            # existence does not prove which of the two counts is visible.
+            return "badge_constraint_only"
         if self._pure_generic_cost_delta(customization_id) is not None:
             return "card_face_generic_cost"
         if _normalise_text(definition.get("actions")) == "upgradeHand":
@@ -4898,12 +4954,15 @@ class ArenaEntityCatalog:
             "turnsRemaining": ("ターン追加+", ""),
             "score": ("スコア+", ""),
         }
-        for field, (prefix, suffix) in simple_action_labels.items():
-            added_value = _first_integer_increment(definition.get("actions"), field)
-            if added_value is None:
-                continue
-            token = f"{prefix}{added_value}{suffix}"
-            base_has_same_token = _first_integer_increment(card.get("actions"), field) == added_value
+        added_contract = _added_action_contract(definition)
+        if added_contract is not None and added_contract[0] in simple_action_labels:
+            field, added_value, contract_kind = added_contract
+            prefix, suffix = simple_action_labels[field]
+            base_has_same_token = added_value in _all_literal_integer_increments(card.get("actions"), field)
+            if base_has_same_token and contract_kind != "literal_addition":
+                # A replacement sharing one literal needs its own descriptor;
+                # compatibility must not admit a new ambiguous base pairing.
+                return None
 
             def match_added_action(
                 compact: str,
@@ -4914,17 +4973,31 @@ class ArenaEntityCatalog:
                 suffix: str = suffix,
                 base_has_same_token: bool = base_has_same_token,
             ) -> bool:
-                if base_has_same_token:
-                    return True
+                if count not in (0, 1):
+                    return False
                 visible = _contains_exact_integer_token(
                     compact,
                     prefix,
                     added_value,
                     suffix,
                 )
+                if base_has_same_token:
+                    # A pure added row can genuinely duplicate a base row.
+                    # Keep this unresolved for the existing badge constraint;
+                    # never claim empty text is evidence for either state.
+                    return visible
                 return visible is (count > 0)
 
+            match_added_action.action_contract = contract_kind
             return match_added_action
+
+        if any(
+            re.search(rf"(?<![.A-Za-z0-9_]){field}\+=[0-9]", normalized_customization_actions)
+            for field in simple_action_labels
+        ):
+            # No later label-only branch may launder an unhandled scalar
+            # expression or a compound patch into supported detail semantics.
+            return None
 
         if definition.get("forceInitialHand") is True:
 
