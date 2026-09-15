@@ -2695,6 +2695,9 @@ class ArenaEntityCatalog:
         """Recognize positive rows without changing the legacy fallback surface."""
 
         definition = self._customizations[customization_id]
+        conditional_multipliers = self._conditional_score_multipliers_descriptor(card, customization_id)
+        if conditional_multipliers is not None:
+            return self._conditional_score_multipliers_level_is_visible(compact, level, conditional_multipliers)
         applied_score = self._good_condition_applied_score_descriptor(
             card,
             customization_id,
@@ -4085,6 +4088,68 @@ class ArenaEntityCatalog:
             return None
         return rarity, int(card_count_text)
 
+    def _conditional_score_multipliers_descriptor(
+        self,
+        card: Mapping[str, Any],
+        customization_id: int,
+    ) -> tuple[int, int, int, int] | None:
+        """Bind both tagged replacement rows and the inherited good-condition branch."""
+        definition = self._customizations[customization_id]
+        actions = _normalise_text(definition.get("actions"))
+        if "goodConditionTurnsMultiplier" not in actions or "concentrationMultiplier" not in actions:
+            return None
+        base = re.fullmatch(
+            r"@basescore\+=([1-9][0-9]*);@bonusif:goodConditionTurns>=1"
+            r"\{score\+=([1-9][0-9]*)\};?",
+            _normalise_text(card.get("actions")),
+        )
+        replacement = re.fullmatch(
+            r"@basedo\{goodConditionTurnsMultiplier=([2-9][0-9]*);score\+=([1-9][0-9]*)\};"
+            r"@bonusdo\{concentrationMultiplier=([2-9][0-9]*);score\+=([1-9][0-9]*)\};?",
+            actions,
+        )
+        if (
+            base is None or replacement is None
+            or definition.get("type") != "effect"
+            or type(definition.get("max")) is not int or definition["max"] != 1
+            or any(definition.get(field) not in (None, "", False)
+                   for field in ("conditions", "cost", "effects", "limit", "forceInitialHand"))
+        ):
+            return None
+        base_score, bonus_score = map(int, base.groups())
+        good_multiplier, replaced_base, concentration_multiplier, replaced_bonus = map(int, replacement.groups())
+        if (base_score, bonus_score) != (replaced_base, replaced_bonus):
+            return None
+        return base_score, bonus_score, good_multiplier, concentration_multiplier
+
+    @staticmethod
+    def _conditional_score_multipliers_level_is_visible(
+        compact: str, level: int, operands: tuple[int, int, int, int],
+    ) -> bool:
+        if level not in (0, 1):
+            return False
+        base_score, bonus_score, good_multiplier, concentration_multiplier = operands
+        conditional_row = rf"(?<!絶)好調状態の場合[、,]?スコア\+{bonus_score}(?![0-9]|[.,．，。][0-9])"
+        base_row = rf"スコア\+{base_score}(?![0-9]|[.,．，。][0-9])"
+        base_annotation = rf"\(?好調効果を{good_multiplier}倍適用\)?"
+        bonus_annotation = rf"\(?集中効果を{concentration_multiplier}倍適用\)?"
+        complete_base = False
+        complete_positive = False
+        annotated = False
+        conflicting = False
+        for view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY):
+            complete_base |= bool(re.search(base_row, view) and re.search(conditional_row, view))
+            complete_positive |= bool(
+                re.search(base_row + base_annotation, view)
+                and re.search(conditional_row + bonus_annotation, view)
+            )
+            annotated |= "好調効果を" in view or "集中効果を" in view
+            for label, expected in (("好調", good_multiplier), ("集中", concentration_multiplier)):
+                conflicting |= any(int(value) != expected for value in re.findall(rf"{label}効果を([0-9]+)倍適用", view))
+        if level == 1:
+            return complete_positive and not conflicting
+        return complete_base and not annotated
+
     def _good_condition_applied_score_descriptor(
         self,
         card: Mapping[str, Any],
@@ -4558,6 +4623,20 @@ class ArenaEntityCatalog:
         normalized_customization_actions = _normalise_text(
             definition.get("actions")
         )
+        if (
+            "goodConditionTurnsMultiplier" in normalized_customization_actions
+            and "concentrationMultiplier" in normalized_customization_actions
+        ):
+            operands = self._conditional_score_multipliers_descriptor(card, customization_id)
+            if operands is None:
+                # Never mistake an unhandled replacement for a scalar addition
+                # merely because it retains the base score literal.
+                return None
+
+            def match_conditional_score_multipliers(compact: str, count: int) -> bool:
+                return self._conditional_score_multipliers_level_is_visible(compact, count, operands)
+
+            return match_conditional_score_multipliers
         if "setGoodImpressionTurnsEffectBuff" in normalized_customization_actions:
             impression_buff = self._good_impression_buff_descriptor(card, customization_id)
             if impression_buff is None:
