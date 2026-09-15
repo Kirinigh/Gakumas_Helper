@@ -13,6 +13,7 @@ from threading import RLock
 from dataclasses import field, dataclass
 
 from .decision import HIGHEST_WIN_RATE_FALLBACK_RULE
+from .badge_glyph_pool import badge_glyph_task_pools
 
 
 def diagnostic_logger(logger):
@@ -261,11 +262,15 @@ def register_arena_log_sinks(agent_server, logger):
             if detail.entry != "Challenge":
                 return
             if noti_type == NotificationType.Starting:
+                badge_glyph_task_pools.start(detail.task_id)
                 arena_task_log.start(detail.task_id)
             elif noti_type in (NotificationType.Succeeded, NotificationType.Failed):
-                if noti_type == NotificationType.Succeeded:
-                    arena_task_log.read_terminal(tasker, detail.task_id, logger)
-                arena_task_log.finish(detail.task_id, succeeded=noti_type == NotificationType.Succeeded, logger=logger)
+                try:
+                    if noti_type == NotificationType.Succeeded:
+                        arena_task_log.read_terminal(tasker, detail.task_id, logger)
+                    arena_task_log.finish(detail.task_id, succeeded=noti_type == NotificationType.Succeeded, logger=logger)
+                finally:
+                    badge_glyph_task_pools.finish(detail.task_id)
 
     sinks = (TaskSink(),)
     agent_server.add_tasker_sink(sinks[0])

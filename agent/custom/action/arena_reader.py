@@ -78,6 +78,7 @@ from arena_winrate.recovery import error_retry_box
 from arena_winrate.task_log import arena_task_log, diagnostic_logger
 from arena_winrate.cancellation import ArenaTaskCancelled, cancellation_for
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
+from arena_winrate.badge_glyph_pool import BadgeGlyphDomain, badge_glyph_task_pools
 from arena_winrate._detail_text_layout import (
     recover_distant_number_text,
     recover_wrapped_signed_text,
@@ -612,18 +613,15 @@ class MaaArenaReaderBackend:
         self._badge_glyph_count_diagnostics: dict[
             tuple[int, int], dict[str, Any]
         ] = {}
-        # Member-local glyph exemplars are learned only from independently
-        # confirmed detail semantics.  They deliberately do not outlive the
-        # frozen twelve-card layout: a window/layout change or a new member
-        # starts with an empty calibration set.
-        self._badge_glyph_exemplars: dict[
-            tuple[int, ...], dict[str, Any]
-        ] = {}
-        self._badge_glyph_polluted_descriptors: set[tuple[int, ...]] = set()
+        # Only independent detail truth crosses member/reader boundaries.
+        # Source-frame dimensions select the task domain before observation.
+        self._badge_glyph_task_pool = badge_glyph_task_pools.for_context(context)
+        self._badge_glyph_pool_size: tuple[int, int] | None = None
+        self._badge_glyph_domain = BadgeGlyphDomain()
+        self._badge_glyph_exemplars = self._badge_glyph_domain.exemplars
+        self._badge_glyph_polluted_descriptors = self._badge_glyph_domain.polluted
         self._badge_glyph_runtime_labels: dict[tuple[int, ...], int] = {}
-        # Persist only the low-dimensional, image-free provenance needed to
-        # audit whether a member-local exemplar can transfer across cards.
-        # The active exemplar table itself is still cleared at member close.
+        # Diagnostics retain scalar provenance, never card images or masks.
         self._runtime_badge_glyph_exemplar_diagnostics: list[
             dict[str, Any]
         ] = []
@@ -1683,6 +1681,9 @@ class MaaArenaReaderBackend:
         self,
         requested_group: int,
     ) -> tuple[Any, ...]:
+        self._bind_badge_glyph_task_domain(
+            self._card_count_frames.get(requested_group, ())
+        )
         cached = self._badge_local_results.get(requested_group)
         if cached is not None:
             return cached
@@ -1785,6 +1786,32 @@ class MaaArenaReaderBackend:
                     )
         return self._badge_local_results[requested_group]
 
+    def _bind_badge_glyph_task_domain(self, frames: Sequence[Any]) -> None:
+        """Select a task pool with existing frame metadata, without new input."""
+
+        pool = getattr(self, "_badge_glyph_task_pool", None)
+        if pool is None or not frames:
+            return
+        sizes = {tuple(getattr(image, "shape", ())[:2]) for image in frames}
+        if len(sizes) != 1:
+            size = None
+        else:
+            size = next(iter(sizes))
+            if len(size) != 2 or any(type(value) is not int or value <= 0 for value in size):
+                size = None
+        if size is not None and size == self._badge_glyph_pool_size and pool.active:
+            return
+        domain = pool.domain(size) if size is not None else BadgeGlyphDomain()
+        self._badge_glyph_pool_size = size
+        self._badge_glyph_domain = domain
+        self._badge_glyph_exemplars = domain.exemplars
+        self._badge_glyph_polluted_descriptors = domain.polluted
+        # These are decisions about the old captured member, never task truth.
+        self._badge_glyph_runtime_labels.clear()
+        self._badge_glyph_count_diagnostics.clear()
+        self._badge_local_results.clear()
+        self._badge_glyph_observations.clear()
+
     @staticmethod
     def _badge_glyph_ocr_canvases(
         descriptor: Any,
@@ -1877,9 +1904,9 @@ class MaaArenaReaderBackend:
         contour-rasterization outlier with the same component box; an unordered
         two-of-three vote is never accepted.  No frames are averaged and no
         nearest-neighbour vote is used.  Position is omitted from the returned
-        signature: the member-local lifetime already fixes the window/layout
-        generation, while the same rendered digit may occupy another one of
-        the twelve card slots.
+        signature: the source-frame domain fixes capture dimensions, while a
+        complete rendered digit may occupy another card slot or member. The
+        same-frame plate and component checks still bind each source locally.
         """
 
         if len(observations) != 3:
@@ -2202,6 +2229,9 @@ class MaaArenaReaderBackend:
         source = resolved.resolution_source
         reads = resolved.detail_confirmation_reads
         count = sum(int(value) for value in resolved.customizations.values())
+        task_pool = getattr(self, "_badge_glyph_task_pool", None)
+        if task_pool is not None and not task_pool.active:
+            return False
         if (
             resolved.detail_evidence_mode != "positive_unique"
             or isinstance(reads, bool)
@@ -2270,6 +2300,9 @@ class MaaArenaReaderBackend:
             "detail_evidence_mode": resolved.detail_evidence_mode,
             "detail_confirmation_reads": resolved.detail_confirmation_reads,
         }
+        if getattr(self, "_badge_glyph_pool_size", None) is not None:
+            diagnostic["capture_size"] = list(self._badge_glyph_pool_size)
+            diagnostic["task_id"] = self._badge_glyph_task_pool.task_id
         if descriptor in polluted:
             getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
             raise ArenaReaderError(
@@ -2315,12 +2348,19 @@ class MaaArenaReaderBackend:
             )
             self._increment("skill_card_badge_glyph_detail_outliers_excluded")
         if existing is None:
+            pool_domain = getattr(self, "_badge_glyph_domain", None)
+            if pool_domain is not None and not pool_domain.admit(descriptor):
+                self._increment("skill_card_badge_glyph_pool_capacity_skips")
+                return False
             runtime_labels.pop(descriptor, None)
+            if pool_domain is not None:
+                pool_domain.consumed_labels.pop(descriptor, None)
             runtime_diagnostics.append(diagnostic)
             exemplars[descriptor] = {
                 "count": count,
                 "geometries": {geometry},
                 "prototypes": {(geometry, support_frames)},
+                "source": diagnostic,
             }
             self._increment("skill_card_badge_glyph_exemplars_registered")
             return True
@@ -2340,6 +2380,9 @@ class MaaArenaReaderBackend:
                 f"{key!r} exact glyph exemplar has invalid geometry provenance",
             )
         runtime_labels.pop(descriptor, None)
+        pool_domain = getattr(self, "_badge_glyph_domain", None)
+        if pool_domain is not None:
+            pool_domain.consumed_labels.pop(descriptor, None)
         runtime_diagnostics.append(diagnostic)
         geometries.add(geometry)
         prototype_provenance.add((geometry, support_frames))
@@ -2407,11 +2450,7 @@ class MaaArenaReaderBackend:
         disproved by the new truth.
         """
 
-        for runtime_descriptor, claimed_count in getattr(
-            self,
-            "_badge_glyph_runtime_labels",
-            {},
-        ).items():
+        for runtime_descriptor, claimed_count in self._badge_glyph_consumed_claims(descriptor, count):
             if type(claimed_count) is not int or not 1 <= claimed_count <= 9:
                 raise ArenaReaderError(
                     "skill_card_badge_glyph_exemplar_invalid",
@@ -2452,7 +2491,7 @@ class MaaArenaReaderBackend:
         evidence: str,
         check_nearby_samples: bool = True,
     ) -> None:
-        """Cross-check any runtime glyph label against all member-local truth."""
+        """Cross-check a runtime label against independent truth and prior use."""
 
         polluted = getattr(self, "_badge_glyph_polluted_descriptors", set())
         exemplar = getattr(self, "_badge_glyph_exemplars", {}).get(
@@ -2480,6 +2519,9 @@ class MaaArenaReaderBackend:
             "_badge_glyph_runtime_labels",
             {},
         ).get(descriptor)
+        pool_domain = getattr(self, "_badge_glyph_domain", None)
+        if runtime_count is None and pool_domain is not None:
+            runtime_count = pool_domain.consumed_labels.get(descriptor)
         conflicting_count = (
             exemplar_count
             if exemplar_count is not None and exemplar_count != count
@@ -2544,13 +2586,9 @@ class MaaArenaReaderBackend:
                     raise ArenaReaderError(
                         "skill_card_badge_glyph_exemplar_transition_conflict",
                         f"{key!r} {evidence} is not separated from count "
-                        f"{candidate_count} member truth",
+                        f"{candidate_count} independent truth",
                     )
-        for runtime_descriptor, candidate_count in getattr(
-            self,
-            "_badge_glyph_runtime_labels",
-            {},
-        ).items():
+        for runtime_descriptor, candidate_count in self._badge_glyph_consumed_claims(descriptor, count):
             if (
                 type(candidate_count) is not int
                 or not 1 <= candidate_count <= 9
@@ -2597,6 +2635,27 @@ class MaaArenaReaderBackend:
             labels = {}
             self._badge_glyph_runtime_labels = labels
         labels[descriptor] = count
+        pool_domain = getattr(self, "_badge_glyph_domain", None)
+        if pool_domain is not None:
+            pool_domain.consumed_labels[descriptor] = count
+
+    def _badge_glyph_consumed_claims(self, descriptor: tuple[int, ...], count: int):
+        """Yield inference history only to contradiction guards, never lookup."""
+
+        pool_domain = getattr(self, "_badge_glyph_domain", None)
+        shared = {} if pool_domain is None else pool_domain.consumed_labels
+        if shared:
+            rows, metrics = pool_domain.consumed_comparisons(descriptor, count)
+            if metrics is None:
+                yield from rows
+            else:
+                nearby = self._badge_glyph_calibration_outer_near(metrics)
+                for index, row in enumerate(rows):
+                    if nearby[index]:
+                        yield row
+        for descriptor, count in getattr(self, "_badge_glyph_runtime_labels", {}).items():
+            if shared.get(descriptor) != count:
+                yield descriptor, count
 
     @staticmethod
     def _badge_glyph_comparison_metrics(
@@ -2657,15 +2716,14 @@ class MaaArenaReaderBackend:
     ) -> bool:
         """Return whether another label is too close for calibrated transfer."""
 
+        # Bitwise OR preserves the scalar predicate and applies the identical
+        # thresholds to a batch of task-history comparisons.
         return (
-            metrics["l1_sum"] <= BADGE_GLYPH_CALIBRATED_OUTER_L1_MAX
-            or metrics["mse"] <= BADGE_GLYPH_CALIBRATED_OUTER_MSE_MAX
-            or metrics["q4_changed_cells"]
-            <= BADGE_GLYPH_CALIBRATED_OUTER_CHANGED_MAX
-            or metrics["binary_xor_cells"]
-            <= BADGE_GLYPH_CALIBRATED_OUTER_XOR_MAX
-            or metrics["foreground_iou"]
-            >= BADGE_GLYPH_CALIBRATED_OUTER_IOU_MIN
+            (metrics["l1_sum"] <= BADGE_GLYPH_CALIBRATED_OUTER_L1_MAX)
+            | (metrics["mse"] <= BADGE_GLYPH_CALIBRATED_OUTER_MSE_MAX)
+            | (metrics["q4_changed_cells"] <= BADGE_GLYPH_CALIBRATED_OUTER_CHANGED_MAX)
+            | (metrics["binary_xor_cells"] <= BADGE_GLYPH_CALIBRATED_OUTER_XOR_MAX)
+            | (metrics["foreground_iou"] >= BADGE_GLYPH_CALIBRATED_OUTER_IOU_MIN)
         )
 
     @staticmethod
@@ -2676,7 +2734,7 @@ class MaaArenaReaderBackend:
         ],
         metrics: dict[str, int | float],
     ) -> bool:
-        """Accept one prototype only inside the member-local inner radius."""
+        """Accept one prototype only inside the existing calibrated radius."""
 
         geometry_matches = any(
             target_geometry[:4] == sample_geometry[:4]
@@ -2789,16 +2847,17 @@ class MaaArenaReaderBackend:
         support_frames: int,
         admissible_counts: tuple[int, ...],
     ) -> int | None:
-        """Transfer a count only inside a fully covered member-local domain.
+        """Transfer a count only inside a fully covered capture-size domain.
 
         This is a bounded calibration, not a global nearest-neighbour model.
         The target must be strictly stable in all three source frames, every
-        detail-compatible label must already have independent member truth,
+        detail-compatible label must already have independent detail truth,
         one three-frame prototype must enter the inner radius, and every other
         label must remain outside the wider rejection guard.
         """
 
-        if support_frames != 3:
+        pool_domain = getattr(self, "_badge_glyph_domain", None)
+        if support_frames != 3 or (pool_domain is not None and pool_domain.saturated):
             return None
         exemplars = getattr(self, "_badge_glyph_exemplars", {})
         if not exemplars:
@@ -2816,7 +2875,7 @@ class MaaArenaReaderBackend:
                 )
                 raise ArenaReaderError(
                     "skill_card_badge_glyph_calibration_ambiguous",
-                    f"{key!r} calibrated glyph is too close to polluted member evidence",
+                    f"{key!r} calibrated glyph is too close to polluted evidence",
                 )
 
         candidates: list[dict[str, Any]] = []
@@ -2888,7 +2947,7 @@ class MaaArenaReaderBackend:
             self._increment("skill_card_badge_glyph_calibration_conflicts")
             raise ArenaReaderError(
                 "skill_card_badge_glyph_calibration_ambiguous",
-                f"{key!r} enters member-local inner radii for multiple counts "
+                f"{key!r} enters calibrated inner radii for multiple counts "
                 f"{sorted(inner_counts)!r}",
             )
         count = next(iter(inner_counts))
@@ -2905,13 +2964,13 @@ class MaaArenaReaderBackend:
             self._increment("skill_card_badge_glyph_calibration_conflicts")
             raise ArenaReaderError(
                 "skill_card_badge_glyph_calibration_ambiguous",
-                f"{key!r} has a competing member label inside the outer guard",
+                f"{key!r} has a competing independent label inside the outer guard",
             )
         self._record_badge_glyph_runtime_label(
             key,
             descriptor,
             count=count,
-            evidence="member-local calibrated glyph",
+            evidence="independently calibrated glyph",
         )
         return count
 
@@ -2922,8 +2981,12 @@ class MaaArenaReaderBackend:
         maximum_count: int,
         admissible_counts: Sequence[int] | None = None,
     ) -> int | None:
-        """Resolve exact or safely calibrated member-local glyph evidence."""
+        """Resolve exact or calibrated independent glyph evidence."""
 
+        self._increment("skill_card_badge_glyph_pool_lookups")
+        task_pool = getattr(self, "_badge_glyph_task_pool", None)
+        if task_pool is not None and not task_pool.active:
+            return None
         signature = self._stable_badge_glyph_exemplar_signature(
             getattr(self, "_badge_glyph_observations", {}).get(key, ())
         )
@@ -3131,6 +3194,24 @@ class MaaArenaReaderBackend:
                         else "detail_ambiguity_same_member_calibrated_glyph"
                     ),
                 }
+                task_pool = getattr(self, "_badge_glyph_task_pool", None)
+                if task_pool is not None:
+                    task_scope = task_pool.task_id is not None
+                    scope = "task" if task_scope else "reader"
+                    self._badge_glyph_count_diagnostics[key]["pool_scope"] = (
+                        scope
+                    )
+                    self._badge_glyph_count_diagnostics[key]["task_id"] = task_pool.task_id
+                    self._badge_glyph_count_diagnostics[key]["mode"] = (
+                        f"detail_ambiguity_{scope}_exact_glyph_exemplar"
+                        if exact_resolution else f"detail_ambiguity_{scope}_calibrated_glyph"
+                    )
+                    self._increment(
+                        "skill_card_badge_glyph_task_pool_resolutions"
+                        if task_scope else "skill_card_badge_glyph_reader_pool_resolutions"
+                    )
+                    if allow_ocr:
+                        self._increment("skill_card_badge_glyph_pool_ocr_fallbacks_avoided")
                 self._increment(
                     "skill_card_badge_glyph_exemplar_resolutions"
                     if exact_resolution
@@ -12472,8 +12553,6 @@ class MaaArenaReaderBackend:
         self._badge_local_results.clear()
         self._badge_glyph_observations.clear()
         self._badge_glyph_count_diagnostics.clear()
-        getattr(self, "_badge_glyph_exemplars", {}).clear()
-        getattr(self, "_badge_glyph_polluted_descriptors", set()).clear()
         getattr(self, "_badge_glyph_runtime_labels", {}).clear()
         self._inferred_clicked_cards.clear()
         self._active_inferred_clicked_card = None
