@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import os
 import re
+import gzip
 import json
 import time
 import uuid
+import zlib
 import shutil
 import hashlib
 import tempfile
@@ -113,7 +116,7 @@ def _recoverable_component_failure(error: Exception) -> bool:
             return False
         if isinstance(current, urllib.error.HTTPError):
             return current.code >= 500 or current.code in {408, 429}
-        if isinstance(current, (OSError, subprocess.TimeoutExpired, http.client.IncompleteRead, http.client.RemoteDisconnected)):
+        if isinstance(current, (OSError, EOFError, zlib.error, subprocess.TimeoutExpired, http.client.IncompleteRead, http.client.RemoteDisconnected)):
             return True
         current = current.__cause__
     return False
@@ -271,6 +274,7 @@ class GitHubProductionSource:
                 "Accept": "application/vnd.github+json",
                 "User-Agent": "Gakumas-Helper-arena-component-updater",
                 "X-GitHub-Api-Version": "2022-11-28",
+                **({"Accept-Encoding": "gzip"} if is_api else {}),
             },
         )
         last_error: Exception | None = None
@@ -282,6 +286,13 @@ class GitHubProductionSource:
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
                     data = response.read(maximum + 1)
+                    if len(data) > maximum:
+                        raise ArenaComponentError(f"RIS response exceeds the accepted size: {url}")
+                    if is_api and response.headers.get("Content-Encoding", "").strip().lower() == "gzip":
+                        # Bound both transferred and decoded bytes; never inflate an
+                        # entire untrusted response before enforcing the existing limit.
+                        with gzip.GzipFile(fileobj=io.BytesIO(data)) as decoded:
+                            data = decoded.read(maximum + 1)
                 if len(data) > maximum:
                     raise ArenaComponentError(f"RIS response exceeds the accepted size: {url}")
                 return data
@@ -298,7 +309,7 @@ class GitHubProductionSource:
                 last_error = error
                 if error.code < 500 and error.code not in {408, 429}:
                     break
-            except (OSError, urllib.error.URLError, http.client.IncompleteRead, http.client.RemoteDisconnected) as error:
+            except (OSError, EOFError, zlib.error, urllib.error.URLError, http.client.IncompleteRead, http.client.RemoteDisconnected) as error:
                 last_error = error
             if attempt < HTTP_ATTEMPTS:
                 time.sleep(0.25 * attempt)
