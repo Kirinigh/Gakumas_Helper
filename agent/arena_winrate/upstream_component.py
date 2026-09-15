@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import ssl
 import gzip
 import json
 import time
@@ -138,6 +139,56 @@ def _log_component_update_notice(message: str, *, recovered: bool = False) -> No
         visible_logger.info(message)
     else:
         visible_logger.warning(message)
+
+
+def _component_failure_summary(error: BaseException, status: str) -> str:
+    """Describe observed failures without guessing a proxy or server cause."""
+
+    pending = [error]
+    errors: list[BaseException] = []
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        errors.append(current)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if isinstance(current, urllib.error.URLError) and isinstance(current.reason, BaseException):
+            pending.append(current.reason)
+
+    phase = {
+        "check_failed_using_active": "版本查询",
+        "catalog_check_failed_using_active": "场地目录读取",
+        "startup_check": "本地资源检查",
+    }.get(status, "资源更新")
+    stage = next((getattr(item, "_arena_component_stage", None) for item in errors
+                  if getattr(item, "_arena_component_stage", None)), None)
+    phase = {
+        "materialize_source": "资源下载", "build": "组件构建",
+        "validate_candidate": "组件校验", "validate_installed": "组件校验", "cached_validation": "组件校验",
+        "create_temporary_directory": "本地文件准备", "promote": "本地文件更新",
+        "activate": "本地组件启用", "cleanup": "临时文件清理",
+    }.get(stage, phase)
+
+    if any(isinstance(item, ssl.SSLCertVerificationError) for item in errors):
+        reason = "连接证书校验失败，请检查系统时间及网络配置"
+    elif any(isinstance(item, (gzip.BadGzipFile, EOFError, zlib.error, http.client.IncompleteRead)) for item in errors):
+        reason = "下载内容不完整或损坏"
+    elif any(isinstance(item, (ssl.SSLError, ConnectionError, http.client.RemoteDisconnected)) for item in errors):
+        reason = "网络连接中断；请检查网络，使用代理时可尝试更换节点"
+    elif any(isinstance(item, (TimeoutError, subprocess.TimeoutExpired)) for item in errors):
+        reason = "等待超时"
+    elif http_error := next((item for item in errors if isinstance(item, urllib.error.HTTPError)), None):
+        reason = f"服务器返回错误（HTTP {http_error.code}）"
+    elif any(isinstance(item, urllib.error.URLError) for item in errors):
+        reason = "无法连接下载服务，请检查网络"
+    elif any(isinstance(item, PermissionError) for item in errors):
+        reason = "文件无法写入或替换，可能被占用或缺少权限"
+    else:
+        reason = "详细原因已保留在日志中"
+    return f"{phase}失败：{reason}"
 
 
 def _promote_component_directory(source: Path, destination: Path) -> None:
@@ -300,8 +351,12 @@ class GitHubProductionSource:
                 if is_api and error.code in (403, 429):
                     try:
                         try:
-                            body = error.read(8192).decode("utf-8", errors="replace")
-                        except (OSError, http.client.HTTPException):
+                            data = error.read(8192)
+                            if error.headers.get("Content-Encoding", "").strip().lower() == "gzip":
+                                with gzip.GzipFile(fileobj=io.BytesIO(data)) as decoded:
+                                    data = decoded.read(8192)
+                            body = data.decode("utf-8", errors="replace")
+                        except (OSError, EOFError, zlib.error, http.client.HTTPException):
                             body = ""
                         _GITHUB_RATE_LIMIT.reject(error.code, error.headers, f"{error.reason} {body}")
                     finally:
@@ -581,13 +636,15 @@ class ArenaComponentManager:
         with self._lock:
             outcome = self._checks.get(baseline)
             if outcome is None:
+                started = time.monotonic()
                 outcome = self._check_once(baseline)
                 retried = False
                 for attempt in range(FAILED_CHECK_RETRIES):
                     if outcome.failure is None or not _recoverable_component_failure(outcome.failure):
                         break
                     _log_component_update_notice(
-                        f"RIS 资源更新未成功，正在重试（{attempt + 1}/{FAILED_CHECK_RETRIES}）；请稍候。"
+                        f"RIS {_component_failure_summary(outcome.failure, outcome.status)}。\n"
+                        f"正在重试（{attempt + 1}/{FAILED_CHECK_RETRIES}）；已用时 {time.monotonic() - started:.1f} 秒。"
                     )
                     retried = True
                     outcome = self._check_once(baseline, previous=outcome)
@@ -619,6 +676,9 @@ class ArenaComponentManager:
                             f"RIS 更新暂缓：{limited} 本地组件 {outcome.bundle.commit[:12]} 保留，"
                             "请核对使用期数；到期后重启客户端可再次检查。"
                         )
+                    else:
+                        message += f"\n{_component_failure_summary(outcome.failure, outcome.status)}。"
+                    message += f" 本次检查用时 {time.monotonic() - started:.1f} 秒。"
                     _log_component_update_notice(message)
                 elif retried:
                     _log_component_update_notice(
@@ -823,6 +883,7 @@ class ArenaComponentManager:
             self._activate(installed)
             return installed
         except Exception as error:
+            error._arena_component_stage = stage
             error.add_note(f"RIS component install stage={stage} commit={commit}")
             _log_component_failure(stage, error, commit=commit, destination=destination)
             raise
@@ -1297,7 +1358,10 @@ def check_arena_component_on_startup() -> None:
     except Exception as error:
         _log_component_failure("startup_check", error)
         if baseline not in _DEFAULT_MANAGER._checks:
-            _log_component_update_notice("RIS 启动检查未完成，继续启动客户端；竞技场将尝试已有本地资源。")
+            _log_component_update_notice(
+                "RIS 启动检查未完成，继续启动客户端；竞技场将尝试已有本地资源。\n"
+                f"{_component_failure_summary(error, 'startup_check')}；用时 {time.monotonic() - started:.1f} 秒。"
+            )
 
 
 def reset_failed_arena_component_checks() -> None:
