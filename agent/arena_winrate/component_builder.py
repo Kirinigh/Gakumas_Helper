@@ -150,6 +150,11 @@ def build_runtime_component(
             newline="\n",
         )
         shutil.copy2(scoring, output / "scoring.mjs")
+        if './calibration-cache.mjs' in runner_source:
+            calibration = baseline_bundle / "calibration-cache.mjs"
+            if not calibration.is_file():
+                raise ArenaComponentBuildError("baseline calibration cache module is missing")
+            shutil.copy2(calibration, output / "calibration-cache.mjs")
 
         manifest = {
             "schema_version": 1,

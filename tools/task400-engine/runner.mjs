@@ -1,6 +1,6 @@
 import { availableParallelism, cpus } from "node:os";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve as resolvePath } from "node:path";
+import { resolve as resolvePath } from "node:path";
+import { readCalibration, saveCalibration } from "./calibration-cache.mjs";
 import { performance } from "node:perf_hooks";
 import {
   Worker,
@@ -284,32 +284,6 @@ function calibrationIdentity(available) {
     cpu_model: cpus()[0]?.model?.trim() || "unknown",
     available_parallelism: available,
   };
-}
-
-function isReusableCalibration(value, identity) {
-  if (!value || typeof value !== "object") return false;
-  for (const [key, expected] of Object.entries(identity)) {
-    if (value[key] !== expected) return false;
-  }
-  return (
-    Number.isSafeInteger(value.selected_workers) &&
-    value.selected_workers >= 1 &&
-    value.selected_workers <= identity.available_parallelism
-  );
-}
-
-async function readCalibration(cachePath, identity) {
-  try {
-    const value = JSON.parse(await readFile(cachePath, "utf8"));
-    return isReusableCalibration(value, identity) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-async function saveCalibration(cachePath, value) {
-  await mkdir(dirname(cachePath), { recursive: true });
-  await writeFile(cachePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function chooseCalibratedWorkerCount(benchmarks) {

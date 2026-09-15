@@ -17,6 +17,10 @@ from .schema import SnapshotValidationError, validate_own_snapshot
 from .adapter import UPSTREAM_COMMIT, OwnScoreBatch
 
 CACHE_SCHEMA_VERSION = 2
+MAX_SCORE_VARIANTS = 4  # Current result plus the three most recently computed alternatives.
+_SCORE_VARIANT_FIELDS = (
+    "upstream_commit", "season", "stageIds", "simulations", "seed", "saved_at_utc", "stages",
+)
 LEGACY_CACHE_SCHEMA_VERSION = 1
 SUPPORTED_CACHE_SCHEMA_VERSIONS = frozenset(
     {LEGACY_CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION}
@@ -487,6 +491,30 @@ class OwnScoreResimulationRequired(OwnScoreCacheError):
     """Raised when a valid cached lineup only needs new simulator samples."""
 
 
+def _score_variant(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {field: record[field] for field in _SCORE_VARIANT_FIELDS}
+
+
+def _restore_score_variant(
+    record: Mapping[str, Any], variant: object,
+) -> dict[str, Any]:
+    # All versions share one authoritative snapshot. History cannot replace it,
+    # the schema, or the current manual Grade override.
+    if not isinstance(variant, Mapping) or set(variant) != set(_SCORE_VARIANT_FIELDS):
+        raise OwnScoreCacheError("own-score cache version entry is invalid; use manual recalculation")
+    restored = {**record, **variant}
+    restored.pop("score_variants", None)
+    try:
+        _render_summary(restored)
+    except _CacheSummaryError as error:
+        raise OwnScoreCacheError("own-score cache version contents are invalid; use manual recalculation") from error
+    return restored
+
+
+def _score_key(record: Mapping[str, Any]) -> tuple[object, object, object]:
+    return record.get("upstream_commit"), record.get("seed"), record.get("simulations")
+
+
 class OwnScoreCacheStore:
     """Persist one own lineup and its raw member samples for the active season."""
 
@@ -724,6 +752,32 @@ class OwnScoreCacheStore:
             summary = _render_summary(record)
         except _CacheSummaryError as error:
             raise OwnScoreCacheError(f"own-score cache summary data is invalid: {error}") from error
+        # Keep alternatives only while the entire captured lineup is unchanged.
+        # A fresh capture invalidates them even when some members look identical.
+        variants: list[dict[str, Any]] = []
+        try:
+            previous = self._read_record()
+        except OwnScoreCacheError:
+            previous = {}
+        if previous.get("own_snapshot") == snapshot:
+            history = previous.get("score_variants", [])
+            if not isinstance(history, list):
+                history = []
+            candidates = [previous, *history[:MAX_SCORE_VARIANTS - 1]]
+            seen = {_score_key(record)}
+            for candidate in candidates:
+                try:
+                    variant = _score_variant(candidate) if candidate is previous else candidate
+                    _restore_score_variant(record, variant)
+                except (KeyError, TypeError, OwnScoreCacheError):
+                    continue  # A successful new calculation can repair a broken cache.
+                key = _score_key(variant)
+                if key not in seen:
+                    variants.append(variant)
+                    seen.add(key)
+                if len(variants) == MAX_SCORE_VARIANTS - 1:
+                    break
+        record["score_variants"] = variants
         try:
             self._atomic_write(
                 self.path,
@@ -769,6 +823,27 @@ class OwnScoreCacheStore:
         record = self._read_record()
         if record.get("season") != season or record.get("stageIds") != list(stage_ids):
             return None
+        active_matches = (
+            record.get("upstream_commit") == expected_upstream_commit
+            and record.get("seed") == seed
+            and isinstance(record.get("simulations"), int)
+            and not isinstance(record.get("simulations"), bool)
+            and record["simulations"] >= simulations
+        )
+        if not active_matches:
+            variants = record.get("score_variants", [])
+            if not isinstance(variants, list) or len(variants) >= MAX_SCORE_VARIANTS:
+                raise OwnScoreCacheError("own-score cache version list is invalid; use manual recalculation")
+            for variant in variants:
+                if (
+                    isinstance(variant, Mapping)
+                    and variant.get("upstream_commit") == expected_upstream_commit
+                    and variant.get("seed") == seed
+                ):
+                    candidate = _restore_score_variant(record, variant)
+                    if candidate["simulations"] >= simulations:
+                        record = candidate
+                        break
         if record.get("upstream_commit") != expected_upstream_commit:
             raise OwnScoreResimulationRequired("simulator revision changed; resimulate the cached lineup")
         if record.get("seed") != seed:

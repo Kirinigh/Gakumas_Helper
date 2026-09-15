@@ -76,6 +76,7 @@ RIS_ENGINE_REBUILT_PAYLOAD_FILES = frozenset(
 )
 RIS_ENGINE_REUSED_HOST_PAYLOAD_FILES = (
     "THIRD_PARTY_NOTICES/Node.js-LICENSE",
+    "calibration-cache.mjs",
     "node.exe",
     "runner.mjs",
     "scoring.mjs",

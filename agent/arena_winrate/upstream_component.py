@@ -967,6 +967,12 @@ def _inspect_bundle(bundle: Path) -> _BundleInfo:
         if not (bundle / name).is_file():
             raise ArenaComponentError(f"arena component runtime file is missing: {name}")
     try:
+        runner_source = (bundle / "runner.mjs").read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ArenaComponentError("arena component runner is unreadable") from error
+    if './calibration-cache.mjs' in runner_source and not (bundle / "calibration-cache.mjs").is_file():
+        raise ArenaComponentError("arena component runtime file is missing: calibration-cache.mjs")
+    try:
         catalog = ContestStageCatalog.from_bundle(bundle)
         latest = catalog.resolve("latest").season
     except StageCatalogError as error:

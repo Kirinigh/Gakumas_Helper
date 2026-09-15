@@ -121,6 +121,7 @@ def build(
     if not scoring.is_file():
         raise ValueError(f"scoring module is missing next to runner: {scoring}")
     shutil.copy2(scoring, output / "scoring.mjs")
+    shutil.copy2(runner.with_name("calibration-cache.mjs"), output / "calibration-cache.mjs")
 
     runtime: dict[str, object] = {"included": False}
     if (node_runtime_zip is not None or node_runtime_sha256 is not None):
