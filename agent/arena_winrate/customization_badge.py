@@ -214,18 +214,17 @@ def _measure_customization_badge_internal(
     glyph_non_badge_art_candidate = False
     if seeded_plate_candidate:
         # Count is never inferred from arbitrary white pixels in the card box.
-        # The auxiliary glyph is cut only from the bounded interior generated
-        # by the exact same centre-seeded green component that authorized the
-        # detail click.  It is used later only when the already-open detail is
+        # The auxiliary glyph must belong to the exact same centre-seeded
+        # green component that authorized the detail click. It is used later
+        # only when the already-open detail is
         # semantically non-unique without the displayed badge total.
         # Preserve the original white connectivity. Subtracting pale green
         # pixels first can shatter one large card-art stroke into a small
         # digit-like fragment and produce a silent false positive.
         white = (hsv[:, :, 1] <= 135) & (hsv[:, :, 2] >= 145)
         # The badge plate is allowed the same bounded card-box displacement as
-        # the presence shortlist.  Keep the domain fixed around the semantic
-        # locus, but do not assume the rendered digit is centred on the seed:
-        # the live 720x1280 glyph sits about seven normalized pixels below it.
+        # the presence shortlist. The fixed domain locates white components;
+        # it does not define their final boundaries.
         glyph_domain = badge_interior & (distance_from_peak <= 10.25)
         glyph_pixels = white & glyph_domain
         glyph_foreground_pixel_count = int(glyph_pixels.sum())
@@ -235,6 +234,17 @@ def _measure_customization_badge_internal(
                 connectivity=8,
             )
         )
+        # The presence domain only locates the plate. Recover complete white
+        # components before evaluating a digit: cropping first can both cut a
+        # real digit and turn a connected outer border into a false digit.
+        _, full_white_labels, full_white_stats, full_white_centroids = (
+            cv2.connectedComponentsWithStats(white.astype(np.uint8), connectivity=8)
+        )
+        _, full_green_labels = cv2.connectedComponents(
+            green_union.astype(np.uint8), connectivity=8
+        )
+        seed_y, seed_x = np.nonzero(selected_component)
+        full_plate = full_green_labels == full_green_labels[seed_y[0], seed_x[0]]
         glyph_candidates: list[int] = []
         for component_index in range(1, component_count):
             gx, gy, gw, gh, area = (
@@ -260,6 +270,30 @@ def _measure_customization_badge_internal(
                 + 1,
             )
             intersects_digit_lane = digit_lane_overlap_pixels >= 2
+            local_component = glyph_labels[gy:gy + gh, gx:gx + gw] == component_index
+            white_id = int(full_white_labels[gy:gy + gh, gx:gx + gw][local_component][0])
+            fx, fy, fw, fh, full_area = map(int, full_white_stats[white_id])
+            _, full_cy = full_white_centroids[white_id]
+            # Require the whole component to be enclosed by this same green
+            # component locally. This follows the rendered digit rather than
+            # increasing the fixed seed radius or selecting the largest blob.
+            enclosed = False
+            if 4 <= full_area <= 110 and 2 <= fw <= 13 and 5 <= fh <= 17:
+                left, top = max(0, fx - 3), max(0, fy - 3)
+                right, bottom = min(96, fx + fw + 3), min(96, fy + fh + 3)
+                surrounds = (
+                    full_plate[top:fy, fx:fx + fw].any()
+                    and full_plate[fy + fh:bottom, fx:fx + fw].any()
+                    and full_plate[fy:fy + fh, left:fx].any()
+                    and full_plate[fy:fy + fh, fx + fw:right].any()
+                )
+                if surrounds:
+                    points_y, points_x = np.nonzero(full_plate[top:bottom, left:right])
+                    hull = cv2.convexHull(np.column_stack((points_x, points_y)).astype(np.int32))
+                    enclosure = np.zeros((bottom - top, right - left), dtype=np.uint8)
+                    cv2.fillConvexPoly(enclosure, hull, 1)
+                    complete_mask = full_white_labels[top:bottom, left:right] == white_id
+                    enclosed = bool(np.all(enclosure[complete_mask]))
             glyph_raw_components.append(
                 {
                     "box": [gx, gy, gw, gh],
@@ -271,17 +305,18 @@ def _measure_customization_badge_internal(
                     "centroid_distance": round(centroid_distance, 6),
                     "digit_lane_overlap_pixels": digit_lane_overlap_pixels,
                     "intersects_digit_lane": intersects_digit_lane,
+                    "complete_component_box": [fx, fy, fw, fh],
+                    "complete_component_area": full_area,
+                    "complete_component_enclosed": enclosed,
                 }
             )
             if (
-                4 <= area <= 110
-                and 2 <= gw <= 13
-                and 5 <= gh <= 17
-                and centroid_distance <= 9.5
-                and centroid_y >= peak_y + 0.5
+                enclosed
+                and full_cy >= peak_y + 0.5
                 and intersects_digit_lane
             ):
-                glyph_candidates.append(component_index)
+                if white_id not in glyph_candidates:
+                    glyph_candidates.append(white_id)
         glyph_component_count = len(glyph_candidates)
         if not glyph_candidates:
             oversized_components = []
@@ -332,7 +367,7 @@ def _measure_customization_badge_internal(
                     )
                 )
         if len(glyph_candidates) == 1:
-            component_mask = glyph_labels == glyph_candidates[0]
+            component_mask = full_white_labels == glyph_candidates[0]
             glyph_y, glyph_x = np.nonzero(component_mask)
             gx = int(glyph_x.min())
             gy = int(glyph_y.min())
