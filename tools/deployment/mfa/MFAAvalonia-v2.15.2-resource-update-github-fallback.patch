@@ -1477,13 +1477,17 @@ diff --git a/MFAAvalonia/Extensions/MaaFW/FocusHandler.cs b/MFAAvalonia/Extensio
                 || input.StartsWith("./", StringComparison.Ordinal)
 diff --git a/MFAAvalonia/Helper/GitHubApiRequests.cs b/MFAAvalonia/Helper/GitHubApiRequests.cs
 new file mode 100644
+index 0000000..bdfc603
 --- /dev/null
 +++ b/MFAAvalonia/Helper/GitHubApiRequests.cs
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,184 @@
 +using System;
 +using System.Collections.Generic;
 +using System.Globalization;
 +using System.Linq;
++using System.IO;
++using System.Text;
++using System.Text.Json;
 +using System.Net;
 +using System.Net.Http;
 +using System.Threading;
@@ -1504,9 +1508,14 @@ new file mode 100644
 +        try
 +        {
 +            var key = client.DefaultRequestHeaders.Authorization?.ToString() ?? string.Empty;
++            var shared = key.Length == 0 && Uri.TryCreate(url, UriKind.Absolute, out var target)
++                && string.Equals(target.Host, "api.github.com", StringComparison.OrdinalIgnoreCase);
 +            var now = DateTimeOffset.UtcNow;
 +            foreach (var expired in ResumeTimes.Where(item => item.Value <= now).Select(item => item.Key).ToArray())
 +                ResumeTimes.Remove(expired);
++            if (shared && ReadSharedResumeTime() is { } disk && disk > now
++                && (!ResumeTimes.TryGetValue(key, out var memory) || disk > memory))
++                ResumeTimes[key] = disk;
 +            if (ResumeTimes.TryGetValue(key, out var resume))
 +                throw RateLimitError(resume);
 +
@@ -1536,7 +1545,10 @@ new file mode 100644
 +                    var reset = DateTimeOffset.FromUnixTimeSeconds(epoch);
 +                    if (reset > resume) resume = reset;
 +                }
++                if (ResumeTimes.TryGetValue(key, out var memoryResume) && memoryResume > resume)
++                    resume = memoryResume;
 +                ResumeTimes[key] = resume;
++                if (shared) ResumeTimes[key] = resume = SaveSharedResumeTime(resume);
 +                throw RateLimitError(resume);
 +            }
 +            catch
@@ -1550,6 +1562,105 @@ new file mode 100644
 +            Gate.Release();
 +        }
 +    }
++
++    private static string SharedStateDirectory => Path.Combine(AppContext.BaseDirectory, ".local", "runtime-data");
++    private static string SharedStatePath => Path.Combine(SharedStateDirectory, "github-api-rate-limit.json");
++
++    private static void SharedDiagnostic(string operation, Exception error)
++    {
++        try
++        {
++            LoggerHelper.Info($"GitHub 共享限流状态{operation}失败（{error.GetType().Name}）；保留已有进程内等待期限。");
++        }
++        catch { /* A diagnostic sink must not change request or cooldown behavior. */ }
++    }
++
++    private static DateTimeOffset? ReadSharedResumeTime()
++    {
++        try
++        {
++            using var stream = new FileStream(SharedStatePath, FileMode.Open, FileAccess.Read,
++                FileShare.ReadWrite | FileShare.Delete);
++            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
++            using var document = JsonDocument.Parse(reader.ReadToEnd());
++            var root = document.RootElement;
++            if (root.ValueKind != JsonValueKind.Object
++                || !root.TryGetProperty("schema_version", out var schema)
++                || !schema.TryGetInt32(out var version) || version != 1
++                || !root.TryGetProperty("resume_at", out var value)
++                || !value.TryGetDouble(out var seconds) || !double.IsFinite(seconds)
++                || seconds < 0 || seconds > 253402300799d)
++                throw new InvalidDataException("Invalid shared cooldown state");
++            return DateTimeOffset.UnixEpoch.AddSeconds(seconds);
++        }
++        catch (FileNotFoundException) { return null; }
++        catch (DirectoryNotFoundException) { return null; }
++        catch (Exception error)
++        {
++            SharedDiagnostic("读取", error);
++            return null;
++        }
++    }
++
++    private static DateTimeOffset SaveSharedResumeTime(DateTimeOffset resume)
++    {
++        FileStream? fileLock = null;
++        var locked = false;
++        string? temporary = null;
++        try
++        {
++            Directory.CreateDirectory(SharedStateDirectory);
++            fileLock = new FileStream(Path.Combine(SharedStateDirectory, "github-api-rate-limit.lock"),
++                FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
++            for (var attempt = 0; attempt < 4; attempt++)
++            {
++                try
++                {
++                    fileLock.Lock(0, 1);
++                    locked = true;
++                    break;
++                }
++                catch (IOException) when (attempt < 3) { Thread.Sleep(50); }
++            }
++            // Readers need no lock: only complete, atomically replaced JSON is visible.
++            var previous = ReadSharedResumeTime();
++            if (previous is { } existing && existing > resume) resume = existing;
++            temporary = Path.Combine(SharedStateDirectory, ".github-api-rate-limit-" + Guid.NewGuid().ToString("N") + ".tmp");
++            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
++            {
++                var bytes = JsonSerializer.SerializeToUtf8Bytes(new
++                {
++                    schema_version = 1,
++                    resume_at = (resume - DateTimeOffset.UnixEpoch).TotalSeconds
++                });
++                output.Write(bytes);
++                output.Flush();
++            }
++            File.Move(temporary, SharedStatePath, overwrite: true);
++            temporary = null;
++        }
++        catch (Exception error) { SharedDiagnostic("写入", error); }
++        finally
++        {
++            if (fileLock != null)
++            {
++                if (locked)
++                {
++                    try { fileLock.Unlock(0, 1); }
++                    catch (Exception error) { SharedDiagnostic("解锁", error); }
++                }
++                try { fileLock.Dispose(); }
++                catch (Exception error) { SharedDiagnostic("关闭锁文件", error); }
++            }
++            if (temporary != null)
++            {
++                try { File.Delete(temporary); }
++                catch (Exception error) { SharedDiagnostic("清理临时文件", error); }
++            }
++        }
++        return resume;
++    }
++
 +
 +    private static Exception RateLimitError(DateTimeOffset resume) => new(
 +        $"GitHub 请求额度受限，请在 {resume.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz} 后重试。等待期间重复检查不会发送请求；可在更新设置中配置有效的 GitHub Token 后重试。");

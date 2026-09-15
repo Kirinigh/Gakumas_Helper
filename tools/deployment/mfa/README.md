@@ -131,6 +131,16 @@ python tools/deployment/mfa/test_github_update.py --source-zip "<固定源码 ZI
 
 测试应用维护补丁，编译实际版本发现、版本比较、资产选择方法及完整 `GitHubApiRequests.cs`；替代界面、配置和 HTTP 响应，不联网或恢复依赖。覆盖分页、跨页最高版本、稳定/Beta/Alpha 渠道、指定版本、公告保存、资产 URL/摘要、独立详情查询、403/429、服务端恢复时间、冷却期拦截/到期恢复、凭据切换与普通权限失败。`--patch` 可指定旧补丁作相同断言的反向验证：65 个版本时旧实现发出 5 次请求，新实现为 1 次。
 
-版本列表改用每页 100 条，短页停止，列表中已有的 release 资产直接复用。元数据请求按凭据执行进程内限流冷却，识别状态码、限流头和响应正文；`Retry-After` 和额度耗尽时的 `X-RateLimit-Reset` 决定等待时间，没有有效恢复信息时至少等待一分钟。冷却同时覆盖资源和客户端的 GitHub 版本元数据查询，不改变下载重试及校验。更换凭据可重新检查；重启客户端会清空内存冷却记录。普通 403 权限错误仍按请求失败报告。
+版本列表改用每页 100 条，短页停止，列表中已有的 release 资产直接复用。元数据请求按凭据执行进程内限流冷却，识别状态码、限流头和响应正文；`Retry-After` 和额度耗尽时的 `X-RateLimit-Reset` 决定等待时间，没有有效恢复信息时至少等待一分钟。冷却同时覆盖资源和客户端的 GitHub 版本元数据查询，不改变下载重试及校验。更换凭据可重新检查。普通 403 权限错误仍按请求失败报告。
+
+匿名 `api.github.com` 请求还与 Python 组件共享程序目录下的 `.local/runtime-data/github-api-rate-limit.json`，重启后继续遵守等待期限；认证请求只使用独立的内存记录，不读写共享文件。JSON 使用整数 `schema_version=1` 和有限数字 `resume_at`（Unix 秒，范围 0..253402300799），兼容 UTF-8 BOM。读取不加锁；写入使用同目录 `github-api-rate-limit.lock` 第 0 字节长度 1 的锁，最多尝试 4 次、间隔 50ms，在锁内取已有期限与本次期限的最大值，再以同目录临时文件原子替换。损坏、锁冲突或写入失败会记录诊断并保留内存期限；不自动删除过期文件，不保存凭据。
+
+共享持久化的独立离线回归：
+
+```powershell
+python tools/deployment/mfa/test_rate_limit_state.py --source-zip "<固定源码 ZIP>" --dotnet "<现有 SDK>\dotnet.exe" --work-dir "<尚不存在的测试目录>" --python-helper "<Python 生产 github_rate_limit.py>"
+```
+
+测试编译完整真实帮助类，以独立进程和真实 Windows 文件覆盖跨启动、损坏、并发取最大期限、认证隔离及双向文件锁；可选 `--python-helper` 加载生产 Python 类验证两个组件互读与互斥。仅验证源码补丁，不代表已重建或安装客户端。
 
 本次交付为已通过离线回归的源码补丁，不能恢复已消耗的 GitHub 服务端额度。现有安装不会自动获得修复；纳入发行客户端仍需按本文件的 Core 构建、双次复建与制品验证流程生成新 bundle。
