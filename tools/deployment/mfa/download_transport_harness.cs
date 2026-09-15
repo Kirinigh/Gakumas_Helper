@@ -16,12 +16,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using MFAAvalonia.Helper;
 
 public static class Program
 {
     private static readonly ConcurrentQueue<(string Name, Func<Task> Action)> Queue = new();
     private static readonly SemaphoreSlim _queueLock = new(1, 1);
-    private static HttpClient CreateHttpClientWithProxy() => new(new SocketsHttpHandler { UseProxy = false });
+    private static Func<HttpMessageHandler>? HandlerFactory;
+    private static HttpClient CreateHttpClientWithProxy() => new(HandlerFactory?.Invoke() ?? new SocketsHttpHandler { UseProxy = false });
     private static void SetProgress(ProgressBar? progress, double value) { if (progress != null) progress.Values.Add(value); }
     private static void SetDownloadInfo(TextBlock? size, TextBlock? speed, long read, long total, long perSecond) { }
     private static void SetStatusText(TextBlock? text, TextBlock? speed, string message) { }
@@ -131,8 +133,87 @@ public static class Program
         Require(File.ReadAllBytes(activeDownload).SequenceEqual(payload), "task cleanup preserves active download");
         Console.WriteLine("PASS task_cleanup_preserves_active_download");
         passed++;
-        Console.WriteLine($"TOTAL {passed} PASS");
+        await AssetRateLimitCases(args[0], payload);
+        Console.WriteLine($"TOTAL {passed} transport cases plus API asset cases PASS");
     }
+
+    private static async Task AssetRateLimitCases(string directory, byte[] payload)
+    {
+        const string url = "https://api.github.com/repos/example/project/releases/assets/123";
+        var path = Path.Combine(directory, "api-asset.zip");
+        var state = Path.Combine(AppContext.BaseDirectory, ".local", "runtime-data", "github-api-rate-limit.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(state)!);
+        File.WriteAllText(state, "{\"schema_version\":1,\"resume_at\":" + DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds() + "}");
+        int calls = 0;
+        HandlerFactory = () => new FakeApiHandler(_ => { calls++; return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamOnlyContent(payload) }; });
+        try
+        {
+            await DownloadWithRetry(url, path, null, 3);
+            throw new Exception("shared cooldown must reject download");
+        }
+        catch (GitHubRateLimitException error) { Require(error.Message.Contains("后重试"), "explicit resume hint"); }
+        Require(calls == 0 && !File.Exists(path), "anonymous persisted cooldown sends zero requests");
+        Console.WriteLine("PASS asset_shared_cooldown_zero_requests");
+
+        foreach (var mode in new[] { "403", "429", "body403" })
+        {
+            Instances.VersionUpdateSettingsUserControlModel.GitHubToken = "fixture-" + mode;
+            calls = 0;
+            HandlerFactory = () => new FakeApiHandler(request => {
+                calls++;
+                Require(request.Headers.Authorization?.Parameter == "fixture-" + mode, "request credential retained");
+                Require(request.Headers.Accept.Any(x => x.MediaType == "application/octet-stream"), "asset accept retained");
+                var response = new HttpResponseMessage(mode == "429" ? (HttpStatusCode)429 : HttpStatusCode.Forbidden);
+                response.Content = new StringContent(mode == "body403" ? "API rate limit exceeded" : "limited");
+                if (mode != "body403") response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromMinutes(3));
+                return response;
+            });
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                try { await DownloadWithRetry(url, path, null, 3); throw new Exception("rate limit must escape retries"); }
+                catch (GitHubRateLimitException error) { Require(error.Message.Contains("后重试"), "resume hint retained"); }
+            }
+            Require(calls == 1 && !File.Exists(path), mode + " only first request sent, no retry");
+            using var metadataClient = CreateHttpClientWithProxy();
+            metadataClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "fixture-" + mode);
+            try { using var ignored = await GitHubApiRequests.GetAsync(metadataClient, "https://api.github.com/repos/example/project/releases"); throw new Exception("asset cooldown must cover metadata"); }
+            catch (GitHubRateLimitException) { }
+            Require(calls == 1, "same credentials share metadata cooldown");
+            Console.WriteLine("PASS asset_" + mode + "_single_request_and_metadata_cooldown");
+        }
+
+        foreach (var mode in new[] { "success", "http500", "connection", "permission403" })
+        {
+            Instances.VersionUpdateSettingsUserControlModel.GitHubToken = "fixture-recover-" + mode;
+            calls = 0;
+            HandlerFactory = () => new FakeApiHandler(_ => {
+                calls++;
+                if (calls == 1 && mode == "connection") throw new HttpRequestException("transient fixture connection");
+                if (calls == 1 && mode is "http500" or "permission403")
+                    return new HttpResponseMessage(mode == "http500" ? HttpStatusCode.InternalServerError : HttpStatusCode.Forbidden) { Content = new StringContent("ordinary failure") };
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamOnlyContent(payload) };
+            });
+            var (success, downloaded) = await DownloadWithRetry(url, path, null, 3);
+            Require(success && calls == (mode == "success" ? 1 : 2), mode + " normal recovery retained");
+            Require(File.ReadAllBytes(downloaded).SequenceEqual(payload), "streamed bytes preserved");
+            File.Delete(downloaded);
+            Console.WriteLine("PASS asset_" + mode + "_streamed_and_credentials_isolated");
+        }
+        HandlerFactory = null;
+        Instances.VersionUpdateSettingsUserControlModel.GitHubToken = "";
+    }
+}
+
+public sealed class FakeApiHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => Task.FromResult(respond(request));
+}
+
+public sealed class StreamOnlyContent(byte[] body) : HttpContent
+{
+    protected override bool TryComputeLength(out long length) { length = body.Length; return true; }
+    protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => throw new Exception("successful asset must not be buffered");
+    protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(new MemoryStream(body, writable: false));
 }
 
 public sealed class LoopbackServer : IAsyncDisposable
@@ -200,7 +281,7 @@ public static class Instances
     public static Tabs InstanceTabBarViewModel { get; } = new();
 }
 public sealed class RootModel { public bool Updating; public void SetUpdating(bool value) => Updating = value; }
-public sealed class Settings { public string GitHubToken => ""; }
+public sealed class Settings { public string GitHubToken { get; set; } = ""; }
 public sealed class Tabs { public Tab? ActiveTab => null; }
 public sealed class Tab { public TaskQueueView TaskQueueViewModel { get; } = new(); }
 public sealed class TaskQueueView { public void OutputDownloadProgress(long read, long total, int speed, double time) { } }

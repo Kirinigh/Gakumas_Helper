@@ -91,6 +91,7 @@ def run(args: argparse.Namespace) -> dict:
         "/nostdlib+", "/target:exe", "/langversion:14", "/nullable:enable",
         f'/out:"{output}"',
         *(f'/reference:"{item}"' for item in sorted(ref_dirs[-1].glob("*.dll"))),
+        f'"{source_root / "MFAAvalonia/Helper/GitHubApiRequests.cs"}"',
         f'"{fixture_path}"',
     ]), encoding="utf-8")
     (work / "DownloadTransportHarness.runtimeconfig.json").write_text(json.dumps({
