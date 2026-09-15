@@ -63,7 +63,7 @@ MAX_SOURCE_FILE_BYTES = 32 * 1024 * 1024
 MAX_SOURCE_TOTAL_BYTES = 64 * 1024 * 1024
 MAX_SOURCE_FILES = 2000
 MAX_PRODUCTION_DEPLOYMENTS = 100
-PRODUCTION_DEPLOYMENT_PAGE_SIZE = 10
+PRODUCTION_DEPLOYMENT_PAGE_SIZE = 100
 HTTP_ATTEMPTS = 3
 FAILED_CHECK_RETRIES = 1
 DIRECTORY_MOVE_RETRY_DELAYS = (0.1, 0.3, 0.6)
@@ -257,6 +257,10 @@ class GitHubProductionSource:
         self.check_timeout_seconds = check_timeout_seconds
         self.download_timeout_seconds = download_timeout_seconds
         self.download_workers = download_workers
+        # Immutable query results only; no partial downloads survive a retry.
+        self._tree_reference: tuple[str, str] | None = None
+        self._source_manifest: tuple[str, dict[str, int]] | None = None
+        self._stage_source: tuple[str, bytes] | None = None
 
     @staticmethod
     def _request_bytes(url: str, *, timeout: float, maximum: int) -> bytes:
@@ -382,20 +386,32 @@ class GitHubProductionSource:
     def fetch_stage_rows(self, commit: str) -> object:
         _validate_commit(commit)
         url = f"{RAW_BASE}/{commit}/packages/gakumas-data/json/stages.json"
-        return self._request_json(url, timeout=self.download_timeout_seconds)
+        if self._stage_source is not None and self._stage_source[0] == commit:
+            data = self._stage_source[1]
+        else:
+            data = self._request_bytes(url, timeout=self.download_timeout_seconds, maximum=MAX_API_RESPONSE_BYTES)
+        try:
+            rows = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ArenaComponentError(f"RIS response is not valid JSON: {url}") from error
+        self._stage_source = (commit, data)
+        return rows
 
-    def materialize_source(self, commit: str, destination: Path) -> None:
-        _validate_commit(commit)
-        if destination.exists() and any(destination.iterdir()):
-            raise ArenaComponentError(f"RIS source destination must be absent or empty: {destination}")
-        git_commit = self._request_json(
-            f"{API_BASE}/git/commits/{commit}",
-            timeout=self.download_timeout_seconds,
-        )
-        tree = git_commit.get("tree") if isinstance(git_commit, Mapping) else None
-        tree_sha = tree.get("sha") if isinstance(tree, Mapping) else None
-        if not isinstance(tree_sha, str) or COMMIT_PATTERN.fullmatch(tree_sha) is None:
-            raise ArenaComponentError("RIS production commit does not expose a valid source tree")
+    def _source_file_sizes(self, commit: str) -> dict[str, int]:
+        if self._source_manifest is not None and self._source_manifest[0] == commit:
+            return self._source_manifest[1]
+        if self._tree_reference is not None and self._tree_reference[0] == commit:
+            tree_sha = self._tree_reference[1]
+        else:
+            git_commit = self._request_json(
+                f"{API_BASE}/git/commits/{commit}",
+                timeout=self.download_timeout_seconds,
+            )
+            tree = git_commit.get("tree") if isinstance(git_commit, Mapping) else None
+            tree_sha = tree.get("sha") if isinstance(tree, Mapping) else None
+            if not isinstance(tree_sha, str) or COMMIT_PATTERN.fullmatch(tree_sha) is None:
+                raise ArenaComponentError("RIS production commit does not expose a valid source tree")
+            self._tree_reference = (commit, tree_sha)
         tree_payload = self._request_json(
             f"{API_BASE}/git/trees/{tree_sha}?recursive=1",
             timeout=self.download_timeout_seconds,
@@ -430,14 +446,21 @@ class GitHubProductionSource:
         missing = REQUIRED_SOURCE_PATHS.difference(unique_paths)
         if missing:
             raise ArenaComponentError(f"RIS source tree is missing required files: {sorted(missing)}")
+        self._source_manifest = (commit, files)
+        return files
 
+    def materialize_source(self, commit: str, destination: Path) -> None:
+        _validate_commit(commit)
+        if destination.exists() and any(destination.iterdir()):
+            raise ArenaComponentError(f"RIS source destination must be absent or empty: {destination}")
+        files = self._source_file_sizes(commit)
         destination.mkdir(parents=True, exist_ok=True)
         destination_root = destination.resolve()
         try:
             with ThreadPoolExecutor(max_workers=self.download_workers) as executor:
                 futures = {
                     executor.submit(self._download_source_file, commit, path, files[path]): path
-                    for path in unique_paths
+                    for path in files
                 }
                 for future in as_completed(futures):
                     path = futures[future]
@@ -457,11 +480,18 @@ class GitHubProductionSource:
 
     def _download_source_file(self, commit: str, path: str, expected_size: int) -> bytes:
         encoded_path = urllib.parse.quote(path, safe="/")
-        data = self._request_bytes(
-            f"{RAW_BASE}/{commit}/{encoded_path}",
-            timeout=self.download_timeout_seconds,
-            maximum=MAX_SOURCE_FILE_BYTES,
-        )
+        if (
+            path == "packages/gakumas-data/json/stages.json"
+            and self._stage_source is not None
+            and self._stage_source[0] == commit
+        ):
+            data = self._stage_source[1]
+        else:
+            data = self._request_bytes(
+                f"{RAW_BASE}/{commit}/{encoded_path}",
+                timeout=self.download_timeout_seconds,
+                maximum=MAX_SOURCE_FILE_BYTES,
+            )
         if len(data) != expected_size:
             raise ArenaComponentError(
                 f"RIS source file size changed for immutable commit {commit[:12]}: {path}"
@@ -549,7 +579,7 @@ class ArenaComponentManager:
                         f"RIS 资源更新未成功，正在重试（{attempt + 1}/{FAILED_CHECK_RETRIES}）；请稍候。"
                     )
                     retried = True
-                    outcome = self._check_once(baseline)
+                    outcome = self._check_once(baseline, previous=outcome)
                 self._checks[baseline] = outcome
                 if outcome.failure is not None:
                     limited = outcome.failure
@@ -586,7 +616,7 @@ class ArenaComponentManager:
                     )
         return _resolve_selection(outcome, selection)
 
-    def _check_once(self, baseline_bundle: Path) -> _CheckOutcome:
+    def _check_once(self, baseline_bundle: Path, *, previous: _CheckOutcome | None = None) -> _CheckOutcome:
         baseline = _inspect_bundle(baseline_bundle)
         active = self._load_active()
         if active is None:
@@ -601,7 +631,10 @@ class ArenaComponentManager:
         )
         warnings = list(active_reference_warnings)
         try:
-            remote_commit = self.source.discover_production_commit()
+            remote_commit = (
+                previous.remote_commit if previous is not None and previous.remote_commit is not None
+                else self.source.discover_production_commit()
+            )
         except Exception as error:
             _log_component_failure("discover_production", error, active_commit=active.commit)
             warnings.append(f"RIS 生产版本检查失败，继续使用 {active.commit[:12]}：{error}")
@@ -626,8 +659,15 @@ class ArenaComponentManager:
             )
 
         try:
-            remote_catalog = ContestStageCatalog.from_rows(self.source.fetch_stage_rows(remote_commit))
-            remote_latest = remote_catalog.resolve("latest").season
+            if (
+                previous is not None
+                and previous.remote_commit == remote_commit
+                and previous.remote_latest_season is not None
+            ):
+                remote_latest = previous.remote_latest_season
+            else:
+                remote_catalog = ContestStageCatalog.from_rows(self.source.fetch_stage_rows(remote_commit))
+                remote_latest = remote_catalog.resolve("latest").season
         except Exception as error:
             _log_component_failure("fetch_stage_catalog", error, commit=remote_commit)
             warnings.append(
