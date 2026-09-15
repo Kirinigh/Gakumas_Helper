@@ -62,10 +62,10 @@ SECRET_BYTE_PATTERNS = (
     re.compile(rb"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
     re.compile(rb"Authorization\s*:\s*Bearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
 )
-EMAIL_PATTERN = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
+EMAIL_PATTERN = re.compile(r"(?<![\w.+-])[\w.+-]+(?<!\.)@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
 BINARY_EMAIL_PATTERN = re.compile(
     r"(?i)(?<![A-Za-z0-9._%+-])[A-Za-z0-9][A-Za-z0-9._%+-]{2,}"
-    r"@(?:[A-Za-z0-9-]{2,}\.)+[A-Za-z]{2,24}(?![A-Za-z0-9_.-])"
+    r"(?<!\.)@(?:[A-Za-z0-9-]{2,}\.)+[A-Za-z]{2,24}(?![A-Za-z0-9_.-])"
 )
 ASCII_TEXT_RUN_PATTERN = re.compile(rb"[\x20-\x7e]{6,}")
 UTF16_LE_TEXT_RUN_PATTERN = re.compile(rb"(?:[\x20-\x7e]\x00){6,}")

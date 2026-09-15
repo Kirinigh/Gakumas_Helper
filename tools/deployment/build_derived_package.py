@@ -369,11 +369,11 @@ def _prune_unused_video_backend(site_packages: Path) -> None:
 
 
 def _remove_obsolete_root_agent_tools(candidate: Path, framework: dict[str, Any]) -> None:
-    """MFA resolves libs/MaaAgentBinary; preserve Python's separate default path."""
+    """Remove identical legacy files that MFA deletes on startup, retaining active copies."""
     legacy = candidate / "MaaAgentBinary"
     active = candidate / "libs/MaaAgentBinary"
     for path in legacy.rglob("*"):
-        if not path.is_file() or path.name.lower() in {"license", "license.md", "readme", "readme.md"}:
+        if not path.is_file():
             continue
         counterpart = active / path.relative_to(legacy)
         if counterpart.is_file() and sha256_file(path) == sha256_file(counterpart):

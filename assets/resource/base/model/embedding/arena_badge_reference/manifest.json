@@ -13,19 +13,19 @@
   "component": "task410_arena_card_reference",
   "evaluation": {
     "path": "hard_negative_evaluation.json",
-    "sha256": "A3DDD5B61A9B28B7094DB6A0A6DF9338A823F52298958640DDB222CDFD1ED601",
+    "sha256": "25FF95EB809A24A427DF384B1F3C0373FF096F289AD85090C2DD4682CAC85ABC",
     "status": "PASS",
     "tool_contract": "task095-card-badge-hard-negative-evaluation-v1"
   },
   "gallery": {
-    "business_card_id_count": 874,
+    "business_card_id_count": 876,
     "normalization_size": [
       96,
       96
     ],
     "path": "badge_reference_gallery.npz",
-    "sha256": "CC110F7B1740B6F3EF5FB9222F13251545C2A925A64182B326117A8FBD471287",
-    "visual_group_count": 448
+    "sha256": "E94CF9A2CAC79984A170713819CA9CCDCB1C093EBAD973FDE734A6A589ABF483",
+    "visual_group_count": 450
   },
   "production_handoff": {
     "reason": "private-live target, inherited rows, geometry stress, and authoritative hard negatives passed offline; independent live holdout remains PENDING",
@@ -42,145 +42,81 @@
   "source": {
     "added_reference_file_count": 1,
     "arena_component": "arena_custom_card_embedding",
-    "arena_component_manifest_sha256": "CF74F717097C9589B8493D3744DA39CD5E7C5D23FDF97927AD61B171A11A1BF2",
-    "arena_gallery_sha256": "304CFE0F413EA7F274B7E704EDA810B0FBADC1624D086290CC2617FD067484FE",
-    "base_manifest_sha256": "67309D8FF39C67BBAB56FE6FA9AC50F1C29F8E6FE62D6A11AC4B0C28628C76D4",
-    "base_reference_file_count": 3406,
+    "arena_component_manifest_sha256": "F33DA883812F5E51F57DE6D7702F1B5492EF8AB15A2CAA8ADA475012DDDF92AA",
+    "arena_gallery_sha256": "674B3B995926EC36D3743E41E544ADF0DF52A9A3EC99CBDC1126DE3BB0B65FF9",
+    "base_manifest_sha256": "04C3115E00729F70F5C26AE7F49B01C0BAB97F5C365CD59A325751011F41644C",
+    "base_reference_file_count": 3408,
     "catalog_license": "BSD-3-Clause",
     "catalog_repository": "https://github.com/surisuririsu/gakumas-tools",
-    "catalog_revision": "2b1621ea0ef458de6b363143d6dab90b5335c812",
-    "extension_dataset_id": "task095-skill-card-extension-pc-705100-0054-2b1621-published-ui",
-    "extension_dataset_manifest_sha256": "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
-    "fixed_icon_provenance_sha256": "FD02C63D7753A6D127BB41D5A7AFC9A87833D35CF1BB96D361885283E80F79B8",
+    "catalog_revision": "0d0a85145258f700dbbab66d31acf87361297a37",
+    "extension_dataset_id": "task095-skill-card-extension-pc-705100-0054-0d0a85-published-ui",
+    "extension_dataset_manifest_sha256": "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C",
+    "fixed_icon_provenance_sha256": "055CDD75D516AB9D519603F9B1BC8E81A9830CA5642BFC37934DE92E6AF9268D",
     "fixed_icons": {
       "references": {
-        "871": {
-          "business_id": 871,
+        "875": {
+          "business_id": 875,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
             0,
-            240,
-            239
+            200,
+            199
           ],
           "dimensions": [
             130,
             130
           ],
-          "frozen_at": "2026-09-10",
+          "frozen_at": "2026-09-11",
           "kind": "skill_card",
-          "name": "光り輝く道しるべ",
+          "name": "好きを集める一番星",
           "original_dimensions": [
-            240,
-            239
+            200,
+            199
           ],
-          "original_file": "game8-card-871.webp",
-          "original_sha256": "7D3346E831EADCA4B7B2601E69EFC7058E19C8EB93CE671CA25FEAE885882F99",
-          "original_size": 9658,
-          "original_url": "https://img.game8.jp/12987301/056ee789f23235b7bb9d2538469e275e.webp/original",
-          "page_url": "https://game8.jp/gakuen-idolmaster/815128",
-          "png_sha256": "E7F9ED3904F0259F50671CD591E049050EB7EA5761399B8F6F5A75C7AF3323A6",
+          "original_file": "875.webp",
+          "original_sha256": "C75F9E34A3F2C845AFEDD5C1D9CCE65F54F44409111F62430A5827CEF84FC42F",
+          "original_size": 7848,
+          "original_url": "https://img.game8.jp/12987660/c5dbf102f8761cde59545ecbf5945710.webp/original",
+          "page_url": "https://game8.jp/gakuen-idolmaster/815155",
+          "png_sha256": "CF9BA4DFE5B48A808F98CB3E33FCCA634AF33868FFE19808BF0CB8E52CF1C869",
           "publisher": "Game8",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "5827B366CBC34F474D930D2411EAE2CB8351C792152A136C4E39B332B1C5C5A6",
-          "size": 30430,
+          "rgb_pixel_sha256": "23A72A9BDE81647374CC267FB3C73B8C499EC43C5FA1A636B612E2DCCE02380B",
+          "size": 32173,
           "upgraded": false
         },
-        "872": {
-          "business_id": 872,
+        "876": {
+          "business_id": 876,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
-            1616,
-            149,
-            1769,
-            302
+            0,
+            0,
+            202,
+            201
           ],
           "dimensions": [
             130,
             130
           ],
-          "frozen_at": "2026-09-10",
+          "frozen_at": "2026-09-11",
           "kind": "skill_card",
-          "name": "光り輝く道しるべ",
+          "name": "夢を追い続ける一番星",
           "original_dimensions": [
-            1920,
-            1080
+            202,
+            201
           ],
-          "original_file": "sena-performance-slide.jpg",
-          "original_sha256": "B7395385B78C7749E22DB8563F4077A7AE8DB17551E07EE2618597571790F78C",
-          "original_size": 341912,
-          "original_url": "https://appgamelog.com/wp-content/uploads/gkmas-livestreaming-matome-260909-22.jpg",
-          "page_url": "https://appgamelog.com/gkmas-livestreaming-matome/",
-          "png_sha256": "8C5F24ED2F0CC6A34BCAEE3A69399B4A8D854BA07C202AD147D9D4A2347C3CEA",
-          "publisher": "AppGameLog",
-          "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "FD3178946344611A19A52D37193BE0B4BDD00CC08EAA82E5BAA9F2E0E0267DCA",
-          "size": 31492,
-          "upgraded": true
-        },
-        "873": {
-          "business_id": 873,
-          "capture_provenance": "UNKNOWN",
-          "crop_box": [
-            0,
-            0,
-            240,
-            239
-          ],
-          "dimensions": [
-            130,
-            130
-          ],
-          "frozen_at": "2026-09-10",
-          "kind": "skill_card",
-          "name": "先へ進む姿",
-          "original_dimensions": [
-            240,
-            239
-          ],
-          "original_file": "game8-card-873.webp",
-          "original_sha256": "F5E99A294133D22EA8643B057FD1978BEFD7414DF0C20CD6C88F14924B23F0DF",
-          "original_size": 9442,
-          "original_url": "https://img.game8.jp/12987302/34c43c91fd7d73e3ece044236e067e39.webp/original",
-          "page_url": "https://game8.jp/gakuen-idolmaster/815128",
-          "png_sha256": "FB45086A027E903F81FA049956081A0BBE0E050EA53AD48348257C8CDAC61189",
+          "original_file": "876.webp",
+          "original_sha256": "469976C03CBC698D3EB7447F8E3F45F1FA576492F33FD356B32953FAF1ECD447",
+          "original_size": 7296,
+          "original_url": "https://img.game8.jp/12987695/827dd48c5d59cd7f410b92fafde7fec6.webp/original",
+          "page_url": "https://game8.jp/gakuen-idolmaster/815156",
+          "png_sha256": "8CFF7C53337D5EDDAE99AEC0F09BFDA646F20F2E849A5C2DF4D47845946DCC18",
           "publisher": "Game8",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "36973D102EFEB73C458EF36AFA0A941DBF9C77372922283144F5EE0577125591",
-          "size": 31133,
+          "rgb_pixel_sha256": "A70D882FDD0EFAB92B6BF2AEE5A3B5CA81D3B3D8A891F7EEBDCC6528980D4A96",
+          "size": 31196,
           "upgraded": false
-        },
-        "874": {
-          "business_id": 874,
-          "capture_provenance": "UNKNOWN",
-          "crop_box": [
-            1616,
-            409,
-            1769,
-            563
-          ],
-          "dimensions": [
-            130,
-            130
-          ],
-          "frozen_at": "2026-09-10",
-          "kind": "skill_card",
-          "name": "先へ進む姿",
-          "original_dimensions": [
-            1920,
-            1080
-          ],
-          "original_file": "sena-performance-slide.jpg",
-          "original_sha256": "B7395385B78C7749E22DB8563F4077A7AE8DB17551E07EE2618597571790F78C",
-          "original_size": 341912,
-          "original_url": "https://appgamelog.com/wp-content/uploads/gkmas-livestreaming-matome-260909-22.jpg",
-          "page_url": "https://appgamelog.com/gkmas-livestreaming-matome/",
-          "png_sha256": "92C9F155685128B824D6EA696A58E765F9CCBEDF2F2DE9F11A647F7C5B38C26E",
-          "publisher": "AppGameLog",
-          "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "14696A05FD9D0C48EB16A63439BB726B15D512B15159F82C06AB4FC132D1BFB0",
-          "size": 31794,
-          "upgraded": true
         }
       },
       "schema_version": 1,
@@ -209,10 +145,10 @@
         ]
       }
     ],
-    "reference_file_count": 3407,
+    "reference_file_count": 3409,
     "reference_set_digest_contract": "sha256(base_reference_set_sha256 || public_dataset_id || NUL || public_dataset_revision || NUL || ordered(public_reference_name || NUL || business_id || NUL || visual_group_id || NUL || top_coarse_bytes || reused_green_mask_bytes))",
-    "reference_set_sha256": "08817B7FE70320C643AE926A7A47E80FBB2FB648CDDAC47A5BDB5498067A75E3",
+    "reference_set_sha256": "87298D0C4BB649742C16B67481FDFA3DB292BF0D5BD70BC0A60DA868B26CB58C",
     "replaced_reference_file_count": 0,
-    "retained_reference_file_count": 3406
+    "retained_reference_file_count": 3408
   }
 }
