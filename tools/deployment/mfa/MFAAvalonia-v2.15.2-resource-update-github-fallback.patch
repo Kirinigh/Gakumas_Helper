@@ -819,7 +819,6 @@ diff --git a/MFAAvalonia/Helper/TaskOptionGenerator.cs b/MFAAvalonia/Helper/Task
          ComboBoxExtensions.SetDisableNavigationOnLostFocus(comboBox, true);
          ComboBoxExtensions.SetCanSearch(comboBox, true);
 diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionChecker.cs
-index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e3080d3e56f4 100644
 --- a/MFAAvalonia/Helper/VersionChecker.cs
 +++ b/MFAAvalonia/Helper/VersionChecker.cs
 @@ -306,6 +306,16 @@
@@ -856,7 +855,66 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
          ProgressBar? progress = null;
          TextBlock? textBlock = null;
          TextBlock? downloadSpeedTextBlock = null;
-@@ -849,14 +862,14 @@
+@@ -748,6 +761,7 @@
+         string downloadUrl = string.Empty;
+         string sha256 = string.Empty;
+         var isFull = true;
++        var releaseCatalog = new List<JToken>();
+         if (isLocalPackage)
+         {
+             if (!File.Exists(localPackagePath))
+@@ -768,7 +782,7 @@
+             {
+                 if (isGithub)
+                 {
+-                    var result = await GetLatestVersionAndDownloadUrlFromGithubAsync(strings[0], strings[1], false, "", localVersion).ConfigureAwait(false);
++                    var result = await GetLatestVersionAndDownloadUrlFromGithubAsync(strings[0], strings[1], false, "", localVersion, releaseCatalog).ConfigureAwait(false);
+                     downloadUrl = result.url;
+                     latestVersion = result.latestVersion;
+                     sha256 = result.sha256;
+@@ -817,6 +831,41 @@
+             Instances.InstanceTabBarViewModel.ActiveTab?.TaskQueueViewModel.ClearDownloadProgress();
+             return;
+         }
++        // Opt in only when the target advertises the new protocol. Older targets keep their existing route.
++        var targetRelease = releaseCatalog.FirstOrDefault(r => r["tag_name"]?.ToString() == latestVersion);
++        if (isGithub && !isLocalPackage && AppPaths.DataRoot == AppPaths.InstallRoot
++            && (bool?)targetRelease?["prerelease"] != true
++            && targetRelease?["assets"] is JArray releaseAssets
++            && releaseAssets.Any(a => a["name"]?.ToString() == $"GakumasHelper-release-{latestVersion}.json")
++            )
++        {
++            var work = Path.Combine(AppPaths.InstallRoot, ".local", "updates", Guid.NewGuid().ToString("N"));
++            Directory.CreateDirectory(work);
++            using var client = CreateHttpClientWithProxy();
++            client.DefaultRequestHeaders.UserAgent.ParseAdd("GakumasHelperUpdater/1");
++            var token = Instances.VersionUpdateSettingsUserControlModel.GitHubToken;
++            if (!string.IsNullOrWhiteSpace(token)) client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
++            var catalog = releaseCatalog.Select(r => System.Text.Json.Nodes.JsonNode.Parse(r.ToString())!.AsObject()).ToList();
++            DerivedFileUpdate.Plan? plan = null;
++            try
++            {
++                plan = await DerivedFileUpdate.Prepare(AppPaths.InstallRoot, work, localVersion, latestVersion, catalog, client);
++            }
++            catch (NotSupportedException) { LoggerHelper.Info("目标未提供增量协议，继续完整更新。"); }
++            catch { Instances.RootViewModel.SetUpdating(false); Dismiss(sukiToast); throw; }
++            if (plan != null)
++            {
++            LoggerHelper.Info($"更新方案：{plan.Reason}；包数={plan.Steps.Count}");
++            if (dryRun) { Instances.RootViewModel.SetUpdating(false); return; }
++            await StopTaskersAndAgentsForUpdateAsync();
++            await DerivedFileUpdate.LaunchWorker(plan, token, Instances.VersionUpdateSettingsUserControlModel.ProxyAddress);
++            SetStatusText(textBlock, downloadSpeedTextBlock, "更新包已全部校验，正在退出并应用更新。");
++            Interlocked.Exchange(ref _restartPending, 1);
++            DispatcherHelper.PostOnMainThread(() => { Instances.RootView.BeforeClosed(true, true); Instances.RootView.SaveWindowSizeAndPositionImmediately(); Environment.Exit(0); });
++            await Task.Delay(Timeout.Infinite); // The worker reports success only after final verification.
++            return;
++            }
++        }
+         MaaProcessorManager.Instance.Current.SetTasker();
+         // 仅停止正在运行的任务，不 Dispose 处理器（避免界面变白/配置列表清空）
+         // BeforeClosed 将在重启前调用
+@@ -849,14 +898,14 @@
              SetStatusText(textBlock, downloadSpeedTextBlock, LangKeys.Downloading.ToLocalization());
              SetProgress(progress, 0);
              (var downloadStatus, tempZipFilePath) = await DownloadWithRetry(downloadUrl, tempZipFilePath, progress, 3, textBlock, downloadSpeedTextBlock);
@@ -874,7 +932,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
          }
          else
          {
-@@ -879,7 +892,7 @@
+@@ -879,7 +928,7 @@
              Dismiss(sukiToast);
              ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
              Instances.RootViewModel.SetUpdating(false);
@@ -883,7 +941,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
          }
          SetStatusText(textBlock, downloadSpeedTextBlock, LangKeys.Verifying.ToLocalization());
          var sha256Verified = true;
-@@ -901,7 +914,7 @@
+@@ -901,7 +950,7 @@
              Dismiss(sukiToast);
              ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.HashVerificationFailed.ToLocalization());
              Instances.RootViewModel.SetUpdating(false);
@@ -892,7 +950,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
          }
          SetStatusText(textBlock, downloadSpeedTextBlock, LangKeys.Extracting.ToLocalization());
          LoggerHelper.Info($"准备解压资源包：源文件={tempZipFilePath}，目标目录={tempExtractDir}");
-@@ -916,7 +929,7 @@
+@@ -916,7 +965,7 @@
              Dismiss(sukiToast);
              ToastHelper.Warn(LangKeys.Warning.ToLocalization(), validationMessage, -1);
              Instances.RootViewModel.SetUpdating(false);
@@ -901,7 +959,102 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
          }
  
          var containsCoreApplicationFiles = ContainsCoreApplicationFiles(originPath);
-@@ -2030,7 +2043,7 @@
+@@ -1744,14 +1793,17 @@
+         public int Total { get; set; } = 0;
+     }
+ 
+-    private sealed class UpdateFileTransaction : IDisposable
++    internal sealed class UpdateFileTransaction : IDisposable
+     {
+         private sealed record FileChange(string TargetPath, string? BackupPath);
+ 
+         private readonly string _backupRoot;
+         private readonly List<FileChange> _changes = [];
++        private readonly HashSet<string> _createdDirectories = new(StringComparer.OrdinalIgnoreCase);
+         private int _nextBackupId;
+         private bool _committed;
++        private bool _rolledBack;
++        private bool _rollbackSucceeded;
+ 
+         public UpdateFileTransaction(string tempRoot)
+         {
+@@ -1775,7 +1827,7 @@
+             cancellationToken.ThrowIfCancellationRequested();
+             var targetDirectory = Path.GetDirectoryName(targetPath);
+             if (!string.IsNullOrWhiteSpace(targetDirectory))
+-                Directory.CreateDirectory(targetDirectory);
++                EnsureDirectory(targetDirectory);
+ 
+             var pendingPath = targetPath + ".pending_update";
+             try
+@@ -1811,6 +1863,19 @@
+             ReplaceFile(stagedPath, targetPath, CancellationToken.None);
+         }
+ 
++        private void EnsureDirectory(string directory)
++        {
++            var missing = new Stack<string>();
++            for (var current = directory; !Directory.Exists(current); current = Path.GetDirectoryName(current)!) missing.Push(current);
++            while (missing.TryPop(out var current)) { Directory.CreateDirectory(current); _createdDirectories.Add(current); }
++        }
++
++        private void RemoveEmptyCreatedDirectories()
++        {
++            foreach (var directory in _createdDirectories.OrderByDescending(p => p.Length))
++                if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
++        }
++
+         public void TrackReplacement(string targetPath, string backupPath)
+         {
+             _changes.Add(new FileChange(targetPath, backupPath));
+@@ -1826,7 +1891,7 @@
+         {
+             if (!_committed)
+             {
+-                if (Rollback())
++                if (RollbackChecked())
+                     TryDeleteBackupRoot();
+                 return;
+             }
+@@ -1837,8 +1902,10 @@
+         private string NextBackupPath() =>
+             Path.Combine(_backupRoot, $"{_nextBackupId++:D8}.bak");
+ 
+-        private bool Rollback()
+-        {
++        public bool RollbackChecked()
++        {
++            if (_rolledBack) return _rollbackSucceeded;
++            _rolledBack = true;
+             var succeeded = true;
+             LoggerHelper.Warning($"更新未完成，开始回滚已修改文件：数量={_changes.Count}");
+             for (var index = _changes.Count - 1; index >= 0; index--)
+@@ -1852,11 +1919,12 @@
+                         File.Delete(change.TargetPath);
+                     }
+ 
++                    RemoveEmptyCreatedDirectories();
+                     if (change.BackupPath != null && File.Exists(change.BackupPath))
+                     {
+                         var targetDirectory = Path.GetDirectoryName(change.TargetPath);
+                         if (!string.IsNullOrWhiteSpace(targetDirectory))
+-                            Directory.CreateDirectory(targetDirectory);
++                            EnsureDirectory(targetDirectory);
+                         File.Move(change.BackupPath, change.TargetPath, overwrite: true);
+                     }
+                 }
+@@ -1867,8 +1935,10 @@
+                 }
+             }
+ 
++            try { RemoveEmptyCreatedDirectories(); } catch (Exception error) { succeeded = false; LoggerHelper.Error("回滚新增目录失败", error); }
+             if (!succeeded)
+                 LoggerHelper.Error($"部分更新文件回滚失败，已保留回滚目录供手动恢复：目录={_backupRoot}");
++            _rollbackSucceeded = succeeded;
+             return succeeded;
+         }
+ 
+@@ -2030,7 +2100,7 @@
                  Dismiss(sukiToast);
                  ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
                  Instances.RootViewModel.SetUpdating(false);
@@ -910,7 +1063,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
              }
  
              // 解压文件
-@@ -2154,13 +2167,14 @@
+@@ -2154,13 +2224,14 @@
      {
          for (int i = 0; i < retries; i++)
          {
@@ -932,7 +1085,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
                  await Task.Delay(2000 * (i + 1));
              }
          }
-@@ -2402,7 +2416,7 @@
+@@ -2402,7 +2473,7 @@
                  Dismiss(sukiToast);
                  ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
                  Instances.RootViewModel.SetUpdating(false);
@@ -941,7 +1094,16 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
              }
  
              SetText(textBlock, LangKeys.ApplyingUpdate.ToLocalization());
-@@ -2474,7 +2488,7 @@
+@@ -2461,7 +2532,7 @@
+         string repo = "MFAAvalonia",
+         bool onlyCheck = false,
+         string targetVersion = "",
+-        string currentVersion = "v0.0.0")
++        string currentVersion = "v0.0.0", List<JToken>? releaseCatalog = null)
+     {
+         var versionType = repo.Equals("MFAAvalonia", StringComparison.OrdinalIgnoreCase)
+             ? Instances.VersionUpdateSettingsUserControlModel.UIUpdateChannelIndex.ToVersionType()
+@@ -2474,7 +2545,7 @@
  
          var releaseUrl = $"https://api.github.com/repos/{owner}/{repo}/releases";
          int page = 1;
@@ -950,7 +1112,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
          using var httpClient = CreateHttpClientWithProxy();
  
          if (!string.IsNullOrWhiteSpace(Instances.VersionUpdateSettingsUserControlModel.GitHubToken))
-@@ -2496,7 +2510,7 @@
+@@ -2496,7 +2567,7 @@
              var urlWithParams = $"{releaseUrl}?per_page={perPage}&page={page}";
              try
              {
@@ -959,7 +1121,15 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
                  if (response.IsSuccessStatusCode)
                  {
                      string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-@@ -2542,7 +2556,7 @@
+@@ -2507,6 +2578,7 @@
+                     }
+                     foreach (var tag in tags)
+                     {
++                        releaseCatalog?.Add(tag.DeepClone());
+                         // 检查是否为预发布版本
+                         if ((bool)tag["prerelease"] && versionType == VersionType.Stable)
+                         {
+@@ -2542,7 +2614,7 @@
                                  if (!onlyCheck && repo != "MFAAvalonia")
                                      SaveChangelog(tag, "body");
                              }
@@ -968,7 +1138,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
                              return (url, latestVersion, sha256);
                          }
  
-@@ -2556,11 +2570,8 @@
+@@ -2556,11 +2628,8 @@
                              }
                          }
                      }
@@ -982,7 +1152,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
                  }
                  else
                  {
-@@ -2587,7 +2598,7 @@
+@@ -2587,7 +2656,7 @@
                  if (!onlyCheck && repo != "MFAAvalonia")
                      SaveChangelog(bestRelease, "body");
              }
@@ -991,7 +1161,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
          }
          return (url, latestVersion, sha256);
      }
-@@ -2779,7 +2790,7 @@
+@@ -2779,7 +2848,7 @@
          return $@"\b{osOrFamily}-{arch}\b";
      }
  
@@ -1000,7 +1170,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
      {
          string downloadUrl = string.Empty;
          string sha256 = string.Empty;
-@@ -2802,12 +2813,15 @@
+@@ -2802,12 +2871,15 @@
  
          try
          {
@@ -1021,7 +1191,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
                  if (releaseData["assets"] is JArray { Count: > 0 } assets)
                  {
                      var orderedAssets = assets
-@@ -2834,11 +2848,6 @@
+@@ -2834,11 +2906,6 @@
                      downloadUrl = bestAsset?.Url ?? string.Empty;
                      sha256 = bestAsset?.Sha256 ?? string.Empty;
                  }
@@ -1033,7 +1203,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
              }
          }
          catch (Exception e) when (e is not OperationCanceledException)
-@@ -3104,6 +3113,8 @@
+@@ -3104,6 +3171,8 @@
          TextBlock? downloadSpeedTextBlock = null)
      {
          var targetFilePath = filePath;
@@ -1042,7 +1212,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
          try
          {
              using var httpClient = CreateHttpClientWithProxy();
-@@ -3125,7 +3136,9 @@
+@@ -3125,7 +3194,9 @@
                  }
              }
  
@@ -1053,7 +1223,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
              response.EnsureSuccessStatusCode();
  
              if (response.Content.Headers.ContentDisposition != null)
-@@ -3147,6 +3160,7 @@
+@@ -3147,6 +3218,7 @@
  
              await using var contentStream = await response.Content.ReadAsStreamAsync();
              await using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
@@ -1061,7 +1231,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
  
              var buffer = new byte[8192];
              var stopwatch = Stopwatch.StartNew();
-@@ -3176,7 +3190,7 @@
+@@ -3176,7 +3248,7 @@
                  double progressPercentage;
                  if (totalBytes.HasValue && totalBytes.Value > 0)
                  {
@@ -1070,7 +1240,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
                  }
                  else
                  {
-@@ -3199,6 +3213,11 @@
+@@ -3199,6 +3271,11 @@
                  }
              }
  
@@ -1082,7 +1252,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
              SetProgress(progressBar, 100);
              SetDownloadInfo(downloadSizeTextBlock, downloadSpeedTextBlock, totalBytesRead, totalBytes ?? totalBytesRead, bytesPerSecond);
              DispatcherHelper.PostOnMainThread(() =>
-@@ -3211,6 +3230,11 @@
+@@ -3211,6 +3288,11 @@
  
              return (true, targetFilePath);
          }
@@ -1094,7 +1264,7 @@ index 6e6d1118fa414ba21c7efa4f15a58ad95dd08bd7..69fccdb04a836c2ed57a2a505539e308
          catch (HttpRequestException httpEx)
          {
              LoggerHelper.Error($"HTTP 请求失败：原因={httpEx.Message}", httpEx);
-@@ -3225,6 +3249,20 @@
+@@ -3225,6 +3307,20 @@
          {
              LoggerHelper.Error($"下载文件时发生未知错误：原因={ex.Message}", ex);
              return (false, targetFilePath);
@@ -1501,10 +1671,10 @@ diff --git a/MFAAvalonia/Extensions/MaaFW/FocusHandler.cs b/MFAAvalonia/Extensio
                 || input.StartsWith("./", StringComparison.Ordinal)
 diff --git a/MFAAvalonia/Helper/GitHubApiRequests.cs b/MFAAvalonia/Helper/GitHubApiRequests.cs
 new file mode 100644
-index 0000000..161efe487da84b4fa403d3341baa6a68a5f9848d
+index 0000000..556b46e5ff1affd4f7d35b0ee29f5b6ed1c1ca27
 --- /dev/null
 +++ b/MFAAvalonia/Helper/GitHubApiRequests.cs
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,204 @@
 +using System;
 +using System.Collections.Generic;
 +using System.Globalization;
@@ -1601,7 +1771,8 @@ index 0000000..161efe487da84b4fa403d3341baa6a68a5f9848d
 +        }
 +    }
 +
-+    private static string SharedStateDirectory => Path.Combine(AppContext.BaseDirectory, ".local", "runtime-data");
++    internal static string SharedRoot = AppContext.BaseDirectory;
++    private static string SharedStateDirectory => Path.Combine(SharedRoot, ".local", "runtime-data");
 +    private static string SharedStatePath => Path.Combine(SharedStateDirectory, "github-api-rate-limit.json");
 +
 +    private static void SharedDiagnostic(string operation, Exception error)
@@ -1707,4 +1878,480 @@ index 0000000..161efe487da84b4fa403d3341baa6a68a5f9848d
 +internal sealed class GitHubRateLimitException : Exception
 +{
 +    internal GitHubRateLimitException(string message) : base(message) { }
++}
+diff --git a/MFAAvalonia/AppRuntime.cs b/MFAAvalonia/AppRuntime.cs
+--- a/MFAAvalonia/AppRuntime.cs
++++ b/MFAAvalonia/AppRuntime.cs
+@@ -163,6 +163,8 @@
+ 
+     public static void Initialize(string[] args, string instanceKey)
+     {
++        if (args.Length == 3 && args[0] == "--gkh-update-worker")
++            Environment.Exit(DerivedFileUpdate.RunWorker(args[1], args[2]));
+         Args = ParseArguments(args);
+         _instanceKey = instanceKey;
+         _executablePath = Environment.ProcessPath;
+diff --git a/MFAAvalonia/Helper/DerivedFileUpdate.cs b/MFAAvalonia/Helper/DerivedFileUpdate.cs
+new file mode 100644
+index 0000000..f6b2b3f2f325624099bae2a68f1bd5e1a26b9413
+--- /dev/null
++++ b/MFAAvalonia/Helper/DerivedFileUpdate.cs
+@@ -0,0 +1,458 @@
++using System;
++using System.IO;
++using System.IO.Compression;
++using System.IO.Pipes;
++using System.Linq;
++using System.Collections.Generic;
++using System.Diagnostics;
++using System.Net;
++using System.Net.Http;
++using System.Net.Http.Headers;
++using System.Security.Cryptography;
++using System.Text.Json;
++using System.Text.Json.Nodes;
++using System.Threading;
++using System.Threading.Tasks;
++
++namespace MFAAvalonia.Helper;
++
++// One operation owns its catalog, retry budget, staging directories and transaction.
++internal static class DerivedFileUpdate
++{
++    internal const string StateName = "GAKUMAS_HELPER_UPDATE.json";
++    private static readonly HashSet<string> MutableRoots = new(StringComparer.OrdinalIgnoreCase)
++        { ".local", "config", "logs", "log", "cache", "captures", "screenshots", "profiles", "userdata", "user_data", "runtime-data", "temp", "tmp", "temp_res", "temp_mfa", "temp_maafw", "backup", "debug" };
++    internal sealed class Budget { public int Remaining { get; set; } = 2; }
++    internal sealed class Asset
++    {
++        public string name { get; set; } = "";
++        public string url { get; set; } = "";
++        public string sha256 { get; set; } = "";
++        public long bytes { get; set; }
++    }
++    internal sealed class State
++    {
++        public int schema_version { get; set; }
++        public string version { get; set; } = "";
++        public JsonObject compatibility { get; set; } = new();
++        public Dictionary<string, string> files { get; set; } = new();
++    }
++    internal sealed class Delta
++    {
++        public string from { get; set; } = "";
++        public string to { get; set; } = "";
++        public string base_state_sha256 { get; set; } = "";
++        public State @base { get; set; } = new();
++        public string asset { get; set; } = "";
++        public long bytes { get; set; }
++        public string sha256 { get; set; } = "";
++    }
++    internal sealed class Metadata
++    {
++        public int protocol { get; set; }
++        public State target { get; set; } = new();
++        public string state_sha256 { get; set; } = "";
++        public Delta? delta { get; set; }
++    }
++    internal sealed class Step
++    {
++        public Metadata Metadata { get; set; } = new();
++        public Asset Asset { get; set; } = new();
++        public string Directory { get; set; } = "";
++    }
++    internal sealed class Plan
++    {
++        public string Root { get; set; } = "";
++        public string Work { get; set; } = "";
++        public string Executable { get; set; } = "";
++        public int ParentPid { get; set; }
++        public long ParentStart { get; set; }
++        public Metadata Target { get; set; } = new();
++        public Asset Full { get; set; } = new();
++        public List<Step> Steps { get; set; } = new();
++        public bool IsDelta { get; set; }
++        public Budget Budget { get; set; } = new();
++        public string Reason { get; set; } = "full";
++    }
++    internal sealed class Secrets
++    {
++        public string Token { get; set; } = "";
++        public string Proxy { get; set; } = "";
++    }
++    internal static string Hash(string path)
++    {
++        using var input = File.OpenRead(path);
++        return Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
++    }
++    internal static bool Protected(string relative)
++    {
++        var parts = relative.Replace('\\', '/').ToLowerInvariant().Split('/');
++        return MutableRoots.Contains(parts[0]) || parts.Contains("__pycache__")
++            || parts[^1] is "config.json" or "appsettings.json" or "maa.log" or "gui.log"
++            || parts[^1].EndsWith(".pyc") || parts[^1].EndsWith(".backupmfa");
++    }
++    internal static string PathIn(string root, string relative)
++    {
++        if (string.IsNullOrWhiteSpace(relative) || relative.Contains('\\') || relative.Contains(':')
++            || relative.Split('/').Any(p => p is "" or "." or ".." || p.EndsWith('.') || p.EndsWith(' ')) || Protected(relative))
++            throw new InvalidDataException("更新包含有无效路径或用户数据路径。");
++        var result = Path.GetFullPath(Path.Combine(root, relative));
++        var parent = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
++        if (!result.StartsWith(parent, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("更新路径越界。");
++        for (var current = result; current.Length >= parent.Length; current = Path.GetDirectoryName(current)!)
++            if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
++                throw new InvalidDataException("更新路径不能包含链接。");
++        return result;
++    }
++    private static Version Stable(string value)
++    {
++        if (!System.Text.RegularExpressions.Regex.IsMatch(value, @"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$"))
++            throw new InvalidDataException("增量更新仅接受正式语义版本。");
++        return Version.Parse(value[1..]);
++    }
++    private static bool SameLine(string left, string right)
++    {
++        var a = Stable(left); var b = Stable(right);
++        return a.Major == b.Major && a.Minor == b.Minor && a < b;
++    }
++    private static void ValidateState(State state)
++    {
++        Stable(state.version);
++        if (state.schema_version != 1 || state.files.Count == 0 || !state.files.ContainsKey("interface.json")
++            || !state.files.ContainsKey("GAKUMAS_HELPER_BUILD.json")) throw new InvalidDataException("更新清单不完整。");
++        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
++        foreach (var pair in state.files)
++        {
++            PathIn(Path.GetTempPath(), pair.Key);
++            if (!seen.Add(pair.Key) || pair.Key == StateName || !ValidHash(pair.Value)) throw new InvalidDataException("更新文件清单无效。");
++        }
++    }
++    private static bool ValidHash(string value) => System.Text.RegularExpressions.Regex.IsMatch(value, "^[a-fA-F0-9]{64}$");
++    private static IEnumerable<string> ManagedFiles(string root)
++    {
++        var pending = new Stack<string>();
++        pending.Push(root);
++        while (pending.TryPop(out var directory))
++        {
++            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
++            {
++                var relative = Path.GetRelativePath(root, entry).Replace('\\', '/');
++                if (Protected(relative)) continue;
++                PathIn(root, relative);
++                if (Directory.Exists(entry)) pending.Push(entry);
++                else yield return relative;
++            }
++        }
++    }
++    internal static void VerifyTree(string root, State state, string? stateHash = null)
++    {
++        ValidateState(state);
++        foreach (var pair in state.files)
++            if (!File.Exists(PathIn(root, pair.Key)) || !Hash(PathIn(root, pair.Key)).Equals(pair.Value, StringComparison.OrdinalIgnoreCase))
++                throw new InvalidDataException("本地文件与版本基底不一致：" + pair.Key);
++        if (stateHash != null && (!File.Exists(PathIn(root, StateName)) || !Hash(PathIn(root, StateName)).Equals(stateHash, StringComparison.OrdinalIgnoreCase)))
++            throw new InvalidDataException("版本基底清单不一致。");
++        var actual = ManagedFiles(root).Where(p => p != StateName);
++        if (!actual.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(state.files.Keys))
++            throw new InvalidDataException("本地存在清单外程序文件，采用完整更新。");
++    }
++    internal static Asset ResolveAsset(JsonObject release, string name)
++    {
++        var matches = release["assets"]!.AsArray().OfType<JsonObject>().Where(a => (string?)a["name"] == name).ToArray();
++        if (matches.Length != 1) throw new InvalidDataException("缺少或重复的更新附件：" + name);
++        var item = matches[0];
++        var hash = ((string?)item["digest"] ?? "").Replace("sha256:", "");
++        var url = (string?)item["url"] ?? "";
++        if (!ValidHash(hash) || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != "https" || uri.Host != "api.github.com")
++            throw new InvalidDataException("更新附件缺少可靠下载信息。");
++        return new Asset { name = name, url = url, sha256 = hash, bytes = (long?)item["size"] ?? 0 };
++    }
++    internal static async Task Download(HttpClient client, Asset asset, string target, Budget budget)
++    {
++        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
++        while (true)
++        {
++            try
++            {
++                using var request = new HttpRequestMessage(HttpMethod.Get, asset.url);
++                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
++                using var response = await GitHubApiRequests.SendAsync(client, request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
++                response.EnsureSuccessStatusCode();
++                await using (var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
++                await using (var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write))
++                    await input.CopyToAsync(output).ConfigureAwait(false);
++                if (new FileInfo(target).Length != asset.bytes || !Hash(target).Equals(asset.sha256, StringComparison.OrdinalIgnoreCase))
++                    throw new InvalidDataException("更新附件校验失败。");
++                return;
++            }
++            catch (GitHubRateLimitException) { throw; }
++            catch (InvalidDataException)
++            {
++                if (File.Exists(target)) File.Delete(target);
++                throw;
++            }
++            catch (Exception error) when (error is IOException or HttpRequestException)
++            {
++                if (File.Exists(target)) File.Delete(target);
++                if (budget.Remaining-- <= 0) throw;
++                await Task.Delay(2000).ConfigureAwait(false);
++            }
++        }
++    }
++    internal static async Task<Plan> Prepare(string root, string work, string localVersion, string targetVersion,
++        List<JsonObject> catalog, HttpClient client)
++    {
++        var releases = catalog.Where(r => (bool?)r["draft"] != true && (bool?)r["prerelease"] != true)
++            .GroupBy(r => (string?)r["tag_name"] ?? "").ToDictionary(g => g.Key, g => g.Single());
++        var plan = new Plan { Root = root, Work = work };
++        var downloadingDelta = false;
++        var cache = new Dictionary<string, Metadata>();
++        async Task<Metadata> MetadataFor(string tag)
++        {
++            if (cache.TryGetValue(tag, out var cached)) return cached;
++            if (!releases.TryGetValue(tag, out var release)) throw new InvalidDataException("增量链缺少正式版本。");
++            var asset = ResolveAsset(release, $"GakumasHelper-release-{tag}.json");
++            if (asset.bytes <= 0 || asset.bytes > 16 * 1024 * 1024) throw new InvalidDataException("版本清单体积无效。");
++            var path = Path.Combine(work, tag + ".json");
++            await Download(client, asset, path, plan.Budget);
++            var document = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
++            var metadata = document["file_update"]?.Deserialize<Metadata>() ?? throw new NotSupportedException("目标仅提供完整更新。");
++            if (metadata.protocol != 1 || metadata.target.version != tag || !ValidHash(metadata.state_sha256)) throw new InvalidDataException("版本清单不匹配。");
++            ValidateState(metadata.target);
++            cache[tag] = metadata;
++            return metadata;
++        }
++        plan.Target = await MetadataFor(targetVersion);
++        plan.Full = ResolveAsset(releases[targetVersion], $"MaaGakumasu-win-x86_64-{targetVersion}.zip");
++        try
++        {
++            if (!SameLine(localVersion, targetVersion)) throw new InvalidDataException("跨主/次版本采用完整更新。");
++            var cursor = plan.Target;
++            while (cursor.target.version != localVersion)
++            {
++                if (plan.Steps.Count >= 32) throw new InvalidDataException("更新链超过32步，采用完整更新。");
++                var delta = cursor.delta ?? throw new InvalidDataException("缺少相邻增量或此步要求完整更新。");
++                if (delta.to != cursor.target.version || !SameLine(delta.from, delta.to)
++                    || Stable(delta.from) < Stable(localVersion) || delta.@base.version != delta.from
++                    || !JsonNode.DeepEquals(delta.@base.compatibility, cursor.target.compatibility)) throw new InvalidDataException("增量基底或兼容条件不符。");
++                ValidateState(delta.@base);
++                var asset = ResolveAsset(releases[delta.to], delta.asset);
++                if (asset.bytes != delta.bytes || !asset.sha256.Equals(delta.sha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("增量附件身份不一致。");
++                plan.Steps.Insert(0, new Step { Metadata = cursor, Asset = asset });
++                if (delta.from == localVersion) break;
++                var previous = await MetadataFor(delta.from);
++                if (!previous.state_sha256.Equals(delta.base_state_sha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("增量链基底不连续。");
++                cursor = previous;
++            }
++            if (plan.Steps.Count == 0 || plan.Steps.Sum(s => s.Asset.bytes) >= plan.Full.bytes * 0.8)
++                throw new InvalidDataException("增量总量未节省至少20%，采用完整更新。");
++            VerifyTree(root, plan.Steps[0].Metadata.delta!.@base, plan.Steps[0].Metadata.delta!.base_state_sha256);
++            downloadingDelta = true;
++            foreach (var step in plan.Steps)
++            {
++                var archive = Path.Combine(work, step.Asset.name);
++                await Download(client, step.Asset, archive, plan.Budget);
++                step.Directory = Path.Combine(work, "step-" + step.Metadata.target.version);
++                Extract(step, archive, false);
++            }
++            plan.IsDelta = true;
++            plan.Reason = "相邻增量链已完整校验";
++        }
++        catch (GitHubRateLimitException) { throw; }
++        catch (Exception error) when (error is IOException or InvalidDataException or ArgumentException or InvalidOperationException or NotSupportedException)
++        {
++            if (plan.Budget.Remaining < 0) throw;
++            if (downloadingDelta && plan.Budget.Remaining-- <= 0) throw;
++            plan.Reason = error.Message;
++            plan.Steps.Clear();
++            await PrepareFull(plan, client);
++        }
++        return plan;
++    }
++    internal static async Task PrepareFull(Plan plan, HttpClient client)
++    {
++        if (plan.Budget.Remaining < 0) throw new IOException("更新恢复预算已用完。");
++        var archive = Path.Combine(plan.Work, "full.zip");
++        if (!File.Exists(archive)) await Download(client, plan.Full, archive, plan.Budget);
++        var step = new Step { Metadata = plan.Target, Asset = plan.Full, Directory = Path.Combine(plan.Work, "full") };
++        Extract(step, archive, true);
++        plan.IsDelta = false;
++        plan.Steps = new List<Step> { step };
++    }
++    internal static void Extract(Step step, string archive, bool full)
++    {
++        if (Directory.Exists(step.Directory)) throw new IOException("更新暂存目录已存在。");
++        Directory.CreateDirectory(step.Directory);
++        using var zip = ZipFile.OpenRead(archive);
++        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
++        foreach (var entry in zip.Entries)
++        {
++            if (entry.FullName.EndsWith('/')) continue;
++            var target = PathIn(step.Directory, entry.FullName);
++            if (!seen.Add(entry.FullName) || (entry.ExternalAttributes >> 16 & 0xF000) == 0xA000) throw new InvalidDataException("更新包包含重复路径或链接。");
++            if (entry.FullName != StateName && entry.FullName != "changes.json" && !step.Metadata.target.files.ContainsKey(entry.FullName))
++                throw new InvalidDataException("更新包含有清单外文件。");
++            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
++            entry.ExtractToFile(target);
++        }
++        if (!Hash(PathIn(step.Directory, StateName)).Equals(step.Metadata.state_sha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("目标清单校验失败。");
++        var state = JsonSerializer.Deserialize<State>(File.ReadAllText(PathIn(step.Directory, StateName)))!;
++        if (!JsonNode.DeepEquals(JsonSerializer.SerializeToNode(state), JsonSerializer.SerializeToNode(step.Metadata.target))) throw new InvalidDataException("目标清单内容不一致。");
++        if (full) VerifyTree(step.Directory, step.Metadata.target, step.Metadata.state_sha256);
++        else
++        {
++            var delta = step.Metadata.delta!;
++            var expected = step.Metadata.target.files.Where(p => !delta.@base.files.TryGetValue(p.Key, out var old) || old != p.Value).Select(p => p.Key).Append(StateName).ToHashSet(StringComparer.OrdinalIgnoreCase);
++            if (!seen.Where(p => p != "changes.json").ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(expected)) throw new InvalidDataException("增量文件集合不匹配。");
++            var changes = JsonNode.Parse(File.ReadAllText(PathIn(step.Directory, "changes.json")))!.AsObject();
++            string[] Values(string name) => changes[name]?.AsArray().Select(p => p!.GetValue<string>()).ToArray() ?? throw new InvalidDataException("增量变更表不完整。");
++            if (!Values("deleted").ToHashSet().SetEquals(delta.@base.files.Keys.Except(step.Metadata.target.files.Keys))
++                || !Values("added").Concat(Values("modified")).ToHashSet().SetEquals(expected)
++                || Values("deleted_dir").Length != 0 || Values("added_dir").Length != 0) throw new InvalidDataException("增量增删改清单不一致。");
++            foreach (var relative in expected.Where(p => p != StateName))
++                if (!Hash(PathIn(step.Directory, relative)).Equals(step.Metadata.target.files[relative], StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("增量文件校验失败。");
++        }
++    }
++    internal static void Apply(Plan plan, Action<string>? beforeMutation = null)
++    {
++        using var transaction = new VersionChecker.UpdateFileTransaction(plan.Work);
++        try
++        {
++            foreach (var step in plan.Steps)
++            {
++                if (plan.IsDelta) VerifyTree(plan.Root, step.Metadata.delta!.@base, step.Metadata.delta!.base_state_sha256);
++                var target = step.Metadata.target;
++                var deleted = plan.IsDelta ? step.Metadata.delta!.@base.files.Keys.Except(target.files.Keys)
++                    : ManagedFiles(plan.Root).Where(p => p != StateName && !target.files.ContainsKey(p));
++                foreach (var relative in deleted.ToArray())
++                {
++                    beforeMutation?.Invoke(relative);
++                    transaction.DeleteFile(PathIn(plan.Root, relative));
++                }
++                foreach (var source in Directory.EnumerateFiles(step.Directory, "*", SearchOption.AllDirectories))
++                {
++                    var relative = Path.GetRelativePath(step.Directory, source).Replace('\\', '/');
++                    if (relative is "changes.json" or StateName) continue;
++                    beforeMutation?.Invoke(relative);
++                    transaction.ReplaceFile(source, PathIn(plan.Root, relative), CancellationToken.None);
++                }
++                transaction.ReplaceFile(PathIn(step.Directory, StateName), PathIn(plan.Root, StateName), CancellationToken.None);
++                VerifyTree(plan.Root, target, step.Metadata.state_sha256);
++            }
++            VerifyTree(plan.Root, plan.Target.target, plan.Target.state_sha256);
++            transaction.Commit();
++        }
++        catch
++        {
++            if (!transaction.RollbackChecked()) throw new RollbackIncompleteException("更新回滚未完整完成；已保留备份，不再尝试完整更新。");
++            throw;
++        }
++    }
++    internal sealed class RollbackIncompleteException(string message) : IOException(message);
++    internal static async Task Execute(Plan plan, HttpClient client, Action<string>? beforeMutation = null)
++    {
++        try { Apply(plan, beforeMutation); }
++        catch (RollbackIncompleteException) { throw; }
++        catch (Exception error) when (plan.IsDelta && error is IOException or InvalidDataException)
++        {
++            if (plan.Budget.Remaining-- <= 0) throw;
++            await PrepareFull(plan, client);
++            Apply(plan);
++        }
++    }
++
++    internal static async Task LaunchWorker(Plan plan, string token, string proxy)
++    {
++        var shadow = Path.Combine(plan.Work, "worker");
++        Directory.CreateDirectory(shadow);
++        // A locally modified base must not supply the worker for a full repair.
++        var workerSource = plan.IsDelta ? plan.Root : plan.Steps.Single().Directory;
++        if (plan.IsDelta) VerifyTree(plan.Root, plan.Steps[0].Metadata.delta!.@base, plan.Steps[0].Metadata.delta!.base_state_sha256);
++        // Run an unchanged copy outside the install tree, including its own Core/runtime.
++        foreach (var relative in ManagedFiles(workerSource))
++        {
++            if (Protected(relative) || (relative.Contains('/') && !relative.StartsWith("libs/") && !relative.StartsWith("runtimes/"))) continue;
++            var destination = PathIn(shadow, relative);
++            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
++            File.Copy(PathIn(workerSource, relative), destination);
++        }
++        plan.Executable = plan.Target.target.files.ContainsKey("MaaGakumasu.exe") ? "MaaGakumasu.exe"
++            : Path.GetRelativePath(plan.Root, Environment.ProcessPath!).Replace('\\', '/');
++        PathIn(plan.Root, plan.Executable);
++        using var parent = Process.GetCurrentProcess();
++        plan.ParentPid = parent.Id;
++        plan.ParentStart = parent.StartTime.ToUniversalTime().Ticks;
++        var planFile = Path.Combine(plan.Work, "plan.json");
++        await File.WriteAllTextAsync(planFile, JsonSerializer.Serialize(plan));
++        var pipeName = "gkh-update-" + Guid.NewGuid().ToString("N");
++        using var pipe = new NamedPipeServerStream(pipeName, PipeDirection.Out, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
++        var start = new ProcessStartInfo(PathIn(shadow, plan.Executable)) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = shadow };
++        start.ArgumentList.Add("--gkh-update-worker");
++        start.ArgumentList.Add(planFile);
++        start.ArgumentList.Add(pipeName);
++        using var worker = Process.Start(start) ?? throw new IOException("无法启动更新进程。");
++        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
++        await pipe.WaitForConnectionAsync(timeout.Token);
++        // Credentials exist only in the same-user pipe and worker memory, never in plan/logs/arguments.
++        await JsonSerializer.SerializeAsync(pipe, new Secrets { Token = token, Proxy = proxy }, cancellationToken: timeout.Token);
++        await pipe.FlushAsync(timeout.Token);
++        WriteResult(plan, "pending", "更新包已校验，等待程序退出后应用。");
++    }
++    internal static int RunWorker(string planFile, string pipeName)
++    {
++        Plan? plan = null;
++        try
++        {
++            plan = JsonSerializer.Deserialize<Plan>(File.ReadAllText(planFile)) ?? throw new InvalidDataException("更新计划缺失。");
++            if (plan.Root == AppContext.BaseDirectory || !Path.GetFullPath(plan.Work).StartsWith(Path.GetFullPath(plan.Root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
++                throw new InvalidDataException("更新工作目录无效。");
++            using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.In, PipeOptions.CurrentUserOnly);
++            pipe.Connect(30000);
++            var secrets = JsonSerializer.Deserialize<Secrets>(pipe) ?? new Secrets();
++            using var handler = new HttpClientHandler();
++            if (!string.IsNullOrWhiteSpace(secrets.Proxy))
++            {
++                var proxy = new Uri(secrets.Proxy);
++                var address = new UriBuilder(proxy) { UserName = "", Password = "" };
++                var configuredProxy = new WebProxy(address.Uri);
++                if (!string.IsNullOrEmpty(proxy.UserInfo))
++                {
++                    var credentials = proxy.UserInfo.Split(':', 2);
++                    configuredProxy.Credentials = new NetworkCredential(Uri.UnescapeDataString(credentials[0]),
++                        credentials.Length > 1 ? Uri.UnescapeDataString(credentials[1]) : "");
++                }
++                handler.Proxy = configuredProxy;
++            }
++            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(10) };
++            client.DefaultRequestHeaders.UserAgent.ParseAdd("GakumasHelperUpdater/1");
++            if (!string.IsNullOrWhiteSpace(secrets.Token)) client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", secrets.Token);
++            GitHubApiRequests.SharedRoot = plan.Root;
++            try
++            {
++                using var parent = Process.GetProcessById(plan.ParentPid);
++                if (parent.StartTime.ToUniversalTime().Ticks == plan.ParentStart && !parent.WaitForExit(60000))
++                    throw new IOException("程序尚未退出，已取消更新。");
++            }
++            catch (ArgumentException) { /* Parent already exited. */ }
++            Execute(plan, client).GetAwaiter().GetResult();
++            WriteResult(plan, "success", "更新完成，已核对全部目标文件。");
++            Process.Start(new ProcessStartInfo(PathIn(plan.Root, plan.Executable)) { UseShellExecute = true, WorkingDirectory = plan.Root });
++            return 0;
++        }
++        catch (Exception error)
++        {
++            if (plan != null) WriteResult(plan, "failed", error.Message);
++            if (OperatingSystem.IsWindows())
++                ShowFailure(IntPtr.Zero, "更新未完成。" + Environment.NewLine + error.Message, "MaaGakumasu 更新", 0x10);
++            return 1; // Do not launch a client from a potentially incomplete rollback.
++        }
++    }
++    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "MessageBoxW", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
++    private static extern int ShowFailure(IntPtr window, string text, string caption, uint type);
++    private static void WriteResult(Plan plan, string status, string message)
++    {
++        var directory = Path.Combine(plan.Root, ".local", "runtime-data");
++        Directory.CreateDirectory(directory);
++        File.WriteAllText(Path.Combine(directory, "update-result.json"), JsonSerializer.Serialize(new { status, message, target = plan.Target.target.version }));
++    }
 +}

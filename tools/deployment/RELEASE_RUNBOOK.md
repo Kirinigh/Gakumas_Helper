@@ -305,11 +305,16 @@ finally {
   --qualification $Qualification
 ```
 
-仅允许生成三个最终资产：
+每次发布保留以下三个完整包资产；启用文件增量且存在兼容的前一正式版本时，另生成一个相邻增量资产：
 
 1. `MaaGakumasu-win-x86_64-<VERSION>.zip`
 2. `GakumasHelper-release-<VERSION>.json`
 3. `GakumasHelper-checksums-<VERSION>.txt`
+4. 可选 `GakumasHelper-delta-<PREVIOUS>-to-<VERSION>.gkhdelta`
+
+制作相邻增量时额外传入 `--previous-candidate <前一正式版本完整包的已核验解压目录>`，其版本必须等于本批 `previous_channel_version`，不可使用改过的本机安装目录。运行库、框架或布局不兼容时自动完整更新；维护者也可传 `--require-full` 明确取消该相邻增量。首次支持新更新器时前版没有文件库存，必须只提供完整包交付新更新器。每次只制作上一正式版本至本版的差分，旧 Release 和链上资产持续保留，不能为补链重写旧发布。
+
+`file_update` 清单说明完整目标库存与可选相邻差分；客户端根据来源和目标主/次版本、整条相邻链兼容性、实际本地基底及总下载体积选择路径，最多32步且至少节省20%。当前正式单目录安装支持增量；其它渠道/布局继续原完整更新。首版复用 `changes.json` 文件增删改和 MFA 的事务，不使用二进制差分、断点续传或跨次下载缓存。
 
 必须验证：
 
@@ -317,7 +322,8 @@ finally {
 - 候选目录与 ZIP 成员清单、大小和内容完全一致；
 - Release manifest 通过严格 schema，且源码 SHA、版本和组件关系正确；
 - 完整序列化 manifest 和最终资产通过隐私/内部标识门；
-- checksums 只引用本次 ZIP 和 manifest，散列与本地文件一致；
+- checksums 只引用本次完整 ZIP、manifest 和可选相邻增量，散列与本地文件一致；
+- 有增量时校验其全部成员、增删改清单、基底/目标库存，并用历史客户端真实选包算法证明完整 ZIP 始终优先；随机调整资产顺序仍须通过；
 - 最终 ZIP Defender 扫描无目标检测；
 - 将最终 ZIP 解压到新的可丢弃目录，先运行版本内 `deployment\Start-MaaGakumasu-Admin.cmd --check`，再经对应授权用同一版本入口执行无游戏输入的启动／退出冒烟并核对窗口标题；不得运行或修改正式候选；
 - Release Notes 根据实际 `update_contract` 描述版本优先级、MFA 内置更新入口、RIS engine/data 窄例外和人工首次安装边界。
@@ -329,7 +335,7 @@ finally {
 - 说明文件保存为 UTF-8，记录其 SHA-256；标题文本和说明文件路径绑定为 `$ReleaseTitle`、`$ReleaseNotes`；
 - 后续任何标题、说明或说明文件字节变化都会使 `ASSETS_VERIFIED` 失效。
 
-三个资产中的任一字节变化都会使 `ASSETS_VERIFIED` 失效。
+本次资产中的任一字节变化都会使 `ASSETS_VERIFIED` 失效。
 
 ## 10. REMOTE_PREFLIGHT_PASSED：远端写入前检查
 
@@ -347,7 +353,7 @@ finally {
 - 目标 tag 不存在；
 - 同版本 Release（包括 draft）不存在；
 - 未认证 `/releases` 与认证维护者视角均已枚举；按安装态 MFA 的 Stable／Beta／Alpha 过滤与 SemVer 规则计算候选，并模拟加入本次 Release 后的结果。正式版支持的 Stable 必须选中新版本；旧组合 prerelease 仍占优的 Beta／Alpha 在说明中明确不受支持。纯手动迁移 prerelease 则必须证明默认 Stable 会过滤全部 prerelease；GitHub Latest 标志不代替 MFA 通道排序核验；
-- 三个本地资产的最终大小和 SHA-256 已记录。
+- 全部本地资产（三个或四个）的最终大小和 SHA-256 已记录。
 - `$ReleaseTitle` 和 `$ReleaseNotes` 仍等于已冻结值，说明文件 SHA-256 未变化。
 
 “查询失败”不等于“不存在”。认证、网络、限流或 API 错误必须单独处理，不能据此继续发布。
@@ -391,18 +397,19 @@ $DraftArguments = @('release', 'create', $Version,
 if ($Qualification -eq 'arena_preview') { $DraftArguments += '--prerelease' }
 gh @DraftArguments
 
-gh release upload $Version `
-  $PackageZip `
-  $ReleaseManifest `
-  $Checksums `
-  --repo 'Kirinigh/Gakumas_Helper'
+$ReleaseAssets = @($PackageZip, $ReleaseManifest, $Checksums)
+$ManifestValue = Get-Content -LiteralPath $ReleaseManifest -Raw | ConvertFrom-Json
+if ($ManifestValue.file_update.delta) {
+  $ReleaseAssets += Join-Path (Split-Path $ReleaseManifest) $ManifestValue.file_update.delta.asset
+}
+gh release upload $Version @ReleaseAssets --repo 'Kirinigh/Gakumas_Helper'
 ```
 
 上传完成后查询 Release API/CLI 并逐项比较：
 
 - `isDraft=true`；`isPrerelease` 在预览版为 `true`，正式版为 `false`；
 - tag 名称和目标 SHA 正确；
-- 恰好三个资产；
+- 资产集合精确等于本批清单：三个完整包资产，加清单中声明的可选相邻增量；
 - 文件名、大小、`uploaded` 状态和 GitHub digest 与本地一致；
 - 远端标题和说明与冻结文本一致，且本地说明文件 SHA-256 未变化；
 - Release Notes 中的版本、源码 SHA 和资产 SHA-256 与最终文件一致；
@@ -428,7 +435,7 @@ if ($Qualification -eq 'arena_release') {
 - 远端 `main`、tag、Release tag 目标和两个 manifest 的源码 SHA 一致；
 - GitHub 首页 `README.md` 显示独立 GKH 版本结构与通用 `vXXX` 资产示例，不冻结本次精确版本；
 - `main` 和 tag 下的 `pyproject.toml`、`assets/interface.json` 均为本次版本，README 保持通用占位符；
-- 三个资产仍为 `uploaded`，大小和 digest 不变；
+- 本次全部资产仍为 `uploaded`，大小和 digest 不变；
 - 旧 tag 和旧 Release 仍可用于公开版本回滚；本机旧安装目录的保留与核对属于独立安装批次，不作为本次公开发布完成门。
 
 只有这些检查全部通过后才能宣布发布完成。之后普通源码提交可以让 `main` 前进；复查旧 Release 时以该版本不可变 tag、发布源码 SHA 和资产来源为准，不要求移动中的 `main` 永远停在旧发布提交。

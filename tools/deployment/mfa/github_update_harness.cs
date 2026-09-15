@@ -156,6 +156,18 @@ static class Program
         message = await Error(async () => { await VersionChecker.Detail(); });
         await Error(async () => { await VersionChecker.Detail(); });
         Check(message.Contains("额度受限") && h.Requests.Count == 1, "body-only rate limit uses default cooldown");
+        foreach (var deltaFirst in new[] { false, true })
+        {
+            h = Reset("legacy-selection");
+            var full = new JObject { ["name"] = "MaaGakumasu-win-x86_64-v0.5.4.zip", ["url"] = "https://api.github.com/full", ["digest"] = "sha256:full" };
+            var delta = new JObject { ["name"] = "GakumasHelper-delta-v0.5.3-to-v0.5.4.gkhdelta", ["url"] = "https://api.github.com/delta", ["digest"] = "sha256:delta" };
+            var metadata = new JObject { ["name"] = "GakumasHelper-release-v0.5.4.json", ["url"] = "https://api.github.com/metadata" };
+            var release = Release("v0.5.4");
+            release["assets"] = deltaFirst ? new JArray(delta, metadata, full) : new JArray(full, metadata, delta);
+            h.Respond = _ => Json(release);
+            var chosen = await VersionChecker.Detail();
+            Check(chosen.downloadUrl == "https://api.github.com/full", "historical asset priority always selects complete ZIP regardless of asset order");
+        }
         Console.WriteLine("All GitHub update regression cases passed; no network used.");
     }
 }

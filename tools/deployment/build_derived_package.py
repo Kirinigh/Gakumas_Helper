@@ -24,6 +24,11 @@ from typing import Any
 from pathlib import Path
 from email.parser import Parser
 
+try:
+    from tools.deployment import file_update
+except ModuleNotFoundError:
+    import file_update
+
 SCHEMA_VERSION = 1
 UPSTREAM_REPOSITORY = "https://github.com/SuperWaterGod/MaaGakumasu"
 FRAMEWORK_REPOSITORY = "https://github.com/MaaXYZ/MaaFramework"
@@ -1408,7 +1413,9 @@ def build_derived_package(
                 "version_ordering": version_ordering,
                 "requires_manual_bootstrap": requires_manual_bootstrap,
                 "client_updater": "mfa_builtin_resource_update",
-                "payload_scope": "full_derived_package",
+                "payload_scope": ("full_with_adjacent_file_deltas"
+                                  if update_mode == "derived_release_channel" else "full_derived_package"),
+                **({"file_update_protocol": 1} if update_mode == "derived_release_channel" else {}),
                 "python_dependency_updater": "existing_agent_pip_update",
                 "auto_update_setting": "preserve_user_configuration",
                 "safe_upstream_precedence": upstream_tag,
@@ -1424,6 +1431,8 @@ def build_derived_package(
             encoding="utf-8",
         )
 
+        if update_mode == "derived_release_channel":
+            file_update.write_state(candidate, derived_version)
         os.replace(candidate, output)
         return output
     finally:

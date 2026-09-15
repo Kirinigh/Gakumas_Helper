@@ -23,8 +23,10 @@ from collections.abc import Mapping
 import numpy as np
 
 try:
+    from tools.deployment import file_update
     from tools.deployment import build_derived_package as derived_package
 except ModuleNotFoundError:  # Direct script execution from tools/deployment.
+    import file_update
     import build_derived_package as derived_package
 
 try:
@@ -2089,13 +2091,18 @@ def _validate_candidate(
     expected_update_contract = {
         "version_namespace": "independent_gkh_semver",
         "client_updater": "mfa_builtin_resource_update",
-        "payload_scope": "full_derived_package",
         "python_dependency_updater": "existing_agent_pip_update",
     }
     if any(update_contract.get(key) != value for key, value in expected_update_contract.items()):
         raise ReleaseBuildError(
             "candidate update contract must use the MFA built-in full-package update path"
         )
+    if update_contract.get("payload_scope") == "full_with_adjacent_file_deltas":
+        if update_contract.get("file_update_protocol") != 1:
+            raise ReleaseBuildError("candidate file update protocol is invalid")
+        file_update.load_state(candidate)
+    elif update_contract.get("payload_scope") != "full_derived_package":
+        raise ReleaseBuildError("candidate update payload scope is invalid")
     if update_contract.get("release_channel") != expected_channel:
         raise ReleaseBuildError(
             f"candidate must record the {expected_channel} release channel for its release qualification"
@@ -2475,6 +2482,8 @@ def build_release_assets(
     release_version: str,
     release_repository: str,
     qualification: str = "arena_preview",
+    previous_candidate: Path | None = None,
+    require_full: bool = False,
 ) -> dict[str, Path]:
     candidate = candidate.resolve()
     output_dir = output_dir.resolve()
@@ -2633,6 +2642,19 @@ def build_release_assets(
                 "Uninterrupted two-day arena daily acceptance remains open",
             ],
         }
+        if build["update_contract"].get("file_update_protocol") == 1:
+            if previous_candidate is not None:
+                previous_build = _load_object(previous_candidate / "GAKUMAS_HELPER_BUILD.json")
+                if previous_build.get("derived_version") != build["update_contract"]["previous_channel_version"]:
+                    raise ReleaseBuildError("delta base must be the recorded previous formal release")
+            release_manifest["file_update"] = file_update.build_adjacent(
+                candidate, previous_candidate, temporary_root, require_full=require_full,
+            )
+            delta = release_manifest["file_update"]["delta"]
+            if delta:
+                if (output_dir / delta["asset"]).exists():
+                    raise ReleaseBuildError("delta output already exists")
+                final_paths[delta["asset"]] = output_dir / delta["asset"]
         manifest_path = temporary_root / manifest_name
         manifest_payload = (json.dumps(release_manifest, ensure_ascii=False, indent=2) + "\n").encode(
             "utf-8"
@@ -2643,13 +2665,16 @@ def build_release_assets(
         manifest_sha256 = sha256_file(manifest_path)
         checksums_path = temporary_root / checksums_name
         checksums_path.write_text(
-            f"{package_sha256}  {package_name}\n{manifest_sha256}  {manifest_name}\n",
+            f"{package_sha256}  {package_name}\n{manifest_sha256}  {manifest_name}\n"
+            + "".join(f"{file_update.digest(temporary_root / name)}  {name}\n"
+                      for name in final_paths if name.endswith(".gkhdelta")),
             encoding="ascii",
         )
 
         for name, final_path in final_paths.items():
             os.replace(temporary_root / name, final_path)
-    return {"package": final_paths[package_name], "manifest": final_paths[manifest_name], "checksums": final_paths[checksums_name]}
+    return {"package": final_paths[package_name], "manifest": final_paths[manifest_name], "checksums": final_paths[checksums_name],
+            **{"delta": path for name, path in final_paths.items() if name.endswith(".gkhdelta")}}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -2659,6 +2684,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--release-version", required=True)
     parser.add_argument("--release-repository", required=True)
     parser.add_argument("--qualification", choices=tuple(RELEASE_CHANNELS), default="arena_preview")
+    parser.add_argument("--previous-candidate", type=Path)
+    parser.add_argument("--require-full", action="store_true")
     return parser
 
 
@@ -2670,6 +2697,8 @@ def main() -> int:
         release_version=args.release_version,
         release_repository=args.release_repository,
         qualification=args.qualification,
+        previous_candidate=args.previous_candidate,
+        require_full=args.require_full,
     )
     print(json.dumps({name: str(path) for name, path in assets.items()}, ensure_ascii=False))
     return 0

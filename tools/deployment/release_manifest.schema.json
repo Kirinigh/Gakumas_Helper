@@ -16,6 +16,131 @@
     "known_gates"
   ],
   "properties": {
+    "file_update": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "target",
+        "state_sha256",
+        "delta"
+      ],
+      "properties": {
+        "protocol": {
+          "const": 1
+        },
+        "target": {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "version",
+            "compatibility",
+            "files"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+            },
+            "compatibility": {
+              "type": "object"
+            },
+            "files": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[a-fA-F0-9]{64}$"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "state_sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "delta": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "from",
+                "to",
+                "base_state_sha256",
+                "base",
+                "asset",
+                "bytes",
+                "sha256"
+              ],
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+                },
+                "to": {
+                  "type": "string",
+                  "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+                },
+                "base_state_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-fA-F0-9]{64}$"
+                },
+                "base": {
+                  "type": "object",
+                  "required": [
+                    "schema_version",
+                    "version",
+                    "compatibility",
+                    "files"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": 1
+                    },
+                    "version": {
+                      "type": "string",
+                      "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+                    },
+                    "compatibility": {
+                      "type": "object"
+                    },
+                    "files": {
+                      "type": "object",
+                      "minProperties": 1,
+                      "additionalProperties": {
+                        "type": "string",
+                        "pattern": "^[a-fA-F0-9]{64}$"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "asset": {
+                  "type": "string",
+                  "pattern": "^GakumasHelper-delta-v[0-9.]+-to-v[0-9.]+\\.gkhdelta$"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-fA-F0-9]{64}$"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "schema_version": { "const": 1 },
     "product": { "const": "MaaGakumasu-GakumasHelper" },
     "qualification": { "enum": ["arena_preview", "arena_release", "stable"] },
