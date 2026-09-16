@@ -1108,8 +1108,12 @@ def classify_post_challenge_page(
         return "WAIT"
     if (
         reward_close_clicks < 3
-        and len(outcome_kinds) == 1
-        and ("GRADE" in normalised or "レート報酬" in normalised)
+        and (
+            # The rate reward blurs the result behind it. Its own title and
+            # the sole Close anchor identify the overlay without that result.
+            "レート報酬" in normalised
+            or ("GRADE" in normalised and len(outcome_kinds) == 1)
+        )
     ):
         return "CLOSE_REWARD"
     return "AMBIGUOUS"
