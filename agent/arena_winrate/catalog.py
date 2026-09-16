@@ -1103,6 +1103,24 @@ class ArenaEntityCatalog:
             raise ArenaCatalogError(f"skill-card {card_id} has no fixed title")
         return title
 
+    def is_skill_card_upgrade_pair(self, base_id: int, upgraded_id: int) -> bool:
+        """Check a unique catalog pair; this does not recover an observed ID."""
+
+        base = self._cards_by_id.get(base_id)
+        upgraded = self._cards_by_id.get(upgraded_id)
+        if (base is None or upgraded is None
+                or base.get("upgraded") is not False
+                or upgraded.get("upgraded") is not True):
+            return False
+        base_title = self._skill_card_display_title(base)
+        upgraded_title = self._skill_card_display_title(upgraded)
+        return bool(
+            base_title and not base_title.endswith("+")
+            and upgraded_title == base_title + "+"
+            and len(self._cards_by_display_title.get(base_title, ())) == 1
+            and len(self._cards_by_display_title.get(upgraded_title, ())) == 1
+        )
+
     def skill_card_business_ids(self) -> tuple[int, ...]:
         """Return every skill-card business ID declared by the active catalog."""
 

@@ -8007,6 +8007,16 @@ class MaaArenaReaderBackend:
     def _assert_skill_detail_open_id(self, key: tuple[int, int] | None, card_id: int) -> None:
         expected = getattr(self, "_card_detail_open_ids", {}).get(key)
         if expected is not None and expected != card_id:
+            upgrade_pair = getattr(self.catalog, "is_skill_card_upgrade_pair", None)
+            if upgrade_pair is not None and upgrade_pair(card_id, expected):
+                # A missing '+' is also a valid base title. Do not parse its
+                # body as either ID or count it as a confirmation observation.
+                self._increment("skill_card_detail_upgrade_mark_missing")
+                raise ArenaReaderError(
+                    "skill_card_detail_upgrade_mark_missing",
+                    f"target {key!r}: opened detail ID {expected}, actual detail ID {card_id}; "
+                    "upgrade mark is unconfirmed; waiting for a complete title",
+                )
             self._increment("skill_card_detail_id_changes")
             raise ArenaReaderError(
                 "skill_card_detail_id_changed",
@@ -10373,7 +10383,10 @@ class MaaArenaReaderBackend:
             if diagnostic is not None:
                 diagnostic["error"] = str(error)
             used_contacts = getattr(self, "_card_transaction_contact_counts", {}).get(key)
-            if error.code not in {"skill_card_detail_disappeared", "skill_card_detail_id_changed"} or used_contacts != 1:
+            if error.code not in {
+                "skill_card_detail_disappeared", "skill_card_detail_id_changed",
+                "skill_card_detail_upgrade_mark_missing",
+            } or used_contacts != 1:
                 raise
             original_error = str(error)
             error_code = error.code
@@ -10387,7 +10400,7 @@ class MaaArenaReaderBackend:
         succeeded = False
         self._increment("skill_card_detail_reopen_attempts")
         try:
-            if error_code == "skill_card_detail_id_changed":
+            if error_code in {"skill_card_detail_id_changed", "skill_card_detail_upgrade_mark_missing"}:
                 self._dismiss_skill_card_detail()
                 self._assert_card_group_visible(key[0], card_slot=key[1])
                 self._increment("skill_card_detail_source_resets")
@@ -10509,6 +10522,7 @@ class MaaArenaReaderBackend:
         cost_fallback_confirmation_reads = 0
         cost_fallback_confirmation_extension_applied = False
         terminal_error: ArenaReaderError | None = None
+        pending_title_error: ArenaReaderError | None = None
         numeric_recovery_started = False
         body_recovery_active = False
         same_frame_body_recovery_attempted = False
@@ -10820,6 +10834,7 @@ class MaaArenaReaderBackend:
                         self._increment(
                             "skill_card_cost_fallback_title_bound_roi_confirmations"
                         )
+                    pending_title_error = None
                     resolved_count = sum(
                         int(value) for value in resolved.customizations.values()
                     )
@@ -11376,6 +11391,15 @@ class MaaArenaReaderBackend:
                     confirmation_candidate = None
                     confirmation_reason = None
                     last_error = str(error)
+                    pending_title_error = (
+                        error if error.code == "skill_card_detail_upgrade_mark_missing" else None
+                    )
+                    if pending_title_error is not None:
+                        # Do not bridge confirmation votes across an uncertain
+                        # identity. Retry only within the existing deadline;
+                        # no ROI/body repair or extra budget can turn it valid.
+                        zero_candidate = positive_candidate = cost_fallback_candidate = None
+                        detail_identity_observations.clear()
                     if (frame_is_settled and not same_frame_body_recovery_attempted
                             and error.code in {
                                 "skill_card_detail_ambiguous",
@@ -11507,6 +11531,9 @@ class MaaArenaReaderBackend:
             # through both direct and badge paths without renewing the budget.
             terminal_error.retry_whole_read = False
             raise terminal_error
+        if pending_title_error is not None:
+            pending_title_error.retry_whole_read = False
+            raise pending_title_error
         if self._skill_card_detail_disappeared(
             key, opened_image, opened_capture_time, transaction_token,
             source_guard_frames, tuple(recent_detail_frames),
