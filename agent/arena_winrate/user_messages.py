@@ -7,7 +7,7 @@ from typing import Literal
 from dataclasses import dataclass
 from collections.abc import Mapping
 
-from .service import ArenaEvaluation, ArenaOwnScoreEvaluation
+from .service import ArenaEvaluation, ArenaOwnScoreEvaluation, ArenaProviderAttemptFailure
 
 _SKILL_CARD_LAYOUT_ERRORS = {
     "skill_card_layout_incomplete": "技能卡布局定位失败",
@@ -43,11 +43,13 @@ _ERROR_LABELS = (
     ("p_item_", "P 道具识别不完整或结果不唯一"),
     ("skill_card_", "技能卡识别不完整或结果不唯一"),
     ("arena_grade", "竞技场 Grade 读取失败"),
+    ("arena_main_ambiguous", "无法确认竞技场主界面"),
     ("rehearsal", "无法确认己方演习页面"),
     ("opponent_", "对手列表或对手编成读取失败"),
     ("member_", "成员栏位或成员详情读取失败"),
     ("param_", "成员表现力数值读取失败"),
     ("ocr_empty", "当前画面的文字未能读取"),
+    ("maa_back_anchor_ambiguous", "未能定位返回按钮"),
     ("maa_", "Maa 界面操作失败"),
     ("timeout", "操作超时"),
 )
@@ -250,6 +252,25 @@ def own_score_user_status(
     )
 
 
+def _provider_failure_message(
+    failure: ArenaProviderAttemptFailure,
+    *,
+    location: Mapping[str, object] | None = None,
+) -> str:
+    raw = f"{failure.code}: {failure.detail}" if failure.code else failure.detail
+    recovery = ""
+    # This wrapper is produced by the reader's existing recovery contract.
+    # Keep the original failure separate so recovery labels cannot override it.
+    if failure.code == "recovery_failed":
+        original, separator, recovery = failure.detail.partition("; recovery also failed: ")
+        if separator:
+            raw = original
+    message = describe_arena_error(raw, location=location).removesuffix("；请查看详细日志")
+    if recovery:
+        message += "；随后返回失败：" + describe_arena_error(recovery, location={}).removesuffix("；请查看详细日志")
+    return message
+
+
 def win_rate_stop_user_status(
     evaluation: ArenaEvaluation,
     *,
@@ -276,7 +297,25 @@ def win_rate_stop_user_status(
         "adapter_failure": "本地胜率模拟器执行失败",
     }
     reason = status_labels.get(evaluation.status, "处理未完成")
+    failures = evaluation.provider_attempt_failures
+    if evaluation.status == "observation_failure" and failures:
+        messages = [
+            _provider_failure_message(
+                failure,
+                # The backend's location is bound to the final error. Never
+                # attach a later member/card's name to an earlier attempt.
+                location=location if index == len(failures) - 1 else None,
+            )
+            for index, failure in enumerate(failures)
+        ]
+        detail = messages[0]
+        for index, message in enumerate(messages[1:], start=2):
+            detail += ("；再次读取仍未解决" if message == messages[index - 2]
+                       else f"；第{index}次读取：{message}")
+        detail += "；请查看详细日志"
+    else:
+        detail = describe_arena_error(evaluation.error, location=location)
     return ArenaUserStatus(
-        f"竞技场未挑战：{reason}；{describe_arena_error(evaluation.error, location=location)}",
+        f"竞技场未挑战：{reason}；{detail}",
         "error",
     )
