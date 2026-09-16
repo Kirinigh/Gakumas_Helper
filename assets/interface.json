@@ -1301,7 +1301,7 @@
           "name": "arena_win_rate_lower_threshold_percent",
           "label": "$快速选择下限（百分比）",
           "description": "$快速选择下限说明",
-          "default": "0",
+          "default": "20",
           "pipeline_type": "int",
           "verify": "^(?:100|[1-9]?\\d)$",
           "pattern_msg": "$胜率门槛输入说明"

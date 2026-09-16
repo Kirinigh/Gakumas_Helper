@@ -9,6 +9,7 @@ from dataclasses import dataclass
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BUNDLE_DIR = PROJECT_ROOT / "assets" / "arena-winrate"
 DEFAULT_THRESHOLD_PERCENT = 70
+DEFAULT_LOWER_THRESHOLD_PERCENT = 20
 DEFAULT_SIMULATIONS = 2000
 DEFAULT_TIMEOUT_SECONDS = 300
 DEFAULT_SEASON_SELECTION = "latest"
@@ -86,7 +87,7 @@ class ArenaRuntimeConfig:
     simulations: int = DEFAULT_SIMULATIONS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     bundle_dir: Path = DEFAULT_BUNDLE_DIR
-    lower_threshold_percent: int = 0
+    lower_threshold_percent: int = DEFAULT_LOWER_THRESHOLD_PERCENT
 
     @property
     def threshold(self) -> float:
@@ -111,7 +112,7 @@ class ArenaRuntimeConfig:
         )
         if not 0 <= threshold_percent <= 100:
             raise ValueError("threshold_percent must be from 0 to 100")
-        lower = _integer(value.get("lower_threshold_percent", 0), field="lower_threshold_percent")
+        lower = _integer(value.get("lower_threshold_percent", DEFAULT_LOWER_THRESHOLD_PERCENT), field="lower_threshold_percent")
         if not 0 <= lower <= threshold_percent:
             raise ValueError("快速选择下限必须在0与胜率门槛之间")
         if simulations < 1000:

@@ -41,6 +41,7 @@
             "竞技场 Grade": "未识别",
             "竞技场胜率参数": {
               "arena_win_rate_threshold_percent": "70",
+              "arena_win_rate_lower_threshold_percent": "20",
               "arena_win_rate_simulations": "2000",
               "arena_win_rate_timeout_seconds": "300"
             },

@@ -9,6 +9,7 @@ from threading import Event
 from dataclasses import replace
 from concurrent.futures import Future, TimeoutError, ThreadPoolExecutor
 
+from .config import DEFAULT_LOWER_THRESHOLD_PERCENT
 from .schema import validate_own_snapshot, validate_opponent_snapshot
 from .adapter import MATCH_RULE, PROTOCOL_VERSION, SCORE_AGGREGATION
 from .service import DEFAULT_CALIBRATION_CACHE, ArenaEvaluation, ArenaProviderAttemptFailure
@@ -24,7 +25,7 @@ class _SimulationFailure(ArenaReadSuperseded):
 class ProgressiveArenaService:
     """UI stays on the caller thread. Only immutable simulation input is shared."""
 
-    def __init__(self, adapter, *, threshold, lower_threshold=0, simulations=2000, seed=400,
+    def __init__(self, adapter, *, threshold, lower_threshold=DEFAULT_LOWER_THRESHOLD_PERCENT / 100, simulations=2000, seed=400,
                  confidence=0.95, cancel_check=lambda: None):
         if not 0 <= lower_threshold <= threshold <= 1:
             raise ValueError("lower threshold must be between zero and the upper threshold")
