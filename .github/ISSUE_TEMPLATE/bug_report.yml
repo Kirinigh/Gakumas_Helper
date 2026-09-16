@@ -61,7 +61,7 @@ body:
     attributes:
       label: 关键配置
       description: 只写竞技场期数、门槛、模拟次数、超时、自动重算和本地采集档位；不要上传配置文件
-      placeholder: 目录最新 / 70% / 2000 / 180 秒 / 自动重算关闭 / 采集关闭
+      placeholder: 目录最新 / 70% / 2000 / 180 秒 / 自动重算关闭
     validations:
       required: true
   - type: dropdown

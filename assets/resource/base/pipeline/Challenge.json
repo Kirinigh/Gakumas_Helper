@@ -9,7 +9,7 @@
       "param": {}
     },
     "next": [
-      "LocalDataConfigureChallenge",
+      "ChallengeResetOwnScorePreparation",
       "[JumpBack]ReturnHome",
       "[JumpBack]BackHome",
       "[JumpBack]CloseMenu",

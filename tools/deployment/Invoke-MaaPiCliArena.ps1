@@ -52,9 +52,7 @@ $script:ArenaOptionNames = @'
 {
   "season": "\u7ade\u6280\u573a\u671f\u6570",
   "win_rate": "\u7ade\u6280\u573a\u80dc\u7387\u53c2\u6570",
-  "own_recalculation": "\u6bcf\u65e5\u6311\u6218\u81ea\u52a8\u91cd\u7b97\u5df1\u65b9\u6570\u636e",
-  "capture": "\u6bcf\u65e5\u6311\u6218\u672c\u5730\u753b\u9762\u91c7\u96c6",
-  "capture_off": "\u5173\u95ed"
+  "own_recalculation": "\u6bcf\u65e5\u6311\u6218\u81ea\u52a8\u91cd\u7b97\u5df1\u65b9\u6570\u636e"
 }
 '@ | ConvertFrom-Json
 
@@ -513,10 +511,6 @@ function Write-GkhArenaConfiguration(
                     [ordered]@{
                         name = $script:ArenaOptionNames.own_recalculation
                         value = $ownRecalculationValue
-                    },
-                    [ordered]@{
-                        name = $script:ArenaOptionNames.capture
-                        value = $script:ArenaOptionNames.capture_off
                     }
                 )
             }
@@ -553,7 +547,6 @@ function Write-GkhArenaConfiguration(
         simulation_timeout_seconds = $WinRateTimeoutSeconds
         own_cache_mode = if ($AutoRecalculateOwn) { 'recalculate' } else { 'explicit_reuse' }
         auto_recalculate_own = $AutoRecalculateOwn
-        capture_mode = 'off'
         updates_enabled = $false
         prepared_at_utc = [DateTime]::UtcNow.ToString('o')
     }
@@ -775,7 +768,6 @@ function Invoke-GkhElevatedArenaWorker([string]$PreparedRuntime, [int]$WorkerTim
     $seasonOptions = @($configuredOptions | Where-Object { $_.name -ceq $script:ArenaOptionNames.season })
     $winRateOptions = @($configuredOptions | Where-Object { $_.name -ceq $script:ArenaOptionNames.win_rate })
     $ownOptions = @($configuredOptions | Where-Object { $_.name -ceq $script:ArenaOptionNames.own_recalculation })
-    $captureOptions = @($configuredOptions | Where-Object { $_.name -ceq $script:ArenaOptionNames.capture })
     $winRateOptionProperties = if ($winRateOptions.Count -eq 1) {
         @($winRateOptions[0].PSObject.Properties)
     } else { @() }
@@ -825,18 +817,15 @@ function Invoke-GkhElevatedArenaWorker([string]$PreparedRuntime, [int]$WorkerTim
         $manifest.updates_enabled -ne $false -or
         $manifest.season -cne 'latest' -or
         $manifest.auto_recalculate_own -ne $expectedAutoRecalculateOwn -or
-        $manifest.capture_mode -cne 'off' -or
         $configuredTasks.Count -ne 1 -or
         $configuredTasks[0].name -cne $script:ArenaTaskName -or
-        $configuredOptions.Count -ne 4 -or
+        $configuredOptions.Count -ne 3 -or
         $seasonOptions.Count -ne 1 -or
         $seasonOptions[0].value -cne 'latest' -or
         $winRateOptions.Count -ne 1 -or
         -not $winRateOptionContractValid -or
         $ownOptions.Count -ne 1 -or
         $ownOptions[0].value -cne $expectedOwnRecalculationValue -or
-        $captureOptions.Count -ne 1 -or
-        $captureOptions[0].value -cne $script:ArenaOptionNames.capture_off -or
         -not $parametersValid -or
         [int]$manifest.threshold_percent -ne $parsedThreshold -or
         [int]$manifest.simulations -ne $parsedSimulations -or
@@ -987,7 +976,6 @@ try {
             simulations = $Simulations
             simulation_timeout_seconds = $SimulationTimeoutSeconds
             auto_recalculate_own = $preparedRuntimeState.AutoRecalculateOwn
-            capture_mode = 'off'
             updates_enabled = $false
             executed = $false
         }

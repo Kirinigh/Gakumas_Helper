@@ -135,8 +135,7 @@
       "name": "每日挑战",
       "entry": "Challenge",
       "option": [
-        "挑战模式",
-        "每日挑战本地画面采集"
+        "挑战模式"
       ],
       "default_check": true,
       "doc": "$每日挑战说明",
@@ -149,8 +148,7 @@
       "option": [
         "竞技场期数",
         "竞技场胜率参数",
-        "每日挑战自动重算己方数据",
-        "每日挑战本地画面采集"
+        "每日挑战自动重算己方数据"
       ],
       "pipeline_override": {
         "ChallengeVerifyRefresh": {
@@ -991,62 +989,6 @@
           }
         }
       }
-    },
-    "每日挑战本地画面采集": {
-      "type": "select",
-      "default_case": "关闭",
-      "description": "$竞技场本地画面采集说明",
-      "cases": [
-        {
-          "name": "关闭",
-          "label": "$关闭",
-          "pipeline_override": {
-            "LocalDataConfigureChallenge": {
-              "custom_action_param": {
-                "capture_mode": "off",
-                "root": ".local/runtime-data"
-              }
-            }
-          }
-        },
-        {
-          "name": "仅失败现场",
-          "label": "$仅失败现场",
-          "pipeline_override": {
-            "LocalDataConfigureChallenge": {
-              "custom_action_param": {
-                "capture_mode": "failure",
-                "root": ".local/runtime-data"
-              }
-            }
-          }
-        },
-        {
-          "name": "ROI与失败现场",
-          "label": "$竞技场识别区域及失败现场",
-          "pipeline_override": {
-            "LocalDataConfigureChallenge": {
-              "custom_action_param": {
-                "capture_mode": "roi",
-                "root": ".local/runtime-data"
-              }
-            }
-          }
-        },
-        {
-          "name": "截图ROI与失败现场",
-          "label": "$竞技场截图及识别区域及失败现场",
-          "pipeline_override": {
-            "LocalDataConfigureChallenge": {
-              "custom_action_param": {
-                "capture_mode": "screenshot",
-                "root": ".local/runtime-data"
-              }
-            }
-          }
-        }
-      ],
-      "label": "$竞技场本地画面采集"
     },
     "挑战模式": {
       "type": "select",
