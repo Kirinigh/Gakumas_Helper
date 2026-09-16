@@ -33,6 +33,7 @@ split_commits = false
 protect_breaking_commits = true
 sort_commits = "oldest"
 commit_parsers = [
+    { footer = "^Upstream-Sync: ?true$", group = "<!-- -1 -->🔄 上游同步" },
     { message = "^feat", group = "<!-- 0 -->✨ 新功能" },
     { message = "^fix", group = "<!-- 1 -->🐛 问题修复" },
     { message = "^perf", group = "<!-- 2 -->🚀 性能优化" },

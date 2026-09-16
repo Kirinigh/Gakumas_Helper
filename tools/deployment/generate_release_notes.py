@@ -92,6 +92,13 @@ def generate(
             "git-cliff omitted or added commits")
     require(len(context) == 1 and context[0]["version"] == version,
             "git-cliff generated unexpected version sections")
+    for item in context[0]["commits"]:
+        upstream = any(
+            footer["token"] == "Upstream-Sync" and footer["value"] == "true"
+            for footer in item.get("footers", [])
+        )
+        require((item["group"] == "<!-- -1 -->🔄 上游同步") == upstream,
+                "Upstream synchronization classification differs from commit marker")
     with tempfile.TemporaryDirectory(prefix="release-notes-") as temporary:
         root = Path(temporary)
         context_path = root / "context.json"

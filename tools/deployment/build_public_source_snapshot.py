@@ -1115,6 +1115,7 @@ def build_public_snapshot(
     public_parent_revision: str | None = None,
     source_update: bool = False,
     commit_message: str | None = None,
+    upstream_sync: bool = False,
     history_cache: PublicHistoryValidationCache | None = None,
 ) -> dict[str, object]:
     history_cache = history_cache if history_cache is not None else PublicHistoryValidationCache()
@@ -1133,6 +1134,12 @@ def build_public_snapshot(
             f"{FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION}"
         )
     commit_date = _release_commit_date(release_date)
+    if upstream_sync:
+        if not source_update or commit_message is None:
+            raise PublicSnapshotError("upstream-sync requires a source update and explicit message")
+        if re.search(r"(?im)^Upstream-Sync:", commit_message):
+            raise PublicSnapshotError("upstream-sync marker is generated; do not supply it manually")
+        commit_message = commit_message.rstrip() + "\n\nUpstream-Sync: true"
     if source_update:
         if initial_public_root or public_parent_root is None:
             raise PublicSnapshotError("source update requires a verified public parent")
@@ -1494,6 +1501,8 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--release-date", "--commit-date", dest="release_date", required=True)
     parser.add_argument("--source-update", action="store_true")
+    parser.add_argument("--upstream-sync", action="store_true",
+                        help="Classify this source update as upstream synchronization in release notes")
     parser.add_argument("--message-file", type=Path, help="UTF-8 source commit title and optional body")
     parser.add_argument("--repository", required=True)
     history_mode = parser.add_mutually_exclusive_group(required=True)
@@ -1509,6 +1518,7 @@ def main() -> int:
         release_date=args.release_date,
         repository=args.repository,
         source_update=args.source_update,
+        upstream_sync=args.upstream_sync,
         commit_message=(
             args.message_file.read_text(encoding="utf-8").rstrip("\n")
             if args.message_file is not None else None
