@@ -97,6 +97,14 @@ python tools/deployment/mfa/test_download_transport.py --source-zip "<固定源�
 
 编译直接使用 SDK 内置编译器与标准库引用，不执行依赖恢复或网络安装。测试目录保留编译日志、实际传输断言日志、生成的源码和 `result.json`。它证明固定源码中的传输及失败分支行为；正式 Core 仍须遵守上面的完整构建和双次复建契约。修改补丁会使既有 bundle 的补丁散列绑定失效，必须重新构建、验证新的 bundle 后才能纳入将来的发行包，不能把旧 DLL 当作本补丁已部署。
 
+## Agent 复用客户端 GitHub 令牌
+
+同一补丁在 `AgentHelper` 启动子进程时，将当前配置档已解密的 GitHub Token 传入 `MFA_GITHUB_TOKEN`。空配置清除继承值；不新增配置项或令牌文件。`agent/main.py` 在启动 pip 和其他子进程前取走环境值，RIS 只向 HTTPS `api.github.com` 发送认证头，同源跳转保持认证，跨域或降级跳转拒绝。原始文件下载不携带令牌。
+
+修改令牌后重启客户端生效。RIS 认证冷却与匿名共享冷却分开；认证冷却与现有客户端一样只在进程内保存，不宣称跨进程共享认证额度状态。无令牌保持匿名路径，失效令牌提示修改，不自动匿名重试。上述下载回归同时编译实际启动桥接方法，验证配置档切换和空值清理；Python 对应回归为 `tests/test_arena_github_credentials.py`。
+
+交付必须同时包含重建后的 GUI Core 与 Python 改动；仅替换 Python 不能让旧 Core 自动传入令牌。本补丁未改变版本号，也不自动重启或更新现装客户端。
+
 ## 离线日志导出回归
 
 ```powershell

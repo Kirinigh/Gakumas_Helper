@@ -66,6 +66,10 @@ def run(args: argparse.Namespace) -> dict:
              "IsGitHubReleaseAssetApiUrl", "ParseFileNameFromContentDisposition",
              "VerifyFileSha256Async"]
     methods = "\n\n".join(extract_method(source, name) for name in names)
+    agent = (source_root / "MFAAvalonia/Extensions/MaaFW/AgentHelper.cs").read_text(encoding="utf-8-sig")
+    if "ApplyGitHubTokenEnvironmentVariable(startInfo, Instances.VersionUpdateSettingsUserControlModel.GitHubToken);" not in agent:
+        raise ValueError("Agent must use the decrypted active-profile token")
+    methods += "\n\n" + extract_method(agent, "ApplyGitHubTokenEnvironmentVariable")
     resource = extract_method(source, "UpdateResource")
     start = resource.index("        if (!isLocalPackage)\n        {", resource.index("var tempZipFilePath"))
     end = resource.index("        var changesPath =", start)

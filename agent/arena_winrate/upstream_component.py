@@ -27,6 +27,11 @@ from dataclasses import dataclass
 from collections.abc import Mapping, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+try:  # Repository/package imports and the installed agent/main.py entrypoint.
+    from ..github_credentials import get_launch_token
+except ImportError:
+    from github_credentials import get_launch_token
+
 from .config import PROJECT_ROOT, DEFAULT_BUNDLE_DIR
 from .stages import StageCatalogError, ContestStageCatalog, ContestSeasonDefinition
 from .adapter import (
@@ -127,6 +132,27 @@ _GITHUB_RATE_LIMIT = GitHubRateLimit(
     PROJECT_ROOT / ".local/runtime-data/github-api-rate-limit.json",
     on_error=lambda error: _log_component_failure("github_cooldown_state", error),
 )
+# One active-profile credential per Agent launch; this budget is independent
+# of the anonymous IP cooldown, like the desktop's authenticated request gate.
+_AUTHENTICATED_GITHUB_RATE_LIMIT = GitHubRateLimit(None)
+
+
+def _is_github_api_url(url: str) -> bool:
+    target = urllib.parse.urlsplit(url)
+    return (target.scheme == "https" and target.hostname == "api.github.com"
+            and target.port in (None, 443) and target.username is None and target.password is None)
+
+
+class _GitHubApiRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        if not _is_github_api_url(newurl):
+            if fp is not None:
+                fp.close()
+            raise urllib.error.HTTPError(request.full_url, code, "GitHub API redirected outside its origin", headers, None)
+        redirected = super().redirect_request(request, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            redirected.add_unredirected_header("Authorization", request.get_header("Authorization"))
+        return redirected
 
 
 def _log_component_update_notice(message: str, *, recovered: bool = False) -> None:
@@ -181,7 +207,9 @@ def _component_failure_summary(error: BaseException, status: str) -> str:
     elif any(isinstance(item, (TimeoutError, subprocess.TimeoutExpired)) for item in errors):
         reason = "等待超时"
     elif http_error := next((item for item in errors if isinstance(item, urllib.error.HTTPError)), None):
-        reason = f"服务器返回错误（HTTP {http_error.code}）"
+        reason = ("GitHub 令牌无效或已过期，请在客户端更新设置中修改后重启"
+                  if http_error.code == 401 and _is_github_api_url(http_error.url)
+                  else f"服务器返回错误（HTTP {http_error.code}）")
     elif any(isinstance(item, urllib.error.URLError) for item in errors):
         reason = "无法连接下载服务，请检查网络"
     elif any(isinstance(item, PermissionError) for item in errors):
@@ -318,7 +346,9 @@ class GitHubProductionSource:
 
     @staticmethod
     def _request_bytes(url: str, *, timeout: float, maximum: int) -> bytes:
-        is_api = urllib.parse.urlsplit(url).hostname == "api.github.com"
+        is_api = _is_github_api_url(url)
+        token = get_launch_token() if is_api else ""
+        rate_limit = _AUTHENTICATED_GITHUB_RATE_LIMIT if token else _GITHUB_RATE_LIMIT
         request = urllib.request.Request(
             url,
             headers={
@@ -328,14 +358,18 @@ class GitHubProductionSource:
                 **({"Accept-Encoding": "gzip"} if is_api else {}),
             },
         )
+        open_request = urllib.request.urlopen
+        if token:
+            request.add_unredirected_header("Authorization", f"Bearer {token}")
+            open_request = urllib.request.build_opener(_GitHubApiRedirectHandler()).open
         last_error: Exception | None = None
         attempts_made = 0
         for attempt in range(1, HTTP_ATTEMPTS + 1):
             if is_api:
-                _GITHUB_RATE_LIMIT.check()
+                rate_limit.check()
             attempts_made = attempt
             try:
-                with urllib.request.urlopen(request, timeout=timeout) as response:
+                with open_request(request, timeout=timeout) as response:
                     data = response.read(maximum + 1)
                     if len(data) > maximum:
                         raise ArenaComponentError(f"RIS response exceeds the accepted size: {url}")
@@ -358,9 +392,11 @@ class GitHubProductionSource:
                             body = data.decode("utf-8", errors="replace")
                         except (OSError, EOFError, zlib.error, http.client.HTTPException):
                             body = ""
-                        _GITHUB_RATE_LIMIT.reject(error.code, error.headers, f"{error.reason} {body}")
+                        rate_limit.reject(error.code, error.headers, f"{error.reason} {body}")
                     finally:
                         error.close()
+                elif token:
+                    error.close()
                 last_error = error
                 if error.code < 500 and error.code not in {408, 429}:
                     break

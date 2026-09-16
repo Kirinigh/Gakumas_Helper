@@ -1,4 +1,4 @@
-"""Anonymous GitHub API cooldown shared with the desktop updater.
+"""GitHub cooldowns: shared anonymous disk state or authenticated memory state.
 
 Only a UTC resume timestamp is persisted. This is network state, independent of
 the active RIS component and of any authenticated client's request budget.
@@ -21,7 +21,7 @@ from email.utils import parsedate_to_datetime
 class GitHubRateLimitError(RuntimeError):
     _arena_component_retry_exhausted = True
 
-    def __init__(self, resume_at: float):
+    def __init__(self, resume_at: float, *, persistent: bool = True):
         self.resume_at = resume_at
         date = datetime.fromtimestamp(resume_at, timezone.utc)
         try:
@@ -29,7 +29,8 @@ class GitHubRateLimitError(RuntimeError):
         except (OverflowError, ValueError):
             pass
         label = date.strftime("%Y-%m-%d %H:%M:%S %z")
-        super().__init__(f"GitHub 请求额度受限，{label} 后可重新检查；等待期间重启也不会重复请求。")
+        waiting = "等待期间重启也不会重复请求" if persistent else "本进程等待期间不会重复请求"
+        super().__init__(f"GitHub 请求额度受限，{label} 后可重新检查；{waiting}。")
 
 
 def _number(value) -> float | None:
@@ -67,7 +68,9 @@ def rate_limit_resume(status, headers, body: str, now: float) -> float | None:
 
 
 class GitHubRateLimit:
-    def __init__(self, path: Path, *, clock=time.time, on_error=None):
+    """A None path keeps authenticated state out of the anonymous IP budget."""
+
+    def __init__(self, path: Path | None, *, clock=time.time, on_error=None):
         self.path = path
         self.clock = clock
         self.on_error = on_error or (lambda error: None)
@@ -75,6 +78,8 @@ class GitHubRateLimit:
         self._gate = threading.RLock()
 
     def _read(self) -> float:
+        if self.path is None:
+            return 0.0
         try:
             state = json.loads(self.path.read_text(encoding="utf-8-sig"))
             if isinstance(state, dict) and type(state.get("schema_version")) is int and state["schema_version"] == 1:
@@ -121,11 +126,13 @@ class GitHubRateLimit:
             # Atomic replacement lets readers use either complete state.
             self._resume_at = max(self._resume_at, self._read())
             if self._resume_at > self.clock():
-                raise GitHubRateLimitError(self._resume_at)
+                raise GitHubRateLimitError(self._resume_at, persistent=self.path is not None)
 
     def record(self, resume_at: float) -> None:
         with self._gate:
             self._resume_at = max(self._resume_at, resume_at)
+            if self.path is None:
+                return
             temporary = self.path.with_name(f"{self.path.name}.{uuid.uuid4().hex}.tmp")
             try:
                 with self._file_lock():
@@ -148,4 +155,4 @@ class GitHubRateLimit:
         resume = rate_limit_resume(status, headers, body, self.clock())
         if resume is not None:
             self.record(resume)
-            raise GitHubRateLimitError(self._resume_at)
+            raise GitHubRateLimitError(self._resume_at, persistent=self.path is not None)

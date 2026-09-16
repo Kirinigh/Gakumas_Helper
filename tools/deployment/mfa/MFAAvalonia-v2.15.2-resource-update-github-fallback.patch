@@ -2355,3 +2355,30 @@ index 0000000..f6b2b3f2f325624099bae2a68f1bd5e1a26b9413
 +        File.WriteAllText(Path.Combine(directory, "update-result.json"), JsonSerializer.Serialize(new { status, message, target = plan.Target.target.version }));
 +    }
 +}
+diff --git a/MFAAvalonia/Extensions/MaaFW/AgentHelper.cs b/MFAAvalonia/Extensions/MaaFW/AgentHelper.cs
+--- a/MFAAvalonia/Extensions/MaaFW/AgentHelper.cs
++++ b/MFAAvalonia/Extensions/MaaFW/AgentHelper.cs
+@@ -244,6 +244,7 @@
+             MaaProcessorManager.Instance.GetInstanceName(processor.InstanceId) ?? string.Empty;
+         ApplyChildProcessEncodingEnvironmentVariables(startInfo, isPythonProcess);
+         ApplyPiEnvironmentVariables(startInfo, processor);
++        ApplyGitHubTokenEnvironmentVariable(startInfo, Instances.VersionUpdateSettingsUserControlModel.GitHubToken);
+ 
+         LoggerHelper.Info(
+             $"Agent 启动命令：{program} {(shouldAddUnbufferedFlag ? "-u " : "")}{string.Join(" ", replacedArgs)} {ctx.Client.Id} "
+@@ -431,6 +432,15 @@
+         return ctx;
+     }
+ 
++    private static void ApplyGitHubTokenEnvironmentVariable(ProcessStartInfo startInfo, string? token)
++    {
++        // Snapshot the decrypted active profile only for this child. The Agent
++        // consumes/removes it before starting pip or simulation workers.
++        startInfo.Environment.Remove("MFA_GITHUB_TOKEN");
++        if (!string.IsNullOrWhiteSpace(token))
++            startInfo.Environment["MFA_GITHUB_TOKEN"] = token.Trim();
++    }
++
+     private static void ApplyPiEnvironmentVariables(ProcessStartInfo startInfo, MaaProcessor processor)
+     {
+         SetEnvironmentVariable(startInfo, "PI_INTERFACE_VERSION", PiInterfaceVersion);

@@ -57,6 +57,18 @@ public static class Program
 
     public static async Task Main(string[] args)
     {
+        var child = new ProcessStartInfo();
+        child.Environment["MFA_GITHUB_TOKEN"] = "inherited-wrong-profile";
+        ApplyGitHubTokenEnvironmentVariable(child, " profile-A-fixture ");
+        Require(child.Environment["MFA_GITHUB_TOKEN"] == "profile-A-fixture", "active profile token forwarded");
+        ApplyGitHubTokenEnvironmentVariable(child, "profile-B-fixture");
+        Require(child.Environment["MFA_GITHUB_TOKEN"] == "profile-B-fixture", "profile switch replaces token");
+        ApplyGitHubTokenEnvironmentVariable(child, " ");
+        Require(!child.Environment.ContainsKey("MFA_GITHUB_TOKEN"), "empty profile clears inherited token");
+        child.Environment["MFA_GITHUB_TOKEN"] = "inherited";
+        ApplyGitHubTokenEnvironmentVariable(child, null);
+        Require(!child.Environment.ContainsKey("MFA_GITHUB_TOKEN"), "null profile clears inherited token");
+        Console.WriteLine("PASS Agent credential bridge: active profile, switch, empty, null");
         Directory.CreateDirectory(args[0]);
         var payload = Enumerable.Range(0, 32768).Select(i => (byte)(i % 251)).ToArray();
         var scenarios = new[] {

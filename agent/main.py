@@ -22,6 +22,10 @@ os.chdir(parent_dir)
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
+from github_credentials import consume_launch_token
+
+consume_launch_token()
+
 try:
     from utils import logger
 except ImportError:
