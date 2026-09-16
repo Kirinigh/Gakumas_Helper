@@ -1235,8 +1235,6 @@ def build_public_snapshot(
             shutil.copy2(public_gitignore, output / ".gitignore")
             public_provenance = output / "tools" / "deployment" / "public" / "ASSET_PROVENANCE.md"
             shutil.copy2(public_provenance, output / "ASSET_PROVENANCE.md")
-            startup_announcement_path = output / "tools" / "deployment" / "public" / "STARTUP_ANNOUNCEMENT.md"
-            startup_announcement_template = startup_announcement_path.read_text(encoding="utf-8")
             announcement_path = output / PUBLIC_ANNOUNCEMENT_PATH
             announcement_path.parent.mkdir(parents=True, exist_ok=True)
             if source_update:
@@ -1256,6 +1254,8 @@ def build_public_snapshot(
                     env=release_git_environment,
                 ))
             else:
+                startup_announcement_path = output / "tools" / "deployment" / "public" / "STARTUP_ANNOUNCEMENT.md"
+                startup_announcement_template = startup_announcement_path.read_text(encoding="utf-8")
                 announcement_path.write_text(
                     _render_startup_announcement(
                         startup_announcement_template,
