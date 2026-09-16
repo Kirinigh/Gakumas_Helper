@@ -12,7 +12,7 @@
 - 公开发布与本机安装是两个独立批次。发布流程不得覆盖现有安装，也不得自动切换 `current`。
 - 普通源码更新使用 `--source-update`，在已验证公开 `main` 的线性历史上追加真实的功能、修复或文档提交，保持父提交的版本号，不生成本次发布公告、不打包、不创建 tag 或 Release。可以逐次推送，也可以积累多个已验证提交后一次普通快进 (fast-forward) 推送；每次推送仍须核对相应授权和明确提交清单。
 
-客户端公告直接生成到 `assets/resource/announcement/01_更新公告.md`，正文仍来自 `tools/deployment/public/RELEASE_NOTES.md`。新快照不再携带旧 `assets/resource/Changelog.md`。普通源码更新与完整历史检查均优先采用新路径，仅在新路径不存在时兼容旧路径；迁移和后续源码更新必须保留已发布正文的原始字节。
+启动公告与 GitHub 发布说明 (Release notes) 是独立产物。启动公告从 `tools/deployment/public/STARTUP_ANNOUNCEMENT.md` 生成到 `assets/resource/announcement/01_更新公告.md`，只保留面向用户的更新摘要、使用方法与提醒；不得附加逐提交日志或制品校验元数据。GitHub 页面由 `generate_release_notes.py` 调用固定 git-cliff，使用 `tools/deployment/git-cliff.toml` 对两版之间全部公开提交分类，列出作者、提交链接、完整版本比较及制品来源。不得再把启动公告正文直接作为 GitHub 发布说明，也不得要求两处正文相等。新快照不再携带旧 `assets/resource/Changelog.md`。普通源码更新与完整历史检查均优先采用新路径，仅在新路径不存在时兼容旧路径；迁移和后续源码更新必须保留已发布正文的原始字节。
 
 ## 2. 完成定义与硬对齐门
 
@@ -328,6 +328,33 @@ finally {
 - 将最终 ZIP 解压到新的可丢弃目录，先运行版本内 `deployment\Start-MaaGakumasu-Admin.cmd --check`，再经对应授权用同一版本入口执行无游戏输入的启动／退出冒烟并核对窗口标题；不得运行或修改正式候选；
 - Release Notes 根据实际 `update_contract` 描述版本优先级、MFA 内置更新入口、RIS engine/data 窄例外和人工首次安装边界。
 
+### 9.1 独立生成并冻结 GitHub 详细更新记录
+
+维护者固定使用 **git-cliff 2.14.1**，不使用上游 `.github/cliff.toml`（其中仍有上游仓库和渠道信息），不启用上游自动打包流水线。该工具仅用于发布维护，不进入安装包或运行时依赖。
+
+官方来源：https://github.com/orhun/git-cliff/releases/tag/v2.14.1 。Windows x64 输入为 `git-cliff-2.14.1-x86_64-pc-windows-msvc.zip`，SHA-256 `791aa263079aa7894e24d4e2f8e978aa6214e9dd9dbf04f79ae5f3565758f1a1`，许可证 MIT / Apache-2.0。工具缓存放在批准的本地构建目录，首次取得后核对摘要并执行 Defender 扫描；保留包内许可证。缺少固定版本时停止，不在生成步骤隐式下载，也不回退成人工摘要。
+
+在最终公开源码与 manifest 已冻结后生成；`$PreviousVersion` 是本渠道上一次已发布版本，必须先通过只读远端检查，并把其标签取到公开快照。不得用远端当前 main 或工作树 HEAD^ 代替上版边界；本地上版标签必须与远端对应标签一致。`$PublicSha` 必须匹配 manifest 的来源，生成器还会检查干净、完整、线性的公开历史以及现有目标标签。
+
+```powershell
+$ReleaseNotesDirectory = Join-Path $BatchDirectory 'release-notes'
+$NotesArguments = @(
+  '-B', '-X', 'utf8', 'tools/deployment/generate_release_notes.py',
+  '--source', $PublicSnapshotDirectory, '--previous-tag', $PreviousVersion,
+  '--version', $Version, '--revision', $PublicSha,
+  '--manifest', $ReleaseManifest, '--git-cliff', $GitCliffExecutable,
+  '--output', $ReleaseNotesDirectory)
+& $Python @NotesArguments
+if ($LASTEXITCODE -ne 0) { throw 'Release notes generation failed' }
+$ReleaseNotes = Join-Path $ReleaseNotesDirectory 'notes.md'
+```
+
+`notes.md` 是唯一上传正文；`notes.json` 记录准确提交范围、贡献者与已有说明冻结所需的摘要，只留在原发布批次目录，不作为附件上传。范围内每项提交必须出现且有独立链接，未知类型归“其他变化”，不丢弃普通提交、维护或文档提交。命令完全离线，忽略会过滤提交的 git-cliff 环境覆盖，并禁止配置执行外部命令；私有开发历史不得作为输入。
+
+贡献者取公开提交作者并去重，不显示邮箱、不凭作者姓名伪造 `@账号`。公开导出使用统一发行作者时，该名称只代表公开记录，不代表还原了真实个人贡献者；不得自动标为“首次贡献”。需要个人署名时先取得明确、可公开的归属证据。历史归一化作者不因公告生成而重写。
+
+上传草稿前必须运行同一参数加 `--verify`，它重新从同一范围生成并逐字节比较；提交遗漏、配置变化、manifest变化或正文手工修改均停止。只校验旧说明的哈希不足以代替这一步。旧批次脚本仅作历史证据；新批次不得沿用从 RELEASE_NOTES.md 截取正文、或强制启动公告与发布正文相等的旧逻辑。生成失败保留旧目录，使用新的批次子目录，不覆盖旧输出。
+
 在 `ASSETS_VERIFIED` 完成前，还必须冻结本次 Release 标题和说明文件。它们不是下载资产，但属于公开发布输入：
 
 - 标题、说明中的版本、公开源码 SHA、包 SHA-256 和安装/更新语义与最终产物一致；
@@ -354,7 +381,7 @@ finally {
 - 同版本 Release（包括 draft）不存在；
 - 未认证 `/releases` 与认证维护者视角均已枚举；按安装态 MFA 的 Stable／Beta／Alpha 过滤与 SemVer 规则计算候选，并模拟加入本次 Release 后的结果。正式版支持的 Stable 必须选中新版本；旧组合 prerelease 仍占优的 Beta／Alpha 在说明中明确不受支持。纯手动迁移 prerelease 则必须证明默认 Stable 会过滤全部 prerelease；GitHub Latest 标志不代替 MFA 通道排序核验；
 - 全部本地资产（三个或四个）的最终大小和 SHA-256 已记录。
-- `$ReleaseTitle` 和 `$ReleaseNotes` 仍等于已冻结值，说明文件 SHA-256 未变化。
+- `$ReleaseTitle` 和 `$ReleaseNotes` 仍等于已冻结值，说明文件 SHA-256 未变化；git-cliff `--verify` 通过，上版标签仍匹配远端，上传正文必须是生成的 `notes.md`。
 
 “查询失败”不等于“不存在”。认证、网络、限流或 API 错误必须单独处理，不能据此继续发布。
 
@@ -391,6 +418,9 @@ git -C $PublicSnapshotDirectory push --atomic `
 引用对齐后创建草稿 Release：
 
 ```powershell
+& $Python @NotesArguments --verify
+if ($LASTEXITCODE -ne 0) { throw 'Release notes verification failed' }
+
 $DraftArguments = @('release', 'create', $Version,
   '--repo', 'Kirinigh/Gakumas_Helper', '--verify-tag',
   '--title', $ReleaseTitle, '--notes-file', $ReleaseNotes, '--draft')
@@ -406,6 +436,8 @@ gh release upload $Version @ReleaseAssets --repo 'Kirinigh/Gakumas_Helper'
 ```
 
 上传完成后查询 Release API/CLI 并逐项比较：
+
+- 草稿与最终公开页面的 `body` 均与冻结 `notes.md` 逐字节一致，贡献者、全部提交链接和比较链接完整；启动公告不参与这一正文相等检查。
 
 - `isDraft=true`；`isPrerelease` 在预览版为 `true`，正式版为 `false`；
 - tag 名称和目标 SHA 正确；
@@ -470,7 +502,7 @@ if ($Qualification -eq 'arena_release') {
 执行下一批次前必须逐项检查；未关闭时不得依赖默认值：
 
 1. `tools/deployment/public/ASSET_PROVENANCE.md` 当前固定记录一个上游版本、提交和 ZIP 散列；升级上游时必须同步并复核。
-2. `tools/deployment/public/RELEASE_NOTES.md` 包含旧组合命名空间的一次性人工迁移说明；迁移完成后的发布必须根据构建清单实际 `update_contract` 生成或重写说明。
+2. `tools/deployment/public/STARTUP_ANNOUNCEMENT.md` 保存使用者需要的安装/更新语义；每次根据实际 `update_contract` 更新。GitHub 详细记录链接该版公告和手册，不复用公告作为记录模板。
 3. `arena_release` 表示正式发布通道，不表示竞技场稳定性满分。每批必须复核生成 manifest 的 `known_gates` 与实际未完成验证，不能沿用已过时的开放或完成结论。
 4. 当前没有统一的 GitHub 发布编排器；`main`、tag、draft、资产核对和最终发布仍须按本文逐项人工执行。
 5. 后续较高 SemVer Release 仍应完成一次 MFA 内置完整包更新冒烟；这只验证资产命名和原生入口接线，不新增项目下载器、客户端候选目录、逐组件散列、Defender 或独立回滚矩阵。RIS engine/data 依赖通道按其独立组件契约验证，不改变客户端 Release 契约。

@@ -172,8 +172,7 @@ CURRENT_INTERFACE_FORBIDDEN_FIELDS = (
     "mirrorchyan_rid",
     "mirrorchyan_multiplatform",
 )
-RELEASE_NOTES_METADATA_HEADING = "### 可复核信息"
-RELEASE_NOTES_PLACEHOLDER_PATTERN = re.compile(r"@[A-Z][A-Z0-9_]*@")
+ANNOUNCEMENT_PLACEHOLDER_PATTERN = re.compile(r"@[A-Z][A-Z0-9_]*@")
 
 
 class PublicSnapshotError(RuntimeError):
@@ -736,25 +735,19 @@ def _validate_source_commit_message(message: str) -> None:
         )
 
 
-def _render_release_changelog(
+def _render_startup_announcement(
     template: str,
     *,
     version: str,
     repository: str,
 ) -> str:
-    marker = f"\n{RELEASE_NOTES_METADATA_HEADING}\n"
-    if template.count(marker) != 1:
-        raise PublicSnapshotError(
-            "release notes must contain exactly one verifiable-information heading"
-        )
-    body, _marker, _metadata = template.partition(marker)
-    if "@VERSION@" not in body:
-        raise PublicSnapshotError("release notes body must contain @VERSION@")
-    rendered = body.replace("@VERSION@", version).replace("@REPOSITORY@", repository)
-    unresolved = sorted(set(RELEASE_NOTES_PLACEHOLDER_PATTERN.findall(rendered)))
+    if "@VERSION@" not in template:
+        raise PublicSnapshotError("startup announcement must contain @VERSION@")
+    rendered = template.replace("@VERSION@", version).replace("@REPOSITORY@", repository)
+    unresolved = sorted(set(ANNOUNCEMENT_PLACEHOLDER_PATTERN.findall(rendered)))
     if unresolved:
         raise PublicSnapshotError(
-            "release notes body contains unresolved placeholders: " + ", ".join(unresolved)
+            "startup announcement contains unresolved placeholders: " + ", ".join(unresolved)
         )
     return rendered.rstrip() + "\n"
 
@@ -1228,8 +1221,8 @@ def build_public_snapshot(
             shutil.copy2(public_gitignore, output / ".gitignore")
             public_provenance = output / "tools" / "deployment" / "public" / "ASSET_PROVENANCE.md"
             shutil.copy2(public_provenance, output / "ASSET_PROVENANCE.md")
-            release_notes_path = output / "tools" / "deployment" / "public" / "RELEASE_NOTES.md"
-            release_notes_template = release_notes_path.read_text(encoding="utf-8")
+            startup_announcement_path = output / "tools" / "deployment" / "public" / "STARTUP_ANNOUNCEMENT.md"
+            startup_announcement_template = startup_announcement_path.read_text(encoding="utf-8")
             announcement_path = output / PUBLIC_ANNOUNCEMENT_PATH
             announcement_path.parent.mkdir(parents=True, exist_ok=True)
             if source_update:
@@ -1250,8 +1243,8 @@ def build_public_snapshot(
                 ))
             else:
                 announcement_path.write_text(
-                    _render_release_changelog(
-                        release_notes_template,
+                    _render_startup_announcement(
+                        startup_announcement_template,
                         version=version,
                         repository=repository,
                     ),
