@@ -76,7 +76,7 @@ from p_item_recognition import (
 from card_selection.model import frame_identifier, isolate_card_candidates
 from arena_winrate.recovery import error_retry_box
 from arena_winrate.task_log import arena_task_log, diagnostic_logger
-from arena_winrate.cancellation import ArenaTaskCancelled, cancellation_for
+from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded, cancellation_for
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
 from arena_winrate.badge_glyph_pool import BadgeGlyphDomain, badge_glyph_task_pools
 from arena_winrate._detail_text_layout import (
@@ -948,9 +948,16 @@ class MaaArenaReaderBackend:
         wall_seconds: float, succeeded: bool, error_code: str | None,
         reopened: bool,
         sample_cursor: Mapping[str, int] | None = None,
+        superseded: bool = False,
     ) -> None:
         self._record_duration_sample("member_read_attempt", wall_seconds)
-        if not succeeded:
+        if superseded:
+            diagnostic = getattr(self, "_member_failure_frames", None)
+            self._progressive_abandoned_member = dict(diagnostic["position"]) if diagnostic is not None else None
+            self._record_duration_sample("member_read_superseded", wall_seconds)
+            for key in tuple(self._card_transaction_started):
+                self._finish_card_transaction(key, superseded=True)
+        elif not succeeded:
             self._record_duration_sample("member_read_failed_attempt", wall_seconds)
             # Finish only real accepted transactions. Open failures use a
             # separate diagnostic timer and never create an active identity.
@@ -966,6 +973,7 @@ class MaaArenaReaderBackend:
             "member_slot": member_slot,
             "wall_seconds": round(wall_seconds, 6),
             "succeeded": succeeded,
+            "superseded": superseded,
             "error_code": error_code,
             "reopened": reopened,
             **self.runtime_samples_since(cursor),
@@ -984,6 +992,7 @@ class MaaArenaReaderBackend:
 
     def _finish_card_transaction(
         self, key: tuple[int, int], *, failed: bool = False, error: str | None = None,
+        superseded: bool = False,
     ) -> None:
         if failed:
             self._retain_failed_skill_detail_identity(key)
@@ -1009,8 +1018,11 @@ class MaaArenaReaderBackend:
         if started is None:
             return
         elapsed = time.perf_counter() - started
-        self._record_duration_sample("skill_card_detail_transaction", elapsed)
-        self._record_duration_sample(kind, elapsed)
+        if superseded:
+            self._record_duration_sample("skill_card_detail_superseded", elapsed)
+        else:
+            self._record_duration_sample("skill_card_detail_transaction", elapsed)
+            self._record_duration_sample(kind, elapsed)
         if failed:
             self._record_duration_sample("skill_card_detail_failed_transaction", elapsed)
             self._increment("skill_card_detail_failed_transactions")
@@ -3895,8 +3907,8 @@ class MaaArenaReaderBackend:
     def select_opponent_for_challenge(self, position: int) -> dict[str, Any]:
         """Perform one lightweight same-session guard, then open the target.
 
-        The complete lineup has already been read and simulated.  This guard
-        intentionally does not repeat that expensive work: it only proves the
+        The configured selection rule has already chosen this opponent. This
+        guard does not require its lineup or a simulated rate: it proves the
         arena main page and three ordered cards still exist, then confirms the
         selected preview exposes the existing challenge-start control.
         """
@@ -5553,7 +5565,7 @@ class MaaArenaReaderBackend:
         try:
             resolved = operation()
         except BaseException as error:
-            cancelled = isinstance(error, ArenaTaskCancelled)
+            cancelled = isinstance(error, (ArenaTaskCancelled, ArenaReadSuperseded))
             record.update(fallback_status="cancelled" if cancelled else "failed", error=str(error))
             self._increment(
                 "skill_card_gallery_fallback_cancellations" if cancelled
@@ -12588,6 +12600,24 @@ class MaaArenaReaderBackend:
             require_opponents=not target.is_own_team,
         )
 
+    def finish_progressive_read(self) -> None:
+        """Dismiss an interrupted member's tooltip before the existing return loop."""
+        position = getattr(self, "_progressive_abandoned_member", None)
+        self._progressive_abandoned_member = None
+        if position is not None:
+            image = self._capture()
+            items = self._ocr(image, r".+")
+            if self._matching_ocr_items(items, r"サポートボーナス") and self._matching_ocr_items(items, r"^閉じる$"):
+                height, width = image.shape[:2]
+                self._click((int(width * 0.955), int(height * 0.022), 1, 1), settle_seconds=0)
+            elif (len(self._matching_ocr_items(items, r"^体力$")) == 1
+                  and len(self._matching_ocr_items(items, r"^総合力$")) == 1
+                  and len(self._matching_ocr_items(items, r"^ステージ\s*[123]$")) <= 1):
+                # Both detail types use the same inert backdrop. It is harmless
+                # when the just-issued open/close already left the member bare.
+                self._dismiss_skill_card_detail()
+        self.recover_to_arena_main(require_opponents=True)
+
     def recover_to_arena_main(self, *, require_opponents: bool = True) -> None:
         self._recover_arena_main(
             maximum_steps=6,
@@ -12647,7 +12677,16 @@ class MaaArenaReaderBackend:
                 self._sleep(0.25)
                 continue
             # Navigation must use the frame whose page/overlays were checked.
-            self._back(image=image)
+            try:
+                self._back(image=image)
+            except ArenaReaderError as error:
+                if error.code != "maa_back_anchor_ambiguous" or "found 0 " not in error.detail:
+                    raise
+                if steps >= maximum_steps:
+                    raise
+                # A returned click/recognition can precede the next page's
+                # render. Spend the existing recovery steps on new frames.
+                self._sleep(0.1)
         if getattr(self, "_last_retry_dialog_seen", False):
             raise ArenaReaderError(
                 "arena_communication_retry_exhausted",
@@ -12769,6 +12808,9 @@ class MaaArenaReaderBackend:
             cancellation = cancellation_for(getattr(self, "context", None))
             self._cancellation = cancellation
         cancellation.check()
+        progress_check = getattr(self, "_progressive_read_check", None)
+        if progress_check is not None and not getattr(self, "_progressive_contact_active", False):
+            progress_check()
 
     def _sleep(self, seconds: float) -> None:
         self._check_cancelled()
@@ -13235,13 +13277,14 @@ class MaaArenaReaderBackend:
         down_succeeded = False
         up_succeeded = False
         interaction_error: BaseException | None = None
+        self._progressive_contact_active = True
         try:
             down_succeeded = bool(
                 controller.post_touch_down(*point).wait().succeeded
             )
             if down_succeeded:
                 self._sleep(self._member_long_press_seconds)
-        except (ArenaTaskCancelled, Exception) as error:
+        except (ArenaTaskCancelled, ArenaReadSuperseded, Exception) as error:
             interaction_error = error
         finally:
             try:
@@ -13249,6 +13292,8 @@ class MaaArenaReaderBackend:
             except Exception as error:  # pragma: no cover - native Maa boundary
                 if interaction_error is None:
                     interaction_error = error
+            finally:
+                self._progressive_contact_active = False
         elapsed = time.perf_counter() - started
         self._add_timing("long_press_actions", elapsed)
         self._add_timing("controller_direct_long_press_actions", elapsed)
@@ -13286,13 +13331,14 @@ class MaaArenaReaderBackend:
         down_succeeded = False
         up_succeeded = False
         interaction_error: BaseException | None = None
+        self._progressive_contact_active = True
         try:
             down_succeeded = bool(
                 controller.post_touch_down(*point).wait().succeeded
             )
             if down_succeeded:
                 self._sleep(duration_ms / 1000.0)
-        except (ArenaTaskCancelled, Exception) as error:
+        except (ArenaTaskCancelled, ArenaReadSuperseded, Exception) as error:
             interaction_error = error
         finally:
             try:
@@ -13300,6 +13346,8 @@ class MaaArenaReaderBackend:
             except Exception as error:  # pragma: no cover - native Maa boundary
                 if interaction_error is None:
                     interaction_error = error
+            finally:
+                self._progressive_contact_active = False
         elapsed = time.perf_counter() - started
         self._add_timing("short_press_actions", elapsed)
         self._add_timing("controller_direct_short_press_actions", elapsed)

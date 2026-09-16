@@ -1298,6 +1298,15 @@
           "pattern_msg": "$胜率门槛输入说明"
         },
         {
+          "name": "arena_win_rate_lower_threshold_percent",
+          "label": "$快速选择下限（百分比）",
+          "description": "$快速选择下限说明",
+          "default": "0",
+          "pipeline_type": "int",
+          "verify": "^(?:100|[1-9]?\\d)$",
+          "pattern_msg": "$胜率门槛输入说明"
+        },
+        {
           "name": "arena_win_rate_simulations",
           "label": "$模拟次数",
           "description": "$模拟次数说明",
@@ -1326,6 +1335,7 @@
           "attach": {
             "mode": "win_rate",
             "threshold_percent": "{arena_win_rate_threshold_percent}",
+            "lower_threshold_percent": "{arena_win_rate_lower_threshold_percent}",
             "simulations": "{arena_win_rate_simulations}",
             "timeout_seconds": "{arena_win_rate_timeout_seconds}"
           }

@@ -301,6 +301,11 @@ class SubprocessArenaAdapter:
             raise AdapterError("simulation request shape is invalid")
 
         own_stage_requests = own_request.get("stages")
+        positions = request.get("opponent_positions", list(range(len(opponent_requests))))
+        if (not isinstance(positions, list) or len(positions) != len(opponent_requests)
+                or any(type(position) is not int or position not in range(3) for position in positions)
+                or len(set(positions)) != len(positions)):
+            raise AdapterError("simulation opponent positions are invalid")
         if not isinstance(own_stage_requests, list) or len(own_stage_requests) != 3:
             raise AdapterError("simulation own stage request is invalid")
         stage_payloads = payload.get("stages")
@@ -389,7 +394,7 @@ class SubprocessArenaAdapter:
                     stage_distributions[stage_index]["opponents"].append(
                         {
                             "opponent_id": str(candidate["opponent_id"]),
-                            "position": position,
+                            "position": positions[position],
                             "member_distributions": SubprocessArenaAdapter._parse_distribution_list(
                                 stage_result.get("opponent_member_distributions"),
                                 simulations,
@@ -421,7 +426,7 @@ class SubprocessArenaAdapter:
         except (IndexError, KeyError, TypeError, ValueError) as error:
             raise AdapterError("adapter candidate result is invalid") from error
 
-        expected = [(str(item["team_id"]), index) for index, item in enumerate(opponent_requests)]
+        expected = [(str(item["team_id"]), positions[index]) for index, item in enumerate(opponent_requests)]
         actual = [(estimate.opponent_id, estimate.position) for estimate in estimates]
         if actual != expected:
             raise AdapterError("adapter candidate order or identity mismatch")

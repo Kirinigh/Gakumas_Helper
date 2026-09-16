@@ -310,6 +310,22 @@ def validate_own_snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
     return deepcopy(dict(root))
 
 
+def validate_opponent_snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
+    """A complete own team plus one complete opponent, retaining its screen index."""
+    root, stage_ids, issues = _validate_root_header(value)
+    own_id = _validate_team(root.get("own_team"), "$.own_team", stage_ids, issues)
+    position = root.get("opponent_position")
+    if type(position) is not int or position not in range(OPPONENT_COUNT):
+        issues.append(ValidationIssue("$.opponent_position", "must be 0, 1 or 2"))
+    opponent = root.get("opponent")
+    opponent_id = _validate_team(opponent, "$.opponent", stage_ids, issues)
+    if opponent_id == own_id or opponent_id != f"opponent-{position}":
+        issues.append(ValidationIssue("$.opponent.team_id", "must match its visible opponent position"))
+    if issues:
+        raise SnapshotValidationError(issues)
+    return deepcopy(dict(root))
+
+
 def validate_snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
     """Validate and return a defensive copy of a complete arena snapshot."""
 

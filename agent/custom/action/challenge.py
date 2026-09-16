@@ -20,7 +20,6 @@ from arena_winrate import (
     OwnScoreCacheError,
     OwnScoreCacheStore,
     ArenaComponentError,
-    ArenaWinRateService,
     ArenaOwnScoreService,
     SubprocessArenaAdapter,
     ArenaChallengeFlowError,
@@ -39,6 +38,7 @@ from arena_winrate.reader import ArenaPageState
 from arena_winrate.decision import HIGHEST_WIN_RATE_FALLBACK_RULE
 from arena_winrate.task_log import arena_task_log, diagnostic_logger, opponent_rates_message
 from maa.agent.agent_server import AgentServer
+from arena_winrate.progressive import ProgressiveArenaService
 from arena_winrate.cancellation import (
     ArenaTaskCancelled,
     cancellation_for,
@@ -972,7 +972,8 @@ class ChallengeAuto(CustomAction):
                 arena_task_log.background(
                     context,
                     f"竞技场日常：Grade {effective_grade}；"
-                    f"胜率门槛 {config.threshold_percent}%，模拟 {config.simulations} 次，超时 {config.timeout_seconds} 秒；"
+                    f"胜率门槛 {config.threshold_percent}%，快速选择下限 {config.lower_threshold_percent}%；"
+                    f"模拟 {config.simulations} 次，累计超时 {config.timeout_seconds} 秒；"
                     + ("本轮已刷新己方数据" if auto_recalculate_own else "使用已保存的己方数据"),
                     user_logger,
                 )
@@ -983,36 +984,15 @@ class ChallengeAuto(CustomAction):
                     known_grade=effective_grade,
                 )
                 reader = ArenaLineupReader(backend, season)
-                opponent_read_attempts: list[dict[str, object]] = []
-
-                class OpponentSnapshotProvider:
-                    snapshot: dict[str, object] | None = None
-
-                    def read(self) -> dict[str, object]:
-                        started = time.perf_counter()
-                        succeeded = False
-                        try:
-                            self.snapshot = reader.read_opponents(own_snapshot)
-                            succeeded = True
-                            return self.snapshot
-                        finally:
-                            opponent_read_attempts.append({
-                                "attempt": len(opponent_read_attempts) + 1,
-                                "succeeded": succeeded,
-                                "read_wall_seconds": round(time.perf_counter() - started, 6),
-                            })
-
-                provider = OpponentSnapshotProvider()
-
-                evaluation = ArenaWinRateService(
+                provider = ProgressiveArenaService(
                     adapter,
                     threshold=config.threshold,
+                    lower_threshold=config.lower_threshold,
                     simulations=config.simulations,
-                ).evaluate(
-                    provider,
-                    allow_click=True,
-                    own_score_cache=own_score_cache,
+                    cancel_check=cancellation_for(context).check,
                 )
+                evaluation = provider.evaluate(reader, own_snapshot, own_score_cache=own_score_cache, allow_click=True)
+                opponent_read_attempts = provider.read_attempts
             except (
                 ArenaReaderError,
                 AdapterError,
@@ -1097,11 +1077,11 @@ class ChallengeAuto(CustomAction):
             source_capture_id = str(provider.snapshot["capture_id"])
             selected_position = evaluation.decision.selected_position
             challenge_id = new_challenge_id(selected_position)
-            selected_row = next(
+            selected_row = next((
                 row
                 for row in evaluation.decision.estimates
                 if row["position"] == selected_position
-            )
+            ), None)
             if evaluation.decision.decision_rule == HIGHEST_WIN_RATE_FALLBACK_RULE:
                 logger.info(
                     "竞技场未有对手达到 "
@@ -1129,6 +1109,8 @@ class ChallengeAuto(CustomAction):
                         "selected_opponent_id": evaluation.decision.selected_opponent_id,
                         "decision_rule": evaluation.decision.decision_rule,
                         "threshold": evaluation.decision.threshold,
+                        "lower_threshold": config.lower_threshold,
+                        "selected_win_rate_known": selected_row is not None,
                         "estimate": selected_row,
                         "estimates": [
                             dict(row) for row in evaluation.decision.estimates

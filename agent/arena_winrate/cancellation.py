@@ -6,6 +6,12 @@ from contextvars import ContextVar
 from collections.abc import Callable
 
 
+class ArenaReadSuperseded(BaseException):
+    """A computed decision ends speculative reading, without stopping the task."""
+
+    code = "read_superseded"
+
+
 class ArenaTaskCancelled(BaseException):
     """Unwind business retries, like asyncio cancellation, to the action boundary.
 

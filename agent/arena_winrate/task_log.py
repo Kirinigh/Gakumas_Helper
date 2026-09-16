@@ -12,7 +12,7 @@ from functools import wraps
 from threading import RLock
 from dataclasses import field, dataclass
 
-from .decision import HIGHEST_WIN_RATE_FALLBACK_RULE
+from .decision import QUICK_THIRD_OPPONENT_RULE, HIGHEST_WIN_RATE_FALLBACK_RULE
 from .badge_glyph_pool import badge_glyph_task_pools
 
 
@@ -250,6 +250,8 @@ def opponent_rates_message(decision):
         message += f"；选择 {selected + 1} 号"
         if decision.decision_rule == HIGHEST_WIN_RATE_FALLBACK_RULE:
             message += f"（均未达到 {decision.threshold * 100:.0f}% 门槛，选择最高胜率）"
+        elif decision.decision_rule == QUICK_THIRD_OPPONENT_RULE:
+            message += "（前两位均不高于快速下限，3号胜率未计算）"
     return message
 
 

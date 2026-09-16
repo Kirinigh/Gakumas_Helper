@@ -17,8 +17,9 @@ from functools import wraps
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable, Sequence
 
-from .schema import SCHEMA_VERSION, validate_snapshot, validate_own_snapshot
+from .schema import SCHEMA_VERSION, validate_snapshot, validate_own_snapshot, validate_opponent_snapshot
 from .stages import ContestSeasonDefinition
+from .cancellation import ArenaReadSuperseded
 
 
 class ArenaReaderError(RuntimeError):
@@ -96,6 +97,7 @@ def _record_lineup_attempt(side: str):
                             "method": operation.__name__,
                             "wall_seconds": elapsed,
                             "succeeded": succeeded,
+                            "superseded": isinstance(failure, ArenaReadSuperseded),
                             "error_type": None if failure is None else type(failure).__name__,
                             "error_code": None if failure is None else getattr(failure, "code", None),
                             "error_detail": None if failure is None else str(failure),
@@ -1015,6 +1017,37 @@ class ArenaLineupReader:
         return validate_own_snapshot(snapshot)
 
     @_record_lineup_attempt("opponent")
+    def read_opponent(self, own_snapshot: Mapping[str, Any], position: int) -> dict[str, Any]:
+        """Read one opponent. Completed earlier opponents remain in the caller."""
+        cached = validate_own_snapshot(own_snapshot)
+        if type(position) is not int or position not in range(3):
+            raise ValueError("opponent position must be 0, 1 or 2")
+        if cached["season"] != self.season.season or cached["stageIds"] != list(self.season.stage_ids):
+            raise ArenaReaderError("own_snapshot_season_mismatch", "cached season differs from the reader")
+        target = TeamTarget(f"opponent-{position}", position)
+        first_observation = len(self._last_observations)
+        try:
+            self.backend.ensure_arena_main(require_opponents=True)
+            opponent = self._read_team(target)
+            self.backend.leave_team(target)
+            return validate_opponent_snapshot({
+                "schema_version": SCHEMA_VERSION, "capture_id": self.capture_id_factory(), "source": "live_screen",
+                "season": self.season.season, "stageIds": list(self.season.stage_ids),
+                "arena_grade": self._require_backend_grade(), "own_team": cached["own_team"],
+                "opponent_position": position, "opponent": opponent,
+            })
+        except BaseException as error:
+            del self._last_observations[first_observation:]
+            if not isinstance(error, Exception):
+                raise
+            try:
+                self.backend.recover_to_arena_main(require_opponents=True)
+            except Exception as recovery_error:
+                raise ArenaReaderError("recovery_failed", f"{error}; recovery also failed: {recovery_error}",
+                                       retry_whole_read=getattr(error, "retry_whole_read", True)) from error
+            raise
+
+    @_record_lineup_attempt("opponent")
     def read_opponents(self, own_snapshot: Mapping[str, Any]) -> dict[str, Any]:
         """Read only the three opponents and combine them with a validated own capture.
 
@@ -1142,6 +1175,7 @@ class ArenaLineupReader:
             self._member_diagnostic("begin_member_read_diagnostics", target, stage_number, member_slot)
             succeeded = False
             failure: Exception | None = None
+            superseded = False
             sample_cursor = None
             cursor_reader = getattr(self.backend, "runtime_sample_cursor", None)
             if callable(cursor_reader):
@@ -1160,6 +1194,9 @@ class ArenaLineupReader:
                 )
                 succeeded = True
                 return observation
+            except ArenaReadSuperseded:
+                superseded = True
+                raise
             except Exception as error:
                 failure = error
                 self._member_diagnostic("persist_member_read_failure", error)
@@ -1215,6 +1252,8 @@ class ArenaLineupReader:
                             {} if sample_cursor is None
                             else {"sample_cursor": sample_cursor}
                         )
+                        if superseded:
+                            cursor_argument["superseded"] = True
                         recorder(
                             target, stage_number, member_slot,
                             wall_seconds=elapsed,

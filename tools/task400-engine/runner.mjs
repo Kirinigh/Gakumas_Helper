@@ -80,9 +80,17 @@ function assertRequest(request) {
   }
   if (
     request.operation === "arena_match_win_rate" &&
-    (!Array.isArray(request.opponents) || request.opponents.length !== 3)
+    (!Array.isArray(request.opponents) ||
+      (request.opponent_positions === undefined ? request.opponents.length !== 3 : request.opponents.length !== 1))
   ) {
     throw new Error("the player and exactly three visible opponents are required");
+  }
+  if (request.opponent_positions !== undefined &&
+      (request.operation !== "arena_match_win_rate" || !Array.isArray(request.opponent_positions) ||
+       request.opponent_positions.length !== 1 || !Number.isInteger(request.opponent_positions[0]) ||
+       request.opponent_positions[0] < 0 || request.opponent_positions[0] > 2 ||
+       request.opponents[0].team_id !== `opponent-${request.opponent_positions[0]}`)) {
+    throw new Error("single-opponent position must match its visible team ID");
   }
   if (request.operation === "arena_own_score" && request.opponents !== undefined) {
     throw new Error("arena_own_score must not include opponents");
@@ -91,6 +99,15 @@ function assertRequest(request) {
   (request.opponents || []).forEach((opponent, position) =>
     assertSide(opponent, `opponents[${position}]`, request.stageIds),
   );
+  if (request.opponent_positions !== undefined) {
+    const ownCount = request.own_team.stages.reduce((total, stage) => total + stage.members.length, 0);
+    const position = request.opponent_positions[0];
+    if (!Number.isSafeInteger(request.opponent_seed_offset) ||
+        request.opponent_seed_offset < ownCount + position * 3 ||
+        request.opponent_seed_offset > ownCount + position * 9) {
+      throw new Error("single-opponent random stream offset is invalid");
+    }
+  }
   const teamIds = [request.own_team, ...(request.opponents || [])].map((team) => team.team_id);
   if (new Set(teamIds).size !== teamIds.length) {
     throw new Error("team IDs must be unique");
@@ -522,6 +539,8 @@ function makeJobs(request) {
     );
   }
   (request.opponents || []).forEach((opponent, position) => {
+    // Preserve the full batch's stream, including fixtures with fewer members.
+    if (request.opponent_positions !== undefined) seedStream = request.opponent_seed_offset;
     opponent.stages.forEach((stage) => {
       stage.members.forEach((member, memberIndex) => {
         jobs.push({
@@ -544,7 +563,11 @@ function makeJobs(request) {
 async function run(request) {
   assertRequest(request);
   const jobs = makeJobs(request);
-  const parallelism = await resolveParallelism(request, jobs[0]);
+  let parallelism = await resolveParallelism(request, jobs[0]);
+  if (request.parallelism?.reader_concurrent === true) {
+    const capacity = typeof availableParallelism === "function" ? availableParallelism() : cpus().length;
+    parallelism = { ...parallelism, selected_workers: Math.min(parallelism.selected_workers, Math.max(1, Math.floor(capacity / 2))), reader_concurrent: true };
+  }
   const execution = await executeParallel(jobs, parallelism.selected_workers);
   const ownStageScores = request.own_score_cache
     ? request.own_score_cache.stages.map((stage) => stage.member_scores)
@@ -605,7 +628,7 @@ async function run(request) {
     const matchOutcomes = classifyBestOfThree(stageOutcomes);
     candidates.push({
       opponent_id: opponent.team_id,
-      position,
+      position: request.opponent_positions?.[position] ?? position,
       ...countOutcomes(matchOutcomes),
       stages: candidateStages,
     });

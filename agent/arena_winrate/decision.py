@@ -10,6 +10,7 @@ STAGE_NUMBERS = (1, 2, 3)
 VISIBLE_OPPONENT_FAMILY_SIZE = 3
 FAMILYWISE_DECISION_RULE = "bonferroni_one_sided_wilson_lower"
 HIGHEST_WIN_RATE_FALLBACK_RULE = "highest_observed_win_rate_fallback"
+QUICK_THIRD_OPPONENT_RULE = "first_two_below_lower_choose_third"
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,7 @@ def select_first_qualified(
     threshold: float,
     confidence: float = 0.95,
     family_size: int = VISIBLE_OPPONENT_FAMILY_SIZE,
+    allow_fallback: bool = True,
 ) -> ArenaDecision:
     """Prefer the first qualified opponent, otherwise the highest win rate."""
 
@@ -195,7 +197,7 @@ def select_first_qualified(
             selected = estimate
 
     decision_rule = FAMILYWISE_DECISION_RULE
-    if selected is None and estimates:
+    if selected is None and estimates and allow_fallback:
         selected = max(estimates, key=lambda item: (item.win_rate, -item.position))
         decision_rule = HIGHEST_WIN_RATE_FALLBACK_RULE
 

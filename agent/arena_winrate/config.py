@@ -86,10 +86,15 @@ class ArenaRuntimeConfig:
     simulations: int = DEFAULT_SIMULATIONS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     bundle_dir: Path = DEFAULT_BUNDLE_DIR
+    lower_threshold_percent: int = 0
 
     @property
     def threshold(self) -> float:
         return self.threshold_percent / 100
+
+    @property
+    def lower_threshold(self) -> float:
+        return self.lower_threshold_percent / 100
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "ArenaRuntimeConfig":
@@ -106,6 +111,9 @@ class ArenaRuntimeConfig:
         )
         if not 0 <= threshold_percent <= 100:
             raise ValueError("threshold_percent must be from 0 to 100")
+        lower = _integer(value.get("lower_threshold_percent", 0), field="lower_threshold_percent")
+        if not 0 <= lower <= threshold_percent:
+            raise ValueError("快速选择下限必须在0与胜率门槛之间")
         if simulations < 1000:
             raise ValueError("simulations must be at least 1000")
         if timeout_seconds < 1:
@@ -124,4 +132,5 @@ class ArenaRuntimeConfig:
             simulations=simulations,
             timeout_seconds=timeout_seconds,
             bundle_dir=bundle_dir.resolve(),
+            lower_threshold_percent=lower,
         )
