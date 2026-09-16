@@ -153,8 +153,18 @@ MINIMUM_INDEPENDENT_PROJECT_VERSION = "v0.1.0"
 FIRST_PUBLISHABLE_INDEPENDENT_PROJECT_VERSION = "v0.1.1"
 RESERVED_UNPUBLISHABLE_PROJECT_VERSIONS = frozenset({"v0.1.0"})
 REPOSITORY_PATTERN = re.compile(r"^https://github\.com/[^/\s]+/[^/\s]+$")
-PUBLIC_AUTHOR_NAME = "Gakumas Helper Release"
-PUBLIC_AUTHOR_EMAIL = "noreply@gakumas-helper.invalid"
+PUBLIC_AUTHOR_NAME = "Kirinigh"
+PUBLIC_AUTHOR_EMAIL = "293894750+Kirinigh@users.noreply.github.com"
+LEGACY_PUBLIC_AUTHOR_NAME = "Gakumas Helper Release"
+LEGACY_PUBLIC_AUTHOR_EMAIL = "noreply@gakumas-helper.invalid"
+PUBLIC_IDENTITY_EMAILS = frozenset({PUBLIC_AUTHOR_EMAIL, LEGACY_PUBLIC_AUTHOR_EMAIL})
+PUBLIC_HISTORY_IDENTITIES = frozenset(
+    "|".join((name, email, name, email))
+    for name, email in (
+        (PUBLIC_AUTHOR_NAME, PUBLIC_AUTHOR_EMAIL),
+        (LEGACY_PUBLIC_AUTHOR_NAME, LEGACY_PUBLIC_AUTHOR_EMAIL),
+    )
+)
 INTERNAL_TASK_IDENTIFIER_PATTERN = re.compile(rb"(?i)\bTA" rb"SK-[0-9]{3}\b")
 ZIP_CONTAINER_SUFFIXES = {".jar", ".npz", ".whl", ".zip"}
 WINDOWS_RESERVED_PATH_STEMS = {
@@ -423,7 +433,7 @@ def _materialize_git_tree(
             validate_relative_path(
                 Path(*parts),
                 is_directory=is_tree,
-                allowed_emails={PUBLIC_AUTHOR_EMAIL},
+                allowed_emails=PUBLIC_IDENTITY_EMAILS,
                 allow_arena_engine_config=False,
                 machine_markers=path_machine_markers,
             )
@@ -769,7 +779,7 @@ def _validate_snapshot(output: Path) -> dict[str, int]:
         return validate_tree(
             output,
             project_path_predicate=lambda _relative: True,
-            allowed_emails={PUBLIC_AUTHOR_EMAIL},
+            allowed_emails=PUBLIC_IDENTITY_EMAILS,
             allow_arena_engine_config=False,
         )
     except PrivacyGateError as error:
@@ -902,9 +912,6 @@ def _validate_public_history(
     if roots != 1 or not commits or commits[-1] != parent_revision:
         raise PublicSnapshotError("public parent history must contain exactly one public root")
 
-    expected_identity = "|".join(
-        (PUBLIC_AUTHOR_NAME, PUBLIC_AUTHOR_EMAIL, PUBLIC_AUTHOR_NAME, PUBLIC_AUTHOR_EMAIL)
-    )
     history_root = temporary / "verified-public-history"
     history_root.mkdir()
     seen_versions: set[str] = set()
@@ -922,7 +929,7 @@ def _validate_public_history(
             cwd=parent_root,
             env=env,
         ).splitlines()
-        if len(metadata) != 4 or metadata[0] != expected_identity:
+        if len(metadata) != 4 or metadata[0] not in PUBLIC_HISTORY_IDENTITIES:
             raise PublicSnapshotError(f"public history commit identity is not fixed: {commit}")
         public_version = _release_version_from_message(metadata[1], commit=commit)
         source_update = public_version is None
@@ -1038,7 +1045,7 @@ def _validate_public_history(
                 validate_tree(
                     history_root,
                     project_path_predicate=lambda _relative: True,
-                    allowed_emails={PUBLIC_AUTHOR_EMAIL},
+                    allowed_emails=PUBLIC_IDENTITY_EMAILS,
                 )
             except PrivacyGateError as error:
                 raise PublicSnapshotError(str(error)) from error
