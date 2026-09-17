@@ -14010,7 +14010,8 @@ class MaaArenaReaderBackend:
         sub-pixel row-box jitter or a top-family flip inside one stable
         shortlist). In that case an already resolved detail ID may authorize
         one stricter fallback: either the same single clean-reference family or
-        the complete business-ID/visual-family pair set must remain exact in
+        the ambiguous business-ID/visual-family pair set must remain exact or
+        narrow to a subset retaining the detail's exact pair. That set must repeat in
         three consecutive frames, and each frame's raw clicked-slot content
         must match 2/3 frozen source frames at one unique +/-1 native-pixel
         alignment under the unchanged 0.75 MAE gate.
@@ -14183,6 +14184,16 @@ class MaaArenaReaderBackend:
             source_visual_group_allowed
             or single_family_detail_title_override_candidate
         )
+
+        def matches_source_candidates(candidates: tuple[tuple[int, str], ...]) -> bool:
+            # A disappearing alternative is not a changed card. This only
+            # routes to raw-content proof; it never proves restoration itself.
+            return bool(
+                len(candidates) > 1
+                and (expected_card_id, expected_fixed_visual_group) in candidates
+                and set(candidates).issubset(source_stable_identity_candidates)
+            )
+
         deadline = time.monotonic() + timeout_seconds
         started = time.perf_counter()
         last_error = ""
@@ -14398,8 +14409,7 @@ class MaaArenaReaderBackend:
                         multi_family_identity_matches = bool(
                             measured_identity_projection_is_strict
                             and multi_family_detail_title_override_candidate
-                            and measured_identity_candidates
-                            == source_stable_identity_candidates
+                            and matches_source_candidates(measured_identity_candidates)
                         )
                         aligned_content_proof: dict[str, Any] | None = None
                         if (
@@ -14447,6 +14457,16 @@ class MaaArenaReaderBackend:
                             or multi_family_identity_matches
                         )
                         if semantic_identity_matches:
+                            if (
+                                multi_family_identity_matches
+                                and semantic_identity_frames
+                                and self._reference_identity_candidates(semantic_identity_frames[-1])
+                                != measured_identity_candidates
+                            ):
+                                # Do not combine differing subsets into a vote.
+                                semantic_stable_frames = 0
+                                semantic_identity_frames.clear()
+                                aligned_content_frames.clear()
                             semantic_stable_frames += 1
                             semantic_identity_frames.append(identity)
                             del semantic_identity_frames[:-3]
@@ -14486,8 +14506,7 @@ class MaaArenaReaderBackend:
                         )
                         multi_family_identity_settled = bool(
                             multi_family_detail_title_override_candidate
-                            and stable_identity_candidates
-                            == source_stable_identity_candidates
+                            and matches_source_candidates(stable_identity_candidates)
                             and semantic_stable_frames >= 3
                             and len(aligned_content_frames) == 3
                             and all(
@@ -14507,6 +14526,11 @@ class MaaArenaReaderBackend:
                             or multi_family_identity_settled
                         )
                         if semantic_source_settled:
+                            if (
+                                multi_family_identity_settled
+                                and stable_identity_candidates != source_stable_identity_candidates
+                            ):
+                                self._increment("skill_card_source_restore_candidate_contractions")
                             self._increment(
                                 "skill_card_source_restore_semantic_settled_fallbacks"
                             )
