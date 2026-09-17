@@ -7307,8 +7307,13 @@ class MaaArenaReaderBackend:
             cache.pop(next(iter(cache)))
         base_title = self.catalog.skill_card_title(base_id)
         normalize = self.catalog.normalize_skill_card_title_text
-        rows = self._spatial_ocr_rows(self._ocr(image, r".+"))
-        anchors = [box for text, box, _ in rows if normalize(text) == normalize(base_title)]
+        items = self._ocr(image, r".+")
+        # Match the title resolver's cross-column splitting. A visual row can
+        # also contain background stats (e.g. "08 100%") to the right of the
+        # popup; merging that whole row prevents the failure-only crop running.
+        candidates = tuple((_text(item).strip(), _box(item)) for item in items)
+        candidates += self._skill_card_title_ocr_segments(items)
+        anchors = sorted({box for text, box in candidates if normalize(text) == normalize(base_title)})
         if len(anchors) != 1:
             return None
         x, y, width, height = anchors[0]
