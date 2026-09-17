@@ -4096,7 +4096,7 @@ class MaaArenaReaderBackend:
             recent_member_frames.append(
                 bool(self._matching_ocr_items(items, r"^体力$"))
                 and bool(self._matching_ocr_items(items, r"^総合力$"))
-                and "サポートボーナス" not in last_text
+                and not self._has_support_bonus_heading(last_text)
                 and last_close_count == 0
                 and not communication_dialog
             )
@@ -4111,6 +4111,18 @@ class MaaArenaReaderBackend:
                 break
             self._sleep(0.08)
         self._add_timing("support_bonus_open_wait", time.perf_counter() - started)
+        # A slow OCR call can consume the original deadline on an animation
+        # frame. Observe fresh captures before deciding to click or abort.
+        if value is None and (self._has_support_bonus_heading(last_text) or any(recent_member_frames)):
+            transition_deadline = time.monotonic() + 8.0
+            for _ in range(3):
+                if time.monotonic() >= transition_deadline:
+                    break
+                value = read_overlay(reuse_close_label=True)
+                self._increment("support_bonus_transition_reads")
+                if value is not None or recent_member_frames == [True, True]:
+                    break
+                self._sleep(0.12)
         retries = getattr(self, "_support_bonus_retried_teams", None)
         if retries is None:
             retries = set()
@@ -4120,7 +4132,7 @@ class MaaArenaReaderBackend:
             # a whole-provider retry cannot rearm it for the same team.
             retries.add(target.team_id)
             recovery_started = time.perf_counter()
-            recovery_deadline = time.monotonic() + 2.0
+            recovery_deadline = time.monotonic() + 8.0
             self._increment("support_bonus_open_retries")
             self._click(info_box, settle_seconds=0)
             reads = 0
@@ -4143,17 +4155,53 @@ class MaaArenaReaderBackend:
                 r"(?<![0-9])\+([0-9]+(?:\.[0-9]+)?)%",
                 last_text,
             )
+            cleanup = "not attempted: overlay identity unproven"
+            if self._has_support_bonus_heading(last_text) and last_close_count <= 1:
+                try:
+                    self._click(info_box, settle_seconds=0)
+                    self._assert_support_bonus_closed()
+                    cleanup = "closed and member page confirmed"
+                except ArenaReaderError as error:
+                    cleanup = f"member return unconfirmed: {error}"
             raise ArenaReaderError(
                 "support_bonus_missing",
                 "support overlay did not reach one same-frame semantic decision: "
-                f"bonuses={bonuses!r}, close_count={last_close_count}",
+                f"bonuses={bonuses!r}, close_count={last_close_count}; cleanup={cleanup}",
             )
         # The same info icon is the stable toggle on both own and opponent
         # member pages.  OCR's visible 閉じる label belongs to overlay content
         # and is not a reliable hit target across these two layouts.
         self._click(info_box, settle_seconds=0)
-        self._assert_member_detail()
+        self._assert_support_bonus_closed()
         return value
+
+    @staticmethod
+    def _has_support_bonus_heading(text: str) -> bool:
+        # The member-page footnote also contains this phrase; it is not a popup.
+        return sum(row.strip() == "サポートボーナス" for row in text.splitlines()) == 1
+
+    def _assert_support_bonus_closed(self) -> None:
+        deadline = time.monotonic() + 8.0
+        for _ in range(3):
+            if time.monotonic() >= deadline:
+                break
+            image = self._capture()
+            items = self._ocr(image, r".+")
+            text = "\n".join(_text(item) for item in items)
+            communication = self._retry_transient_communication_items(items)
+            if (
+                not communication
+                and not self._has_support_bonus_heading(text)
+                and not self._matching_ocr_items(items, r"^閉じる$")
+                and self._matching_ocr_items(items, r"^体力$")
+                and self._matching_ocr_items(items, r"^総合力$")
+            ):
+                return
+            self._sleep(0.12)
+        raise ArenaReaderError(
+            "support_bonus_close_unconfirmed",
+            "support overlay did not disappear before returning to the member page",
+        )
 
     @staticmethod
     def _support_bonus_from_overlay(
@@ -4167,7 +4215,7 @@ class MaaArenaReaderBackend:
             r"(?<![0-9])\+([0-9]+(?:\.[0-9]+)?)%",
             text,
         )
-        if "サポートボーナス" not in text or len(bonuses) != 1 or close_count != 1:
+        if not MaaArenaReaderBackend._has_support_bonus_heading(text) or len(bonuses) != 1 or close_count != 1:
             return None
         value = float(bonuses[0]) / 100
         if not 0 <= value <= 1:
