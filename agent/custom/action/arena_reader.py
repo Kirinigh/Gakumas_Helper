@@ -13968,7 +13968,7 @@ class MaaArenaReaderBackend:
         self,
         source_images: Sequence[Any],
         boxes: Sequence[tuple[int, int, int, int]],
-        timeout_seconds: float = 2.0,
+        timeout_seconds: float = 8.0,
     ) -> None:
         """Prove a P-item overlay closed before another slot can be clicked."""
 
@@ -13978,15 +13978,18 @@ class MaaArenaReaderBackend:
                 "P-item detail recovery requires the accepted source-row boxes",
             )
         threshold = self.p_item_reader.content_generation_max_mean_abs_error
+        # Four fresh observations, within a fixed ceiling, allow a transition
+        # followed by TWO matching frames even when one OCR takes > 2 seconds.
+        # Success still exits immediately on the original second matching frame.
         deadline = time.monotonic() + timeout_seconds
         consecutive = 0
         last_errors: tuple[float, ...] = ()
-        while time.monotonic() < deadline:
+        for _ in range(4):
+            if time.monotonic() >= deadline:
+                break
             image = self._capture()
             matches_source, last_errors = self._p_item_source_frame_matches(
-                source_images,
-                image,
-                boxes,
+                source_images, image, boxes,
             )
             if matches_source:
                 consecutive += 1
@@ -14111,12 +14114,65 @@ class MaaArenaReaderBackend:
                     best_errors = errors
                 if anchors_visible and all(value <= threshold for value in errors):
                     return True, errors
+                if (
+                    anchors_visible
+                    and all(value <= threshold for value in errors[len(boxes):])
+                    and self._p_item_border_only_change(source_image, image, boxes, threshold)
+                ):
+                    self._increment("p_item_source_border_animation_acceptances")
+                    return True, errors
         except (PItemReferenceError, TypeError, ValueError) as error:
             raise ArenaReaderError(
                 "p_item_source_restore_evidence_invalid",
                 "P-item source-row restore evidence could not be measured",
             ) from error
         return False, best_errors
+
+    @staticmethod
+    def _p_item_border_only_change(
+        source: Any, current: Any, boxes: Sequence[tuple[int, int, int, int]], threshold: float,
+    ) -> bool:
+        """Ignore sparse border shine only; preserve artwork and the '+' corner."""
+        import numpy as np
+
+        deltas = []
+        for x, y, width, height in boxes:
+            before = source[y:y + height, x:x + width]
+            after = current[y:y + height, x:x + width]
+            if before.shape != (height, width, 3) or after.shape != before.shape:
+                return False
+            deltas.append(after.astype(np.int16) - before.astype(np.int16))
+        for delta in deltas:
+            height, width = delta.shape[:2]
+            magnitude = np.abs(delta)
+            core = np.zeros((height, width), dtype=bool)
+            mx, my = max(1, round(width / 8)), max(1, round(height / 8))
+            core[my:height - my, mx:width - mx] = True
+            corner = np.zeros_like(core)
+            corner[:round(height * 0.40), round(width * 0.60):] = True
+            if float(magnitude[core].mean()) > threshold:
+                return False
+            # The upgrade corner stays protected. Only a pixel-identical shine
+            # observed in at least THREE distinct slots can explain changes to
+            # its outer edge; a removed '+' in one slot cannot borrow this proof.
+            votes = np.zeros_like(core, dtype=np.uint8)
+            if len(deltas) == 4:
+                for other in deltas:
+                    if other.shape == delta.shape:
+                        votes += np.all(np.abs(other - delta) <= 1, axis=2)
+            corner_error = magnitude.copy()
+            corner_error[(votes >= 3) & ~core] = 0
+            if float(corner_error[corner].mean()) > threshold:
+                return False
+            changed = magnitude.max(axis=2) > 1
+            if float(changed.mean()) > 0.08:
+                return False
+            border_delta = delta[~core]
+            # A shine brightens (or dims) pixels; mixed colour replacement is
+            # not accepted as decoration, even when the centre is unchanged.
+            if not (np.all(border_delta >= -1) or np.all(border_delta <= 1)):
+                return False
+        return True
 
     def _assert_card_group_visible(
         self,
