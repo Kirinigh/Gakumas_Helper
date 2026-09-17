@@ -7266,6 +7266,16 @@ class MaaArenaReaderBackend:
             source_group_index=source_group_index, detail_image=detail_image,
             source_card_box=source_card_box,
         )
+        if source_group_index is not None and source_card_slot is not None:
+            key = (source_group_index, source_card_slot)
+            expected = getattr(self, "_card_detail_open_ids", {}).get(key)
+            pair = getattr(self.catalog, "is_skill_card_upgrade_pair", None)
+            if expected is not None and pair is not None and pair(resolved, expected):
+                repaired = self._recover_missing_upgrade_title(
+                    detail_image, key, source_card_box, resolved, expected,
+                )
+                if repaired is not None:
+                    resolved = repaired
         if scope is not None and resolved not in scope:
             raise ArenaCatalogError(
                 f"detail card {resolved} is outside the stage/slot domain "
@@ -7274,6 +7284,64 @@ class MaaArenaReaderBackend:
         if source_group_index is not None and source_card_slot is not None:
             self._assert_skill_detail_open_id((source_group_index, source_card_slot), resolved)
         return resolved
+
+    def _recover_missing_upgrade_title(
+        self, image: Any, key: tuple[int, int], source_box: Any, base_id: int, expected_id: int,
+    ) -> int | None:
+        """One same-frame title crop; a prior upgraded ID alone never repairs '+'."""
+        if image is None or not hasattr(image, "shape") or source_box is None:
+            return None
+        import cv2
+
+        cache = getattr(self, "_upgrade_title_roi_evidence", None)
+        if cache is None:
+            cache = self._upgrade_title_roi_evidence = {}
+        cache_key = (id(image), key[0], tuple(source_box), base_id)
+        cached = cache.get(cache_key)
+        if cached is not None and cached[0] is image:
+            return cached[2]
+        # Cache unsuccessful observations too: repeated parsing of this frame
+        # cannot spend another recognition attempt or count as a fresh vote.
+        cache[cache_key] = (image, None, None)
+        while len(cache) > 16:
+            cache.pop(next(iter(cache)))
+        base_title = self.catalog.skill_card_title(base_id)
+        normalize = self.catalog.normalize_skill_card_title_text
+        rows = self._spatial_ocr_rows(self._ocr(image, r".+"))
+        anchors = [box for text, box, _ in rows if normalize(text) == normalize(base_title)]
+        if len(anchors) != 1:
+            return None
+        x, y, width, height = anchors[0]
+        ih, iw = image.shape[:2]
+        # The full-frame resolver already proved this row belongs to the
+        # opened detail. Keep the crop within that row, never the effect '+1'.
+        pad = max(1, round(height * 0.15))
+        left, top = max(0, x - pad), max(0, y - pad)
+        right, bottom = min(iw, x + width + height), min(ih, y + height + pad)
+        if width <= 0 or height <= 0 or right <= left or bottom <= top:
+            return None
+        crop = cv2.resize(image[top:bottom, left:right], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        self._increment("skill_card_upgrade_title_roi_reads")
+        items = self._with_full_frame_ocr_kind("derived_roi", self._ocr, crop, r".+")
+        crop_rows = self._spatial_ocr_rows(items)
+        if len(crop_rows) != 1:
+            return None
+        title = crop_rows[0][0]
+        try:
+            actual = self.catalog.confirm_clicked_skill_card_by_exact_title(title)
+        except ArenaCatalogError:
+            return None
+        if actual != expected_id:
+            return None
+        cache[cache_key] = (image, title, actual)
+        recovered = getattr(self, "_skill_card_recovered_title_frames", None)
+        if recovered is None:
+            recovered = self._skill_card_recovered_title_frames = {}
+        recovered[(id(image), actual)] = (image, base_title)
+        while len(recovered) > 32:
+            recovered.pop(next(iter(recovered)))
+        self._increment("skill_card_upgrade_title_roi_recoveries")
+        return actual
 
     def _confirm_clicked_skill_card_id_from_title(
         self,
@@ -7919,6 +7987,16 @@ class MaaArenaReaderBackend:
                 continue
             new_rows.append(line)
         if len(new_rows) == 1:
+            if source_card_box is not None and getattr(self, "_upgrade_title_roi_evidence", None):
+                try:
+                    base_id = self.catalog.confirm_clicked_skill_card_by_exact_title(new_rows[0])
+                except ArenaCatalogError:
+                    base_id = None
+                cached = getattr(self, "_upgrade_title_roi_evidence", {}).get(
+                    (id(detail_image), group_index, tuple(source_card_box), base_id),
+                )
+                if cached is not None and cached[0] is detail_image and cached[1] is not None:
+                    return cached[1]
             return new_rows[0]
         if not new_rows and source_card_box is not None:
             recovered = self._recover_unmatched_skill_card_title(
@@ -12625,6 +12703,7 @@ class MaaArenaReaderBackend:
         getattr(self, "_title_anchor_ocr_evidence", {}).clear()
         getattr(self, "_trusted_skill_card_title_rows_cache", {}).clear()
         getattr(self, "_skill_card_recovered_title_frames", {}).clear()
+        getattr(self, "_upgrade_title_roi_evidence", {}).clear()
         self._card_source_guard_frames.clear()
         getattr(self, "_card_source_guard_signature_cache", {}).clear()
         self._card_restoration_signatures.clear()
