@@ -80,6 +80,7 @@ from arena_winrate.task_log import arena_task_log, diagnostic_logger
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded, cancellation_for
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
 from arena_winrate.badge_glyph_pool import BadgeGlyphDomain, badge_glyph_task_pools
+from arena_winrate.recognition_probe import RecognitionProbe
 from arena_winrate._detail_text_layout import (
     recover_distant_number_text,
     recover_wrapped_signed_text,
@@ -780,10 +781,59 @@ class MaaArenaReaderBackend:
             "member_read_id": (getattr(self, "_member_failure_frames", None) or {}).get("read_id"),
             "count_baseline": dict(getattr(self, "_runtime_counts", {})),
         }
+        if position.get("kind") == "skill_card":
+            probe = getattr(self, "_recognition_probe", None)
+            if probe is None:
+                probe = self._recognition_probe = RecognitionProbe(DEFAULT_CHALLENGE_RECORD_ROOT)
+            if probe.active():
+                group = position.get("group_index")
+                key = (group, position.get("card_slot"))
+                self._detail_failure_frames.update(
+                    probe_sources=tuple(getattr(self, "_card_source_guard_frames", {}).get(group, ())),
+                    probe_source_box=self._skill_card_source_box(key),
+                    probe_row_boxes=getattr(self, "_card_rows", {}).get(group, ()),
+                    probe_candidates=list(getattr(self, "_card_candidate_groups", {}).get(key, ())),
+                    probe_stage_plan=getattr(self, "_card_stage_plan", None),
+                    probe_frames=[],
+                )
+
+    def _save_recognition_probe(self, detail: dict, outcome: str, error: str | None) -> None:
+        if "probe_sources" not in detail or detail.get("probe_finished"):
+            return
+        detail["probe_finished"] = True
+        started = time.perf_counter()
+        probe = self._recognition_probe
+        try:
+            position = detail["position"]
+            key = (position.get("group_index"), position.get("card_slot"))
+            detail["probe_body_text"] = getattr(self, "_card_detail_texts", {}).get(key)
+            result = probe.save(detail, outcome, error)
+            if result is not None:
+                logger.info(json.dumps(result, ensure_ascii=False))
+        except Exception as probe_error:
+            probe.disabled = True
+            logger.warning(json.dumps({"event": "arena_recognition_probe_disabled",
+                                       "error": str(probe_error)}, ensure_ascii=False))
+        finally:
+            self._record_duration_sample("recognition_probe_save", time.perf_counter() - started)
+
+    def _observe_recognition_probe(self, image: Any, items: Any) -> None:
+        detail = getattr(self, "_detail_failure_frames", None)
+        if detail is None or "probe_frames" not in detail:
+            return
+        try:
+            # Derived OCR crops are not original screenshots; keep only frames
+            # already delivered by _capture in this transaction.
+            if any(frame[1] is image for frame in detail["frames"]):
+                RecognitionProbe.observe(detail, image, items, str(detail["position"].get("phase", "body")))
+        except Exception:
+            self._recognition_probe.disabled = True
 
     def _emit_detail_fallback_diagnostic(self, outcome: str, error: str | None = None) -> None:
         """Emit existing transaction evidence, including interrupted reads."""
         detail = getattr(self, "_detail_failure_frames", None)
+        if detail is not None:
+            self._save_recognition_probe(detail, outcome, error)
         if detail is None or detail.get("fallback_logged"):
             return
         before = detail.get("count_baseline", {})
@@ -7764,6 +7814,7 @@ class MaaArenaReaderBackend:
             all_items,
         )
         cache[id(image)] = evidence
+        self._observe_recognition_probe(image, all_items)
         # Retain enough member-local entries for both accepted source groups,
         # their detail confirmations and transformed ROI views without holding
         # captures beyond the member transaction.
