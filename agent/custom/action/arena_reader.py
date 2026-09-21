@@ -188,6 +188,7 @@ class _FullFrameOcrEvidence(NamedTuple):
     hit: bool
     filtered_items: tuple[Any, ...]
     all_items: tuple[Any, ...]
+    reco_id: int | None = None
 
 
 _PItemPanelRow = tuple[
@@ -1039,6 +1040,8 @@ class MaaArenaReaderBackend:
                 evidence["error_chain"] = diagnostic["error_chain"]
             if diagnostic.get("p_item_text") is not None:
                 evidence["p_item_text"] = diagnostic["p_item_text"]
+            if diagnostic.get("p_item_restore") is not None:
+                evidence["p_item_restore"] = diagnostic["p_item_restore"]
             (folder / "evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
             logger.warning(json.dumps(evidence, ensure_ascii=False, sort_keys=True))
         except Exception as diagnostic_error:
@@ -5292,6 +5295,16 @@ class MaaArenaReaderBackend:
                 # identity row. Later rows are effect prose and can contain
                 # other catalog titles, so they are never matching evidence.
                 raw_matches = match_title_rows(last_title_text)
+                if not raw_matches and source_images and current_atoms:
+                    isolated_row = self._isolated_p_item_title_row(image, source_images, current_atoms)
+                    if isolated_row is not None:
+                        last_title_text, row_box, isolated_components = isolated_row
+                        components = tuple(
+                            (text, normalize_title_row(text), bounds)
+                            for text, bounds in isolated_components
+                        )
+                        raw_matches = match_title_rows(last_title_text)
+                        self._increment("p_item_isolated_title_reuses")
                 matches = raw_matches
                 effect_disambiguated = False
                 text_resolver = getattr(self.catalog, "resolve_clicked_p_item_text", None)
@@ -7907,6 +7920,7 @@ class MaaArenaReaderBackend:
             hit,
             filtered_items,
             all_items,
+            getattr(detail, "reco_id", None),
         )
         cache[id(image)] = evidence
         self._observe_recognition_probe(image, all_items)
@@ -13742,6 +13756,36 @@ class MaaArenaReaderBackend:
         )
 
     @staticmethod
+    def _isolated_p_item_title_row(
+        image: Any, source_images: Sequence[Any], atoms: Sequence[dict[str, Any]],
+    ) -> _PItemPanelRow | None:
+        """Recover only the top row of a proven new panel, never search prose for a name."""
+        from arena_winrate._detail_title_region import _white_detail_panels, isolated_p_item_body_region
+
+        panels = _white_detail_panels(image)
+        if len(panels) != 1:
+            return None
+        px, py, pw, ph = panels[0]
+        height, width = image.shape[:2]
+        sx, sy = width / 720, height / 1280
+        inside = []
+        for atom in atoms:
+            x, y, w, h = (v * scale for v, scale in zip(atom["box"], (sx, sy, sx, sy), strict=True))
+            if px <= x < x + w <= px + pw and py <= y < y + h <= py + ph:
+                inside.append({**atom, "box": (x, y, w, h)})
+            elif px <= x + w / 2 <= px + pw and py <= y + h / 2 <= py + ph:
+                return None
+        rows = MaaArenaReaderBackend._p_item_detail_panel_rows(image, inside)
+        if not rows:
+            return None
+        title_box = tuple(v * scale for v, scale in zip(rows[0][1], (sx, sy, sx, sy), strict=True))
+        if title_box[1] - py > height * .018:
+            return None  # A missing title must not promote the first effect line.
+        if isolated_p_item_body_region(image, source_images, title_box) is None:
+            return None
+        return rows[0]
+
+    @staticmethod
     def _p_item_detail_title_text(
         image: Any,
         items: Sequence[Any],
@@ -14393,13 +14437,24 @@ class MaaArenaReaderBackend:
         deadline = time.monotonic() + timeout_seconds
         consecutive = 0
         last_errors: tuple[float, ...] = ()
+        restore_observations: list[dict[str, Any]] = []
+        diagnostic = getattr(self, "_detail_failure_frames", None)
+        if diagnostic is not None:
+            diagnostic["p_item_restore"] = restore_observations
         for _ in range(4):
             if time.monotonic() >= deadline:
                 break
             image = self._capture()
+            self._last_p_item_restore_anchors = None
             matches_source, last_errors = self._p_item_source_frame_matches(
                 source_images, image, boxes,
             )
+            restore_observations.append({
+                "matches_source": matches_source,
+                "anchors": getattr(self, "_last_p_item_restore_anchors", None),
+                "errors": tuple(round(value, 6) for value in last_errors),
+                "consecutive_before": consecutive,
+            })
             if matches_source:
                 consecutive += 1
                 if consecutive >= 2:
@@ -14411,7 +14466,7 @@ class MaaArenaReaderBackend:
             "p_item_source_restore_unproven",
             "member anchors and two stable source-row generations did not return: "
             f"errors={tuple(round(value, 6) for value in last_errors)!r}; "
-            f"threshold={threshold}",
+            f"threshold={threshold}; observations={restore_observations!r}",
         )
 
     @staticmethod
@@ -14488,6 +14543,14 @@ class MaaArenaReaderBackend:
             # OCR result instead of recognizing the whole image twice.
             exact_rows = {_text(item) for item in self._ocr(image, r".+")}
             anchors_visible = "体力" in exact_rows and "総合力" in exact_rows
+            evidence = self._cached_full_frame_ocr_evidence(image)
+            self._last_p_item_restore_anchors = {
+                "visible": anchors_visible,
+                "filtered_texts": sorted(exact_rows),
+                "ocr_hit": evidence.hit if evidence is not None else None,
+                "reco_id": evidence.reco_id if evidence is not None else None,
+                "all_texts": [_text(item) for item in evidence.all_items] if evidence is not None else None,
+            }
         else:
             anchors_visible = member_anchors_visible
         if not source_images:

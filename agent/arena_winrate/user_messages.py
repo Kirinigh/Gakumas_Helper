@@ -24,7 +24,7 @@ _ERROR_LABELS = (
     ("访问被拒绝", "访问被拒绝，请检查安装目录的写入权限"),
     ("communication_retry_exhausted", "通信异常，自动重试后仍未恢复"),
     ("communication", "当前出现通信异常"),
-    ("p_item_detail_recovery_failed", "P 道具详情关闭后未能返回成员页面"),
+    ("p_item_detail_recovery_failed", "P 道具详情关闭后未能确认已返回成员页面"),
     ("skill_card_close", "技能卡详情未能正常关闭或返回成员页面"),
     ("member_preview_recovery", "未能返回队伍预览并重新打开成员"),
     ("support_bonus", "支援加成页面未能打开或读取完整"),
