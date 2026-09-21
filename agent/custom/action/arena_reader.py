@@ -81,6 +81,7 @@ from arena_winrate.task_log import arena_task_log, diagnostic_logger
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded, cancellation_for
 from arena_winrate._reader_visual import _box, _text, _value
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
+from arena_winrate._reader_evidence import _PItemPanelRow, _NormalizedPItemRow, _PItemOcrObservation
 from arena_winrate.badge_glyph_pool import BadgeGlyphDomain, badge_glyph_task_pools
 from arena_winrate.recognition_probe import RecognitionProbe
 from arena_winrate._detail_text_layout import (
@@ -88,6 +89,7 @@ from arena_winrate._detail_text_layout import (
     recover_wrapped_signed_text,
 )
 from arena_winrate._detail_title_region import isolated_title_region
+from arena_winrate._p_item_detail_evidence import PItemDetailEvidence
 from arena_winrate._skill_card_effect_recovery import recover_skill_effect_body
 
 logger = diagnostic_logger(_base_logger)
@@ -193,28 +195,8 @@ class _FullFrameOcrEvidence(NamedTuple):
     reco_id: int | None = None
 
 
-_PItemPanelRow = tuple[
-    str,
-    tuple[float, float, float, float],
-    tuple[tuple[str, tuple[float, float, float, float]], ...],
-]
-_NormalizedPItemRow = tuple[
-    str,
-    str,
-    tuple[float, float, float, float],
-    tuple[tuple[str, str, tuple[float, float, float, float]], ...],
-]
 
 
-class _PItemOcrObservation(NamedTuple):
-    """One OCR call, with separate title and size-excluded source evidence."""
-
-    full_text: str
-    panel_text: str
-    anchors_visible: bool
-    panel_rows: tuple[_PItemPanelRow, ...]
-    background_rows: tuple[_PItemPanelRow, ...] = ()
-    all_items: tuple[Any, ...] = ()
 
 
 class _TitleAnchorOcrEvidence(NamedTuple):
@@ -517,6 +499,8 @@ class ArenaReaderDiagnosticPort:
 
     def card_recognizer(self, *args: Any, **kwargs: Any) -> Any:
         return self._backend._card_recognizer(*args, **kwargs)
+
+
 
 
 class MaaArenaReaderBackend:
@@ -4660,432 +4644,8 @@ class MaaArenaReaderBackend:
             )
         started = time.perf_counter()
 
-        def match_title_rows(text: str) -> tuple[int, ...]:
-            matches: list[int] = []
-            for title_row in str(text or "").splitlines():
-                if not title_row.strip():
-                    continue
-                family_matcher = getattr(self.catalog, "p_item_detail_title_family_ids", None)
-                if callable(family_matcher):
-                    row_matches = family_matcher(title_row, plan=plan, **slot_scope)
-                    if not row_matches:
-                        recovered = family_matcher(
-                            title_row, plan=plan, allow_one_substitution=True, **slot_scope,
-                        )
-                        # Preserve the existing visual boundary only for a
-                        # one-character OCR repair. An exact complete title
-                        # always searches its full catalog family.
-                        old_matches = self.catalog.clicked_p_item_candidate_matches(
-                            title_row, candidate_p_item_ids=candidate_ids,
-                        ) if recovered else ()
-                        if set(recovered).intersection(old_matches):
-                            row_matches = recovered
-                elif global_title_scope:
-                    row_matches = self.catalog.clicked_p_item_global_detail_matches(
-                        title_row,
-                        candidate_p_item_ids=candidate_ids,
-                        visual_tiebreak_p_item_ids=visual_tiebreak_ids,
-                        unrepresented_p_item_ids=unrepresented_ids,
-                        allow_one_substitution=True,
-                    )
-                else:
-                    row_matches = self.catalog.clicked_p_item_candidate_matches(
-                        title_row,
-                        candidate_p_item_ids=candidate_ids,
-                    )
-                matches.extend(row_matches)
-            return tuple(dict.fromkeys(matches))
-
-        def match_title_rows_exact(text: str) -> tuple[int, ...]:
-            matches: list[int] = []
-            for title_row in str(text or "").splitlines():
-                if not title_row.strip():
-                    continue
-                family_matcher = getattr(self.catalog, "p_item_detail_title_family_ids", None)
-                if callable(family_matcher):
-                    matches.extend(family_matcher(title_row, plan=plan, **slot_scope))
-                else:
-                    matches.extend(self.catalog.clicked_p_item_global_detail_matches(
-                        title_row,
-                        candidate_p_item_ids=candidate_ids,
-                        visual_tiebreak_p_item_ids=visual_tiebreak_ids,
-                        unrepresented_p_item_ids=unrepresented_ids,
-                        allow_one_substitution=False,
-                    ))
-            return tuple(dict.fromkeys(matches))
-
-        def normalize_title_row(text: str) -> str:
-            return re.sub(
-                r"\s+",
-                "",
-                unicodedata.normalize("NFKC", str(text or "")),
-            )
-
-        def title_rows(text: str) -> tuple[tuple[str, str], ...]:
-            rows: list[tuple[str, str]] = []
-            for raw_row in str(text or "").splitlines():
-                normalized = normalize_title_row(raw_row)
-                if normalized:
-                    rows.append((raw_row.strip(), normalized))
-            return tuple(rows)
-
-        def observe_p_item(image: Any) -> tuple[
-            str,
-            str,
-            bool,
-            tuple[_NormalizedPItemRow, ...],
-            tuple[_NormalizedPItemRow, ...],
-            tuple[dict[str, Any], ...],
-        ]:
-            observation = self._p_item_ocr_observation(image)
-
-            def normalize_rows(geometric_rows: Sequence[Any]) -> tuple[
-                _NormalizedPItemRow, ...
-            ]:
-                normalized_rows_list = []
-                for geometric_row in geometric_rows:
-                    if len(geometric_row) == 3:
-                        raw, row_box, components = geometric_row
-                    elif len(geometric_row) == 2:
-                        raw, row_box = geometric_row
-                        components = ((raw, row_box),)
-                    else:
-                        raise ArenaReaderError(
-                            "p_item_ocr_panel_row_invalid",
-                            "P-item OCR panel row has an unsupported shape",
-                        )
-                    normalized = normalize_title_row(raw)
-                    if not normalized:
-                        continue
-                    normalized_components = tuple(
-                        (
-                            str(component_raw).strip(),
-                            normalize_title_row(component_raw),
-                            tuple(float(value) for value in component_box),
-                        )
-                        for component_raw, component_box in components
-                        if normalize_title_row(component_raw)
-                    )
-                    normalized_rows_list.append(
-                        (
-                            str(raw).strip(),
-                            normalized,
-                            tuple(float(value) for value in row_box),
-                            normalized_components,
-                        )
-                    )
-                return tuple(normalized_rows_list)
-
-            background_rows: tuple[_NormalizedPItemRow, ...] = ()
-            atoms: tuple[dict[str, Any], ...] = ()
-            if isinstance(observation, _PItemOcrObservation):
-                full_text = observation.full_text
-                panel_text = observation.panel_text
-                anchors_visible = observation.anchors_visible
-                normalized_rows = normalize_rows(observation.panel_rows)
-                background_rows = normalize_rows(observation.background_rows)
-                if observation.all_items:
-                    height, width = image.shape[:2]
-                    atoms = tuple(
-                        {
-                            "text": _text(item),
-                            "box": tuple(
-                                value / scale
-                                for value, scale in zip(
-                                    _box(item),
-                                    (width / 720.0, height / 1280.0) * 2,
-                                    strict=True,
-                                )
-                            ),
-                        }
-                        for item in observation.all_items
-                    )
-            elif len(observation) == 4:
-                full_text, panel_text, anchors_visible, geometric_rows = observation
-                normalized_rows = normalize_rows(geometric_rows)
-            elif len(observation) == 3:
-                # Isolated tests and injected diagnostic backends predate row
-                # geometry. Give their ordered rows stable synthetic positions;
-                # production always supplies normalized OCR boxes.
-                full_text, panel_text, anchors_visible = observation
-                normalized_rows = tuple(
-                    (
-                        raw,
-                        normalized,
-                        (18.0, 16.0 + index * 48.0, 320.0, 24.0),
-                        (
-                            (
-                                raw,
-                                normalized,
-                                (18.0, 16.0 + index * 48.0, 320.0, 24.0),
-                            ),
-                        ),
-                    )
-                    for index, (raw, normalized) in enumerate(
-                        title_rows(panel_text)
-                    )
-                )
-            else:
-                raise ArenaReaderError(
-                    "p_item_ocr_observation_invalid",
-                    "P-item OCR observation has an unsupported shape",
-                )
-            return (
-                str(full_text),
-                str(panel_text),
-                bool(anchors_visible),
-                normalized_rows,
-                background_rows,
-                atoms,
-            )
-
-        def one_substitution(left: str, right: str) -> bool:
-            return (
-                len(left) >= 3
-                and len(left) == len(right)
-                and sum(a != b for a, b in zip(left, right)) == 1
-            )
-
-        def one_insertion_or_deletion(left: str, right: str) -> bool:
-            if abs(len(left) - len(right)) != 1:
-                return False
-            shorter, longer = sorted((left, right), key=len)
-            first_difference = next(
-                (index for index, value in enumerate(shorter) if value != longer[index]),
-                len(shorter),
-            )
-            return shorter[first_difference:] == longer[first_difference + 1 :]
-
-        def numeric_source_row_extension(
-            current_row: str,
-            source_row: str,
-        ) -> bool:
-            if current_row == source_row or source_row not in current_row:
-                return False
-            residue = current_row.replace(source_row, "", 1)
-            return bool(
-                residue
-                and any(character.isdigit() for character in residue)
-                and re.fullmatch(r"[0-9A-Za-z.,%+\-]+", residue)
-            )
-
-        def verified_numeric_source_row_extension(
-            components: tuple[
-                tuple[str, str, tuple[float, float, float, float]],
-                ...,
-            ],
-            source_row: str,
-            source_box: tuple[float, float, float, float],
-        ) -> bool:
-            source_components = tuple(
-                index
-                for index, (_, normalized, component_box) in enumerate(components)
-                if normalized == source_row
-                and same_source_position(component_box, source_box)
-            )
-            for source_component in source_components:
-                remaining = tuple(
-                    normalized
-                    for index, (_, normalized, _) in enumerate(components)
-                    if index != source_component
-                )
-                if remaining and all(
-                    any(character.isdigit() for character in value)
-                    and re.fullmatch(r"[0-9A-Za-z.,%+\-]+", value)
-                    for value in remaining
-                ):
-                    return True
-            return False
-
-        def same_source_position(
-            current_box: tuple[float, float, float, float],
-            source_box: tuple[float, float, float, float],
-        ) -> bool:
-            current_x, current_y, current_width, current_height = current_box
-            source_x, source_y, source_width, source_height = source_box
-            intersection_width = max(
-                0.0,
-                min(current_x + current_width, source_x + source_width)
-                - max(current_x, source_x),
-            )
-            intersection_height = max(
-                0.0,
-                min(current_y + current_height, source_y + source_height)
-                - max(current_y, source_y),
-            )
-            minimum_area = min(
-                current_width * current_height,
-                source_width * source_height,
-            )
-            if minimum_area <= 0:
-                return False
-            current_centre_y = current_y + current_height / 2.0
-            source_centre_y = source_y + source_height / 2.0
-            return (
-                intersection_width * intersection_height / minimum_area >= 0.50
-                and abs(current_centre_y - source_centre_y) <= 8.0
-            )
-
-        stable_source_title_signatures: frozenset[tuple[str, ...]] = frozenset()
-        stable_source_title_rows: tuple[
-            tuple[str, tuple[float, float, float, float]],
-            ...,
-        ] = ()
-        stable_source_row_frames: tuple[
-            tuple[Any, tuple[tuple[float, float, float, float], ...]],
-            ...,
-        ] = ()
-        stable_source_background_frames: tuple[
-            tuple[int, tuple[_NormalizedPItemRow, ...]], ...
-        ] = ()
-        background_majority_required = 2
-
-        def source_row_pixels_unchanged(
-            current_image: Any,
-            current_box: tuple[float, float, float, float],
-            source_index: int,
-        ) -> bool:
-            import math
-
-            import numpy as np
-
-            comparison_started = time.perf_counter()
-            try:
-                if (
-                    not isinstance(current_image, np.ndarray)
-                    or current_image.ndim != 3
-                    or current_image.shape[2] != 3
-                ):
-                    return False
-                height, width = current_image.shape[:2]
-                for source_image, source_row_boxes in stable_source_row_frames:
-                    if (
-                        not isinstance(source_image, np.ndarray)
-                        or source_image.shape != current_image.shape
-                        or source_image.dtype != current_image.dtype
-                    ):
-                        continue
-                    source_box = source_row_boxes[source_index]
-                    if not same_source_position(current_box, source_box):
-                        continue
-                    current_x, current_y, current_width, current_height = current_box
-                    source_x, source_y, source_width, source_height = source_box
-                    left = math.floor(min(current_x, source_x) * width / 720.0)
-                    top = math.floor(min(current_y, source_y) * height / 1280.0)
-                    right = math.ceil(
-                        max(current_x + current_width, source_x + source_width)
-                        * width / 720.0
-                    )
-                    bottom = math.ceil(
-                        max(current_y + current_height, source_y + source_height)
-                        * height / 1280.0
-                    )
-                    # Compare the complete union at its original coordinates;
-                    # clipping, resizing or mixing pixels from several source
-                    # frames would no longer prove this source row unchanged.
-                    if not (0 <= left < right <= width and 0 <= top < bottom <= height):
-                        continue
-                    if np.array_equal(
-                        current_image[top:bottom, left:right],
-                        source_image[top:bottom, left:right],
-                    ):
-                        return True
-                return False
-            finally:
-                self._add_timing(
-                    "p_item_source_row_pixel_identity",
-                    time.perf_counter() - comparison_started,
-                )
-
-        if source_images:
-            cache = getattr(self, "_p_item_source_ocr_cache", None)
-            if cache is None:
-                cache = {}
-                self._p_item_source_ocr_cache = cache
-            # ``read_p_item_ids`` clears this bounded cache once per member.
-            # The frozen frame objects stay alive for all four slot
-            # transactions, so their in-process identities are sufficient and
-            # avoid hashing three full captures again for every slot.
-            cache_key = tuple(id(image) for image in source_images)
-            source_observations = cache.get(cache_key)
-            if source_observations is None:
-                ocr_started = time.perf_counter()
-                try:
-                    source_observations = tuple(
-                        observe_p_item(source_image)
-                        for source_image in source_images
-                    )
-                    self._assert_p_item_source_generation_stable(
-                        source_images,
-                        source_boxes,
-                    )
-                except Exception as error:
-                    raise ArenaReaderError(
-                        "p_item_source_title_evidence_invalid",
-                        "P-item detail recovery could not freeze source-page "
-                        "catalog-title evidence before clicking",
-                    ) from error
-                self._add_timing(
-                    "p_item_source_title_ocr",
-                    time.perf_counter() - ocr_started,
-                )
-                cache[cache_key] = source_observations
-            signature_counts: dict[tuple[str, ...], int] = {}
-            for _, _, _, source_rows, _, _ in source_observations:
-                signature = tuple(row[1] for row in source_rows)
-                if signature:
-                    signature_counts[signature] = signature_counts.get(signature, 0) + 1
-            strict_majority = len(source_observations) // 2 + 1
-            background_majority_required = max(2, strict_majority)
-            if len(source_observations) >= 2:
-                stable_source_title_signatures = frozenset(
-                    signature
-                    for signature, count in signature_counts.items()
-                    if count >= strict_majority
-                )
-                if stable_source_title_signatures:
-                    stable_signature = next(iter(stable_source_title_signatures))
-                    agreeing_rows = tuple(
-                        source_rows
-                        for _, _, _, source_rows, _, _ in source_observations
-                        if tuple(row[1] for row in source_rows)
-                        == stable_signature
-                    )
-                    stable_source_row_frames = tuple(
-                        (source_image, tuple(row[2] for row in source_rows))
-                        for source_image, (_, _, _, source_rows, _, _) in zip(
-                            source_images, source_observations, strict=True,
-                        )
-                        if tuple(row[1] for row in source_rows) == stable_signature
-                    )
-                    stable_source_title_rows = tuple(
-                        (
-                            normalized,
-                            tuple(
-                                statistics.median(
-                                    rows[index][2][coordinate]
-                                    for rows in agreeing_rows
-                                )
-                                for coordinate in range(4)
-                            ),
-                        )
-                        for index, normalized in enumerate(stable_signature)
-                    )
-                    # Extra rows never alter the old source signature or its
-                    # pixel-row indexes. Only its agreeing source frames may
-                    # contribute exact background evidence.
-                    stable_source_background_frames = tuple(
-                        (id(source_image), background_rows)
-                        for source_image, (_, _, _, source_rows, background_rows, _)
-                        in zip(source_images, source_observations, strict=True)
-                        if tuple(row[1] for row in source_rows) == stable_signature
-                    )
-                else:
-                    raise ArenaReaderError(
-                        "p_item_source_title_evidence_unstable",
-                        "P-item detail recovery could not establish a strict-"
-                        "majority spatial source-row signature before clicking",
-                    )
+        evidence = PItemDetailEvidence(self, candidate_ids, plan, source_images, slot_scope, source_boxes, global_title_scope, visual_tiebreak_ids, unrepresented_ids, time)
+        evidence.prepare_source()
         safe_region = self._p_item_interaction_box(box)
         interaction_point = self._box_center_point(safe_region)
         self._click(interaction_point, settle_seconds=0)
@@ -5129,7 +4689,7 @@ class MaaArenaReaderBackend:
                     current_rows,
                     _,
                     current_atoms,
-                ) = observe_p_item(image)
+                ) = evidence.observe_p_item(image)
                 self._add_timing(
                     "p_item_detail_ocr",
                     time.perf_counter() - ocr_started,
@@ -5145,11 +4705,11 @@ class MaaArenaReaderBackend:
                     exact_sources = tuple(
                         (index,)
                         for index, (source_row, source_box) in enumerate(
-                            stable_source_title_rows
+                            evidence.stable_source_title_rows
                         )
                         if index not in used_source_rows
                         and normalized == source_row
-                        and same_source_position(row_box, source_box)
+                        and evidence.same_source_position(row_box, source_box)
                     )
                     if exact_sources:
                         (source_index,) = min(exact_sources)
@@ -5158,23 +4718,23 @@ class MaaArenaReaderBackend:
                     extended_sources = tuple(
                         (index,)
                         for index, (source_row, source_box) in enumerate(
-                            stable_source_title_rows
+                            evidence.stable_source_title_rows
                         )
                         if index not in used_source_rows
-                        and same_source_position(row_box, source_box)
-                        and numeric_source_row_extension(normalized, source_row)
+                        and evidence.same_source_position(row_box, source_box)
+                        and evidence.numeric_source_row_extension(normalized, source_row)
                     )
                     verified_extended_sources = tuple(
                         (index,)
                         for (index,) in extended_sources
-                        if verified_numeric_source_row_extension(
+                        if evidence.verified_numeric_source_row_extension(
                             components,
-                            stable_source_title_rows[index][0],
-                            stable_source_title_rows[index][1],
+                            evidence.stable_source_title_rows[index][0],
+                            evidence.stable_source_title_rows[index][1],
                         )
                     )
                     if verified_extended_sources:
-                        if match_title_rows_exact(raw):
+                        if evidence.match_title_rows_exact(raw):
                             last_title_text = raw
                             break
                         # A numeric value can be misread as one Latin letter and
@@ -5191,22 +4751,22 @@ class MaaArenaReaderBackend:
                     edited_sources = tuple(
                         index
                         for index, (source_row, source_box) in enumerate(
-                            stable_source_title_rows
+                            evidence.stable_source_title_rows
                         )
                         if index not in used_source_rows
-                        and same_source_position(row_box, source_box)
-                        and one_insertion_or_deletion(normalized, source_row)
+                        and evidence.same_source_position(row_box, source_box)
+                        and evidence.one_insertion_or_deletion(normalized, source_row)
                     )
                     if edited_sources:
                         # A genuine catalog title (including a new '+') wins
                         # over source-row reuse, even with identical pixels.
-                        if match_title_rows_exact(raw):
+                        if evidence.match_title_rows_exact(raw):
                             last_title_text = raw
                             break
                         unchanged_source = next(
                             (
                                 index for index in edited_sources
-                                if source_row_pixels_unchanged(image, row_box, index)
+                                if evidence.source_row_pixels_unchanged(image, row_box, index)
                             ),
                             None,
                         )
@@ -5216,10 +4776,10 @@ class MaaArenaReaderBackend:
                             continue
                     approximate_source = any(
                         index not in used_source_rows
-                        and same_source_position(row_box, source_box)
-                        and one_substitution(normalized, source_row)
+                        and evidence.same_source_position(row_box, source_box)
+                        and evidence.one_substitution(normalized, source_row)
                         for index, (source_row, source_box) in enumerate(
-                            stable_source_title_rows
+                            evidence.stable_source_title_rows
                         )
                     )
                     if approximate_source:
@@ -5229,14 +4789,14 @@ class MaaArenaReaderBackend:
                         last_source_row_uncertain = True
                         break
                     extra_sources: set[tuple[int, int]] = set()
-                    for frame_id, background_rows in stable_source_background_frames:
+                    for frame_id, background_rows in evidence.stable_source_background_frames:
                         candidates = tuple(
                             index
                             for index, (_, source_row, source_box, _) in enumerate(
                                 background_rows
                             )
                             if normalized == source_row
-                            and same_source_position(row_box, source_box)
+                            and evidence.same_source_position(row_box, source_box)
                         )
                         if len(candidates) != 1:
                             continue
@@ -5247,15 +4807,15 @@ class MaaArenaReaderBackend:
                             source_key in used_background_rows
                             or sum(
                                 current_normalized == normalized
-                                and same_source_position(current_box, source_box)
+                                and evidence.same_source_position(current_box, source_box)
                                 for _, current_normalized, current_box, _ in current_rows
                             ) != 1
                             or any(
                                 index in used_source_rows
                                 and source_row == normalized
-                                and same_source_position(source_box, old_box)
+                                and evidence.same_source_position(source_box, old_box)
                                 for index, (source_row, old_box) in enumerate(
-                                    stable_source_title_rows
+                                    evidence.stable_source_title_rows
                                 )
                             )
                         ):
@@ -5263,8 +4823,8 @@ class MaaArenaReaderBackend:
                         extra_sources.add(source_key)
                     if (
                         len({frame_id for frame_id, _ in extra_sources})
-                        >= background_majority_required
-                        and not match_title_rows_exact(raw)
+                        >= evidence.background_majority_required
+                        and not evidence.match_title_rows_exact(raw)
                     ):
                         used_background_rows.update(extra_sources)
                         self._increment("p_item_source_background_row_reuses")
@@ -5274,16 +4834,16 @@ class MaaArenaReaderBackend:
                 # The first row newly introduced by the detail panel is the
                 # identity row. Later rows are effect prose and can contain
                 # other catalog titles, so they are never matching evidence.
-                raw_matches = match_title_rows(last_title_text)
+                raw_matches = evidence.match_title_rows(last_title_text)
                 if not raw_matches and source_images and current_atoms:
                     isolated_row = self._isolated_p_item_title_row(image, source_images, current_atoms)
                     if isolated_row is not None:
                         last_title_text, row_box, isolated_components = isolated_row
                         components = tuple(
-                            (text, normalize_title_row(text), bounds)
+                            (text, evidence.normalize_title_row(text), bounds)
                             for text, bounds in isolated_components
                         )
-                        raw_matches = match_title_rows(last_title_text)
+                        raw_matches = evidence.match_title_rows(last_title_text)
                         self._increment("p_item_isolated_title_reuses")
                 matches = raw_matches
                 effect_disambiguated = False
@@ -5303,12 +4863,12 @@ class MaaArenaReaderBackend:
                     text_started = time.perf_counter()
                     text_result = text_resolver(
                         text_atoms, title_index=title_index,
-                        source_frames=tuple(value[5] for value in source_observations)
+                        source_frames=tuple(value[5] for value in evidence.source_observations)
                         if source_images else (),
                         plan=plan, candidate_p_item_ids=candidate_ids, **slot_scope,
                         visual_tiebreak_p_item_ids=visual_tiebreak_ids,
                         title_text=last_title_text, detail_text=last_text,
-                        allow_one_substitution=not bool(match_title_rows_exact(last_title_text)),
+                        allow_one_substitution=not bool(evidence.match_title_rows_exact(last_title_text)),
                     )
                     if text_result.status != "unique" and current_atoms and source_images:
                         from arena_winrate._detail_title_region import isolated_p_item_body_region
@@ -5317,11 +4877,11 @@ class MaaArenaReaderBackend:
                         if panel_box is not None:
                             text_result = text_resolver(
                                 text_atoms, title_index=title_index,
-                                source_frames=tuple(value[5] for value in source_observations),
+                                source_frames=tuple(value[5] for value in evidence.source_observations),
                                 plan=plan, candidate_p_item_ids=candidate_ids, **slot_scope,
                                 visual_tiebreak_p_item_ids=visual_tiebreak_ids,
                                 title_text=last_title_text, detail_text=last_text,
-                                allow_one_substitution=not bool(match_title_rows_exact(last_title_text)),
+                                allow_one_substitution=not bool(evidence.match_title_rows_exact(last_title_text)),
                                 panel_box=panel_box,
                             )
                             self._increment("p_item_detail_panel_reuses")
@@ -5387,7 +4947,7 @@ class MaaArenaReaderBackend:
                             member_anchors_visible
                             and current_title_signature
                             and current_title_signature
-                            in stable_source_title_signatures
+                            in evidence.stable_source_title_signatures
                         ):
                             source_transition = True
                             last_source_match_route = "semantic_source_transition"
