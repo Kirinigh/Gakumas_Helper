@@ -1641,6 +1641,10 @@ class ArenaLineupReader:
                 )
             skill_groups[group_index] = cards
             customization_groups[group_index] = customizations
+            self._member_diagnostic(
+                "record_skill_card_group_observation", group_index, cards, customizations,
+                excluded_duplicate_flags, empty_flags,
+            )
         slot_state_groups = tuple(
             tuple(
                 SkillCardSlotState.EXCLUDED_DUPLICATE

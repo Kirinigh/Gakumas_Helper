@@ -777,6 +777,7 @@ class MaaArenaReaderBackend:
             "frames": deque(maxlen=5), "actions": deque(maxlen=16),
             "started": time.perf_counter(),
             "transaction_id": uuid4().hex,
+            "member_read_id": (getattr(self, "_member_failure_frames", None) or {}).get("read_id"),
             "count_baseline": dict(getattr(self, "_runtime_counts", {})),
         }
 
@@ -801,7 +802,7 @@ class MaaArenaReaderBackend:
         logger.info(json.dumps({
             "event": "arena_detail_fallback_result",
             **member.get("position", {}), **detail["position"],
-            "member_read_id": member.get("read_id"),
+            "member_read_id": detail.get("member_read_id"),
             "transaction_id": detail.get("transaction_id"),
             "outcome": outcome, "error": error,
             "duration_seconds": round(time.perf_counter() - detail["started"], 6),
@@ -854,6 +855,34 @@ class MaaArenaReaderBackend:
         diagnostic = getattr(self, "_member_failure_frames", None)
         if diagnostic is not None:
             diagnostic["position"]["card_name"] = self.catalog.skill_card_title(card_id)
+
+    def record_skill_card_group_observation(
+        self, group_index: int, card_ids: Sequence[int],
+        customizations: Sequence[Mapping[str, int]],
+        excluded: Sequence[bool], empty: Sequence[bool],
+    ) -> None:
+        """Bind earlier slot diagnostics to the reader's validated group result."""
+        member = getattr(self, "_member_failure_frames", None) or {}
+        cards = []
+        for slot, (card_id, effects, duplicate, vacant) in enumerate(
+            zip(card_ids, customizations, excluded, empty, strict=True), start=1,
+        ):
+            name = None
+            if card_id:
+                try:
+                    name = self.catalog.skill_card_title(card_id)
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    pass
+            cards.append({
+                "card_slot": slot, "card_id": card_id, "card_name": name,
+                "state": "excluded_duplicate" if duplicate else "empty" if vacant else "present",
+                "customizations": dict(effects),
+            })
+        logger.info(json.dumps({
+            **member.get("position", {}), "event": "arena_skill_card_group_resolved",
+            "member_read_id": member.get("read_id"), "group_index": group_index,
+            "cards": cards,
+        }, ensure_ascii=False))
 
     def persist_member_read_failure(self, error: Exception) -> None:
         """Freeze the original failure before any recovery can leave its page."""
@@ -944,6 +973,8 @@ class MaaArenaReaderBackend:
                     unsaved.append({"file": name, "error": str(frame_error)})
             evidence = {
                 "event": event, **diagnostic["position"],
+                "member_read_id": diagnostic.get("member_read_id", diagnostic.get("read_id")),
+                "transaction_id": diagnostic.get("transaction_id"),
                 "error": error, "actions": list(diagnostic["actions"]),
                 "frames": saved, "folder": str(folder),
             }
@@ -1004,6 +1035,7 @@ class MaaArenaReaderBackend:
         cursor = sample_cursor if sample_cursor is not None else baseline[2] if baseline is not None else self.runtime_sample_cursor()
         logger.info(json.dumps({
             "event": "arena_member_read_attempt",
+            "member_read_id": (getattr(self, "_member_failure_frames", None) or {}).get("read_id"),
             "team_id": target.team_id,
             "opponent_position": target.opponent_position,
             "stage_number": stage_number,
@@ -1172,6 +1204,7 @@ class MaaArenaReaderBackend:
 
         return {
             "event": "arena_member_read_metrics",
+            "member_read_id": evidence.get("member_read_id"),
             "team_id": target.team_id,
             "stage_number": stage_number,
             "member_slot": member_slot,
@@ -1298,6 +1331,7 @@ class MaaArenaReaderBackend:
                 }
             )
         evidence = {
+            "member_read_id": (getattr(self, "_member_failure_frames", None) or {}).get("read_id"),
             "stage_number": stage_number,
             "member_slot": member_slot,
             "p_items": [dict(value) for value in self._p_item_diagnostics],
@@ -8266,6 +8300,11 @@ class MaaArenaReaderBackend:
                 self._note_confirmed_detail_name(card_id)
             logger.info(json.dumps({
                 "event": "arena_skill_detail_id_check", "target_slot": key,
+                **((getattr(self, "_member_failure_frames", None) or {}).get("position", {})),
+                "group_index": key[0], "card_slot": key[1],
+                "member_read_id": (getattr(self, "_member_failure_frames", None) or {}).get("read_id"),
+                "transaction_id": (diagnostic or {}).get("transaction_id"),
+                "source_card_box": self._skill_card_source_box(key),
                 "expected_visual_ids": visual_ids, "actual_detail_id": card_id,
                 "other_source_slots": other_slots, "contact": attempt + 1,
                 "outcome": "repeated_title_rebind" if accepted else "reopen" if attempt == 0 else "exhausted",
@@ -10095,6 +10134,7 @@ class MaaArenaReaderBackend:
             logger.info(json.dumps({
                 "event": "arena_card_cost_inconclusive",
                 **((getattr(self, "_member_failure_frames", None) or {}).get("position", {})),
+                "member_read_id": (getattr(self, "_member_failure_frames", None) or {}).get("read_id"),
                 "group_index": group_index, "card_slot": card_slot, "card_id": card_id,
                 "hypotheses": hypotheses, "boxes": boxes, "reason": detail,
                 "predictions": [asdict(prediction) for prediction in predictions],
