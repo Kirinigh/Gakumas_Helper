@@ -263,6 +263,12 @@ finally {
 
 ## 8. CANDIDATE_VERIFIED：从公开提交构建候选
 
+冻结构建输入前，先在本机现用版本完成依赖和 RIS 竞技场组件检查／更新，并确认启动日志无依赖安装或资源同步失败。本机经常使用发布包，必须以 `current` 实际指向目录的构建清单和当前包元数据为参照，不能从目录名推断版本。此步骤只检查程序启动与资源，不运行游戏任务。
+
+`$InstalledReference` 指向这份已更新的本地安装；发行输入仍从已核验来源单独准备，不复制其中的用户配置、日志和缓存。依赖使用干净的 `$PythonSitePackages` 输入，逐包版本应与参照一致；若需要升级，先更新并验证本地参照，再冻结发行输入。RIS 使用最新成功 production deployment 的不可变提交，按 `tools/promote_ris_engine_bundle.py` 重新生成 READY 交接；不得直接复用旧 engine-ready，也不得直接打包运行缓存。构建器联网核对当前 production 提交，要求本地活动组件和待打包引擎均一致；查询失败或任一不一致即停止。期数名称及“正式／预览”从这份新目录生成，不按历史公告硬编码。构建清单中的 `release_reference` 保存版本核对结果，不保存本机路径。
+
+发布前还须用现装版本的隔离副本验证更新：保留它正常运行产生的期数和依赖变化，检查更新方案、真实下载进度、应用与重启后的版本。不得只用干净上一版候选验证增量；不得把真实安装作为差分资产基底。
+
 已完成双构建、来源核对和扫描的 MFA Core READY，在固定源码、补丁、SDK 与依赖输入均未变化时直接复用，保留原证据；项目版本或打包目录变化不要求重建 Core。最终发布包仍须从本批最终公开提交组装并核对。
 
 本批单独升级框架时，先将已核验的官方 ZIP、散列与版本绑定为 `$FrameworkArchive`、`$FrameworkSha256`、`$FrameworkVersion`，在下列构建命令追加 `--framework-archive $FrameworkArchive --framework-sha256 $FrameworkSha256 --framework-version $FrameworkVersion`。`requirements.txt`、Python 依赖输入与宿主实际加载的框架版本必须一致；MFA 应用与 Core 仍使用各自固定输入。
@@ -277,6 +283,7 @@ finally {
   --engine-bundle $EngineBundle `
   --mfa-core-bundle $MfaCoreBundle `
   --python-site-packages $PythonSitePackages `
+  --installed-reference $InstalledReference `
   --output $CandidateDirectory `
   --update-repository $Repository `
   --derived-version $Version `

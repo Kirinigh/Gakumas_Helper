@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import csv
+import sys
 import json
 import stat
 import base64
@@ -27,7 +28,8 @@ from email.parser import Parser
 try:
     from tools.deployment import file_update
 except ModuleNotFoundError:
-    import file_update
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools.deployment import file_update
 
 SCHEMA_VERSION = 1
 UPSTREAM_REPOSITORY = "https://github.com/SuperWaterGod/MaaGakumasu"
@@ -1152,6 +1154,48 @@ def _validate_python_runtime(root: Path, *, framework_version: str | None = None
     return versions
 
 
+def _dependency_versions(site_packages: Path) -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for path in sorted(site_packages.glob("*.dist-info/METADATA")):
+        metadata = Parser().parsestr(path.read_text(encoding="utf-8"))
+        name, version = metadata.get("Name"), metadata.get("Version")
+        if not name or not version:
+            raise BuildError("Python dependency metadata is incomplete")
+        key = re.sub(r"[-_.]+", "-", name).lower()
+        if key in versions:
+            raise BuildError(f"Python dependency has duplicate installed versions: {key}")
+        versions[key] = version
+    if not versions:
+        raise BuildError("Python dependency metadata is missing")
+    return versions
+
+
+def _validate_release_reference(
+    installed_reference: Path | None, engine_bundle: Path, python_site_packages: Path,
+) -> dict[str, Any]:
+    """Read the locally updated reference; never import or copy its user state."""
+    if installed_reference is None:
+        raise BuildError("release requires --installed-reference; update and verify the local reference first")
+    installed = _load_json(installed_reference / "GAKUMAS_HELPER_BUILD.json")
+    expected = _dependency_versions(python_site_packages)
+    actual = _dependency_versions(installed_reference / "python/Lib/site-packages")
+    differences = {name: {"candidate": value, "installed": actual.get(name)}
+                   for name, value in expected.items() if actual.get(name) != value}
+    if differences:
+        raise BuildError(f"release dependencies differ from the updated local reference: {differences}")
+    from agent.arena_winrate.upstream_component import GitHubProductionSource
+
+    production = GitHubProductionSource().discover_production_commit()
+    engine = _load_json(engine_bundle / "manifest.json")
+    active_path = installed_reference / ".local/runtime-data/arena-components/active.json"
+    active = (_load_json(active_path) if active_path.is_file()
+              else _load_json(installed_reference / "assets/arena-winrate/manifest.json"))
+    if engine.get("commit") != production or active.get("commit") != production:
+        raise BuildError("arena input/reference is not the latest successful RIS production deployment; update locally and rebuild the READY input first")
+    return {"installed_version": installed.get("derived_version"),
+            "python_packages": expected, "ris_production_commit": production}
+
+
 def build_derived_package(
     *,
     source_root: Path,
@@ -1172,6 +1216,7 @@ def build_derived_package(
     framework_archive: Path | None = None,
     framework_sha256: str | None = None,
     framework_version: str | None = None,
+    installed_reference: Path | None = None,
 ) -> Path:
     source_root = source_root.resolve()
     upstream_archive = upstream_archive.resolve()
@@ -1237,6 +1282,10 @@ def build_derived_package(
     engine_manifest = _validate_engine_bundle(engine_bundle)
     mfa_core_manifest = _validate_mfa_core_bundle(mfa_core_bundle)
     _validate_input_tree(python_site_packages, label="embedded Python site-packages", reject_private_names=True)
+    release_reference = (
+        _validate_release_reference(installed_reference, engine_bundle, python_site_packages)
+        if validate_python_runtime and update_repository != UPSTREAM_REPOSITORY else None
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     # Keep the transient root short: Windows native-extension loading can fail
     # once the staged DLL path grows beyond legacy loader limits.
@@ -1365,6 +1414,7 @@ def build_derived_package(
         )
         manifest = {
             "schema_version": SCHEMA_VERSION,
+            "release_reference": release_reference,
             "product": "MaaGakumasu",
             "derived_version": derived_version,
             "upstream": {
@@ -1449,6 +1499,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--engine-bundle", type=Path, required=True)
     parser.add_argument("--mfa-core-bundle", type=Path, required=True)
     parser.add_argument("--python-site-packages", type=Path, required=True)
+    parser.add_argument("--installed-reference", type=Path,
+                        help="Locally updated installation used to check release dependencies and RIS production data")
     parser.add_argument("--framework-archive", type=Path)
     parser.add_argument("--framework-sha256")
     parser.add_argument("--framework-version")
@@ -1472,6 +1524,7 @@ def main() -> int:
         engine_bundle=args.engine_bundle,
         mfa_core_bundle=args.mfa_core_bundle,
         python_site_packages=args.python_site_packages,
+        installed_reference=args.installed_reference,
         output=args.output,
         update_repository=args.update_repository,
         allow_upstream_trial_channel=args.allow_upstream_trial_channel,
