@@ -15,6 +15,13 @@ MUTABLE = frozenset({".local", "config", "logs", "log", "cache", "captures", "sc
 MUTABLE_FILES = frozenset({"config.json", "appsettings.json", "maa.log", "gui.log"})
 
 
+def runtime_refresh_path(relative: str) -> bool:
+    """These payloads are replaced in full, even when release bytes did not change."""
+    return relative.casefold() == "interface.json" or relative.casefold().startswith(
+        ("python/lib/site-packages/", "python/scripts/")
+    )
+
+
 def protected(relative: str) -> bool:
     parts = relative.lower().split("/")
     return (parts[0] in MUTABLE or parts[-1] in MUTABLE_FILES
@@ -65,12 +72,12 @@ def write_state(root: Path, release_version: str) -> dict:
     build = json.loads((root / "GAKUMAS_HELPER_BUILD.json").read_text(encoding="utf-8-sig"))
     # Runtime/framework/layout changes require a full package; the GUI/Core may change in a delta.
     files = inventory(root)
-    state = {"schema_version": PROTOCOL, "version": release_version,
+    state = {"schema_version": PROTOCOL, "version": release_version, "runtime_refresh": True,
              "compatibility": {"layout": "gkh-portable-v1", "platform": "win-x86_64",
                                "framework": build.get("framework"),
-                               "python_packages": build.get("python_packages", {}),
+                               "runtime_refresh": 1,
                                "runtime_files": {p: h for p, h in files.items()
-                                                 if (p.startswith(("python/", "runtimes/", "libs/System.", "libs/Microsoft."))
+                                                 if not runtime_refresh_path(p) and (p.startswith(("python/", "runtimes/", "libs/System.", "libs/Microsoft."))
                                                      or p.endswith(".runtimeconfig.json")
                                                      or p.rsplit("/", 1)[-1].lower() in {"coreclr.dll", "hostfxr.dll", "hostpolicy.dll", "clrjit.dll"})}},
              "files": files}
@@ -101,7 +108,8 @@ def build_adjacent(candidate: Path, previous: Path | None, output: Path, *, requ
     old, new = base["files"], target["files"]
     added = sorted(new.keys() - old.keys())
     deleted = sorted(old.keys() - new.keys())
-    modified = sorted(p for p in new.keys() & old.keys() if new[p] != old[p])
+    modified = sorted(p for p in new.keys() & old.keys() if new[p] != old[p]
+                      or (target.get("runtime_refresh") is True and runtime_refresh_path(p)))
     changes = {"added": added + [STATE], "modified": modified, "deleted": deleted,
                "added_dir": [], "deleted_dir": []}
     # Deliberately no OS/architecture token: every historical selector ranks the full ZIP higher.

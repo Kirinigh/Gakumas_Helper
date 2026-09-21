@@ -1893,10 +1893,9 @@ diff --git a/MFAAvalonia/AppRuntime.cs b/MFAAvalonia/AppRuntime.cs
          _executablePath = Environment.ProcessPath;
 diff --git a/MFAAvalonia/Helper/DerivedFileUpdate.cs b/MFAAvalonia/Helper/DerivedFileUpdate.cs
 new file mode 100644
-index 0000000..f6b2b3f2f325624099bae2a68f1bd5e1a26b9413
 --- /dev/null
 +++ b/MFAAvalonia/Helper/DerivedFileUpdate.cs
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,464 @@
 +using System;
 +using System.IO;
 +using System.IO.Compression;
@@ -1932,6 +1931,7 @@ index 0000000..f6b2b3f2f325624099bae2a68f1bd5e1a26b9413
 +    internal sealed class State
 +    {
 +        public int schema_version { get; set; }
++        public bool runtime_refresh { get; set; }
 +        public string version { get; set; } = "";
 +        public JsonObject compatibility { get; set; } = new();
 +        public Dictionary<string, string> files { get; set; } = new();
@@ -2043,16 +2043,19 @@ index 0000000..f6b2b3f2f325624099bae2a68f1bd5e1a26b9413
 +            }
 +        }
 +    }
-+    internal static void VerifyTree(string root, State state, string? stateHash = null)
++    internal static bool RuntimeRefreshPath(string path) => path.Equals("interface.json", StringComparison.OrdinalIgnoreCase)
++        || path.StartsWith("python/Lib/site-packages/", StringComparison.OrdinalIgnoreCase)
++        || path.StartsWith("python/Scripts/", StringComparison.OrdinalIgnoreCase);
++    internal static void VerifyTree(string root, State state, string? stateHash = null, bool refreshRuntime = false)
 +    {
 +        ValidateState(state);
-+        foreach (var pair in state.files)
++        foreach (var pair in state.files.Where(p => !refreshRuntime || !RuntimeRefreshPath(p.Key)))
 +            if (!File.Exists(PathIn(root, pair.Key)) || !Hash(PathIn(root, pair.Key)).Equals(pair.Value, StringComparison.OrdinalIgnoreCase))
 +                throw new InvalidDataException("本地文件与版本基底不一致：" + pair.Key);
 +        if (stateHash != null && (!File.Exists(PathIn(root, StateName)) || !Hash(PathIn(root, StateName)).Equals(stateHash, StringComparison.OrdinalIgnoreCase)))
 +            throw new InvalidDataException("版本基底清单不一致。");
-+        var actual = ManagedFiles(root).Where(p => p != StateName);
-+        if (!actual.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(state.files.Keys))
++        var actual = ManagedFiles(root).Where(p => p != StateName && (!refreshRuntime || !RuntimeRefreshPath(p)));
++        if (!actual.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(state.files.Keys.Where(p => !refreshRuntime || !RuntimeRefreshPath(p))))
 +            throw new InvalidDataException("本地存在清单外程序文件，采用完整更新。");
 +    }
 +    internal static Asset ResolveAsset(JsonObject release, string name)
@@ -2145,7 +2148,7 @@ index 0000000..f6b2b3f2f325624099bae2a68f1bd5e1a26b9413
 +            }
 +            if (plan.Steps.Count == 0 || plan.Steps.Sum(s => s.Asset.bytes) >= plan.Full.bytes * 0.8)
 +                throw new InvalidDataException("增量总量未节省至少20%，采用完整更新。");
-+            VerifyTree(root, plan.Steps[0].Metadata.delta!.@base, plan.Steps[0].Metadata.delta!.base_state_sha256);
++            VerifyTree(root, plan.Steps[0].Metadata.delta!.@base, plan.Steps[0].Metadata.delta!.base_state_sha256, plan.Steps[0].Metadata.target.runtime_refresh);
 +            downloadingDelta = true;
 +            foreach (var step in plan.Steps)
 +            {
@@ -2201,7 +2204,7 @@ index 0000000..f6b2b3f2f325624099bae2a68f1bd5e1a26b9413
 +        else
 +        {
 +            var delta = step.Metadata.delta!;
-+            var expected = step.Metadata.target.files.Where(p => !delta.@base.files.TryGetValue(p.Key, out var old) || old != p.Value).Select(p => p.Key).Append(StateName).ToHashSet(StringComparer.OrdinalIgnoreCase);
++            var expected = step.Metadata.target.files.Where(p => !delta.@base.files.TryGetValue(p.Key, out var old) || old != p.Value || (step.Metadata.target.runtime_refresh && RuntimeRefreshPath(p.Key))).Select(p => p.Key).Append(StateName).ToHashSet(StringComparer.OrdinalIgnoreCase);
 +            if (!seen.Where(p => p != "changes.json").ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(expected)) throw new InvalidDataException("增量文件集合不匹配。");
 +            var changes = JsonNode.Parse(File.ReadAllText(PathIn(step.Directory, "changes.json")))!.AsObject();
 +            string[] Values(string name) => changes[name]?.AsArray().Select(p => p!.GetValue<string>()).ToArray() ?? throw new InvalidDataException("增量变更表不完整。");
@@ -2219,10 +2222,12 @@ index 0000000..f6b2b3f2f325624099bae2a68f1bd5e1a26b9413
 +        {
 +            foreach (var step in plan.Steps)
 +            {
-+                if (plan.IsDelta) VerifyTree(plan.Root, step.Metadata.delta!.@base, step.Metadata.delta!.base_state_sha256);
++                if (plan.IsDelta) VerifyTree(plan.Root, step.Metadata.delta!.@base, step.Metadata.delta!.base_state_sha256, step.Metadata.target.runtime_refresh);
 +                var target = step.Metadata.target;
 +                var deleted = plan.IsDelta ? step.Metadata.delta!.@base.files.Keys.Except(target.files.Keys)
 +                    : ManagedFiles(plan.Root).Where(p => p != StateName && !target.files.ContainsKey(p));
++                if (target.runtime_refresh)
++                    deleted = deleted.Concat(ManagedFiles(plan.Root).Where(p => RuntimeRefreshPath(p) && !target.files.ContainsKey(p))).Distinct();
 +                foreach (var relative in deleted.ToArray())
 +                {
 +                    beforeMutation?.Invoke(relative);
@@ -2266,7 +2271,7 @@ index 0000000..f6b2b3f2f325624099bae2a68f1bd5e1a26b9413
 +        Directory.CreateDirectory(shadow);
 +        // A locally modified base must not supply the worker for a full repair.
 +        var workerSource = plan.IsDelta ? plan.Root : plan.Steps.Single().Directory;
-+        if (plan.IsDelta) VerifyTree(plan.Root, plan.Steps[0].Metadata.delta!.@base, plan.Steps[0].Metadata.delta!.base_state_sha256);
++        if (plan.IsDelta) VerifyTree(plan.Root, plan.Steps[0].Metadata.delta!.@base, plan.Steps[0].Metadata.delta!.base_state_sha256, plan.Steps[0].Metadata.target.runtime_refresh);
 +        // Run an unchanged copy outside the install tree, including its own Core/runtime.
 +        foreach (var relative in ManagedFiles(workerSource))
 +        {

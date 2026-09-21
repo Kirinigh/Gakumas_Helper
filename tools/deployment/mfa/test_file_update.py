@@ -65,6 +65,11 @@ def run(args):
         (package / "MaaGakumasu.exe").write_bytes(f"exe-{index}".encode())
         (package / "MFAAvalonia.Core.dll").write_bytes(f"core-{index}".encode())
         (package / "code.py").write_text(f"version = {index}")
+        dependency = package / "python/Lib/site-packages"
+        dependency.mkdir(parents=True)
+        (dependency / "same.py").write_text("release dependency")
+        (dependency / "numpy.py").write_text(f"dependency release {index}")
+        (dependency / f"numpy-{index}.dist-info").write_text(str(index))
         if index == 1:
             (package / "transition").write_text("file before directory transition")
         else:
@@ -94,6 +99,8 @@ def run(args):
         packages[version] = package
     results = []
     scenarios = [("adjacent", "v0.5.3", "execute", True, 1),
+                 ("runtime_drift", "v0.5.3", "execute", True, 1),
+                 ("runtime_drift_chain", "v0.5.1", "execute", True, 3),
                  ("chain", "v0.5.1", "execute", True, 3),
                  ("modified", "v0.5.1", "execute", False, 1),
                  ("missing", "v0.5.1", "execute", False, 1),
@@ -118,6 +125,12 @@ def run(args):
             path.write_text("user data")
         if name == "modified":
             (root / "code.py").write_text("local patch")
+        if name.startswith("runtime_drift"):
+            (root / "interface.json").write_text('{"version":"local-season-sync"}')
+            dependency = root / "python/Lib/site-packages"
+            (dependency / "same.py").write_text("pip upgraded this unchanged release file")
+            (dependency / "numpy.py").unlink()
+            (dependency / "numpy-new.dist-info").write_text("new pip metadata")
         if name == "extra_local_code":
             (root / "local_patch.py").write_text("local patch")
         catalog = json.loads(json.dumps([r for r in releases if name != "missing" or r["tag_name"] != "v0.5.2"]))
@@ -183,6 +196,7 @@ def run(args):
             if target.is_file():
                 assert (root / target.relative_to(packages["v0.5.4"])).read_bytes() == target.read_bytes(), (name, target.name)
         assert not (root / "obsolete.py").exists()
+        assert not (root / "python/Lib/site-packages/numpy-new.dist-info").exists()
         assert (root / "config/settings.json").read_text() == "user data"
         assert (root / ".local/runtime-data/cache.json").read_text() == "user data"
         assert (root / "logs/old.log").read_text() == "user data"

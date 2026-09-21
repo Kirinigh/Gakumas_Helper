@@ -37,6 +37,7 @@
             "files"
           ],
           "properties": {
+            "runtime_refresh": { "type": "boolean" },
             "schema_version": {
               "const": 1
             },
@@ -100,6 +101,7 @@
                     "files"
                   ],
                   "properties": {
+                    "runtime_refresh": { "type": "boolean" },
                     "schema_version": {
                       "const": 1
                     },
