@@ -172,7 +172,13 @@ def atom_text_view(atoms: list[dict], layout: dict) -> tuple[str, list[dict]]:
             text = normalize(atoms[index]["text"]).translate(str.maketrans({"值": "値", "增": "増", "·": "・"}))
             if not text:
                 continue
-            if previous and previous[-1].isdigit() and text[0].isdigit():
+            # A percentage is also a complete numeric edge. An independent
+            # decoration digit must not turn +25% into the malformed +25%4.
+            numeric_edge = previous and (
+                previous[-1].isdigit()
+                or (previous.endswith("%") and len(previous) > 1 and previous[-2].isdigit())
+            )
+            if numeric_edge and text[0].isdigit():
                 parts.append(BOUNDARY)
                 offset += 1
             parts.append(text)
