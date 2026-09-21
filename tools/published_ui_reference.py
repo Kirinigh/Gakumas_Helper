@@ -55,8 +55,11 @@ def _sha256(value: bytes) -> str:
 
 
 def _validate_reference(reference: Mapping[str, Any], *, component: str) -> None:
-    if not isinstance(reference, Mapping) or set(reference) != REFERENCE_KEYS:
+    if not isinstance(reference, Mapping) or set(reference) not in (REFERENCE_KEYS, REFERENCE_KEYS | {"provisional_shared_from"}):
         raise PublishedUiReferenceError("published UI reference fields are invalid")
+    shared = reference.get("provisional_shared_from")
+    if shared is not None and (component != "skill_card" or not _positive_integer(shared) or shared == reference["business_id"]):
+        raise PublishedUiReferenceError("provisional shared UI must name another skill-card source")
     if reference["kind"] != component or component not in {"p_item", "skill_card"}:
         raise PublishedUiReferenceError("published UI reference kind is invalid")
     if not _positive_integer(reference["business_id"]) or not isinstance(reference["upgraded"], bool):
@@ -132,6 +135,15 @@ def validate_published_ui_references(
             rows[str(business_id)] = row
     for key, reference in references.items():
         _validate_reference(reference, component=component)
+        if "provisional_shared_from" in reference:
+            source = references.get(str(reference["provisional_shared_from"]))
+            if not isinstance(source, Mapping) or "provisional_shared_from" in source:
+                raise PublishedUiReferenceError("provisional shared UI source must be a direct reference")
+            if source.get("upgraded") == reference["upgraded"] or any(
+                reference[field] != source.get(field)
+                for field in REFERENCE_KEYS - {"business_id", "upgraded"}
+            ):
+                raise PublishedUiReferenceError("provisional shared UI must preserve the opposite-state source exactly")
         if str(reference["business_id"]) != key:
             raise PublishedUiReferenceError("published UI reference business_id differs from its key")
         if catalog_rows is None:

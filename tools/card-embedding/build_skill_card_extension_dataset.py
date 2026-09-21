@@ -568,6 +568,7 @@ def _copy_inputs(
     raw_inventory: dict[str, Any],
     raw_art_root: Path,
     fixed_icon_root: Path,
+    provisional_shared_from: dict[int, int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     images = raw_inventory.get("images")
     duplicates = raw_inventory.get("duplicates", [])
@@ -626,7 +627,7 @@ def _copy_inputs(
         width, height, mode = _verify_fixed_icon(source)
         source_sha256 = sha256_file(source)
         previous_owner = icon_hash_owners.setdefault(source_sha256, mapping.business_id)
-        if previous_owner != mapping.business_id:
+        if previous_owner != mapping.business_id and (provisional_shared_from or {}).get(mapping.business_id) != previous_owner:
             raise ExtensionDatasetError(f"fixed PNG is byte-identical across business IDs {previous_owner}/{mapping.business_id}")
         for variant in mapping.asset_variants:
             class_name = _class_name(mapping, variant)
@@ -754,6 +755,11 @@ def build_extension_dataset(
             raw_inventory=raw_inventory,
             raw_art_root=raw_art_root.resolve(),
             fixed_icon_root=fixed_icon_root.resolve(),
+            provisional_shared_from={
+                int(key): row["provisional_shared_from"]
+                for key, row in fixed_icon_source.get("references", {}).items()
+                if "provisional_shared_from" in row
+            },
         )
         crosswalk_path = temporary / "crosswalk.json"
         _write_json(

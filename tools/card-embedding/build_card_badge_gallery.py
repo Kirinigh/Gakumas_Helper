@@ -1556,6 +1556,17 @@ def build_badge_gallery(
                 source.pop(key, None)
             source["fixed_icons"] = dict(fixed_icon_source)
             source["fixed_icon_provenance_sha256"] = extension_sources["fixed_icon_provenance_sha256"]
+            shared_pairs = [
+                [record["provisional_shared_from"], record["business_id"]]
+                for record in fixed_icon_source["references"].values()
+                if "provisional_shared_from" in record
+            ]
+            if shared_pairs:
+                runtime = dict(runtime)
+                runtime["reference_rule_version"] = "task095-provisional-shared-identity-v1"
+                runtime["provisional_shared_pairs"] = sorted(
+                    runtime.get("provisional_shared_pairs", []) + shared_pairs
+                )
         else:
             repository, revision, license_name = _source_provenance(
                 fixed_icon_source,

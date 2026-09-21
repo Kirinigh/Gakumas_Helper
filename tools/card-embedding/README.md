@@ -308,7 +308,7 @@ glyph acceptance gate.
 - 源数据保留官方计划、稀有度、四类归属字段，以及目录 sourceType、pIdolId、type、rarity 和分类依据。目录固有来源可补足官方归属空值；不从图片外观或 pIdolId 单独推断固有种类。
 - 构建会核对冻结来源、已接受的 ID 映射、三套图库的实际 ID 集合和普通／＋标签一致性。官方名称别名使用已接受 crosswalk。
 
-复建当前 876 张卡索引（在项目根目录，使用项目虚拟环境 Python；下列输入路径须替换为已核验的冻结来源）：
+复建当前 880 张卡索引（在项目根目录，使用项目虚拟环境 Python；下列输入路径须替换为已核验的冻结来源）：
 
 ```powershell
 python tools/card-embedding/build_skill_card_classification.py `
@@ -319,11 +319,12 @@ python tools/card-embedding/build_skill_card_classification.py `
   --dataset-manifest .local/classification-inputs/extension-2/dataset_manifest.json `
   --dataset-manifest .local/classification-inputs/extension-3/dataset_manifest.json `
   --dataset-manifest .local/classification-inputs/extension-4/dataset_manifest.json `
+  --dataset-manifest .local/classification-inputs/extension-5/dataset_manifest.json `
   --component-root assets/resource/base/model/classify/card_embedding `
   --component-root assets/resource/base/model/embedding/arena_card `
   --component-root assets/resource/base/model/embedding/arena_badge_reference `
-  --catalog-revision 0d0a85145258f700dbbab66d31acf87361297a37 `
-  --revision skill-card-classification-876-v1 `
+  --catalog-revision 41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c `
+  --revision skill-card-classification-880-provisional-v1 `
   --output assets/data/skill_card_classification.json
 ```
 
@@ -349,3 +350,9 @@ python tools/card-embedding/build_skill_card_classification.py `
 - 每配置预热20次，随后1000次交错查询，计入归一化、完整页面特征、身份取样、图库距离及候选归并。不包含详情、模型或完整读取墙钟，不推算点击节省。完整己方9人P50/P95均须另证≤基线102%，对手及整体竞技场仍待验收。
 
 报告及split记录代码、运行时、来源和参数，拒绝覆盖；全程只读生产代码和资产，不调用Maa、不创建生产候选图库。没有合格候选时输出`STOP_KEEP_BASELINE`并停止晋级。
+
+### 批次11：临时共用强化参考
+
+877～880已追加到三套技能图库；880按用户本轮授权暂用879相同完整UI，来源记录`provisional_shared_from: 879`，不宣称取得880独立强化图。实际图片来源字段完整保留；普通／强化身份仍由目录区分，不修改原图或合成＋标记。构建器只允许来源重放已验证的显式同卡异态共用，其他跨ID重复继续拒绝。
+
+卡面参考使用`task095-provisional-shared-identity-v1`及`provisional_shared_pairs`，必须与本次读取器配套：相同家族保留两个候选，三帧仍不唯一，沿现有详情兜底确认。旧读取器拒绝新规则；新读取器保持旧资产行为。编码器未重训，阈值及页面保护未改变。880的同图离线查询仅证明家族召回和歧义处理，不能作为880真实强化图识别通过。真实图取得后替换临时来源、撤销对应共用声明并重新评估；是否需要重训由真实图诊断决定。

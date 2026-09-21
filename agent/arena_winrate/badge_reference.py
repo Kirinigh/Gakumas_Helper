@@ -27,6 +27,7 @@ class BadgeReferenceError(RuntimeError):
 
 
 REFERENCE_RULE_VERSION = "task410-r10-card-identity-only-v1"
+SHARED_REFERENCE_RULE_VERSION = "task095-provisional-shared-identity-v1"
 
 
 class BadgeReferenceGallery:
@@ -43,6 +44,7 @@ class BadgeReferenceGallery:
         minimum_group_margin: float,
         maximum_zero_coarse_error: float | None = None,
         minimum_high_error_group_margin: float = 3.0,
+        provisional_shared_pairs: Sequence[tuple[int, int]] = (),
     ) -> None:
         import numpy as np
 
@@ -83,6 +85,19 @@ class BadgeReferenceGallery:
             group: np.asarray(indices, dtype=np.int32)
             for group, indices in groups.items()
         }
+        self._provisional_candidates: dict[str, tuple[int, ...]] = {}
+        for source_id, target_id in provisional_shared_pairs:
+            source_rows = np.flatnonzero(self.business_ids == source_id)
+            target_rows = np.flatnonzero(self.business_ids == target_id)
+            if len(source_rows) != 1 or len(target_rows) != 1 or source_id == target_id:
+                raise BadgeReferenceError("provisional shared reference IDs are invalid")
+            source_index, target_index = int(source_rows[0]), int(target_rows[0])
+            group = self.visual_group_ids[source_index]
+            if group != self.visual_group_ids[target_index] or not np.array_equal(
+                self.top_coarse[source_index], self.top_coarse[target_index]
+            ):
+                raise BadgeReferenceError("provisional shared references must have identical pixels and family")
+            self._provisional_candidates[group] = tuple(sorted({source_id, target_id}))
         self._eligible_scopes: dict[frozenset[int], tuple[Any, Any, dict[str, Any]]] = {}
 
     def _eligible_scope(self, eligible_card_ids: frozenset[int]):
@@ -125,8 +140,10 @@ class BadgeReferenceGallery:
         if not expected_hash or _sha256_file(gallery_path) != expected_hash:
             raise BadgeReferenceError("card reference gallery SHA-256 mismatch")
         runtime = manifest.get("runtime", {})
-        if runtime.get("reference_rule_version") != REFERENCE_RULE_VERSION:
+        if runtime.get("reference_rule_version") not in {REFERENCE_RULE_VERSION, SHARED_REFERENCE_RULE_VERSION}:
             raise BadgeReferenceError("card reference rule version mismatch")
+        if runtime.get("provisional_shared_pairs") and runtime.get("reference_rule_version") != SHARED_REFERENCE_RULE_VERSION:
+            raise BadgeReferenceError("provisional shared references require the compatible reader rule")
         with np.load(gallery_path, allow_pickle=False) as payload:
             return cls(
                 business_ids=payload["business_ids"],
@@ -140,6 +157,9 @@ class BadgeReferenceGallery:
                 ),
                 minimum_high_error_group_margin=float(
                     runtime["minimum_high_error_group_margin"]
+                ),
+                provisional_shared_pairs=tuple(
+                    tuple(pair) for pair in runtime.get("provisional_shared_pairs", ())
                 ),
             )
 
@@ -209,7 +229,19 @@ class BadgeReferenceGallery:
                 "identity_low_confidence": low_confidence_identity,
                 "identity_resolution": "coarse_identity_only",
             }
-            measured.append(result)
+            shared_ids = self._provisional_candidates.get(candidate_group)
+            if shared_ids and eligible_card_ids is not None:
+                shared_ids = tuple(card_id for card_id in shared_ids if card_id in eligible_card_ids)
+            if shared_ids:
+                # One temporary image cannot prove either upgrade state.
+                # Keep both business IDs for the existing title fallback.
+                measured.extend(
+                    {**result, "reference_business_id": business_id,
+                     "identity_resolution": "provisional_shared_reference"}
+                    for business_id in shared_ids
+                )
+            else:
+                measured.append(result)
         if len(measured) == 1:
             return measured[0]
         return {

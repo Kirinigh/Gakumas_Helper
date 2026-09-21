@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "revision": "task095-classification-876-v1",
+  "revision": "task095-batch11-880-provisional",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
   "sources": {
-    "catalog_revision": "0d0a85145258f700dbbab66d31acf87361297a37",
-    "catalog_sha256": "06914D26D214B4B569461A55BDAB9DACC1B9A53C40BC585F97B9C9DB46038A33",
-    "decoded_master_sha256": "41F520B844622DD5CBDADF88B706F8EC1D26921EC450767FA34A992775E48E46",
+    "catalog_revision": "41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c",
+    "catalog_sha256": "DF5E597214B16A95155193F24199B7D84359A4E73842D8DE6EA0A222FDEFC92E",
+    "decoded_master_sha256": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
     "datasets": [
       {
         "dataset_id": "task075-authoritative-705100:0036",
@@ -28,6 +28,10 @@
       {
         "dataset_id": "task095-skill-card-extension-pc-705100-0054-0d0a85-published-ui",
         "manifest_sha256": "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C"
+      },
+      {
+        "dataset_id": "task095-skill-card-extension-pc-705100-0062-41153f-published-ui-provisional-shared",
+        "manifest_sha256": "48160BE76DADEB23C2B326D29C862F704BC8F8DBB3E2EDC18DF2B7FA436D98B0"
       }
     ]
   },
@@ -20200,6 +20204,98 @@
         "originCharacterId": "",
         "kind_basis": "user_rule_all_legend_other"
       }
+    },
+    {
+      "business_id": 877,
+      "name": "わたしは、風！",
+      "upgraded": false,
+      "internal_id": "p_card-03-ido-3_245",
+      "asset_id": "img_general_skillcard_ido-3_245",
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 156,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-shro-3-022",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
+      }
+    },
+    {
+      "business_id": 878,
+      "name": "わたしは、風！+",
+      "upgraded": true,
+      "internal_id": "p_card-03-ido-3_245",
+      "asset_id": "img_general_skillcard_ido-3_245",
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 156,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-shro-3-022",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
+      }
+    },
+    {
+      "business_id": 879,
+      "name": "うたたねレポート",
+      "upgraded": false,
+      "internal_id": "p_card-03-sup-3_252",
+      "asset_id": "img_general_skillcard_sup-3_252",
+      "plan": "anomaly",
+      "kind": "support",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "",
+        "originSupportCardId": "s_card-3-0109",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_support_origin"
+      }
+    },
+    {
+      "business_id": 880,
+      "name": "うたたねレポート+",
+      "upgraded": true,
+      "internal_id": "p_card-03-sup-3_252",
+      "asset_id": "img_general_skillcard_sup-3_252",
+      "plan": "anomaly",
+      "kind": "support",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "",
+        "originSupportCardId": "s_card-3-0109",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_support_origin"
+      }
     }
   ],
   "indexes": {
@@ -21086,7 +21182,11 @@
         855,
         856,
         857,
-        858
+        858,
+        877,
+        878,
+        879,
+        880
       ]
     },
     "kind": {
@@ -21416,7 +21516,9 @@
         871,
         872,
         873,
-        874
+        874,
+        877,
+        878
       ],
       "support": [
         236,
@@ -21532,7 +21634,9 @@
         855,
         856,
         863,
-        864
+        864,
+        879,
+        880
       ],
       "basic": [
         1,
@@ -22425,7 +22529,11 @@
         871,
         872,
         873,
-        874
+        874,
+        877,
+        878,
+        879,
+        880
       ],
       "SR": [
         70,
@@ -22869,17 +22977,17 @@
       "free": 65,
       "sense": 277,
       "logic": 301,
-      "anomaly": 233
+      "anomaly": 237
     },
     "kind": {
-      "p_idol": 326,
-      "support": 114,
+      "p_idol": 328,
+      "support": 116,
       "basic": 68,
       "other": 368
     },
     "rarity": {
       "L": 27,
-      "SSR": 420,
+      "SSR": 424,
       "SR": 204,
       "R": 144,
       "N": 81
@@ -22888,26 +22996,26 @@
   "gallery_coverage": [
     {
       "component": "card_embedding",
-      "manifest_sha256": "8A53B146811E5D3ABFAF3F53B5B90009E504359B9C2D03DECE1A4D54260F1129",
-      "gallery_sha256": "1397D09F3ABC78E7C9CA8378C20003E2BBB85E512FB1A1842F54B6736F18AAC8",
-      "row_count": 4176,
-      "business_id_count": 876,
+      "manifest_sha256": "D128615AD6FF8D316468A5B539F27BA0DF48794FF7B0CA34F8ABB6CFD6F021F9",
+      "gallery_sha256": "53A3883246B2694B221B0DFB8CB391ED6B69B1A22B2F08304947EF61A921F3F8",
+      "row_count": 4180,
+      "business_id_count": 880,
       "join_key": "business_id"
     },
     {
       "component": "arena_card",
-      "manifest_sha256": "F33DA883812F5E51F57DE6D7702F1B5492EF8AB15A2CAA8ADA475012DDDF92AA",
-      "gallery_sha256": "674B3B995926EC36D3743E41E544ADF0DF52A9A3EC99CBDC1126DE3BB0B65FF9",
-      "row_count": 4176,
-      "business_id_count": 876,
+      "manifest_sha256": "F6C5A1FE44C970FFF35489ACBFF8BD999E4797BD102153586E7793C281A539E2",
+      "gallery_sha256": "CA409E94A2A38E31305F5877A1124D3397D318E489ED16D89361BA47352BAFC6",
+      "row_count": 4180,
+      "business_id_count": 880,
       "join_key": "business_id"
     },
     {
       "component": "arena_badge_reference",
-      "manifest_sha256": "32D9114B9A52666FB0979ED54352BA89759BDB556F587322B8F831D29370A563",
-      "gallery_sha256": "E94CF9A2CAC79984A170713819CA9CCDCB1C093EBAD973FDE734A6A589ABF483",
-      "row_count": 3409,
-      "business_id_count": 876,
+      "manifest_sha256": "A22D01D46FC198B9D71B29A0B11A3A084E8815592E3BF24698D2B1BBB624462E",
+      "gallery_sha256": "1ACF750E88CD3626F99FC9087B00CB0D69680A2B0D76498A081A74CFF9E1A715",
+      "row_count": 3413,
+      "business_id_count": 880,
       "join_key": "business_id"
     }
   ]

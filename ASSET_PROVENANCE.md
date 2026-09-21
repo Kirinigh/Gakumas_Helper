@@ -20,3 +20,5 @@
 本批RIS目录固定为`0d0a85145258f700dbbab66d31acf87361297a37`，与新增卡牌身份配套。既有P道具和费用参考保留各自历史来源绑定，由发布检查验证与当前运行目录的覆盖和语义一致性；目录包含条目不表示所有新卡效果均已完成实机验证。
 
 发布硬门：公开源码按允许清单生成独立、连续的公开提交；完整包只从已验证的公开提交、固定上游 Release、固定引擎和固定 Python 依赖构建。三套技能卡识别集合必须与包内 RIS 技能目录逐项相等，P 道具图库必须完整覆盖竞技场目录。卡面实机增量必须携带 NPZ、manifest、`hard_negative_evaluation.json` 三件套并重放累积硬负门。费用与 P 道具静态参考必须各自携带 NPZ、manifest、`production_handoff_evaluation.json` 三件套并通过 Release 重算；费用还必须以 engine manifest 绑定当前包内 `skill_cards.json + customizations.json` 字节，并通过 `ArenaEntityCatalog` 语义双向精确门；P 道具还必须从发布源码树实际加载固定 SHA-256 的独立生产来源证据，并将 manifest 的来源投影与其精确比对。引擎还必须核对 canonical source、固定归档、68+4 来源分区、成功 production deployment、首父回滚、runner 协议和实际舞台目录。任何用户配置、日志、缓存、截图、阵容、对局记录、凭据、本机路径、私有训练语料或无许可证参考项目内容均失败关闭。
+
+2026-09-20 技能卡批次11：固定目录`41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c`，官方PC历史清单705100:0062；追加877～880，基础／竞技场各4180行、880个ID，粗参考3413行。旧4176／3409行及两编码器不变。877完整UI来自玩家Exl_2002公开截图，878／879来自Game8；880经用户明确授权暂时共用879图片，manifest的`provisional_shared_from`保留此事实，并非独立强化图。新卡面资产要求配套`task095-provisional-shared-identity-v1`读取器，将879／880作为两个候选交给既有详情兜底；不得仅投放资产给旧读取器。原始图片继续排除于公开包。本轮未公开发布或完成实机验证。
