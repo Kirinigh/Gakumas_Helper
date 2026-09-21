@@ -3953,6 +3953,8 @@ class MaaArenaReaderBackend:
                             raise
                         grade_error = error
                         if attempt < 3:
+                            if error.code == "arena_grade_label_ambiguous":
+                                self._dismiss_grade_reward_hint(image, grade_observations)
                             self._sleep(0.25)
                             continue
                         raise
@@ -4025,6 +4027,82 @@ class MaaArenaReaderBackend:
                 f"contest Grade changed during one read: {self._grade} -> {grade}",
             )
         self._grade = grade
+
+    def _dismiss_grade_reward_hint(self, image: Any, observations: Sequence[Any]) -> bool:
+        """Dismiss one proven reward hint, only after arena-main confirmation.
+
+        The label can be physically covered while the digit remains visible.
+        This action authorizes a new observation, never a Grade value.
+        """
+        if getattr(self, "_grade_reward_hint_dismissed", False):
+            return False
+        if any(_normalize_latin_anchor(_text(item)) == "GRADE" for item in observations):
+            return False
+        if image.ndim != 3 or image.shape[2] < 3:
+            return False
+        height, width = image.shape[:2]
+        if height <= 0 or width <= 0 or not 0.54 <= width / height <= 0.58:
+            return False
+        next_labels = self._matching_ocr_items(observations, r"^次まで$")
+        if len(next_labels) != 1:
+            return False
+        label = _box(next_labels[0])
+        lx, ly, lw, lh = label
+        if not (width * 0.16 <= lx < lx + lw <= width * 0.43 and height * 0.18 <= ly < ly + lh <= height * 0.27):
+            return False
+        amounts = []
+        for item in self._matching_ocr_items(observations, r"^\d[\d,]*\s*Pt$"):
+            x, y, w, h = _box(item)
+            if (
+                width * 0.18 <= x < x + w <= width * 0.48
+                and ly + lh * 0.5 <= y < y + h <= height * 0.29
+                and abs((x + w / 2) - (lx + lw / 2)) <= width * 0.16
+            ):
+                amounts.append((x, y, w, h))
+        if len(amounts) != 1:
+            return False
+        x, y, w, h = amounts[0]
+        left, right = max(0, min(x, lx) - round(width * 0.01)), min(width, max(x + w, lx + lw) + round(width * 0.01))
+        top, bottom = max(0, ly - round(height * 0.006)), min(height, y + h + round(height * 0.006))
+        import numpy as np
+
+        panel = np.asarray(image)[top:bottom, left:right, :3].astype(np.int16)
+        if not panel.size or float(np.mean((panel.min(axis=2) >= 225) & (np.ptp(panel, axis=2) <= 20))) < 0.55:
+            return False
+        # The unoccupied centre of the top header is outside the emblem,
+        # reward/navigation buttons, currency, and the lower opponent rows.
+        point = (round(width * 0.5), round(height * 0.08), 1, 1)
+        margin = round(width * 0.015)
+        if any(
+            bx - margin <= point[0] <= bx + bw + margin and by - margin <= point[1] <= by + bh + margin
+            for bx, by, bw, bh in (_box(item) for item in observations)
+        ):
+            return False
+        self._grade_reward_hint_dismissed = True  # Consume before input; no budget renewal on recovery.
+        started = time.perf_counter()
+        succeeded = False
+        try:
+            self._click(point, settle_seconds=0)
+            self._increment("arena_grade_reward_hint_dismissals")
+            succeeded = True
+        finally:
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "arena_reader_recovery",
+                        "action": "grade_reward_hint_dismiss",
+                        "click_point": point,
+                        "hint_boxes": [label, amounts[0]],
+                        "succeeded": succeeded,
+                        "grade_confirmed": False,
+                        "extra_ocr": 0,
+                        "extra_clicks": 1,
+                        "wall_seconds": round(time.perf_counter() - started, 6),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        return True
 
     def enter_team(self, target: TeamTarget) -> None:
         self._badge_candidate_detail_checks.clear()
