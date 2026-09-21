@@ -133,8 +133,34 @@ def measure_member_slot(crop: np.ndarray) -> MemberSlotMetrics:
     )
 
 
+def _has_centered_empty_slot_dash(crop: np.ndarray) -> bool:
+    """Recognize the explicit dash on a flat placeholder of either team color."""
+    height, width = crop.shape[:2]
+    dy, dx = max(1, int(height * 0.1)), max(1, int(width * 0.1))
+    inner = crop[dy:-dy, dx:-dx, :3].astype(np.float32)
+    background = np.median(inner.reshape(-1, 3), axis=0)
+    foreground = np.max(np.abs(inner - background), axis=2) > 16
+    ys, xs = np.nonzero(foreground)
+    if not len(xs):
+        return False
+    ih, iw = foreground.shape
+    left, right, top, bottom = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
+    bar_width, bar_height = right - left, bottom - top
+    # Every non-background pixel must fit one short, filled central bar. A
+    # portrait, extra mark, loading frame or texture cannot become an empty slot.
+    return bool(
+        0.18 * iw <= bar_width <= 0.45 * iw
+        and 0.035 * ih <= bar_height <= 0.13 * ih
+        and bar_width >= 2.5 * bar_height
+        and abs((left + right) / 2 - iw / 2) <= 0.12 * iw
+        and abs((top + bottom) / 2 - ih / 2) <= 0.12 * ih
+        and foreground.sum() >= 0.85 * bar_width * bar_height
+        and np.all(np.median(inner[foreground], axis=0) - background >= 20)
+    )
+
+
 def classify_member_slot(crop: np.ndarray) -> tuple[MemberSlotState, MemberSlotMetrics]:
-    """Classify only explicit black blanks; weak non-black slots remain ambiguous."""
+    """Require a known blank or portrait; weak non-black slots remain ambiguous."""
 
     metrics = measure_member_slot(crop)
     if (
@@ -153,4 +179,6 @@ def classify_member_slot(crop: np.ndarray) -> tuple[MemberSlotState, MemberSlotM
         and metrics.edge_density >= MEMBER_SLOT_MIN_EDGE_DENSITY
     ):
         return MemberSlotState.OCCUPIED, metrics
+    if _has_centered_empty_slot_dash(crop):
+        return MemberSlotState.EMPTY, metrics
     return MemberSlotState.AMBIGUOUS, metrics
