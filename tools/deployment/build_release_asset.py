@@ -2301,8 +2301,45 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         label="arena card vision",
         )
     )
+    badge_arena_manifest_path = arena_card_root / "manifest.json"
+    badge_arena_manifest = arena_card
+    badge_arena_rows = arena_rows
+    arena_build = arena_card.get("build", {})
+    if arena_build.get("tool_contract") == "task095-arena-full-ui-union-v1":
+        badge_arena_manifest_path = arena_card_root / "preserved_base/manifest.json"
+        if sha256_file(badge_arena_manifest_path).casefold() != str(arena_build.get("base_manifest_sha256")).casefold():
+            raise ReleaseBuildError("full UI preserved base manifest mismatch")
+        badge_arena_manifest = json.loads(badge_arena_manifest_path.read_text(encoding="utf-8"))
+        base_gallery = _resolve_inside(badge_arena_manifest_path.parent, badge_arena_manifest["gallery"]["path"])
+        if sha256_file(base_gallery).casefold() != str(arena_build.get("base_gallery_sha256")).casefold():
+            raise ReleaseBuildError("full UI preserved base gallery mismatch")
+        if badge_arena_manifest["model"] != arena_card["model"]:
+            raise ReleaseBuildError("full UI reference extension changed the encoder")
+        with np.load(base_gallery, allow_pickle=False) as old, np.load(
+            _resolve_inside(arena_card_root, arena_card["gallery"]["path"]), allow_pickle=False
+        ) as new:
+            count = len(old["class_names"])
+            if (
+                count != arena_build.get("preserved_rows")
+                or len(new["class_names"]) != count + arena_build.get("appended_rows", 0)
+                or set(old.files) != set(new.files)
+                or any(not np.array_equal(old[key], new[key][:count]) for key in old.files)
+            ):
+                raise ReleaseBuildError("full UI preserved base arrays changed")
+            appended = len(new["class_names"]) - count
+            if not 0 < appended <= count:
+                raise ReleaseBuildError("full UI reference count is invalid")
+            for key in old.files:
+                if key == "embeddings":
+                    continue
+                expected = old[key][:appended]
+                if key == "class_names":
+                    expected = np.asarray([str(name) + "_full_ui" for name in expected])
+                if not np.array_equal(new[key][count:], expected):
+                    raise ReleaseBuildError("full UI reference identity changed")
+        _, badge_arena_rows, _, _, _ = _load_skill_card_gallery_contract(base_gallery, label="preserved arena card vision")
     arena_reference_rows_by_id: dict[int, int] = {}
-    for _, raw_business_id, _ in arena_rows:
+    for _, raw_business_id, _ in badge_arena_rows:
         business_id = int(raw_business_id)
         arena_reference_rows_by_id[business_id] = (
             arena_reference_rows_by_id.get(business_id, 0) + 1
@@ -2320,7 +2357,7 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
     _validate_badge_live_evaluation(
         badge_root,
         badge,
-        arena_card_manifest=arena_card,
+        arena_card_manifest=badge_arena_manifest,
         arena_reference_rows_by_business_id=arena_reference_rows_by_id,
         actual_reference_row_count=badge_reference_row_count,
         actual_live_reference_row_count=len(badge_live_reference_rows),
@@ -2330,13 +2367,10 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         actual_reference_rows_by_business_id=badge_reference_rows_by_id,
         actual_live_reference_rows=badge_live_reference_rows,
     )
-    arena_card_manifest_path = _resolve_inside(
-        candidate,
-        COMPONENT_MANIFESTS["arena_card_vision"],
-    )
+    arena_card_manifest_path = badge_arena_manifest_path
     arena_card_gallery_path = _resolve_inside(
         arena_card_manifest_path.parent,
-        str(arena_card["gallery"]["path"]),
+        str(badge_arena_manifest["gallery"]["path"]),
     )
     badge_source = badge.get("source")
     if (
@@ -2376,7 +2410,7 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         raise ReleaseBuildError("skill-card recognition business-ID sets disagree")
     if card_groups != arena_groups or card_groups != badge_groups:
         raise ReleaseBuildError("skill-card recognition visual-group sets disagree")
-    if card_rows != arena_rows:
+    if card_rows != badge_arena_rows:
         raise ReleaseBuildError(
             "skill-card base and arena gallery identity rows disagree"
         )

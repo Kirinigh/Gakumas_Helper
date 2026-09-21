@@ -68,6 +68,10 @@ def export(current, frozen, report_path, output):
             print(f"encoded {index}/{len(paths)}", flush=True)
     extended = extend_arrays(arrays, frozen_arrays, np.stack(vectors))
     output.mkdir(parents=True)
+    preserved = output / "preserved_base"
+    preserved.mkdir()
+    shutil.copyfile(current / "manifest.json", preserved / "manifest.json")
+    shutil.copyfile(current / manifest["gallery"]["path"], preserved / manifest["gallery"]["path"])
     shutil.copyfile(current / manifest["model"]["path"], output / manifest["model"]["path"])
     gallery = output / manifest["gallery"]["path"]
     np.savez_compressed(gallery, **extended)
@@ -86,6 +90,8 @@ def export(current, frozen, report_path, output):
         "reason": "2026-09-21 user explicitly authorized enablement before outstanding follow-up validation; not an acceptance pass",
     }
     manifest["build"] = {
+        "base_dataset_manifest_sha256": manifest["build"]["base_dataset_manifest_sha256"],
+        "base_dataset_lineage_manifest_sha256s": manifest["build"]["base_dataset_lineage_manifest_sha256s"],
         "tool_contract": "task095-arena-full-ui-union-v1",
         "mode": "GALLERY_ONLY", "base_manifest_sha256": baseline_manifest_sha,
         "base_gallery_sha256": manifest["gallery"]["sha256"],

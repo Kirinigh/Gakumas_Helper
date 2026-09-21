@@ -15,7 +15,15 @@
       "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C"
     ],
     "policy": "frozen full UI reference membership; base model unchanged; no per-ID exceptions",
-    "upgrade_marker_policy": "duplicate original markers; arena candidate callers disable upgrade resolution"
+    "upgrade_marker_policy": "duplicate original markers; arena candidate callers disable upgrade resolution",
+    "base_dataset_manifest_sha256": "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C",
+    "base_dataset_lineage_manifest_sha256s": [
+      "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
+      "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
+      "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
+      "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
+      "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C"
+    ]
   },
   "component": "arena_custom_card_embedding",
   "gallery": {
