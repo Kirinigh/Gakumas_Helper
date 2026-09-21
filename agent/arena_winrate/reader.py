@@ -589,6 +589,8 @@ class ArenaLineupReader:
         # One UI recovery belongs to this reader instance, including both
         # provider attempts. Member/page resets must not replenish it.
         self._member_reopen_used = False
+        # Recognition recovery is scoped to a role and survives provider rereads.
+        self._member_recognition_reopens: dict[tuple[str, int, int], int] = {}
         self._member_attempt_closing = False
 
     def last_observation_reports(self) -> tuple[dict[str, Any], ...]:
@@ -1170,7 +1172,9 @@ class ArenaLineupReader:
     ) -> MemberObservation:
         """Open, observe and close one member through the shared state machine."""
 
-        for reopened in (False, True):
+        position = (target.team_id, stage_number, member_slot)
+        for attempt in range(4):
+            reopened = attempt > 0
             started = time.perf_counter()
             self._member_diagnostic("begin_member_read_diagnostics", target, stage_number, member_slot)
             succeeded = False
@@ -1203,9 +1207,18 @@ class ArenaLineupReader:
                 recovery_code = self._member_reopen_error_code(
                     error, during_close=self._member_attempt_closing,
                 )
+                recognition_code = self._member_recognition_error_code(error)
+                recognition_recovery = recognition_code is not None or (
+                    recovery_code is not None
+                    and isinstance(error, ArenaReaderError)
+                    and error.code.startswith(("skill_card_", "p_item_"))
+                )
+                recovery_code = recovery_code or recognition_code
+                used = self._member_recognition_reopens.get(position, 0)
+                exhausted = used >= 3 if recognition_recovery else self._member_reopen_used
                 recover = getattr(self.backend, "recover_member_preview", None)
                 if (
-                    self._member_reopen_used
+                    exhausted
                     or recovery_code is None
                     or not callable(recover)
                 ):
@@ -1228,7 +1241,12 @@ class ArenaLineupReader:
                         # that budget or repair an unsupported catalog meaning.
                         error.retry_whole_read = False
                     raise
-                self._member_reopen_used = True
+                # Spend before navigation; a failed return cannot create another
+                # opportunity. The backend must prove the preview before rereading.
+                if recognition_recovery:
+                    self._member_recognition_reopens[position] = used + 1
+                else:
+                    self._member_reopen_used = True
                 try:
                     recover(
                         target, stage_number, member_slot,
@@ -1272,6 +1290,60 @@ class ArenaLineupReader:
                         )
                 self._member_diagnostic("end_member_read_diagnostics")
         raise AssertionError("member reopen budget exhausted without a result")
+
+    @staticmethod
+    def _member_recognition_error_code(error: Exception) -> str | None:
+        """Only known observation failures can reopen a role, never setup faults."""
+        if not isinstance(error, ArenaReaderError):
+            return None
+        current: BaseException | None = error
+        seen: set[int] = set()
+        while isinstance(current, ArenaReaderError) and id(current) not in seen:
+            seen.add(id(current))
+            if current.code in {
+                "skill_card_cost_fallback_changed",
+                "skill_card_cost_fallback_contract_invalid",
+                "skill_card_cost_fallback_frame_conflict",
+                "skill_card_cost_fallback_location_missing",
+                "skill_card_cost_fallback_roi_conflict",
+                "skill_card_detail_effect_view_conflict",
+                "skill_card_detail_positive_evidence_missing",
+                "skill_card_reference_unavailable",
+                "skill_card_reference_catalog_invalid",
+                "p_item_reader_missing",
+                "p_item_runtime_not_approved",
+            }:
+                return None
+            current = current.__cause__
+        if error.code in {
+            "skill_card_detail_ambiguous",
+            "skill_card_badge_detail_inference_ambiguous",
+            "skill_card_badge_detail_identity_unknown",
+            "skill_card_customization_detail_empty",
+            "skill_card_customization_total_mismatch",
+            "skill_card_detail_title_unresolved",
+            "skill_card_detail_upgrade_mark_missing",
+            "skill_card_detail_id_changed",
+            "skill_card_icon_unknown",
+            "skill_card_reference_identity_ambiguous",
+            "skill_card_customization_count_unknown",
+            "skill_card_customization_frame_incomplete",
+            "skill_card_customization_frame_shifted",
+            "skill_card_layout_unstable",
+            "skill_card_secondary_row_missing",
+            "skill_card_slot_missing",
+            "skill_card_empty_slot_unstable",
+            "skill_card_duplicate_marker_unstable",
+            "p_item_unknown",
+            "p_item_detail_parser_failed",
+            "p_item_detail_ambiguous",
+            "p_item_detail_open_or_title_failed",
+            "p_item_detail_budget_exceeded",
+            "p_item_content_generation_unstable",
+            "p_item_source_generation_unstable",
+        }:
+            return error.code
+        return None
 
     @staticmethod
     def _member_reopen_error_code(
