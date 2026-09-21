@@ -5,23 +5,23 @@
   },
   "evaluation": {
     "path": "production_handoff_evaluation.json",
-    "sha256": "31D117B21DDBA066E9C5F94A345E4CBA549FA27CBF3F8C94D1459C5753ADEA78",
+    "sha256": "552A0FC6DB9991927ABBC57FC287FF95CD0F57892D3BE77425F1D87D40FC8F3E",
     "status": "PASS",
     "tool_contract": "task095-static-reference-production-promotion-v1"
   },
   "production_handoff": {
-    "reason": "user-provided game UI crops, deterministic lineage, container, and offline ranking gates passed; real JJC calibration remains PENDING",
+    "reason": "authoritative fixed-rendered source, deterministic lineage, container, and offline ranking gates passed; real JJC calibration remains PENDING",
     "status": "READY_WITH_REAL_SAMPLES_PENDING"
   },
   "recognizer": "p_item_rendered_reference_v1",
   "reference_gallery": {
-    "business_id_count": 434,
+    "business_id_count": 436,
     "color_order": "BGR",
     "image_shape": "original_png_dimensions",
     "image_shape_count": 19,
     "path": "p_item_rendered_reference_gallery.npz",
     "provisional_business_ids": [],
-    "sha256": "8CBD13A28073957B61986FE6216F884CB494FB4CF857F71943800DECB79C18E1"
+    "sha256": "A0606F5FFD336DE04DA78C8D9DCD78F5952EC329692F45D1649E3D25002B8DED"
   },
   "runtime": {
     "ambiguous_action": "bounded_detail_or_fail_closed",
@@ -54,7 +54,7 @@
   },
   "schema_version": 1,
   "source": {
-    "business_id_count": 434,
+    "business_id_count": 436,
     "business_ids": [
       7,
       8,
@@ -489,20 +489,22 @@
       482,
       483,
       485,
-      486
+      486,
+      488,
+      489
     ],
-    "evidence_id": "user-ui-20260910",
+    "evidence_id": "published-ui-20260920",
     "extension_provenance": {
       "base_gallery": {
         "added_business_ids": [
-          485,
-          486
+          488,
+          489
         ],
-        "base_business_id_count": 432,
-        "inherited_business_id_count": 432,
+        "base_business_id_count": 434,
+        "inherited_business_id_count": 434,
         "replaced_business_ids": [],
-        "sha256": "390F3FFE04D92AA0FF5A7E26D294A95A66152F65D488A10D71105FCEA200F565",
-        "target_business_id_count": 434
+        "sha256": "8CBD13A28073957B61986FE6216F884CB494FB4CF857F71943800DECB79C18E1",
+        "target_business_id_count": 436
       },
       "catalog": {
         "arena_stage_business_ids": [
@@ -862,118 +864,120 @@
           482,
           483,
           485,
-          486
+          486,
+          488,
+          489
         ],
         "excluded_current_rows": [
           {
-            "business_id": 484,
+            "business_id": 487,
             "mode": "produce",
-            "name": "たらふくすし放題♪",
+            "name": "素敵なお仕事",
             "reason": "non-stage row is outside the arena-stage contract",
             "source_type": "support"
           }
         ],
         "included_business_ids": [
-          485,
-          486
+          488,
+          489
         ],
-        "p_items_git_blob_sha1": "c582a43a88b056f6bd5b60d86e0c81ca1c12aec2",
-        "p_items_sha256": "466F36D53384AFDE691F37C1C9412B1AC881ADECFC4FAE286DD1C0374F1F5A46",
+        "p_items_git_blob_sha1": "a5d5d91cbf77286569008ad3357a9f311857bd6d",
+        "p_items_sha256": "E48AB4E7467547079B03815AC39CD8018B6770F2D3614F79443531F7B81379B7",
         "path": "packages/gakumas-data/json/p_items.json",
         "repository": "https://github.com/surisuririsu/gakumas-tools",
-        "revision": "2b1621ea0ef458de6b363143d6dab90b5335c812",
+        "revision": "41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c",
         "stage_scope_contract": "EntityBank selectable entities use modes=['stage']; coverage/generate-suite filters p.mode === 'stage'"
       },
-      "schema_version": 6,
-      "user_provided_ui_crops": {
+      "published_ui_crops": {
         "catalog_production_deployment": {
-          "deployment_id": 6353569966,
-          "revision": "2b1621ea0ef458de6b363143d6dab90b5335c812",
+          "deployment_id": 6540432420,
+          "revision": "41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c",
           "status": "success"
         },
         "references": {
-          "485": {
-            "business_id": 485,
-            "capture_provenance": "USER_PROVIDED_GAME_UI",
+          "488": {
+            "business_id": 488,
+            "capture_provenance": "UNKNOWN",
             "crop_box": [
-              43,
-              158,
-              235,
-              350
+              870,
+              946,
+              921,
+              998
             ],
             "dimensions": [
               130,
               130
             ],
-            "frozen_at": "2026-09-10",
+            "frozen_at": "2026-09-20",
             "kind": "p_item",
-            "name": "頂点の輝き",
+            "name": "止まない嵐",
             "original_dimensions": [
-              993,
-              999
+              2575,
+              1407
             ],
-            "original_file": "upgrade-panel.png",
-            "original_sha256": "5FCB80C838E780845C42387E0A6BF4D50EEADBCE9CCB1A58CF845FFA624D9C45",
-            "original_size": 396635,
-            "original_url": null,
-            "page_url": null,
-            "png_sha256": "2EC5194BD994006B748C1A7516364BB1DA3AAD396871170935F69E9F7E7D7585",
-            "publisher": "USER_PROVIDED",
+            "original_file": "youtube-dcF5m8NRrWk-488.png",
+            "original_sha256": "D8CBEE1BDAD74F041E7081B6712FA7DB46491A9AADBCE091EB773FFD7FCCBF3B",
+            "original_size": 404599,
+            "original_url": "https://www.youtube.com/watch?v=dcF5m8NRrWk&t=1873s",
+            "page_url": "https://www.youtube.com/watch?v=dcF5m8NRrWk&t=1873s",
+            "png_sha256": "30F5F86F4860416614E8C1B68F09E8608B2E5769093E27E9128E38588147C2FD",
+            "publisher": "YouTube / ミーク (@Meek_Meekuma)",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "7A393C23ACC6EF52FD6CE8D4894C200721609FDCB918706FD61D81033918EADC",
-            "size": 15451,
+            "rgb_pixel_sha256": "CBB78E45B9DAD6E5481632D8B9CBFF35899EC474426BFE1DC34D6A1F540455D8",
+            "size": 18834,
             "upgraded": false
           },
-          "486": {
-            "business_id": 486,
-            "capture_provenance": "USER_PROVIDED_GAME_UI",
+          "489": {
+            "business_id": 489,
+            "capture_provenance": "UNKNOWN",
             "crop_box": [
-              43,
-              588,
-              235,
-              780
+              0,
+              0,
+              236,
+              237
             ],
             "dimensions": [
               130,
               130
             ],
-            "frozen_at": "2026-09-10",
+            "frozen_at": "2026-09-20",
             "kind": "p_item",
-            "name": "頂点の輝き",
+            "name": "止まない嵐",
             "original_dimensions": [
-              993,
-              999
+              236,
+              237
             ],
-            "original_file": "upgrade-panel.png",
-            "original_sha256": "5FCB80C838E780845C42387E0A6BF4D50EEADBCE9CCB1A58CF845FFA624D9C45",
-            "original_size": 396635,
-            "original_url": null,
-            "page_url": null,
-            "png_sha256": "D4FF6D5A616E6ED56B682F292BADE26875851384333A75FF831D65CFBAE460A1",
-            "publisher": "USER_PROVIDED",
+            "original_file": "game8-489.webp",
+            "original_sha256": "79E85A3B71D4B31C524298CBA9F90EF453E8D366DD04EE0659D030F1610D0E31",
+            "original_size": 4376,
+            "original_url": "https://img.game8.jp/13019216/7e4fb1f726941ec9dbe96cc8386333e1.webp/original",
+            "page_url": "https://game8.jp/gakuen-idolmaster/816967",
+            "png_sha256": "2068B302A5F6DB95C5F9B024CC7418DF1A688D8BEA123810F46AF2F1C411D476",
+            "publisher": "Game8",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "F8A6F327055F3882A897A3892A4D4C996DA0F77B4886C9214F28445F57A9D9BF",
-            "size": 16052,
+            "rgb_pixel_sha256": "6B129A130E88DE3D5766C1CBCDDF684F38E113BBB885A9FEE5E2FE5C2B7B3532",
+            "size": 20648,
             "upgraded": true
           }
         },
-        "source_type": "user_provided_ui_crops"
+        "source_type": "third_party_published_ui_crops"
       },
+      "schema_version": 4,
       "validation": {
         "full_gallery_64px": {
-          "485": {
-            "margin": 0.05493354797363281,
-            "top1_business_id": 485,
+          "488": {
+            "margin": 0.3041036128997803,
+            "top1_business_id": 488,
+            "top1_similarity": 1.0,
+            "top2_business_id": 489,
+            "top2_similarity": 0.6958963871002197
+          },
+          "489": {
+            "margin": 0.41740697622299194,
+            "top1_business_id": 489,
             "top1_similarity": 1.0,
             "top2_business_id": 486,
-            "top2_similarity": 0.9450664520263672
-          },
-          "486": {
-            "margin": 0.05493354797363281,
-            "top1_business_id": 486,
-            "top1_similarity": 1.0,
-            "top2_business_id": 485,
-            "top2_similarity": 0.9450664520263672
+            "top2_similarity": 0.5825930237770081
           },
           "coarse_fine_guard": "fails_safe_to_full_gallery"
         },
@@ -981,10 +985,10 @@
           "runtime_detail_authority": false,
           "status": "PENDING"
         },
-        "metadata_removed_business_id_count": 434,
+        "metadata_removed_business_id_count": 436,
         "source_added_business_ids": [
-          485,
-          486
+          488,
+          489
         ],
         "source_replacement_changed_business_ids": []
       }
@@ -999,15 +1003,15 @@
       "logic": 407,
       "sense": 406
     },
-    "revision": "base-gallery-sha256@390F3FFE04D92AA0FF5A7E26D294A95A66152F65D488A10D71105FCEA200F565+gakumas-tools@2b1621ea0ef458de6b363143d6dab90b5335c812+user-provided-ui-crops-v1",
-    "sanitized_icons_sha256": "4AB088C550F929D6B3E34199CEFBBD8753A44E7A616732714D63FBAAFF9A0140",
-    "scope": "432 immutable inherited references; append 485/486 from user-provided game UI; new live calibration pending",
-    "source_icons_sha256": "A755ABB12CE4AF775D6D34EC6AAD2D44B8D804D727B923A18280F490BC587AF8"
+    "revision": "base-gallery-sha256@8CBD13A28073957B61986FE6216F884CB494FB4CF857F71943800DECB79C18E1+gakumas-tools@41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c+published-ui-crops-v1",
+    "sanitized_icons_sha256": "A06797EE09FA4046C72C7272037C1190CD1051854C394BEFE475B9FB9BB2436A",
+    "scope": "434 immutable inherited references; append 488/489 from public complete game UI; new live calibration pending",
+    "source_icons_sha256": "15B5385F99447D6867E546DFAA551FF2AFDA434ABECB6029E3379C02922B0AB5"
   },
   "validation": {
     "coarse_fine_720_calibration": "NEW_TWO_FULL_GALLERY_RANKINGS_PASS_REAL_JJC_PENDING",
     "embedding_acceptance_calibration": "REJECTED_FOR_CURRENT_JJC_DOMAIN",
-    "jjc_reference_identity": "NEW_TWO_USER_UI_IDENTITIES_BOUND_REAL_JJC_PENDING",
-    "upgraded_marker_calibration": "USER_UI_NORMAL_PLUS_COMPLETE_REFERENCES_REAL_JJC_PENDING"
+    "jjc_reference_identity": "NEW_TWO_PUBLISHED_UI_IDENTITIES_BOUND_REAL_JJC_PENDING",
+    "upgraded_marker_calibration": "PUBLISHED_UI_NORMAL_PLUS_COMPLETE_REFERENCES_REAL_JJC_PENDING"
   }
 }

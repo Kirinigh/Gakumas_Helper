@@ -1,5 +1,13 @@
 # P-item embedding toolchain
 
+## 2026-09-20 增量更新
+
+固定目录 `41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c`，保留旧 434 张参考原字节，追加 488／489「止まない嵐」普通／强化态，图库共 436 项。488 来自公开育成录像的初始状态预览（31:13），489 来自 Game8 完整强化态 UI；逐图原始尺寸、裁框和来源见 `evidence/p_item_production_source_published_ui_20260920.json`。488 原截图中的图标约 51×52 像素，缩放到 130×130 不增加原始细节，真实竞技场校准仍待完成。
+
+分类索引更新为 489 项、153 对普通／＋，旧 486 项标签不变；新增 487 为共通／不可继承支援卡，488／489 为非凡／P 偶像。计划计数 50／154／171／114，种类计数 309／50／82／48，53 项没有参考图。复建使用 `.local/task095-batch11-20260920/` 的 `p_items.json`、`ProduceItem.yaml`、`master-receipt.json`、`pitem/evidence-a.json` 和 `pitem/ready-a`，原固定数据集不变，revision 为 `task095-p-item-classification-489-v1`。
+
+以下 2026-09-13 部分保留原批次来源和复建命令。
+
 ## 全量 P 道具分类索引（2026-09-13）
 
 `assets/data/p_item_classification.json` 按业务 ID 保存全目录 486 条源数据标签，并连接现有固定参考图库的 434 个 ID。52 条没有参考图的目录记录仍完整保留标签，`reference_available=false`；这不表示它们已有可用于识别的图像。竞技场按舞台计划和四槽来源消费分类索引；索引文件保留生成时的离线状态字段，不代表实机验收。普通／＋完整图匹配方案保持不变。

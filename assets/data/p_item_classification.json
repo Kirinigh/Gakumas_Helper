@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "task095-p-item-classification-486-v1",
+  "revision": "task095-p-item-classification-489-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "p_item_plan_and_four_kinds_v1",
   "runtime_filtering_enabled": false,
@@ -8,16 +8,16 @@
     "catalog": {
       "repository": "https://github.com/surisuririsu/gakumas-tools",
       "path": "packages/gakumas-data/json/p_items.json",
-      "revision": "2b1621ea0ef458de6b363143d6dab90b5335c812",
-      "p_items_sha256": "466F36D53384AFDE691F37C1C9412B1AC881ADECFC4FAE286DD1C0374F1F5A46"
+      "revision": "41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c",
+      "p_items_sha256": "E48AB4E7467547079B03815AC39CD8018B6770F2D3614F79443531F7B81379B7"
     },
     "official_master": {
       "file": "ProduceItem.yaml",
-      "url": "https://raw.githubusercontent.com/vertesan/gakumasu-diff/8f3f325edfc18a9db53587f94ae9edea7ad66f86/ProduceItem.yaml",
-      "bytes": 16938812,
-      "sha256": "68F88DDCD068550A54531E5A6BB0E057497A8EEC752AD805D07815142B3BD4EA"
+      "url": "https://raw.githubusercontent.com/vertesan/gakumasu-diff/75eb2a94eb494a6e74053c0f295cb026e837e32a/ProduceItem.yaml",
+      "bytes": 17061492,
+      "sha256": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A"
     },
-    "catalog_evidence_sha256": "8BDBD63DEE07115167B96B2675ACE357B2FF50D850F168B2D745A50601DC5EDC",
+    "catalog_evidence_sha256": "A79D20EDA9C57B1527E5200B285BD80B4BF84C7CC72E618B32CDDEE3F466C562",
     "visual_dataset_manifest_sha256": "78AA1885B75925D34C9186F15FFB3723D78A4DF1F6D183CE6A4523768D71492B",
     "visual_crosswalk_sha256": "9E7CCC422C9308F20CB157DAF922E048CB49CE03B1C8EA581EA1C60BB9544182"
   },
@@ -17873,6 +17873,117 @@
         }
       },
       "paired_business_id": 485
+    },
+    {
+      "business_id": 487,
+      "name": "素敵なお仕事",
+      "upgraded": false,
+      "plan": "free",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "free",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_00-3-352-0",
+          "assetId": "img_general_pitem_3-352",
+          "name": "素敵なお仕事",
+          "planType": "ProducePlanType_Common",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-3-0099",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
+    },
+    {
+      "business_id": 488,
+      "name": "止まない嵐",
+      "upgraded": false,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 156,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_03-3-345-0",
+          "assetId": "img_general_pitem_3-345",
+          "name": "止まない嵐",
+          "planType": "ProducePlanType_Plan3",
+          "isExamEffect": true,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "i_card-shro-3-022",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 489
+    },
+    {
+      "business_id": 489,
+      "name": "止まない嵐+",
+      "upgraded": true,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 156,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_03-3-345-1",
+          "assetId": "img_general_pitem_3-345",
+          "name": "止まない嵐+",
+          "planType": "ProducePlanType_Plan3",
+          "isExamEffect": true,
+          "isUpgraded": true,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "i_card-shro-3-022",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 488
     }
   ],
   "indexes": {
@@ -17926,7 +18037,8 @@
         363,
         371,
         444,
-        447
+        447,
+        487
       ],
       "sense": [
         3,
@@ -18369,7 +18481,9 @@
         469,
         470,
         471,
-        472
+        472,
+        488,
+        489
       ]
     },
     "kind": {
@@ -18680,7 +18794,9 @@
         482,
         483,
         485,
-        486
+        486,
+        488,
+        489
       ],
       "support_inheritable": [
         71,
@@ -18815,7 +18931,8 @@
         471,
         472,
         477,
-        484
+        484,
+        487
       ],
       "other": [
         1,
@@ -18871,15 +18988,15 @@
   },
   "counts": {
     "plan": {
-      "free": 49,
+      "free": 50,
       "sense": 154,
       "logic": 171,
-      "anomaly": 112
+      "anomaly": 114
     },
     "kind": {
-      "p_idol": 307,
+      "p_idol": 309,
       "support_inheritable": 50,
-      "support_non_inheritable": 81,
+      "support_non_inheritable": 82,
       "other": 48
     }
   },
@@ -18897,9 +19014,9 @@
   "gallery_coverage": {
     "component": "p_item_reference",
     "join_key": "business_id",
-    "business_id_count": 434,
-    "manifest_sha256": "D1EFBB034860A3C22BF7A7C7400F7A5735EB3CD1F9DF056E7105F414C0A52167",
-    "gallery_sha256": "8CBD13A28073957B61986FE6216F884CB494FB4CF857F71943800DECB79C18E1",
+    "business_id_count": 436,
+    "manifest_sha256": "CE1036A5AAAF035C1C8F9945C605B631893D9D6C0945D037D8D416E88A95075C",
+    "gallery_sha256": "A0606F5FFD336DE04DA78C8D9DCD78F5952EC329692F45D1649E3D25002B8DED",
     "without_reference_business_ids": [
       1,
       2,
@@ -18952,7 +19069,8 @@
       471,
       472,
       477,
-      484
+      484,
+      487
     ]
   }
 }
