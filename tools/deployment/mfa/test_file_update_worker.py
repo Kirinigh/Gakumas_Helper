@@ -46,7 +46,7 @@ def prepare(args):
         output = work / (label + ".dll")
         response.write_text("\n".join(["/nostdlib+", "/target:exe", f'/out:"{output}"',
                                        *(f'/reference:"{p}"' for p in refs.glob("*.dll")), f'"{path}"']))
-        compiled = subprocess.run([str(dotnet), str(sdk / "Roslyn/bincore/csc.dll"), "/noconfig", f"@{response}"], capture_output=True, text=True)
+        compiled = subprocess.run([str(dotnet), str(sdk / "Roslyn/bincore/csc.dll"), "/noconfig", "/utf8output", f"@{response}"], capture_output=True, text=True, encoding="utf-8")
         (work / (label + "-compile.log")).write_text(compiled.stdout + compiled.stderr)
         compiled.check_returncode()
     shutil.copyfile(work / "parent.dll", root / "MFAAvalonia.dll")
