@@ -83,6 +83,7 @@ from arena_winrate._detail_text_layout import (
     recover_distant_number_text,
     recover_wrapped_signed_text,
 )
+from arena_winrate._detail_title_region import isolated_title_region
 from arena_winrate._skill_card_effect_recovery import recover_skill_effect_body
 
 logger = diagnostic_logger(_base_logger)
@@ -7400,6 +7401,17 @@ class MaaArenaReaderBackend:
             candidate_card_ids=candidate_ids,
             source_card_box=source_card_box,
         )
+        if title_text is None and detail_image is not None and source_card_box is not None:
+            isolated = self._isolated_skill_card_title_entry(detail_image, source_group_index, source_card_box)
+            opened = getattr(self, "_card_detail_open_ids", {})
+            if isolated is not None and isolated[3] is not None and any(
+                (source_group_index, slot + 1) in opened and tuple(row) == tuple(source_card_box)
+                for slot, row in enumerate(getattr(self, "_card_rows", {}).get(source_group_index, ()))
+            ):
+                raise ArenaReaderError(
+                    "skill_card_detail_title_unresolved",
+                    "the isolated detail title could not be uniquely read",
+                )
         # Production detail transactions always carry their frame. When that
         # frame exists, every identity resolver is restricted to one dynamically
         # proven title row. A missing or ambiguous title therefore fails closed
@@ -8041,8 +8053,10 @@ class MaaArenaReaderBackend:
                 ambiguous |= "skill_card_title_ambiguous:" in str(error)
                 continue
             candidates.append((line, box, card_id, raw_text))
-        if ambiguous or len(candidates) != 1:
+        if ambiguous or len(candidates) > 1:
             return None
+        if not candidates:
+            return self._recover_isolated_skill_card_title(group_index, image, source_card_box)
         line, box, card_id, raw_text = candidates[0]
         # This is frame-local title evidence, not an accepted card result.
         # Existing effect, slot-domain and fresh-frame checks still follow.
@@ -8061,6 +8075,78 @@ class MaaArenaReaderBackend:
         while len(evidence) > 32:
             evidence.pop(next(iter(evidence)))
         return line
+
+    def _isolated_skill_card_title_key(self, image: Any, group: int, box: Any) -> tuple:
+        return (
+            id(image), group, tuple(box), getattr(self, "_card_transaction_serial", 0),
+            tuple(id(frame) for frame in getattr(self, "_card_count_frames", {}).get(group, ())),
+        )
+
+    def _isolated_skill_card_title_entry(self, image: Any, group: int, box: Any) -> Any:
+        entry = getattr(self, "_isolated_title_evidence", {}).get(
+            self._isolated_skill_card_title_key(image, group, box),
+        )
+        return entry if entry is not None and entry[0] is image else None
+
+    def _recover_isolated_skill_card_title(self, group: int, image: Any, box: Any) -> str | None:
+        """One crop on a proven new panel; never repair a background substring."""
+        rows = getattr(self, "_card_rows", {}).get(group, ())
+        slots = [index + 1 for index, row in enumerate(rows) if tuple(row) == tuple(box)]
+        if len(slots) != 1 or getattr(self, "_card_transaction_contact_counts", {}).get((group, slots[0])) not in (1, 2):
+            return None
+        frames = getattr(self, "_card_count_frames", {}).get(group, ())
+        if len(frames) != 3 or any(not hasattr(frame, "shape") for frame in frames):
+            return None
+        cached = self._isolated_skill_card_title_entry(image, group, box)
+        if cached is not None:
+            return cached[1]
+        cache = getattr(self, "_isolated_title_evidence", None)
+        if cache is None:
+            cache = self._isolated_title_evidence = {}
+        key = self._isolated_skill_card_title_key(image, group, box)
+        cache[key] = (image, None, None, None, tuple(frames))
+        while len(cache) > 16:
+            cache.pop(next(iter(cache)))
+        items = self._ocr(image, r".+")
+        region = isolated_title_region(image, frames, tuple(box), [(_text(v), _box(v)) for v in items])
+        if region is None:
+            return None
+        cache[key] = (image, None, None, region, tuple(frames))
+        import cv2
+
+        x, y, w, h = region
+        crop = cv2.resize(image[y:y + h, x:x + w], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        self._increment("skill_card_isolated_title_roi_reads")
+        cropped = self._with_full_frame_ocr_kind("derived_roi", self._ocr, crop, r".+")
+        title_rows = self._spatial_ocr_rows(cropped)
+        if len(title_rows) != 1:
+            return None
+        title, (tx, ty, tw, th), _ = title_rows[0]
+        # Touching a crop boundary could hide a leading glyph or terminal '+'.
+        if min(tx, ty, 2 * w - tx - tw, 2 * h - ty - th) < 3:
+            return None
+        mapped = (x + tx // 2, y + ty // 2, (tw + 1) // 2, (th + 1) // 2)
+        if not self._skill_card_title_row_has_neutral_ink(image, mapped):
+            return None
+        if any(self._stable_skill_card_source_ocr_counts(group).get(line, 0)
+               for line in self._normalized_skill_card_ocr_lines(title)):
+            return None
+        try:
+            # Resolve against the complete catalog before the existing scope
+            # and identity guards. Top-K must not manufacture uniqueness.
+            card_id = self._resolve_proven_skill_card_title(title)
+        except ArenaCatalogError:
+            return None
+        item = {"text": title, "box": mapped}
+        cache[key] = (image, title, item, region, tuple(frames))
+        recovered = getattr(self, "_skill_card_recovered_title_frames", None)
+        if recovered is None:
+            recovered = self._skill_card_recovered_title_frames = {}
+        recovered[(id(image), card_id)] = (image, title)
+        while len(recovered) > 32:
+            recovered.pop(next(iter(recovered)))
+        self._increment("skill_card_isolated_title_roi_recoveries")
+        return title
 
     def _skill_card_frame_title_pattern(self, image: Any, card_id: int) -> str:
         pattern = self.catalog.skill_card_title_anchor_pattern(card_id)
@@ -10329,8 +10415,10 @@ class MaaArenaReaderBackend:
             evidence = self._cached_full_frame_ocr_evidence(image)
             if evidence is None:
                 return None
-            atoms = tuple((_text(item), _box(item)) for item in evidence.all_items)
             pattern = self._skill_card_frame_title_pattern(image, card_id)
+            isolated = self._isolated_skill_card_title_atoms(image, pattern)
+            native_items = evidence.all_items if isolated is None else isolated[1]
+            atoms = tuple((_text(item), _box(item)) for item in native_items)
             titles = tuple(box for value, box in atoms if re.search(pattern, value))
             if len(titles) != 1:
                 return None
@@ -10462,15 +10550,17 @@ class MaaArenaReaderBackend:
         started = time.perf_counter()
         self._increment("skill_card_error_body_attempts")
         try:
-            atoms = tuple((_text(item), _box(item)) for item in evidence.all_items)
             pattern = self._skill_card_frame_title_pattern(image, card_id)
+            isolated = self._isolated_skill_card_title_atoms(image, pattern)
+            native_items = evidence.all_items if isolated is None else isolated[1]
+            atoms = tuple((_text(item), _box(item)) for item in native_items)
             titles = tuple(box for value, box in atoms if re.search(pattern, value))
             if len(titles) != 1:
                 return None
             height, width = image.shape[:2]
             repaired = recover_skill_effect_body(
                 atoms, titles[0], self._title_anchored_effect_roi(width, height, titles[0]),
-                self._spatial_ocr_rows(evidence.all_items),
+                self._spatial_ocr_rows(native_items),
             )
             if not repaired.changed:
                 return None
@@ -10517,6 +10607,7 @@ class MaaArenaReaderBackend:
             if error.code not in {
                 "skill_card_detail_disappeared", "skill_card_detail_id_changed",
                 "skill_card_detail_upgrade_mark_missing",
+                "skill_card_detail_title_unresolved",
             } or used_contacts != 1:
                 raise
             original_error = str(error)
@@ -10531,7 +10622,7 @@ class MaaArenaReaderBackend:
         succeeded = False
         self._increment("skill_card_detail_reopen_attempts")
         try:
-            if error_code in {"skill_card_detail_id_changed", "skill_card_detail_upgrade_mark_missing"}:
+            if error_code in {"skill_card_detail_id_changed", "skill_card_detail_upgrade_mark_missing", "skill_card_detail_title_unresolved"}:
                 self._dismiss_skill_card_detail()
                 self._assert_card_group_visible(key[0], card_slot=key[1])
                 self._increment("skill_card_detail_source_resets")
@@ -11523,7 +11614,7 @@ class MaaArenaReaderBackend:
                     confirmation_reason = None
                     last_error = str(error)
                     pending_title_error = (
-                        error if error.code == "skill_card_detail_upgrade_mark_missing" else None
+                        error if error.code in {"skill_card_detail_upgrade_mark_missing", "skill_card_detail_title_unresolved"} else None
                     )
                     if pending_title_error is not None:
                         # Do not bridge confirmation votes across an uncertain
@@ -12123,6 +12214,22 @@ class MaaArenaReaderBackend:
             )
         return left, top, clipped_width, height
 
+    def _isolated_skill_card_title_atoms(self, image: Any, title_pattern: str) -> Any:
+        for key, isolated in getattr(self, "_isolated_title_evidence", {}).items():
+            if (isolated[0] is image and isolated[2] is not None
+                    and key == self._isolated_skill_card_title_key(image, key[1], key[2])
+                    and re.fullmatch(title_pattern, isolated[1]) is not None):
+                # Return the corrected geometry, never the original merged
+                # title/background atom. Retain unchanged body observations.
+                x, y, w, h = isolated[3]
+                native_items = []
+                for item in self._ocr(image, r".+"):
+                    bx, by, bw, bh = _box(item)
+                    if not (bx < x + w and bx + bw > x and by < y + h and by + bh > y):
+                        native_items.append(item)
+                return [isolated[2]], [*native_items, isolated[2]]
+        return None
+
     def _skill_card_title_anchor_evidence(
         self,
         image: Any,
@@ -12136,6 +12243,9 @@ class MaaArenaReaderBackend:
         this preserves the prior failure semantics for unusual OCR layouts.
         """
 
+        isolated = self._isolated_skill_card_title_atoms(image, title_pattern)
+        if isolated is not None:
+            return isolated
         evidence = self._cached_full_frame_ocr_evidence(image)
         if evidence is not None and evidence.hit:
             native_items = list(evidence.all_items)
@@ -12709,6 +12819,7 @@ class MaaArenaReaderBackend:
         getattr(self, "_trusted_skill_card_title_rows_cache", {}).clear()
         getattr(self, "_skill_card_recovered_title_frames", {}).clear()
         getattr(self, "_upgrade_title_roi_evidence", {}).clear()
+        getattr(self, "_isolated_title_evidence", {}).clear()
         self._card_source_guard_frames.clear()
         getattr(self, "_card_source_guard_signature_cache", {}).clear()
         self._card_restoration_signatures.clear()
