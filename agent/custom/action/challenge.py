@@ -39,6 +39,7 @@ from arena_winrate.decision import HIGHEST_WIN_RATE_FALLBACK_RULE
 from arena_winrate.task_log import arena_task_log, diagnostic_logger, opponent_rates_message
 from maa.agent.agent_server import AgentServer
 from arena_winrate.progressive import ProgressiveArenaService
+from arena_winrate.action_probe import ActionProbe
 from arena_winrate.cancellation import (
     ArenaTaskCancelled,
     cancellation_for,
@@ -50,6 +51,7 @@ from arena_winrate.user_messages import (
     own_score_user_status,
     win_rate_stop_user_status,
 )
+from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
 from arena_winrate.upstream_component import reset_failed_arena_component_checks
 from arena_winrate.cost_fallback_logging import (
     cost_customization_fallback_log_payloads,
@@ -123,18 +125,29 @@ def _stop_with_error(context: Context, summary: str, error: object | None = None
     )
 
 
+_ACTION_PROBE = ActionProbe(DEFAULT_CHALLENGE_RECORD_ROOT)
+
+
 def _report_unexpected_errors(method: Callable[..., bool]) -> Callable[..., bool]:
     @wraps(method)
     def wrapped(self, context: Context, argv: CustomAction.RunArg) -> bool:
         cancellation = cancellation_for(context)
         token = active_cancellation.set(cancellation)
+        probe = _ACTION_PROBE
+        emit_probe = lambda entry: logger.info(json.dumps(entry, ensure_ascii=False))
+        ticket = probe.start(type(self).__name__, str(getattr(argv, "node_name", "")), emit_probe)
+        state, error_type = "exception", None
         try:
             cancellation.check()
-            return method(self, context, argv)
+            result = method(self, context, argv)
+            state = "succeeded" if result else "returned_false"
+            return result
         except ArenaTaskCancelled:
+            state = "cancelled"
             logger.info("竞技场任务已停止")
             return False
         except Exception as error:
+            error_type = type(error).__name__
             logger.exception("竞技场任务出现未处理异常")
             return _stop_with_error(
                 context,
@@ -142,6 +155,7 @@ def _report_unexpected_errors(method: Callable[..., bool]) -> Callable[..., bool
                 error,
             )
         finally:
+            probe.finish(ticket, state, error_type, emit_probe)
             active_cancellation.reset(token)
 
     return wrapped

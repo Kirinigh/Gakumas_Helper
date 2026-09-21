@@ -818,7 +818,7 @@ class MaaArenaReaderBackend:
         finally:
             self._record_duration_sample("recognition_probe_save", time.perf_counter() - started)
 
-    def _observe_recognition_probe(self, image: Any, items: Any) -> None:
+    def _observe_recognition_probe(self, image: Any, items: Any, *, reco_id=None) -> None:
         detail = getattr(self, "_detail_failure_frames", None)
         if detail is None or "probe_frames" not in detail:
             return
@@ -826,7 +826,9 @@ class MaaArenaReaderBackend:
             # Derived OCR crops are not original screenshots; keep only frames
             # already delivered by _capture in this transaction.
             if any(frame[1] is image for frame in detail["frames"]):
-                RecognitionProbe.observe(detail, image, items, str(detail["position"].get("phase", "body")))
+                RecognitionProbe.observe(detail, image, items,
+                                         str(detail.get("probe_phase", detail["position"].get("phase", "body"))),
+                                         reco_id=reco_id, seconds=round(time.perf_counter() - detail["started"], 6))
         except Exception:
             self._recognition_probe.disabled = True
 
@@ -4643,6 +4645,15 @@ class MaaArenaReaderBackend:
         failed_before = len(getattr(self, "_runtime_duration_samples", {}).get("p_item_detail_failed_transaction", ()))
         if getattr(self, "_detail_failure_frames", None) is None:
             self._begin_detail_diagnostics(kind="p_item", box=list(box), source=source_images[0] if source_images else None)
+        probe = getattr(self, "_recognition_probe", None)
+        if probe is None:
+            probe = self._recognition_probe = RecognitionProbe(DEFAULT_CHALLENGE_RECORD_ROOT)
+        if probe.active():
+            self._detail_failure_frames.update(
+                probe_sources=tuple(source_images), probe_source_box=box,
+                probe_row_boxes=tuple(source_boxes), probe_candidates=list(candidate_ids),
+                probe_stage_plan=plan, probe_frames=[],
+            )
         try:
             result = self._confirm_p_item_detail_once(
                 box, candidate_ids=candidate_ids, global_title_scope=global_title_scope,
@@ -4656,6 +4667,7 @@ class MaaArenaReaderBackend:
                 self._record_duration_sample("p_item_detail_failed_transaction", time.perf_counter() - started)
             self._persist_detail_failure(str(error))
             raise
+        self._save_recognition_probe(self._detail_failure_frames, "completed", None)
         self._detail_failure_frames = None
         return result
 
@@ -7923,7 +7935,7 @@ class MaaArenaReaderBackend:
             getattr(detail, "reco_id", None),
         )
         cache[id(image)] = evidence
-        self._observe_recognition_probe(image, all_items)
+        self._observe_recognition_probe(image, all_items, reco_id=getattr(detail, "reco_id", None))
         # Retain enough member-local entries for both accepted source groups,
         # their detail confirmations and transformed ROI views without holding
         # captures beyond the member transaction.
@@ -13820,6 +13832,7 @@ class MaaArenaReaderBackend:
         if not detail or not detail.hit:
             raise ArenaReaderError("ocr_empty", "full-screen OCR returned no text")
         items = list(detail.all_results or detail.filtered_results or [])
+        self._observe_recognition_probe(image, items, reco_id=getattr(detail, "reco_id", None))
         full_text = "\n".join(_text(item) for item in items)
         panel_rows = self._p_item_detail_panel_rows(image, items)
         background_rows = self._p_item_detail_panel_rows(
@@ -14441,6 +14454,7 @@ class MaaArenaReaderBackend:
         diagnostic = getattr(self, "_detail_failure_frames", None)
         if diagnostic is not None:
             diagnostic["p_item_restore"] = restore_observations
+            diagnostic["probe_phase"] = "return"
         for _ in range(4):
             if time.monotonic() >= deadline:
                 break
