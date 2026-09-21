@@ -35,6 +35,8 @@ _ERROR_LABELS = (
     ("skill_card_detail_count_conflict", "技能卡强化信息存在矛盾"),
     ("skill_card_cost_evidence_conflict", "技能卡费用信息存在矛盾"),
     ("skill_card_detail_", "技能卡详情未能确认"),
+    ("explicit_or_protected_field_conflict", "P 道具名称已读到，但效果数值存在冲突"),
+    ("insufficient_difference_evidence", "P 道具名称已读到，但普通版与强化版仍未区分"),
     ("p_item_detail_", "P 道具详情未能确认"),
     *_SKILL_CARD_LAYOUT_ERRORS.items(),
     ("result_save", "对局结果暂时无法保存"),

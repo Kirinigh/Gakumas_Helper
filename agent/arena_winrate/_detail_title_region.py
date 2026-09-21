@@ -30,28 +30,7 @@ def isolated_title_region(
         return None
     # White fill is connected around the title and effect glyphs. Other page
     # surfaces are grey; artwork islands must also pass rectangular edge tests.
-    white = (image.min(axis=2) >= 250).astype(np.uint8)
-    _, labels, stats, _ = cv2.connectedComponentsWithStats(white)
-    panels = []
-    for label, (x, y, w, h, area) in enumerate(stats[1:], 1):
-        x, y, w, h = map(int, (x, y, w, h))
-        if not (
-            width * .40 <= w <= width * .65
-            and height * .08 <= h <= height * .45
-            and y + h <= height * .60 and area >= w * h * .62
-        ):
-            continue
-        inset = max(3, round(width * .004))
-        corner = max(8, round(width * .03))
-        component = labels[y:y + h, x:x + w] == label
-        if min(
-            component[inset, corner:-corner].mean(),
-            component[-inset - 1, corner:-corner].mean(),
-            component[corner:-corner, inset].mean(),
-            component[corner:-corner, -inset - 1].mean(),
-        ) < .88:
-            continue
-        panels.append((x, y, w, h))
+    panels = _white_detail_panels(image)
     # Do not select whichever of several panels happens to name a known card.
     if len(panels) != 1:
         return None
@@ -98,3 +77,61 @@ def isolated_title_region(
     ):
         return None
     return left, top, right - left, bottom - top
+
+
+def _white_detail_panels(image: np.ndarray) -> list[tuple[int, int, int, int]]:
+    height, width = image.shape[:2]
+    white = (image.min(axis=2) >= 250).astype(np.uint8)
+    _, labels, stats, _ = cv2.connectedComponentsWithStats(white)
+    panels = []
+    for label, (x, y, w, h, area) in enumerate(stats[1:], 1):
+        x, y, w, h = map(int, (x, y, w, h))
+        if not (
+            width * .40 <= w <= width * .65
+            and height * .08 <= h <= height * .45
+            and y + h <= height * .60 and area >= w * h * .62
+        ):
+            continue
+        inset = max(3, round(width * .004))
+        corner = max(8, round(width * .03))
+        component = labels[y:y + h, x:x + w] == label
+        if min(
+            component[inset, corner:-corner].mean(),
+            component[-inset - 1, corner:-corner].mean(),
+            component[corner:-corner, inset].mean(),
+            component[corner:-corner, -inset - 1].mean(),
+        ) < .88:
+            continue
+        panels.append((x, y, w, h))
+    return panels
+
+
+def isolated_p_item_body_region(
+    image: np.ndarray, sources: Sequence[np.ndarray], title_box: tuple[int, int, int, int],
+) -> tuple[int, int, int, int] | None:
+    """Bound an existing P-item tooltip without guessing its title or effects."""
+    if (image.ndim != 3 or image.shape[2] != 3 or len(sources) != 3
+            or any(source.shape != image.shape for source in sources)):
+        return None
+    height, width = image.shape[:2]
+    panels = _white_detail_panels(image)
+    if len(panels) != 1:
+        return None
+    x, y, w, h = panels[0]
+    tx, ty, tw, th = title_box
+    if not (tw > 0 and th > 0 and x <= tx < tx + tw <= x + w
+            and y <= ty < ty + th <= y + min(h * .35, height * .05)):
+        return None
+    margin = max(5, round(width * .018))
+    outside = np.zeros((height, width), dtype=bool)
+    outside[:round(height * .48)] = True
+    outside[max(0, y - margin):y + h + margin, max(0, x - margin):x + w + margin] = False
+    if outside.sum() < width * height * .1:
+        return None
+    current = image.astype(np.int16)
+    votes = 0
+    for source in sources:
+        changed = np.max(np.abs(current - source.astype(np.int16)), axis=2) > 12
+        if changed[y:y + h, x:x + w].mean() >= .12 and changed[outside].mean() <= .04:
+            votes += 1
+    return (x, y, w, h) if votes >= 2 else None

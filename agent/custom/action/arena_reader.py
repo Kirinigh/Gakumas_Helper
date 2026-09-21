@@ -5317,6 +5317,21 @@ class MaaArenaReaderBackend:
                         title_text=last_title_text, detail_text=last_text,
                         allow_one_substitution=not bool(match_title_rows_exact(last_title_text)),
                     )
+                    if text_result.status != "unique" and current_atoms and source_images:
+                        from arena_winrate._detail_title_region import isolated_p_item_body_region
+
+                        panel_box = isolated_p_item_body_region(image, source_images, tuple(row_box))
+                        if panel_box is not None:
+                            text_result = text_resolver(
+                                text_atoms, title_index=title_index,
+                                source_frames=tuple(value[5] for value in source_observations),
+                                plan=plan, candidate_p_item_ids=candidate_ids, **slot_scope,
+                                visual_tiebreak_p_item_ids=visual_tiebreak_ids,
+                                title_text=last_title_text, detail_text=last_text,
+                                allow_one_substitution=not bool(match_title_rows_exact(last_title_text)),
+                                panel_box=panel_box,
+                            )
+                            self._increment("p_item_detail_panel_reuses")
                     self._add_timing("p_item_detail_text", time.perf_counter() - text_started)
                     self._increment(f"p_item_detail_text_{text_result.status}")
                     last_text_resolution = f"{text_result.status}: {text_result.reason}"
@@ -5474,7 +5489,9 @@ class MaaArenaReaderBackend:
                 consecutive_source_reads = 0
                 consecutive_non_source_reads += 1
                 if last_text:
-                    if last_source_row_uncertain:
+                    if raw_matches and last_text_resolution:
+                        last_error = f"P-item title recognized; body unresolved: {last_text_resolution}"
+                    elif last_source_row_uncertain:
                         last_error = (
                             "P-item detail first changed row remained one OCR "
                             "substitution from a frozen source row"

@@ -89,7 +89,7 @@ def component_rows(atoms: list[dict], height: float) -> list[dict]:
         output.append({"components": sorted(components, key=lambda c: c["box"][0]), "center": row["center"]})
     return output
 
-def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFrames) -> dict:
+def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFrames, panel_box: tuple[int, int, int, int] | None = None) -> dict:
     title = atoms[title_index]
     tx, _, _, title_bottom = bounds(title)
     height = float(title["box"][3])
@@ -104,6 +104,14 @@ def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFra
         if not key:
             rejected.append({"index": index, "reason": "empty_source_text"})
             continue
+        if panel_box is not None:
+            px, py, pw, ph = panel_box
+            ax, ay, ar, ab = bounds(atom)
+            if not (px <= ax < ar <= px + pw and py <= ay < ab <= py + ph):
+                if px <= (ax + ar) / 2 <= px + pw and py <= (ay + ab) / 2 <= py + ph:
+                    return {"status": "unknown", "reason": "panel_atom_crosses_boundary", "body": "", "atoms": []}
+                rejected.append({"index": index, "reason": "outside_confirmed_detail_panel"})
+                continue
         matched_sources = sources.matching_frames(atom, height)
         if len(matched_sources) >= 2:
             rejected.append({"index": index, "reason": "stable_source_background", "source_frame_indices": matched_sources})
@@ -141,7 +149,7 @@ def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFra
                 return {"status": "unknown", "reason": "body_not_rendered_next_to_title", "body": "", "atoms": [], "rejected": rejected, "decorations": decorations}
             rejected.extend({"index": a["index"], "reason": "after_body_geometric_gap"} for later in component_rows([a for a in eligible if bounds(a)[1] >= top], height) for component in later["components"] for a in component["atoms"])
             break
-        if len([component for component in candidates if component["strong"]]) > 1:
+        if panel_box is None and len([component for component in candidates if component["strong"]]) > 1:
             uncertainty.append({"reason": "multiple_body_components_same_row", "atom_indices": [a["index"] for c in candidates for a in c["atoms"]]})
         joined_atoms = sorted((a for component in candidates for a in component["atoms"]), key=lambda a: (a["box"][0], a["index"]))
         selected.append(joined_atoms)
@@ -161,7 +169,7 @@ def atom_text_view(atoms: list[dict], layout: dict) -> tuple[str, list[dict]]:
     previous = ""
     for row in layout["atoms"]:
         for index in row:
-            text = normalize(atoms[index]["text"])
+            text = normalize(atoms[index]["text"]).translate(str.maketrans({"值": "値", "增": "増", "·": "・"}))
             if not text:
                 continue
             if previous and previous[-1].isdigit() and text[0].isdigit():
@@ -431,16 +439,19 @@ class PItemDetailTextIndex:
         source_frames: Sequence[Sequence[Mapping[str, Any]]] | PItemSourceTextFrames = (),
         plan: str | None = None,
         eligible_ids: frozenset[int] | None = None,
+        panel_box: tuple[int, int, int, int] | None = None,
     ) -> PItemDetailTextResult:
         if not isinstance(title_index, int) or isinstance(title_index, bool) or not 0 <= title_index < len(atoms):
             return PItemDetailTextResult("unknown", reason="invalid_title_index")
         atom_rows = [dict(atom) for atom in atoms]
         sources = source_frames if isinstance(source_frames, PItemSourceTextFrames) else PItemSourceTextFrames([[dict(atom) for atom in frame] for frame in source_frames])
-        layout = body_layout(atom_rows, title_index, sources)
+        layout = body_layout(atom_rows, title_index, sources, panel_box)
+        if layout["reason"] == "panel_atom_crosses_boundary":
+            return PItemDetailTextResult("unknown", reason="panel_atom_crosses_boundary")
         text, spans = atom_text_view(atom_rows, layout)
         uncertain = {index for entry in layout.get("uncertainty", ()) for index in entry.get("atom_indices", ())}
         return self._resolve(str(atom_rows[title_index]["text"]), text, spans, plan=plan, eligible_ids=eligible_ids, uncertain_atoms=uncertain,
-                             layout_diagnostics={"status": layout["status"], "reason": layout["reason"], "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": layout.get("uncertainty", ())})
+                             layout_diagnostics={"panel_box": panel_box, "status": layout["status"], "reason": layout["reason"], "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": layout.get("uncertainty", ())})
 
     def match_text(self, title_text: str, detail_text: str, *, plan: str | None = None, eligible_ids: frozenset[int] | None = None) -> PItemDetailTextResult:
         """Compatibility core for old text-only mocks; production passes atoms."""

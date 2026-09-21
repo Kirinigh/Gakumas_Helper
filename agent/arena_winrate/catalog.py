@@ -650,6 +650,7 @@ class ArenaEntityCatalog:
         title_text: str | None = None,
         detail_text: str | None = None,
         allow_one_substitution: bool = False,
+        panel_box: tuple[int, int, int, int] | None = None,
     ) -> PItemDetailTextResult:
         """Resolve attributed detail text without image candidate preselection.
 
@@ -699,7 +700,7 @@ class ArenaEntityCatalog:
                 atoms,
                 title_index=title_index,
                 source_frames=source_frames,
-                plan=plan, **scope,
+                plan=plan, **scope, **({"panel_box": panel_box} if panel_box is not None else {}),
             )
         return replace(
             result,
