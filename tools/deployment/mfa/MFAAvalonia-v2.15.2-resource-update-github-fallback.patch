@@ -872,10 +872,20 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                      downloadUrl = result.url;
                      latestVersion = result.latestVersion;
                      sha256 = result.sha256;
-@@ -817,6 +831,41 @@
-             Instances.InstanceTabBarViewModel.ActiveTab?.TaskQueueViewModel.ClearDownloadProgress();
+@@ -807,7 +821,7 @@
              return;
          }
+ 
+-        SetProgress(progress, 100);
++        SetProgress(progress, 0);
+ 
+         if (!isLocalPackage && string.IsNullOrWhiteSpace(downloadUrl))
+         {
+@@ -816,6 +830,48 @@
+             Instances.RootViewModel.SetUpdating(false);
+             Instances.InstanceTabBarViewModel.ActiveTab?.TaskQueueViewModel.ClearDownloadProgress();
+             return;
++        }
 +        // Opt in only when the target advertises the new protocol. Older targets keep their existing route.
 +        var targetRelease = releaseCatalog.FirstOrDefault(r => r["tag_name"]?.ToString() == latestVersion);
 +        if (isGithub && !isLocalPackage && AppPaths.DataRoot == AppPaths.InstallRoot
@@ -894,7 +904,14 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
 +            DerivedFileUpdate.Plan? plan = null;
 +            try
 +            {
-+                plan = await DerivedFileUpdate.Prepare(AppPaths.InstallRoot, work, localVersion, latestVersion, catalog, client);
++                SetStatusText(textBlock, downloadSpeedTextBlock, "正在准备更新……");
++                plan = await DerivedFileUpdate.Prepare(AppPaths.InstallRoot, work, localVersion, latestVersion, catalog, client,
++                    (stage, received, total) =>
++                    {
++                        SetProgress(progress, total > 0 ? Math.Min(99, received * 100.0 / total) : 0);
++                        SetStatusText(textBlock, downloadSpeedTextBlock, total > 0
++                            ? $"{stage}（{received / 1048576.0:F1} / {total / 1048576.0:F1} MB）" : stage);
++                    });
 +            }
 +            catch (NotSupportedException) { LoggerHelper.Info("目标未提供增量协议，继续完整更新。"); }
 +            catch { Instances.RootViewModel.SetUpdating(false); Dismiss(sukiToast); throw; }
@@ -910,11 +927,10 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
 +            await Task.Delay(Timeout.Infinite); // The worker reports success only after final verification.
 +            return;
 +            }
-+        }
+         }
          MaaProcessorManager.Instance.Current.SetTasker();
          // 仅停止正在运行的任务，不 Dispose 处理器（避免界面变白/配置列表清空）
-         // BeforeClosed 将在重启前调用
-@@ -849,14 +898,14 @@
+@@ -849,14 +905,14 @@
              SetStatusText(textBlock, downloadSpeedTextBlock, LangKeys.Downloading.ToLocalization());
              SetProgress(progress, 0);
              (var downloadStatus, tempZipFilePath) = await DownloadWithRetry(downloadUrl, tempZipFilePath, progress, 3, textBlock, downloadSpeedTextBlock);
@@ -932,7 +948,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          }
          else
          {
-@@ -879,7 +928,7 @@
+@@ -879,7 +935,7 @@
              Dismiss(sukiToast);
              ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
              Instances.RootViewModel.SetUpdating(false);
@@ -941,7 +957,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          }
          SetStatusText(textBlock, downloadSpeedTextBlock, LangKeys.Verifying.ToLocalization());
          var sha256Verified = true;
-@@ -901,7 +950,7 @@
+@@ -901,7 +957,7 @@
              Dismiss(sukiToast);
              ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.HashVerificationFailed.ToLocalization());
              Instances.RootViewModel.SetUpdating(false);
@@ -950,7 +966,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          }
          SetStatusText(textBlock, downloadSpeedTextBlock, LangKeys.Extracting.ToLocalization());
          LoggerHelper.Info($"准备解压资源包：源文件={tempZipFilePath}，目标目录={tempExtractDir}");
-@@ -916,7 +965,7 @@
+@@ -916,7 +972,7 @@
              Dismiss(sukiToast);
              ToastHelper.Warn(LangKeys.Warning.ToLocalization(), validationMessage, -1);
              Instances.RootViewModel.SetUpdating(false);
@@ -959,7 +975,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          }
  
          var containsCoreApplicationFiles = ContainsCoreApplicationFiles(originPath);
-@@ -1744,14 +1793,17 @@
+@@ -1744,14 +1800,17 @@
          public int Total { get; set; } = 0;
      }
  
@@ -978,7 +994,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
  
          public UpdateFileTransaction(string tempRoot)
          {
-@@ -1775,7 +1827,7 @@
+@@ -1775,7 +1834,7 @@
              cancellationToken.ThrowIfCancellationRequested();
              var targetDirectory = Path.GetDirectoryName(targetPath);
              if (!string.IsNullOrWhiteSpace(targetDirectory))
@@ -987,7 +1003,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
  
              var pendingPath = targetPath + ".pending_update";
              try
-@@ -1811,6 +1863,19 @@
+@@ -1811,6 +1870,19 @@
              ReplaceFile(stagedPath, targetPath, CancellationToken.None);
          }
  
@@ -1007,7 +1023,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          public void TrackReplacement(string targetPath, string backupPath)
          {
              _changes.Add(new FileChange(targetPath, backupPath));
-@@ -1826,7 +1891,7 @@
+@@ -1826,7 +1898,7 @@
          {
              if (!_committed)
              {
@@ -1016,7 +1032,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                      TryDeleteBackupRoot();
                  return;
              }
-@@ -1837,8 +1902,10 @@
+@@ -1837,8 +1909,10 @@
          private string NextBackupPath() =>
              Path.Combine(_backupRoot, $"{_nextBackupId++:D8}.bak");
  
@@ -1029,7 +1045,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              var succeeded = true;
              LoggerHelper.Warning($"更新未完成，开始回滚已修改文件：数量={_changes.Count}");
              for (var index = _changes.Count - 1; index >= 0; index--)
-@@ -1852,11 +1919,12 @@
+@@ -1852,11 +1926,12 @@
                          File.Delete(change.TargetPath);
                      }
  
@@ -1043,7 +1059,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                          File.Move(change.BackupPath, change.TargetPath, overwrite: true);
                      }
                  }
-@@ -1867,8 +1935,10 @@
+@@ -1867,8 +1942,10 @@
                  }
              }
  
@@ -1054,7 +1070,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              return succeeded;
          }
  
-@@ -2030,7 +2100,7 @@
+@@ -2030,7 +2107,7 @@
                  Dismiss(sukiToast);
                  ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
                  Instances.RootViewModel.SetUpdating(false);
@@ -1063,7 +1079,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              }
  
              // 解压文件
-@@ -2154,13 +2224,14 @@
+@@ -2154,13 +2231,14 @@
      {
          for (int i = 0; i < retries; i++)
          {
@@ -1085,7 +1101,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  await Task.Delay(2000 * (i + 1));
              }
          }
-@@ -2402,7 +2473,7 @@
+@@ -2402,7 +2480,7 @@
                  Dismiss(sukiToast);
                  ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
                  Instances.RootViewModel.SetUpdating(false);
@@ -1094,7 +1110,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              }
  
              SetText(textBlock, LangKeys.ApplyingUpdate.ToLocalization());
-@@ -2461,7 +2532,7 @@
+@@ -2461,7 +2539,7 @@
          string repo = "MFAAvalonia",
          bool onlyCheck = false,
          string targetVersion = "",
@@ -1103,7 +1119,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
      {
          var versionType = repo.Equals("MFAAvalonia", StringComparison.OrdinalIgnoreCase)
              ? Instances.VersionUpdateSettingsUserControlModel.UIUpdateChannelIndex.ToVersionType()
-@@ -2474,7 +2545,7 @@
+@@ -2474,7 +2552,7 @@
  
          var releaseUrl = $"https://api.github.com/repos/{owner}/{repo}/releases";
          int page = 1;
@@ -1112,7 +1128,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          using var httpClient = CreateHttpClientWithProxy();
  
          if (!string.IsNullOrWhiteSpace(Instances.VersionUpdateSettingsUserControlModel.GitHubToken))
-@@ -2496,7 +2567,7 @@
+@@ -2496,7 +2574,7 @@
              var urlWithParams = $"{releaseUrl}?per_page={perPage}&page={page}";
              try
              {
@@ -1121,7 +1137,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  if (response.IsSuccessStatusCode)
                  {
                      string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-@@ -2507,6 +2578,7 @@
+@@ -2507,6 +2585,7 @@
                      }
                      foreach (var tag in tags)
                      {
@@ -1129,7 +1145,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                          // 检查是否为预发布版本
                          if ((bool)tag["prerelease"] && versionType == VersionType.Stable)
                          {
-@@ -2542,7 +2614,7 @@
+@@ -2542,7 +2621,7 @@
                                  if (!onlyCheck && repo != "MFAAvalonia")
                                      SaveChangelog(tag, "body");
                              }
@@ -1138,7 +1154,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                              return (url, latestVersion, sha256);
                          }
  
-@@ -2556,11 +2628,8 @@
+@@ -2556,11 +2635,8 @@
                              }
                          }
                      }
@@ -1152,7 +1168,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  }
                  else
                  {
-@@ -2587,7 +2656,7 @@
+@@ -2587,7 +2663,7 @@
                  if (!onlyCheck && repo != "MFAAvalonia")
                      SaveChangelog(bestRelease, "body");
              }
@@ -1161,7 +1177,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          }
          return (url, latestVersion, sha256);
      }
-@@ -2779,7 +2848,7 @@
+@@ -2779,7 +2855,7 @@
          return $@"\b{osOrFamily}-{arch}\b";
      }
  
@@ -1170,7 +1186,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
      {
          string downloadUrl = string.Empty;
          string sha256 = string.Empty;
-@@ -2802,12 +2871,15 @@
+@@ -2802,12 +2878,15 @@
  
          try
          {
@@ -1191,7 +1207,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  if (releaseData["assets"] is JArray { Count: > 0 } assets)
                  {
                      var orderedAssets = assets
-@@ -2834,11 +2906,6 @@
+@@ -2834,11 +2913,6 @@
                      downloadUrl = bestAsset?.Url ?? string.Empty;
                      sha256 = bestAsset?.Sha256 ?? string.Empty;
                  }
@@ -1203,7 +1219,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              }
          }
          catch (Exception e) when (e is not OperationCanceledException)
-@@ -3104,6 +3171,8 @@
+@@ -3104,6 +3178,8 @@
          TextBlock? downloadSpeedTextBlock = null)
      {
          var targetFilePath = filePath;
@@ -1212,7 +1228,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          try
          {
              using var httpClient = CreateHttpClientWithProxy();
-@@ -3125,7 +3194,9 @@
+@@ -3125,7 +3201,9 @@
                  }
              }
  
@@ -1223,7 +1239,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              response.EnsureSuccessStatusCode();
  
              if (response.Content.Headers.ContentDisposition != null)
-@@ -3147,6 +3218,7 @@
+@@ -3147,6 +3225,7 @@
  
              await using var contentStream = await response.Content.ReadAsStreamAsync();
              await using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
@@ -1231,7 +1247,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
  
              var buffer = new byte[8192];
              var stopwatch = Stopwatch.StartNew();
-@@ -3176,7 +3248,7 @@
+@@ -3176,7 +3255,7 @@
                  double progressPercentage;
                  if (totalBytes.HasValue && totalBytes.Value > 0)
                  {
@@ -1240,7 +1256,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  }
                  else
                  {
-@@ -3199,6 +3271,11 @@
+@@ -3199,6 +3278,11 @@
                  }
              }
  
@@ -1252,7 +1268,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              SetProgress(progressBar, 100);
              SetDownloadInfo(downloadSizeTextBlock, downloadSpeedTextBlock, totalBytesRead, totalBytes ?? totalBytesRead, bytesPerSecond);
              DispatcherHelper.PostOnMainThread(() =>
-@@ -3211,6 +3288,11 @@
+@@ -3211,6 +3295,11 @@
  
              return (true, targetFilePath);
          }
@@ -1264,7 +1280,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          catch (HttpRequestException httpEx)
          {
              LoggerHelper.Error($"HTTP 请求失败：原因={httpEx.Message}", httpEx);
-@@ -3225,6 +3307,20 @@
+@@ -3225,6 +3314,20 @@
          {
              LoggerHelper.Error($"下载文件时发生未知错误：原因={ex.Message}", ex);
              return (false, targetFilePath);
@@ -1895,7 +1911,7 @@ diff --git a/MFAAvalonia/Helper/DerivedFileUpdate.cs b/MFAAvalonia/Helper/Derive
 new file mode 100644
 --- /dev/null
 +++ b/MFAAvalonia/Helper/DerivedFileUpdate.cs
-@@ -0,0 +1,464 @@
+@@ -0,0 +1,492 @@
 +using System;
 +using System.IO;
 +using System.IO.Compression;
@@ -2069,20 +2085,43 @@ new file mode 100644
 +            throw new InvalidDataException("更新附件缺少可靠下载信息。");
 +        return new Asset { name = name, url = url, sha256 = hash, bytes = (long?)item["size"] ?? 0 };
 +    }
-+    internal static async Task Download(HttpClient client, Asset asset, string target, Budget budget)
++    internal static async Task Download(HttpClient client, Asset asset, string target, Budget budget,
++        Action<string, long, long>? progress = null)
 +    {
 +        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
 +        while (true)
 +        {
 +            try
 +            {
++                progress?.Invoke("正在下载 " + asset.name, 0, asset.bytes);
 +                using var request = new HttpRequestMessage(HttpMethod.Get, asset.url);
 +                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
 +                using var response = await GitHubApiRequests.SendAsync(client, request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
 +                response.EnsureSuccessStatusCode();
 +                await using (var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
 +                await using (var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write))
-+                    await input.CopyToAsync(output).ConfigureAwait(false);
++                {
++                    var buffer = new byte[81920];
++                    long received = 0;
++                    var clock = Stopwatch.StartNew();
++                    long lastReport = -250;
++                    while (true)
++                    {
++                        using var idle = new CancellationTokenSource(TimeSpan.FromSeconds(60));
++                        var count = await input.ReadAsync(buffer.AsMemory(), idle.Token).ConfigureAwait(false);
++                        if (count == 0) break;
++                        await output.WriteAsync(buffer.AsMemory(0, count), idle.Token).ConfigureAwait(false);
++                        received += count;
++                        if (received > asset.bytes) throw new InvalidDataException("更新附件超过声明长度。");
++                        if (clock.ElapsedMilliseconds - lastReport >= 250 || received == asset.bytes)
++                        {
++                            progress?.Invoke("正在下载 " + asset.name, received, asset.bytes);
++                            lastReport = clock.ElapsedMilliseconds;
++                        }
++                    }
++                    await output.FlushAsync().ConfigureAwait(false);
++                }
++                progress?.Invoke("正在校验 " + asset.name, asset.bytes, asset.bytes);
 +                if (new FileInfo(target).Length != asset.bytes || !Hash(target).Equals(asset.sha256, StringComparison.OrdinalIgnoreCase))
 +                    throw new InvalidDataException("更新附件校验失败。");
 +                return;
@@ -2093,16 +2132,17 @@ new file mode 100644
 +                if (File.Exists(target)) File.Delete(target);
 +                throw;
 +            }
-+            catch (Exception error) when (error is IOException or HttpRequestException)
++            catch (Exception error) when (error is IOException or HttpRequestException or OperationCanceledException)
 +            {
 +                if (File.Exists(target)) File.Delete(target);
 +                if (budget.Remaining-- <= 0) throw;
++                progress?.Invoke("下载中断，正在重试 " + asset.name, 0, asset.bytes);
 +                await Task.Delay(2000).ConfigureAwait(false);
 +            }
 +        }
 +    }
 +    internal static async Task<Plan> Prepare(string root, string work, string localVersion, string targetVersion,
-+        List<JsonObject> catalog, HttpClient client)
++        List<JsonObject> catalog, HttpClient client, Action<string, long, long>? progress = null)
 +    {
 +        var releases = catalog.Where(r => (bool?)r["draft"] != true && (bool?)r["prerelease"] != true)
 +            .GroupBy(r => (string?)r["tag_name"] ?? "").ToDictionary(g => g.Key, g => g.Single());
@@ -2116,7 +2156,7 @@ new file mode 100644
 +            var asset = ResolveAsset(release, $"GakumasHelper-release-{tag}.json");
 +            if (asset.bytes <= 0 || asset.bytes > 16 * 1024 * 1024) throw new InvalidDataException("版本清单体积无效。");
 +            var path = Path.Combine(work, tag + ".json");
-+            await Download(client, asset, path, plan.Budget);
++            await Download(client, asset, path, plan.Budget, progress);
 +            var document = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
 +            var metadata = document["file_update"]?.Deserialize<Metadata>() ?? throw new NotSupportedException("目标仅提供完整更新。");
 +            if (metadata.protocol != 1 || metadata.target.version != tag || !ValidHash(metadata.state_sha256)) throw new InvalidDataException("版本清单不匹配。");
@@ -2153,8 +2193,9 @@ new file mode 100644
 +            foreach (var step in plan.Steps)
 +            {
 +                var archive = Path.Combine(work, step.Asset.name);
-+                await Download(client, step.Asset, archive, plan.Budget);
++                await Download(client, step.Asset, archive, plan.Budget, progress);
 +                step.Directory = Path.Combine(work, "step-" + step.Metadata.target.version);
++                progress?.Invoke("正在解压并校验增量更新 " + step.Metadata.target.version, 0, 0);
 +                Extract(step, archive, false);
 +            }
 +            plan.IsDelta = true;
@@ -2167,16 +2208,19 @@ new file mode 100644
 +            if (downloadingDelta && plan.Budget.Remaining-- <= 0) throw;
 +            plan.Reason = error.Message;
 +            plan.Steps.Clear();
-+            await PrepareFull(plan, client);
++            progress?.Invoke("正在准备完整更新：" + plan.Reason, 0, 0);
++            await PrepareFull(plan, client, progress);
 +        }
++        progress?.Invoke("更新包已校验，准备应用更新", 0, 0);
 +        return plan;
 +    }
-+    internal static async Task PrepareFull(Plan plan, HttpClient client)
++    internal static async Task PrepareFull(Plan plan, HttpClient client, Action<string, long, long>? progress = null)
 +    {
 +        if (plan.Budget.Remaining < 0) throw new IOException("更新恢复预算已用完。");
 +        var archive = Path.Combine(plan.Work, "full.zip");
-+        if (!File.Exists(archive)) await Download(client, plan.Full, archive, plan.Budget);
++        if (!File.Exists(archive)) await Download(client, plan.Full, archive, plan.Budget, progress);
 +        var step = new Step { Metadata = plan.Target, Asset = plan.Full, Directory = Path.Combine(plan.Work, "full") };
++        progress?.Invoke("正在解压并校验完整更新", 0, 0);
 +        Extract(step, archive, true);
 +        plan.IsDelta = false;
 +        plan.Steps = new List<Step> { step };

@@ -72,7 +72,14 @@ static class Program
         using var client = new HttpClient(handler);
         client.DefaultRequestHeaders.UserAgent.ParseAdd("fixture");
         var catalog = input["catalog"]!.AsArray().Select(r => r!.AsObject()).ToList();
-        var plan = await DerivedFileUpdate.Prepare(root, work, (string)input["from"]!, (string)input["to"]!, catalog, client);
+        var progress = new List<(string Stage, long Received, long Total)>();
+        var plan = await DerivedFileUpdate.Prepare(root, work, (string)input["from"]!, (string)input["to"]!, catalog, client,
+            (stage, received, total) => progress.Add((stage, received, total)));
+        if (!progress.Any(p => p.Received == 0 && p.Total > 0)
+            || !progress.Any(p => p.Received > 0 && p.Received <= p.Total)
+            || !progress.Any(p => p.Stage.Contains("解压并校验"))
+            || progress.Last().Stage != "更新包已校验，准备应用更新")
+            throw new Exception("Missing real transfer and stage progress");
         var chosenDelta = plan.IsDelta;
         var count = plan.Steps.Count;
         var reason = plan.Reason;
