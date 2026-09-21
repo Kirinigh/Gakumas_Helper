@@ -12,6 +12,7 @@ from typing import Any
 from pathlib import Path
 from datetime import datetime, timezone
 from collections import Counter
+from collections.abc import Mapping
 
 
 class RecognitionProbe:
@@ -50,10 +51,11 @@ class RecognitionProbe:
             return
         raw = []
         for item in items:
-            box = getattr(item, "box", ())
-            raw.append({"text": str(getattr(item, "text", "")),
+            value = item.get if isinstance(item, Mapping) else lambda key, default: getattr(item, key, default)
+            box = value("box", ()) or ()
+            raw.append({"text": str(value("text", "")),
                         "box": [int(value) for value in box],
-                        "score": float(getattr(item, "score", 0))})
+                        "score": float(value("score", 0) or 0)})
         frames.append({"image": image, "ocr": raw, "phase": phase})
         if len(frames) > 6:
             # Preserve the first two observations and four most recent ones.
