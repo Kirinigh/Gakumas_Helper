@@ -93,6 +93,90 @@ diff --git a/MFAAvalonia/Extensions/MaaFW/MaaProcessor.cs b/MFAAvalonia/Extensio
              }
              catch (Exception e)
              {
+@@ -1961,7 +1959,7 @@
+                 {
+                     // 先尝试通过 reco_id 获取识别结果图片
+                     var recoIdToken = jObject["reco_id"];
+-                    if (recoIdToken != null)
++                    if (recoIdToken != null && CanReadRecognitionResult(args.Message))
+                     {
+                         var recoId = Convert.ToInt64(recoIdToken.ToString());
+                         if (recoId > 0)
+@@ -3806,7 +3804,13 @@
+ 
+         try
+         {
+-            if (ViewModel?.IsConnected == true && MaaTasker?.Controller?.IsConnected == true)
++            var currentType = ViewModel?.CurrentController ?? MaaControllerTypes.Adb;
++            var invalidWindow = (currentType == MaaControllerTypes.Win32 || currentType == MaaControllerTypes.Gamepad)
++                && !IsLiveConnectionWindow(Config.DesktopWindow.HWnd);
++            if (invalidWindow)
++                ViewModel?.SetConnected(false);
++
++            if (!invalidWindow && ViewModel?.IsConnected == true && MaaTasker?.Controller?.IsConnected == true)
+             {
+                 return;
+             }
+@@ -3842,7 +3846,7 @@
+                 await EnsureAdbTargetReadyAsync(token, showMessage, delayFingerprintMatching);
+             }
+ 
+-            if (!isPlayCover && ViewModel?.CurrentDevice == null && InstanceConfiguration.GetValue(ConfigurationKeys.AutoDetectOnConnectionFailed, true) && !delayFingerprintMatching)
++            if (!isPlayCover && (ViewModel?.CurrentDevice == null || invalidWindow) && InstanceConfiguration.GetValue(ConfigurationKeys.AutoDetectOnConnectionFailed, true) && !delayFingerprintMatching)
+                 ViewModel?.TryReadAdbDeviceFromConfig(false, true, true, false, strictRecoveryTarget);
+ 
+             var tuple = await TryConnectAsync(token);
+@@ -3855,7 +3859,7 @@
+             }
+             else if (!connected && controllerType == MaaControllerTypes.Win32 && !tuple.Item2 && shouldRetry)
+             {
+-                await RetryConnectionAsync(CancellationToken.None, showMessage, StartSoftware, LangKeys.TryToStartGame,
++                connected = await RetryConnectionAsync(token, showMessage, StartSoftware, LangKeys.TryToStartGame,
+                     InstanceConfiguration.GetValue(ConfigurationKeys.RetryOnDisconnectedWin32, false),
+                     () =>
+                     {
+@@ -4009,9 +4013,41 @@
+     async private Task<(bool, bool, bool)> TryConnectAsync(CancellationToken token)
+     {
+         token.ThrowIfCancellationRequested();
++        var type = ViewModel?.CurrentController ?? MaaControllerTypes.Adb;
++        var targetError = ConnectionTargetError(type, Config.AdbDevice.AdbSerial,
++            Config.DesktopWindow.HWnd, IsLiveConnectionWindow);
++        if (targetError != null)
++        {
++            ViewModel?.SetConnected(false);
++            AddLog(targetError);
++            // Empty ADB targets cannot be recovered by reconnect/restart with the same empty serial.
++            // Window startup retains its configured recovery opportunity.
++            return (false, false, type == MaaControllerTypes.Win32);
++        }
+         var tuple = await GetTaskerAndBoolAsync(token);
+         return (tuple.Item1 is { IsInitialized: true }, tuple.Item2, tuple.Item3);
+     }
++
++    private static bool CanReadRecognitionResult(string message) => message is
++        "Node.Recognition.Succeeded" or "Node.Recognition.Failed" or
++        "Node.Action.Starting" or "Node.Action.Succeeded" or "Node.Action.Failed";
++
++    private static string? ConnectionTargetError(MaaControllerTypes type, string? serial,
++        nint handle, Func<nint, bool> isLiveWindow)
++    {
++        if (type == MaaControllerTypes.Adb && string.IsNullOrWhiteSpace(serial))
++            return "未找到模拟器设备。请先选择设备；DMM 版请选择 PC 控制器和游戏窗口。";
++        if ((type == MaaControllerTypes.Win32 || type == MaaControllerTypes.Gamepad) && !isLiveWindow(handle))
++            return "游戏窗口已关闭或尚未选定。请打开游戏并刷新窗口列表后重新连接。";
++        return null;
++    }
++
++    private static bool IsLiveConnectionWindow(nint handle) => handle != nint.Zero
++        && (!OperatingSystem.IsWindows() || IsWindowForConnection(handle));
++
++    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "IsWindow")]
++    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
++    private static extern bool IsWindowForConnection(nint handle);
+ 
+     private void HandleConnectionFailureAsync(MaaControllerTypes controllerType, CancellationToken token)
+     {
 diff --git a/MFAAvalonia/Extensions/MaaFW/TaskLoader.cs b/MFAAvalonia/Extensions/MaaFW/TaskLoader.cs
 --- a/MFAAvalonia/Extensions/MaaFW/TaskLoader.cs
 +++ b/MFAAvalonia/Extensions/MaaFW/TaskLoader.cs
