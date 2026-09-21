@@ -19,6 +19,7 @@ from typing import Any, Protocol, NamedTuple
 from pathlib import Path
 from threading import Lock
 from collections import Counter, deque
+from dataclasses import asdict
 from collections.abc import Mapping, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
@@ -677,6 +678,7 @@ class MaaArenaReaderBackend:
         self._card_face_cost_diagnostics: dict[tuple[int, int], dict[str, Any]] = {}
         self._card_face_cost_optional_errors: dict[tuple[int, int], str] = {}
         self._cost_customization_fallbacks: dict[tuple[int, int], dict[str, Any]] = {}
+        self._card_face_cost_failed_sources: dict[tuple[int, int], dict[str, Any]] = {}
         self._runtime_cost_customization_fallbacks: list[dict[str, Any]] = []
         self._runtime_detail_title_disambiguations: list[dict[str, Any]] = []
         self._secondary_presence_cache: dict[
@@ -759,6 +761,7 @@ class MaaArenaReaderBackend:
         diagnostic = getattr(self, "_detail_failure_frames", None)
         if diagnostic is None:
             return
+        diagnostic["position"]["observed_detail_card_id"] = card_id
         try:
             diagnostic["position"]["card_name"] = self.catalog.skill_card_title(card_id)
         except (AttributeError, KeyError, TypeError, ValueError):
@@ -773,7 +776,37 @@ class MaaArenaReaderBackend:
             "position": position, "source": source,
             "frames": deque(maxlen=5), "actions": deque(maxlen=16),
             "started": time.perf_counter(),
+            "transaction_id": uuid4().hex,
+            "count_baseline": dict(getattr(self, "_runtime_counts", {})),
         }
+
+    def _emit_detail_fallback_diagnostic(self, outcome: str, error: str | None = None) -> None:
+        """Emit existing transaction evidence, including interrupted reads."""
+        detail = getattr(self, "_detail_failure_frames", None)
+        if detail is None or detail.get("fallback_logged"):
+            return
+        before = detail.get("count_baseline", {})
+        counts = {
+            name: value - before.get(name, 0)
+            for name, value in getattr(self, "_runtime_counts", {}).items()
+            if value > before.get(name, 0) and any(part in name for part in (
+                "fallback", "retries", "reopen", "id_mismatch",
+                "one_character_recoveries", "effect_roi_reads", "isolated_title_roi",
+            ))
+        }
+        if not counts and outcome == "completed":
+            return
+        detail["fallback_logged"] = True
+        member = getattr(self, "_member_failure_frames", None) or {}
+        logger.info(json.dumps({
+            "event": "arena_detail_fallback_result",
+            **member.get("position", {}), **detail["position"],
+            "member_read_id": member.get("read_id"),
+            "transaction_id": detail.get("transaction_id"),
+            "outcome": outcome, "error": error,
+            "duration_seconds": round(time.perf_counter() - detail["started"], 6),
+            "fallback_counts": counts,
+        }, ensure_ascii=False))
 
     def begin_member_read_diagnostics(
         self, target: TeamTarget, stage_number: int, member_slot: int,
@@ -790,6 +823,7 @@ class MaaArenaReaderBackend:
         ):
             self._detail_failure_frames = None
         self._member_failure_frames = {
+            "read_id": uuid4().hex,
             "position": {
                 "team_id": target.team_id,
                 "opponent_position": target.opponent_position,
@@ -859,6 +893,7 @@ class MaaArenaReaderBackend:
 
     def _persist_detail_failure(self, error: str) -> None:
         """Save at most six already captured frames; never capture for logging."""
+        self._emit_detail_fallback_diagnostic("failed", error)
         diagnostic = getattr(self, "_detail_failure_frames", None)
         self._detail_failure_frames = None
         if diagnostic is None or diagnostic.get("persisted", False):
@@ -956,6 +991,7 @@ class MaaArenaReaderBackend:
             diagnostic = getattr(self, "_member_failure_frames", None)
             self._progressive_abandoned_member = dict(diagnostic["position"]) if diagnostic is not None else None
             self._record_duration_sample("member_read_superseded", wall_seconds)
+            self._emit_detail_fallback_diagnostic("superseded")
             for key in tuple(self._card_transaction_started):
                 self._finish_card_transaction(key, superseded=True)
         elif not succeeded:
@@ -1035,6 +1071,7 @@ class MaaArenaReaderBackend:
                 or "skill_card_transaction_failed"
             )
         else:
+            self._emit_detail_fallback_diagnostic("superseded" if superseded else "completed")
             self._detail_failure_frames = None
         if ocr_started is not None:
             backend_started, cache_hits_started = ocr_started
@@ -1545,8 +1582,11 @@ class MaaArenaReaderBackend:
             list[tuple[tuple[int, int, int, int], ...]],
         ] = {group_index: [] for group_index in groups}
         timing_started = time.perf_counter()
+        fresh_outcome, fresh_reason = "interrupted", None
 
         def reject(reason: str) -> None:
+            nonlocal fresh_outcome, fresh_reason
+            fresh_outcome, fresh_reason = "rejected", reason
             self._increment("skill_card_badge_glyph_fresh_group_rejections")
             self._increment(
                 f"skill_card_badge_glyph_fresh_group_{reason}_rejections"
@@ -1667,6 +1707,7 @@ class MaaArenaReaderBackend:
                 )
                 if all(stable_results):
                     self._increment("skill_card_badge_glyph_fresh_group_acceptances")
+                    fresh_outcome = "accepted"
                     return fresh_results
                 if any(
                     not stable
@@ -1689,6 +1730,18 @@ class MaaArenaReaderBackend:
                 "badge_glyph_fresh_group_wait",
                 time.perf_counter() - timing_started,
             )
+            member = getattr(self, "_member_failure_frames", None) or {}
+            logger.info(json.dumps({
+                "event": "arena_badge_fresh_group_result", **member.get("position", {}),
+                "member_read_id": member.get("read_id"),
+                "outcome": fresh_outcome, "reason": fresh_reason,
+                "duration_seconds": round(time.perf_counter() - timing_started, 6),
+                "related_slots": [
+                    {"group_index": group, "card_slot": slot + 1,
+                     "candidate_card_id": getattr(self, "_card_predictions", {}).get((group, slot + 1))}
+                    for group, slot in jobs
+                ],
+            }, ensure_ascii=False))
 
     def _batched_badge_local_results(
         self,
@@ -5826,6 +5879,16 @@ class MaaArenaReaderBackend:
                     elapsed = float(diagnostics["duration_seconds"])
                     self._add_timing("p_item_scale_fallback", elapsed)
                     self._record_duration_sample("p_item_scale_fallback", elapsed)
+                    logger.info(json.dumps({
+                        "event": "arena_p_item_scale_fallback",
+                        "team_id": getattr(target, "team_id", None),
+                        "opponent_position": getattr(target, "opponent_position", None),
+                        "stage_number": stage_number, "member_slot": slot,
+                        "member_read_id": (getattr(self, "_member_failure_frames", None) or {}).get("read_id"),
+                        "screen_slot": index + 1, "generation": generation_attempt,
+                        "p_item_id": decision.p_item_id,
+                        **diagnostics,
+                    }, ensure_ascii=False))
             if all(decision.accepted for decision in decisions):
                 break
             if generation_attempt == 1:
@@ -8722,6 +8785,13 @@ class MaaArenaReaderBackend:
         self._inferred_clicked_cards[key] = inferred
         self._card_predictions[key] = inferred.card_id
         self._increment("skill_card_zero_identity_detail_resolutions")
+        logger.info(json.dumps({
+            "event": "arena_zero_identity_detail_resolved",
+            "team_id": target.team_id, "opponent_position": target.opponent_position,
+            "stage_number": stage_number, "member_slot": member_slot,
+            "member_read_id": (getattr(self, "_member_failure_frames", None) or {}).get("read_id"),
+            "group_index": group_index, "card_slot": card_slot, "card_id": inferred.card_id,
+        }, ensure_ascii=False))
         return inferred
 
     def read_skill_card_id_hints(
@@ -9945,6 +10015,7 @@ class MaaArenaReaderBackend:
             # detail ID.  Do not leave evidence from the hinted generic-cost
             # card attached to a slot whose confirmed card has no such field.
             diagnostics.pop(key, None)
+            getattr(self, "_card_face_cost_failed_sources", {}).pop(key, None)
             return None
         hypotheses = tuple(int(value) for value in hypotheses)
         if cached is not None:
@@ -9979,11 +10050,27 @@ class MaaArenaReaderBackend:
                 f"group {group_index} has no stable three-frame cost evidence",
             )
         started = time.perf_counter()
+        failed_sources = getattr(self, "_card_face_cost_failed_sources", None)
+        if failed_sources is None:
+            failed_sources = self._card_face_cost_failed_sources = {}
+        frame_rows = tuple(
+            self._validated_card_group_row(frame, group_index)
+            for frame in frames
+        )
+        boxes = tuple(tuple(row[card_slot - 1]) for row in frame_rows)
+        prior_failure = failed_sources.get(key)
+        if (
+            prior_failure is not None
+            and prior_failure["card_id"] == card_id
+            and prior_failure["hypotheses"] == hypotheses
+            and prior_failure["boxes"] == boxes
+            and all(old is new for old, new in zip(prior_failure["frames"], frames, strict=True))
+        ):
+            self._increment("skill_card_face_cost_inconclusive_cache_hits")
+            raise ArenaReaderError("skill_card_cost_evidence_inconclusive", prior_failure["error"])
+        failed_sources.pop(key, None)
+        predictions = ()
         try:
-            frame_rows = tuple(
-                self._validated_card_group_row(frame, group_index)
-                for frame in frames
-            )
             predictions = tuple(
                 self._card_cost_references().measure(
                     frame,
@@ -9998,9 +10085,23 @@ class MaaArenaReaderBackend:
         except (
             GenericCostReferenceError,
         ) as error:
+            detail = f"group {group_index}/slot {card_slot}/card {card_id}: {error}"
+            failed_sources[key] = {
+                "card_id": card_id, "hypotheses": hypotheses, "frames": tuple(frames),
+                "boxes": boxes, "error": detail,
+            }
+            # Keep rejected evidence too; a later abort may prevent the lineup
+            # summary from being emitted. No new image or OCR is acquired here.
+            logger.info(json.dumps({
+                "event": "arena_card_cost_inconclusive",
+                **((getattr(self, "_member_failure_frames", None) or {}).get("position", {})),
+                "group_index": group_index, "card_slot": card_slot, "card_id": card_id,
+                "hypotheses": hypotheses, "boxes": boxes, "reason": detail,
+                "predictions": [asdict(prediction) for prediction in predictions],
+            }, ensure_ascii=False))
             raise ArenaReaderError(
                 "skill_card_cost_evidence_inconclusive",
-                f"group {group_index}/slot {card_slot}/card {card_id}: {error}",
+                detail,
             ) from error
         finally:
             self._add_timing(
@@ -12576,6 +12677,11 @@ class MaaArenaReaderBackend:
             runtime = []
             self._runtime_cost_customization_fallbacks = runtime
         runtime.append(dict(record))
+        logger.info(json.dumps({
+            "event": "arena_cost_customization_fallback_recorded", **record,
+            "member_read_id": (getattr(self, "_member_failure_frames", None) or {}).get("read_id"),
+            "cost_evidence_error": getattr(self, "_card_face_cost_optional_errors", {}).get(key),
+        }, ensure_ascii=False))
         self._increment("skill_card_cost_customization_fallbacks")
         self._increment(
             "skill_card_cost_customization_fallbacks_own"
@@ -12858,6 +12964,7 @@ class MaaArenaReaderBackend:
         self._card_content_generation_diagnostics = ()
         self._card_face_cost_diagnostics.clear()
         self._card_face_cost_optional_errors.clear()
+        getattr(self, "_card_face_cost_failed_sources", {}).clear()
         self._cost_customization_fallbacks.clear()
         self._zero_card_identity_fusion_diagnostics.clear()
         self._zero_card_embedding_detail_candidates.clear()
