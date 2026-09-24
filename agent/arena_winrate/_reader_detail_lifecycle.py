@@ -158,6 +158,7 @@ class DetailLifecycleReaderPort(Protocol):
     def _skill_detail_other_source_slots(self, key: tuple[int, int], card_id: int) -> list[tuple[int, int]]: ...
     def _skill_detail_visual_ids(self, key: tuple[int, int]) -> tuple[int, ...]: ...
     def _sleep(self, seconds: float) -> None: ...
+    def _stable_skill_card_source_ocr_counts(self, group_index: int) -> dict[str, int]: ...
 
     _source_restore_poll_seconds: Any
     catalog: Any
@@ -400,6 +401,16 @@ class DetailLifecycleReader:
             last_contact_released_at = self.clock.monotonic()
             deadline = self.clock.monotonic() + 1.5
             while self.clock.monotonic() < deadline:
+                # Prepare the already frozen source while the popup renders,
+                # then capture its current contents. Keep this inside the
+                # admitted iteration: slow source OCR must not consume the
+                # first observation or restart the existing open budget.
+                source_error: ArenaCatalogError | None = None
+                try:
+                    self.port._stable_skill_card_source_ocr_counts(group_index)
+                except ArenaCatalogError as error:
+                    source_error = error
+                    self.port._increment("skill_card_source_title_ocr_unavailable")
                 try:
                     detail_capture_started_at = self.clock.monotonic()
                     detail_image = self.port._capture()
@@ -410,6 +421,12 @@ class DetailLifecycleReader:
                 except ArenaReaderError:
                     last_text = ""
                 try:
+                    if source_error is not None:
+                        # No title can be authoritative without its source.
+                        # Use the ordinary observation/retry path, without
+                        # preparing the same failed source again this frame.
+                        # The next iteration may retry; no failure is cached.
+                        raise source_error
                     confirmed_card_id = self.port._confirm_clicked_skill_card_id(
                         last_text,
                         candidate_ids,

@@ -212,12 +212,18 @@ class SourceRestoreSession:
         while self.clock.monotonic() < deadline:
             if self._observe_frame():
                 return
-            # One wait per rejected observation. Inner evidence stages only
-            # report readiness so the normal first guard frame cannot wait twice.
-            self.backend._sleep(self.backend._source_restore_poll_seconds)
+            wait_seconds = self.backend._source_restore_poll_seconds
+            if self.guard_confirmation_wait_from_capture:
+                # The first matching page still needs an independent capture.
+                # Its processing time counts toward the existing frame interval;
+                # rejected geometry, overlays and identity evidence keep a full wait.
+                wait_seconds = max(0.0, self.previous_capture_started_at + wait_seconds - self.clock.monotonic())
+            self.guard_confirmation_wait_from_capture = False
+            self.backend._sleep(wait_seconds)
         self._raise_failure()
 
     def _observe_frame(self):
+        self.guard_confirmation_wait_from_capture = False
         try:
             capture_started_at = self.clock.monotonic()
             if self.previous_capture_started_at is not None:
@@ -376,6 +382,7 @@ class SourceRestoreSession:
                 return False
             self.source_guard_consecutive += 1
             if self.source_guard_consecutive < 2:
+                self.guard_confirmation_wait_from_capture = True
                 return False
         return True
 
