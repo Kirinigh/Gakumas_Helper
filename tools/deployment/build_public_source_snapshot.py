@@ -77,6 +77,7 @@ FILE_ALLOWLIST = (
     "tools/pipeline.schema.json",
     "tools/install.py",
     "tools/calibrated_p_item_reference.py",
+    "tools/card_cost_template_derivation.py",
     "tools/p_item_derived_source.py",
     "tools/p_item_derived_qualification.py",
     "tools/published_ui_reference.py",
