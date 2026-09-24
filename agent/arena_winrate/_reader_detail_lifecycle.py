@@ -1032,7 +1032,7 @@ class DetailLifecycleReader:
             )
         self.port._finish_card_transaction(key)
 
-    def _dismiss_skill_card_detail(self) -> None:
+    def _dismiss_skill_card_detail(self, *, image: Any = None) -> None:
         """Close a skill-card detail by tapping the inert upper-left backdrop."""
 
         # A successfully opened skill-card transaction already owns a fresh,
@@ -1044,8 +1044,14 @@ class DetailLifecycleReader:
         # the original capture fallback.
         active_keys = tuple(getattr(self.port, "_card_transaction_started", {}))
         dimensions: tuple[int, int] | None = None
+        # Progressive cleanup has just captured and checked this frame. Only
+        # its dimensions are needed for dismissal; no pixels are reused later.
+        shape = getattr(image, "shape", ())
+        if len(shape) >= 2 and int(shape[0]) > 0 and int(shape[1]) > 0:
+            dimensions = (int(shape[0]), int(shape[1]))
+            self.port._increment("skill_card_detail_dismiss_shape_reuses")
         detail_images = getattr(self.port, "_card_detail_images", {})
-        if len(active_keys) == 1 and active_keys[0] in detail_images:
+        if dimensions is None and len(active_keys) == 1 and active_keys[0] in detail_images:
             detail_image = detail_images[active_keys[0]]
             shape = getattr(detail_image, "shape", ())
             if len(shape) >= 2:

@@ -26,6 +26,14 @@ class PageRecoveryState:
     last_retry_dialog_seen: bool = False
 
 
+@dataclass(frozen=True)
+class RecoveryPageObservation:
+    """One current frame and its OCR, passed only before any intervening input."""
+
+    image: Any
+    items: Sequence[Any]
+
+
 class PageFlowClock(Protocol):
     def monotonic(self) -> float: ...
     def perf_counter(self) -> float: ...
@@ -46,7 +54,7 @@ class ArenaPagePort(Protocol):
     def click(self, box: Any, **kwargs: Any) -> Any: ...
     def sleep(self, seconds: float) -> Any: ...
     def check_cancelled(self) -> Any: ...
-    def arena_page_state(self, image: Any) -> Any: ...
+    def arena_page_state(self, image: Any, *, observations: Sequence[Any] | None = None) -> Any: ...
     def matching_ocr_items(self, items: Sequence[Any], expected: str) -> Any: ...
     def box_center_point(self, box: Any) -> Any: ...
     def increment(self, name: str) -> Any: ...
@@ -94,21 +102,33 @@ class ArenaPageFlow:
         maximum_steps: int,
         error_code: str,
         require_opponents: bool,
+        initial_observation: RecoveryPageObservation | None = None,
     ) -> None:
         unavailable_reads = 0
         steps = 0
         loading_reads = 0
         loading_deadline: float | None = None
         while steps < maximum_steps:
-            image = self.port.capture()
+            observation, initial_observation = initial_observation, None
+            if observation is None:
+                image = self.port.capture()
+            else:
+                # Replacing capture must retain its cancellation boundary. The
+                # handoff is consumed before navigation, waits, or another loop.
+                self.port.check_cancelled()
+                image = observation.image
             self.port.state.last_retry_dialog_seen = False
-            state, _ = self.port.arena_page_state(image)
+            if observation is None:
+                state, _ = self.port.arena_page_state(image)
+            else:
+                state, _ = self.port.arena_page_state(image, observations=observation.items)
+                self.port.check_cancelled()
             if arena_page_allows_team_entry(
                 state,
                 require_opponents=require_opponents,
             ):
                 return
-            items = self.port.ocr(image, r".+")
+            items = self.port.ocr(image, r".+") if observation is None else observation.items
             if self.port.matching_ocr_items(items, r"(?i)^\s*NOW\s*LOADING[.\s…]*$"):
                 loading_reads += 1
                 self.port.increment("arena_recovery_loading_frames")

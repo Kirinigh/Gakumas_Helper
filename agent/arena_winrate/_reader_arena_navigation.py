@@ -15,6 +15,7 @@ from arena_winrate import (
     arena_page_allows_team_entry,
 )
 from arena_winrate._reader_visual import _box, _text
+from arena_winrate._arena_page_flow import RecoveryPageObservation
 
 
 class ArenaNavigationReaderPort(Protocol):
@@ -31,7 +32,7 @@ class ArenaNavigationReaderPort(Protocol):
 
     def _click(self, box: tuple[int, int, int, int], *, settle_seconds: float = ...) -> None: ...
     def _dismiss_grade_reward_hint(self, image: Any, observations: Sequence[Any]) -> bool: ...
-    def _dismiss_skill_card_detail(self) -> None: ...
+    def _dismiss_skill_card_detail(self, *, image: Any = None) -> None: ...
 
     _grade: Any
     _grade_reward_hint_dismissed: Any
@@ -48,13 +49,15 @@ class ArenaNavigationReaderPort(Protocol):
 
     def _read_grade(self, image: Any, *, observations: Sequence[Any] | None = ...) -> int: ...
     def _recognize(self, entry: str, image: Any) -> list[Any]: ...
-    def _recover_arena_main(self, *, maximum_steps: int, error_code: str, require_opponents: bool) -> None: ...
+    def _recover_arena_main(self, *, maximum_steps: int, error_code: str, require_opponents: bool,
+                           initial_observation: RecoveryPageObservation | None = None) -> None: ...
     def _sleep(self, seconds: float) -> None: ...
     def _stage_total_anchors(self, image: Any) -> tuple[tuple[int, int, int, int], ...]: ...
     def _team_stage_total_anchors(self, target: TeamTarget, image: Any) -> tuple[tuple[int, int, int, int], ...]: ...
     def _wait_for_stage_member_list(self, expected_total_counts: tuple[int, ...], timeout_seconds: float = ...) -> None: ...
     def ensure_arena_main(self, *, require_opponents: bool = ...) -> None: ...
-    def recover_to_arena_main(self, *, require_opponents: bool = ...) -> None: ...
+    def recover_to_arena_main(self, *, require_opponents: bool = ...,
+                             initial_observation: RecoveryPageObservation | None = None) -> None: ...
 
 
 class ArenaNavigationReader:
@@ -346,6 +349,7 @@ class ArenaNavigationReader:
         """Dismiss an interrupted member's tooltip before the existing return loop."""
         position = getattr(self.port, "_progressive_abandoned_member", None)
         self.port._progressive_abandoned_member = None
+        initial_observation = None
         if position is not None:
             image = self.port._capture()
             items = self.port._ocr(image, r".+")
@@ -359,14 +363,21 @@ class ArenaNavigationReader:
             ):
                 # Both detail types use the same inert backdrop. It is harmless
                 # when the just-issued open/close already left the member bare.
-                self.port._dismiss_skill_card_detail()
-        self.port.recover_to_arena_main(require_opponents=True)
+                self.port._dismiss_skill_card_detail(image=image)
+            else:
+                initial_observation = RecoveryPageObservation(image, tuple(items))
+        if initial_observation is None:
+            self.port.recover_to_arena_main(require_opponents=True)
+        else:
+            self.port.recover_to_arena_main(require_opponents=True, initial_observation=initial_observation)
 
-    def recover_to_arena_main(self, *, require_opponents: bool = True) -> None:
+    def recover_to_arena_main(self, *, require_opponents: bool = True,
+                             initial_observation: RecoveryPageObservation | None = None) -> None:
         self.port._recover_arena_main(
             maximum_steps=6,
             error_code="arena_recovery_failed",
             require_opponents=require_opponents,
+            initial_observation=initial_observation,
         )
 
     def _assert_stage_navigation(self) -> None:
@@ -404,8 +415,10 @@ class ArenaNavigationReader:
     def _arena_page_state(
         self,
         image: Any,
+        *,
+        observations: Sequence[Any] | None = None,
     ) -> tuple[ArenaPageState, tuple[int, int, int, int, int]]:
-        items = self.port._ocr(image, r".+")
+        items = self.port._ocr(image, r".+") if observations is None else observations
         rehearsal_count = len(self.port._matching_ocr_items(items, r"^リハーサル$"))
         opponent_count = len(self.port._recognize("ArenaReaderOpponentCards", image))
         stage_label_count = len(self.port._matching_ocr_items(items, r"^ステージ\s*[123]$"))

@@ -67,6 +67,11 @@ class ProgressiveArenaService:
         retry_remaining = 1  # Shared by this whole selection, not renewed per opponent.
         simulation_seconds = 0.0
         started = time.perf_counter()
+        timeline = {
+            "clock": "perf_counter_offsets_from_evaluation_start",
+            "simulations": [], "decision_ready": None, "read_superseded": None,
+            "recovery_started": None, "recovery_finished": None,
+        }
         self.snapshot = None
         self.read_attempts = []
 
@@ -86,11 +91,14 @@ class ProgressiveArenaService:
             if not future.done():
                 return
             try:
-                batch, elapsed, error = future.result()
+                batch, elapsed, error, run_timing = future.result()
             except Exception as error:
                 raise _SimulationFailure(error) from error
             future = None
             simulation_seconds += elapsed
+            timeline["simulations"].append({
+                **run_timing, "collected": time.perf_counter() - started,
+            })
             if error is not None:
                 raise _SimulationFailure(error)
             expected_position = len(estimates)
@@ -108,10 +116,13 @@ class ProgressiveArenaService:
             elif len(estimates) == 2 and all(row["qualification_lower"] <= self.lower_threshold for row in candidate.estimates):
                 decision = replace(candidate, selected_position=2, selected_opponent_id="opponent-2",
                                    decision_rule=QUICK_THIRD_OPPONENT_RULE)
+            if decision is not None:
+                timeline["decision_ready"] = time.perf_counter() - started
 
         def poll():
             collect()
             if decision is not None:
+                timeline["read_superseded"] = time.perf_counter() - started
                 raise ArenaReadSuperseded("an earlier opponent result selected the challenge")
 
         def request_for(snapshot):
@@ -139,6 +150,7 @@ class ProgressiveArenaService:
                                       "simulation_seconds": simulation_seconds,
                                       "batches": [{"stages": batch.stage_distributions, "parallelism": batch.parallelism}
                                                   for batch in batches],
+                                      "timeline_seconds": timeline,
                                       "wall_seconds": time.perf_counter() - started},
             )
 
@@ -146,6 +158,8 @@ class ProgressiveArenaService:
 
         def simulate(request):
             run_started = time.perf_counter()
+            batch = None
+            failure = None
             try:
                 if hasattr(adapter, "timeout_seconds"):
                     remaining = self.adapter.timeout_seconds - simulation_seconds
@@ -154,17 +168,25 @@ class ProgressiveArenaService:
                     adapter.timeout_seconds = remaining
                 batch = adapter.simulate(request)
             except Exception as error:
-                return None, time.perf_counter() - run_started, error
-            return batch, time.perf_counter() - run_started, None
+                failure = error
+            finished = time.perf_counter()
+            # The worker returns immutable timing values with its result; only
+            # the foreground collector updates the summary and touches Maa.
+            return batch, finished - run_started, failure, {
+                "position": request["opponent_positions"][0],
+                "started": run_started - started, "finished": finished - started,
+            }
 
         def return_to_arena():
             backend._progressive_read_check = previous_hook
             self.cancel_check()
+            timeline["recovery_started"] = time.perf_counter() - started
             restore = getattr(backend, "finish_progressive_read", None)
             if callable(restore):
                 restore()
             else:
                 backend.recover_to_arena_main(require_opponents=True)
+            timeline["recovery_finished"] = time.perf_counter() - started
 
         def record_return_failure(error):
             failures.append(ArenaProviderAttemptFailure(
@@ -190,6 +212,8 @@ class ProgressiveArenaService:
                             break
                         except ArenaReadSuperseded:
                             outcome = "superseded"
+                            if timeline["read_superseded"] is None:
+                                timeline["read_superseded"] = time.perf_counter() - started
                             raise
                         except Exception as error:
                             failures.append(ArenaProviderAttemptFailure(

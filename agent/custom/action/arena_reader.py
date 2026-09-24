@@ -55,7 +55,7 @@ from arena_winrate._reader_io import IoReader
 from card_selection.embedding import OnnxCardEmbedder
 from arena_winrate.cancellation import cancellation_for
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
-from arena_winrate._arena_page_flow import ArenaPageFlow, PageRecoveryState
+from arena_winrate._arena_page_flow import ArenaPageFlow, PageRecoveryState, RecoveryPageObservation
 from arena_winrate._detail_identity import (
     DetailIdentityTransaction,
     detail_identity_proof_diagnostic,
@@ -466,8 +466,10 @@ class _ArenaPageFlowPort:
     def check_cancelled(self) -> Any:
         return self._backend._check_cancelled()
 
-    def arena_page_state(self, image: Any) -> Any:
-        return self._backend._arena_page_state(image)
+    def arena_page_state(self, image: Any, *, observations: Sequence[Any] | None = None) -> Any:
+        if observations is None:
+            return self._backend._arena_page_state(image)
+        return self._backend._arena_page_state(image, observations=observations)
 
     def matching_ocr_items(self, items: Sequence[Any], expected: str) -> Any:
         return self._backend._matching_ocr_items(items, expected)
@@ -1892,8 +1894,10 @@ class MaaArenaReaderBackend:
     def finish_progressive_read(self) -> None:
         return self._component_arena_navigation_reader().finish_progressive_read()
 
-    def recover_to_arena_main(self, *, require_opponents: bool = True) -> None:
-        return self._component_arena_navigation_reader().recover_to_arena_main(require_opponents=require_opponents)
+    def recover_to_arena_main(self, *, require_opponents: bool = True,
+                             initial_observation: RecoveryPageObservation | None = None) -> None:
+        return self._component_arena_navigation_reader().recover_to_arena_main(
+            require_opponents=require_opponents, initial_observation=initial_observation)
 
     def _recover_arena_main(
         self,
@@ -1901,11 +1905,13 @@ class MaaArenaReaderBackend:
         maximum_steps: int,
         error_code: str,
         require_opponents: bool,
+        initial_observation: RecoveryPageObservation | None = None,
     ) -> None:
         return ArenaPageFlow(_ArenaPageFlowPort(self), time, logger).recover_arena_main(
             maximum_steps=maximum_steps,
             error_code=error_code,
             require_opponents=require_opponents,
+            initial_observation=initial_observation,
         )
 
     def _dismiss_contest_details_items(self, image: Any, items: Sequence[Any]) -> bool:
@@ -1986,8 +1992,8 @@ class MaaArenaReaderBackend:
     def _close_overlay(self) -> None:
         return self._component_io_reader()._close_overlay()
 
-    def _dismiss_skill_card_detail(self) -> None:
-        return self._component_detail_lifecycle_reader()._dismiss_skill_card_detail()
+    def _dismiss_skill_card_detail(self, *, image: Any = None) -> None:
+        return self._component_detail_lifecycle_reader()._dismiss_skill_card_detail(image=image)
 
     def _skill_card_detail_close_retry_proven(
         self, group_index: int, expected_card_id: int, source_card_box: tuple[int, int, int, int] | None = None
@@ -2021,8 +2027,8 @@ class MaaArenaReaderBackend:
     def _arena_main_visible(self) -> bool:
         return self._component_arena_navigation_reader()._arena_main_visible()
 
-    def _arena_page_state(self, image: Any) -> tuple[ArenaPageState, tuple[int, int, int, int, int]]:
-        return self._component_arena_navigation_reader()._arena_page_state(image)
+    def _arena_page_state(self, image: Any, *, observations: Sequence[Any] | None = None) -> tuple[ArenaPageState, tuple[int, int, int, int, int]]:
+        return self._component_arena_navigation_reader()._arena_page_state(image, observations=observations)
 
     def _read_grade(self, image: Any, *, observations: Sequence[Any] | None = None) -> int:
         return self._component_arena_navigation_reader()._read_grade(image, observations=observations)
