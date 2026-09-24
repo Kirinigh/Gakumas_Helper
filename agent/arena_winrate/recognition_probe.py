@@ -54,12 +54,15 @@ class RecognitionProbe:
     RETIRED_TARGETS = frozenset({299, 389, 752})
     MAX_SAMPLES = 20
     MAX_BYTES = 128 * 1024 * 1024
+    SOURCE_PNG_CACHE_BYTES = 24 * 1024 * 1024
 
     def __init__(self, root: Path):
         self.root = root
         self.settings: dict[str, Any] = release_probe_settings()
         release_build = self.settings.get("build")
         self.disabled = False
+        self._source_png_member: str | None = None
+        self._source_png_cache: list[tuple[Any, Any, bytes, int]] = []
         try:
             path = root / "recognition-probe.json"
             if path.is_file():
@@ -212,13 +215,64 @@ class RecognitionProbe:
             "contact": contact, "accepted": accepted,
         })
 
+    def _source_png(self, image: Any) -> bytes:
+        """Reuse only owned uint8 source arrays whose pixels still match."""
+        import cv2
+        import numpy as np
+
+        eligible = (
+            type(image) is np.ndarray and image.dtype == np.uint8
+            and image.flags.owndata and image.base is None and image.flags.c_contiguous
+            and (image.ndim == 2 or image.ndim == 3 and image.shape[2] in (1, 3, 4))
+            and 2 * image.nbytes + 1024 <= self.SOURCE_PNG_CACHE_BYTES
+        )
+        # Shape changes invalidate retained arrays before accounting/reuse.
+        self._source_png_cache[:] = [
+            entry for entry in self._source_png_cache
+            if entry[0].shape == entry[1].shape and entry[0].dtype == entry[1].dtype
+        ]
+        for index, (original, snapshot, data, _size) in enumerate(self._source_png_cache):
+            if original is image:
+                if eligible and np.array_equal(image, snapshot):
+                    return data
+                self._source_png_cache.pop(index)
+                break
+        snapshot = image.copy() if eligible else image
+        ok, encoded = cv2.imencode(".png", snapshot)
+        if not ok:
+            raise ValueError("probe PNG encoding failed")
+        data = encoded.tobytes()
+        if eligible:
+            # Count both retained pixel arrays, encoded bytes and a conservative
+            # allowance for their Python containers; views are never retained.
+            size = 2 * image.nbytes + len(data) + 1024
+            if size <= self.SOURCE_PNG_CACHE_BYTES:
+                while self._source_png_cache and (
+                    len(self._source_png_cache) >= 3
+                    or sum(entry[3] for entry in self._source_png_cache) + size > self.SOURCE_PNG_CACHE_BYTES
+                ):
+                    self._source_png_cache.pop(0)
+                self._source_png_cache.append((image, snapshot, data, size))
+        return data
+
     def save(self, diagnostic: dict, outcome: str, error: str | None) -> dict | None:
         if not self.active() or "probe_sources" not in diagnostic:
+            self._source_png_cache.clear()
+            self._source_png_member = None
             return None
         position = diagnostic["position"]
         card_id = position.get("observed_detail_card_id")
         p_item = position.get("kind") == "p_item"
         cost_evidence = diagnostic.get("probe_cost_evidence") if not p_item else None
+        member = diagnostic.get("member_read_id")
+        cache_sources = (
+            not p_item and len(diagnostic["probe_sources"]) == 3
+            and isinstance(member, str) and re.fullmatch(r"[0-9a-f]{32}", member) is not None
+            and outcome not in {"cancelled", "superseded"}
+        )
+        if not cache_sources or member != self._source_png_member:
+            self._source_png_cache.clear()
+            self._source_png_member = member if cache_sources else None
         if outcome in {"cancelled", "superseded"} or (not p_item and not cost_evidence and card_id in self.RETIRED_TARGETS):
             return None
         if p_item and outcome != "completed" and "p_item_source_restore_unproven" not in str(error):
@@ -283,10 +337,13 @@ class RecognitionProbe:
         encoded_frames = []
         saved = []
         for index, (role, image, ocr) in enumerate(images[:10]):
-            ok, encoded = cv2.imencode(".png", image)
-            if not ok:
-                raise ValueError("probe PNG encoding failed")
-            data = encoded.tobytes()
+            if cache_sources and index < 3:
+                data = self._source_png(image)
+            else:
+                ok, encoded = cv2.imencode(".png", image)
+                if not ok:
+                    raise ValueError("probe PNG encoding failed")
+                data = encoded.tobytes()
             encoded_frames.append(data)
             saved.append({"file": f"{index:02d}.png", "role": role,
                           "shape": list(image.shape), "ocr": ocr})
