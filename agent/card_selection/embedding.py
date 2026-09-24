@@ -563,13 +563,16 @@ class OnnxCardEmbedder:
                 import onnxruntime as ort
             except ImportError as error:
                 raise RuntimeError("onnxruntime is required for card embedding") from error
-            self._session = ort.InferenceSession(str(self.model_path), providers=["CPUExecutionProvider"])
-            inputs = self._session.get_inputs()
-            outputs = self._session.get_outputs()
+            session = ort.InferenceSession(str(self.model_path), providers=["CPUExecutionProvider"])
+            inputs = session.get_inputs()
+            outputs = session.get_outputs()
             if len(inputs) != 1 or inputs[0].name != "input" or list(inputs[0].shape[1:]) != [3, 64, 64]:
                 raise ModelIntegrityError("unexpected embedding ONNX input contract")
             if len(outputs) != 1 or outputs[0].name != "embedding" or outputs[0].shape[-1] != self.EMBEDDING_DIM:
                 raise ModelIntegrityError("unexpected embedding ONNX output contract")
+            # Pooled recognizers can outlive a failed read. Publish only a fully
+            # validated session so retries cannot bypass a rejected contract.
+            self._session = session
         return self._session
 
     def preprocess(self, image: Any, box: tuple[int, int, int, int]) -> Any:
