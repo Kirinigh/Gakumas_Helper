@@ -493,6 +493,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
         deadline = started + 8.0
         self._entry_deadline = deadline
         returns = 0
+        home_entry_sent = False
         succeeded = False
         last_page = "unknown"
         try:
@@ -504,7 +505,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                 items = self._ocr(image, r".+")
                 matches = lambda pattern: self._matching_ocr_items(items, pattern)
                 result_page = bool(
-                    matches(r"^(?:WIN|LOSE|LOSS|VICTORY|DEFEAT|勝利|敗北|TAP)$")
+                    matches(r"^(?:WIN|LOSE|LOSS|VICTORY|DEFEAT|勝利|敗北)$")
                     or self._recognize("ChallengeNext", image)
                     or self._recognize("ChallengeFinish", image)
                 )
@@ -526,6 +527,27 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                     return
                 if self._retry_transient_communication_items(items):
                     last_page = "communication"
+                    self._sleep(0.25)
+                    continue
+                # TAP also appears on home missions. Home entry needs the
+                # navigation labels and both independent home-only features.
+                home = matches(r"^ホーム$")
+                contest = matches(r"^コンテスト$")
+                home_page = (
+                    len(home) == len(contest) == 1
+                    and len(matches(r"^活動費$")) == 1
+                    and len(matches(r"^ミッション$")) == 1
+                    and home[0].box[1] > image.shape[0] * 0.85
+                    and contest[0].box[1] > image.shape[0] * 0.85
+                )
+                if home_page:
+                    last_page = "home"
+                    if not home_entry_sent:
+                        if self._recognize("CloseRoundButton", image) or self._recognize("CloseMenu", image):
+                            raise ArenaReaderError("arena_entry_home_overlay", "home navigation is covered by a closeable overlay")
+                        self._check_cancelled()
+                        home_entry_sent = True
+                        self._click(tuple(contest[0].box))
                     self._sleep(0.25)
                     continue
                 state, _ = self._arena_page_state(image)
