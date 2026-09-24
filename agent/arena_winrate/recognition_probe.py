@@ -41,7 +41,7 @@ def release_probe_settings(package_root: Path | None = None) -> dict:
 
 
 class RecognitionProbe:
-    TARGETS = frozenset({297, 553})
+    TARGETS = frozenset({31, 297, 553})
     RETIRED_TARGETS = frozenset({299, 389, 752})
     MAX_SAMPLES = 20
     MAX_BYTES = 128 * 1024 * 1024
