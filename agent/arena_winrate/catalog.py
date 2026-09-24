@@ -372,6 +372,7 @@ class ArenaEntityCatalog:
         self._added_numeric_effect_domain_cache: dict[
             int, tuple[dict[str, tuple[int, ...]], dict[str, str]]
         ] = {}
+        self._effective_detail_matchers: dict[tuple[int, int], Any] = {}
         self._p_items = tuple(dict(row) for row in p_items)
         self._arena_p_item_eligibility: ArenaPItemEligibility | None = None
         self._p_item_detail_text_index: PItemDetailTextIndex | None = None
@@ -1723,7 +1724,7 @@ class ArenaEntityCatalog:
             unsupported = tuple(
                 customization_id
                 for customization_id in available
-                if self._effective_detail_matcher(card, customization_id) is None
+                if self._cached_effective_detail_matcher(card, customization_id) is None
             )
             legacy_partial = tuple(
                 customization_id
@@ -1770,7 +1771,7 @@ class ArenaEntityCatalog:
         group: Mapping[str, int],
     ) -> str:
         definition = self._customizations[customization_id]
-        if self._effective_detail_matcher(card, customization_id) is None:
+        if self._cached_effective_detail_matcher(card, customization_id) is None:
             return "unsupported_fail_closed"
         addition = _added_action_contract(definition)
         if (
@@ -2099,7 +2100,7 @@ class ArenaEntityCatalog:
             return "positive_unique"
         visible_levels: dict[int, frozenset[int]] = {}
         for customization_id in self.available_customization_ids(card_id):
-            matcher = self._effective_detail_matcher(card, customization_id)
+            matcher = self._cached_effective_detail_matcher(card, customization_id)
             if matcher is None:
                 return "negative_dependent"
             maximum = int(self._customizations[customization_id]["max"])
@@ -2345,7 +2346,7 @@ class ArenaEntityCatalog:
             if typed_cost_omitted or once_footer_omitted:
                 certified_omissions += 1
                 continue
-            matcher = self._effective_detail_matcher(card, customization_id)
+            matcher = self._cached_effective_detail_matcher(card, customization_id)
             channel_has_positive_signature = matcher is not None and any(
                 not matcher(compact, 0)
                 and matcher(compact, int(level))
@@ -3106,7 +3107,7 @@ class ArenaEntityCatalog:
         anchors = self._detail_coverage_anchors(card, resolved)
         if not anchors:
             return False
-        matcher = self._effective_detail_matcher(card, customization_id)
+        matcher = self._cached_effective_detail_matcher(card, customization_id)
         if matcher is None:
             return False
         for view in (full_detail_text, *roi_views):
@@ -3384,7 +3385,7 @@ class ArenaEntityCatalog:
                 )
             return {}
         matchers = {
-            customization_id: self._effective_detail_matcher(card, customization_id)
+            customization_id: self._cached_effective_detail_matcher(card, customization_id)
             for customization_id in available
         }
         unsupported = [customization_id for customization_id, matcher in matchers.items() if matcher is None]
@@ -3507,7 +3508,7 @@ class ArenaEntityCatalog:
             if value
         )
         for customization_id in available:
-            matcher = self._effective_detail_matcher(card, customization_id)
+            matcher = self._cached_effective_detail_matcher(card, customization_id)
             if matcher is None:
                 continue
             maximum = int(self._customizations[customization_id]["max"])
@@ -3533,7 +3534,7 @@ class ArenaEntityCatalog:
 
         merged = f"\n{_OCR_EFFECT_VIEW_BOUNDARY}\n".join(views)
         for customization_id in available:
-            matcher = self._effective_detail_matcher(card, customization_id)
+            matcher = self._cached_effective_detail_matcher(card, customization_id)
             if matcher is None:
                 continue
             maximum = int(self._customizations[customization_id]["max"])
@@ -3610,8 +3611,8 @@ class ArenaEntityCatalog:
 
         Unlike badge-assisted positive completion, every available effect must
         match the same text. There must be one positive group across all
-        totals, including groups that share a total. Nothing is cached across
-        observations and a failed solve never starts a badge-count search.
+        totals, including groups that share a total. Observed text and resolved
+        groups are not cached; a failed solve never starts a badge-count search.
         """
         self._validate_added_numeric_effects(card_id, detail_text)
         available = self.available_customization_ids(card_id)
@@ -3621,7 +3622,7 @@ class ArenaEntityCatalog:
         compact = _normalise_effect_text(detail_text)
         levels = []
         for customization_id in available:
-            matcher = self._effective_detail_matcher(card, customization_id)
+            matcher = self._cached_effective_detail_matcher(card, customization_id)
             if matcher is None:
                 raise ArenaCatalogError(
                     f"card {card_id} has unsupported final-effect signature {customization_id}"
@@ -3931,7 +3932,7 @@ class ArenaEntityCatalog:
         self.generic_cost_hypotheses(card_id)
 
         matchers = {
-            customization_id: self._effective_detail_matcher(
+            customization_id: self._cached_effective_detail_matcher(
                 card,
                 customization_id,
             )
@@ -4650,6 +4651,25 @@ class ArenaEntityCatalog:
                 raise ArenaCatalogError(
                     f"malformed good-impression buff effect: card {card_id}, view {view_index}"
                 )
+
+    def _cached_effective_detail_matcher(
+        self,
+        card: Mapping[str, Any],
+        customization_id: int,
+    ) -> Any:
+        """Reuse static matchers for this fixed catalog; never cache observations.
+
+        A different bundle creates a new catalog and therefore a new cache.
+        Detached rows use the original builder, including diagnostic DSL probes.
+        Mutating this catalog's private rows is not a runtime update mechanism.
+        """
+        card_id = card.get("id")
+        if not isinstance(card_id, int) or self._cards_by_id.get(card_id) is not card:
+            return self._effective_detail_matcher(card, customization_id)
+        key = (card_id, customization_id)
+        if key not in self._effective_detail_matchers:
+            self._effective_detail_matchers[key] = self._effective_detail_matcher(card, customization_id)
+        return self._effective_detail_matchers[key]
 
     def _effective_detail_matcher(
         self,
