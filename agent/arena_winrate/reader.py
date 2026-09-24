@@ -20,17 +20,15 @@ from collections.abc import Mapping, Callable, Sequence
 from .schema import SCHEMA_VERSION, validate_snapshot, validate_own_snapshot, validate_opponent_snapshot
 from .stages import ContestSeasonDefinition
 from .cancellation import ArenaReadSuperseded
+from ._reader_errors import ArenaReaderError
 from ._reader_metrics import duration_percentiles
-
-
-class ArenaReaderError(RuntimeError):
-    """Raised when a screen state or required visible field is ambiguous."""
-
-    def __init__(self, code: str, detail: str, *, retry_whole_read: bool = True) -> None:
-        self.code = code
-        self.detail = detail
-        self.retry_whole_read = retry_whole_read
-        super().__init__(f"{code}: {detail}")
+from ._member_read_session import (
+    MemberReadSession,
+    MemberReadRecoveryState,
+    member_reopen_error_code,
+    record_member_diagnostic,
+    member_recognition_error_code,
+)
 
 
 def _record_lineup_attempt(side: str):
@@ -587,12 +585,31 @@ class ArenaLineupReader:
         self.season = season
         self.capture_id_factory = capture_id_factory
         self._last_observations: list[MemberObservation] = []
-        # One UI recovery belongs to this reader instance, including both
-        # provider attempts. Member/page resets must not replenish it.
-        self._member_reopen_used = False
-        # Recognition recovery is scoped to a role and survives provider rereads.
-        self._member_recognition_reopens: dict[tuple[str, int, int], int] = {}
-        self._member_attempt_closing = False
+        self._member_recovery = MemberReadRecoveryState()
+
+    @property
+    def _member_reopen_used(self) -> bool:
+        return self._member_recovery.ui_reopen_used
+
+    @_member_reopen_used.setter
+    def _member_reopen_used(self, value: bool) -> None:
+        self._member_recovery.ui_reopen_used = value
+
+    @property
+    def _member_recognition_reopens(self) -> dict[tuple[str, int, int], int]:
+        return self._member_recovery.recognition_reopens
+
+    @_member_recognition_reopens.setter
+    def _member_recognition_reopens(self, value: dict[tuple[str, int, int], int]) -> None:
+        self._member_recovery.recognition_reopens = value
+
+    @property
+    def _member_attempt_closing(self) -> bool:
+        return self._member_recovery.attempt_closing
+
+    @_member_attempt_closing.setter
+    def _member_attempt_closing(self, value: bool) -> None:
+        self._member_recovery.attempt_closing = value
 
     def last_observation_reports(self) -> tuple[dict[str, Any], ...]:
         """Expose low-dimensional reports from the latest public read operation."""
@@ -1136,12 +1153,7 @@ class ArenaLineupReader:
         }
 
     def _member_diagnostic(self, method: str, *args: Any, **kwargs: Any) -> None:
-        recorder = getattr(self.backend, method, None)
-        if callable(recorder):
-            try:
-                recorder(*args, **kwargs)
-            except Exception:
-                logging.getLogger(__name__).exception("Could not record member diagnostics: %s", method)
+        record_member_diagnostic(self.backend, logging.getLogger(__name__), method, *args, **kwargs)
 
     def read_member_observation(
         self,
@@ -1153,215 +1165,21 @@ class ArenaLineupReader:
         include_support_bonus: bool = False,
     ) -> MemberObservation:
         """Open, observe and close one member through the shared state machine."""
-
-        position = (target.team_id, stage_number, member_slot)
-        for attempt in range(4):
-            reopened = attempt > 0
-            started = time.perf_counter()
-            self._member_diagnostic("begin_member_read_diagnostics", target, stage_number, member_slot)
-            succeeded = False
-            failure: Exception | None = None
-            superseded = False
-            sample_cursor = None
-            cursor_reader = getattr(self.backend, "runtime_sample_cursor", None)
-            if callable(cursor_reader):
-                try:
-                    sample_cursor = cursor_reader()
-                except Exception:
-                    logging.getLogger(__name__).exception("Could not begin member read diagnostics")
-            self._member_attempt_closing = False
-            try:
-                observation = self._read_member_observation_once(
-                    target,
-                    stage_number,
-                    member_slot,
-                    scope=scope,
-                    include_support_bonus=include_support_bonus,
-                )
-                succeeded = True
-                return observation
-            except ArenaReadSuperseded:
-                superseded = True
-                raise
-            except Exception as error:
-                failure = error
-                self._member_diagnostic("persist_member_read_failure", error)
-                recovery_code = self._member_reopen_error_code(
-                    error, during_close=self._member_attempt_closing,
-                )
-                recognition_code = self._member_recognition_error_code(error)
-                recognition_recovery = recognition_code is not None or (
-                    recovery_code is not None
-                    and isinstance(error, ArenaReaderError)
-                    and error.code.startswith(("skill_card_", "p_item_"))
-                )
-                recovery_code = recovery_code or recognition_code
-                used = self._member_recognition_reopens.get(position, 0)
-                exhausted = used >= 3 if recognition_recovery else self._member_reopen_used
-                recover = getattr(self.backend, "recover_member_preview", None)
-                if (
-                    exhausted
-                    or recovery_code is None
-                    or not callable(recover)
-                ):
-                    if isinstance(error, ArenaReaderError) and (
-                        recovery_code is not None
-                        or error.code in {
-                            "skill_card_detail_ambiguous",
-                            "skill_card_badge_detail_inference_ambiguous",
-                            "skill_card_customization_detail_empty",
-                            "skill_card_customization_total_mismatch",
-                            "p_item_detail_parser_failed",
-                            "p_item_detail_ambiguous",
-                            "p_item_detail_open_or_title_failed",
-                            "p_item_detail_budget_exceeded",
-                            "p_item_detail_recovery_failed",
-                        }
-                    ):
-                        # These detail transactions already used their local
-                        # observations/retries. A new lineup read cannot renew
-                        # that budget or repair an unsupported catalog meaning.
-                        error.retry_whole_read = False
-                    raise
-                # Spend before navigation; a failed return cannot create another
-                # opportunity. The backend must prove the preview before rereading.
-                if recognition_recovery:
-                    self._member_recognition_reopens[position] = used + 1
-                else:
-                    self._member_reopen_used = True
-                try:
-                    recover(
-                        target, stage_number, member_slot,
-                        error_code=recovery_code,
-                    )
-                except Exception as recovery_error:
-                    raise ArenaReaderError(
-                        "member_reopen_recovery_failed",
-                        f"member read failed: {error}; returning to its team "
-                        f"preview also failed: {recovery_error}",
-                        retry_whole_read=False,
-                    ) from recovery_error
-                # No partial observation escaped the failed invocation. The
-                # next invocation reopens and rereads this member completely.
-            finally:
-                elapsed = time.perf_counter() - started
-                recorder = getattr(self.backend, "record_member_read_attempt", None)
-                if callable(recorder):
-                    try:
-                        cursor_argument = (
-                            {} if sample_cursor is None
-                            else {"sample_cursor": sample_cursor}
-                        )
-                        if superseded:
-                            cursor_argument["superseded"] = True
-                        recorder(
-                            target, stage_number, member_slot,
-                            wall_seconds=elapsed,
-                            succeeded=succeeded,
-                            error_code=(
-                                None if failure is None
-                                else getattr(failure, "code", type(failure).__name__)
-                            ),
-                            reopened=reopened,
-                            **cursor_argument,
-                        )
-                    except Exception:
-                        logging.getLogger(__name__).exception(
-                            "Could not record member read attempt for %s/stage-%s/member-%s",
-                            target.team_id, stage_number, member_slot,
-                        )
-                self._member_diagnostic("end_member_read_diagnostics")
-        raise AssertionError("member reopen budget exhausted without a result")
+        return MemberReadSession(
+            self.backend, self._member_recovery, self._read_member_observation_once,
+            clock=time, logger=logging.getLogger(__name__),
+        ).run(
+            target, stage_number, member_slot,
+            scope=scope, include_support_bonus=include_support_bonus,
+        )
 
     @staticmethod
     def _member_recognition_error_code(error: Exception) -> str | None:
-        """Only known observation failures can reopen a role, never setup faults."""
-        if not isinstance(error, ArenaReaderError):
-            return None
-        current: BaseException | None = error
-        seen: set[int] = set()
-        while isinstance(current, ArenaReaderError) and id(current) not in seen:
-            seen.add(id(current))
-            if current.code in {
-                "skill_card_cost_fallback_changed",
-                "skill_card_cost_fallback_contract_invalid",
-                "skill_card_cost_fallback_frame_conflict",
-                "skill_card_cost_fallback_location_missing",
-                "skill_card_cost_fallback_roi_conflict",
-                "skill_card_detail_effect_view_conflict",
-                "skill_card_detail_positive_evidence_missing",
-                "skill_card_reference_unavailable",
-                "skill_card_reference_catalog_invalid",
-                "p_item_reader_missing",
-                "p_item_runtime_not_approved",
-            }:
-                return None
-            current = current.__cause__
-        if error.code in {
-            "skill_card_detail_ambiguous",
-            "skill_card_badge_detail_inference_ambiguous",
-            "skill_card_badge_detail_identity_unknown",
-            "skill_card_customization_detail_empty",
-            "skill_card_customization_total_mismatch",
-            "skill_card_detail_title_unresolved",
-            "skill_card_detail_upgrade_mark_missing",
-            "skill_card_detail_id_changed",
-            "skill_card_icon_unknown",
-            "skill_card_reference_identity_ambiguous",
-            "skill_card_customization_count_unknown",
-            "skill_card_customization_frame_incomplete",
-            "skill_card_customization_frame_shifted",
-            "skill_card_layout_unstable",
-            "skill_card_secondary_row_missing",
-            "skill_card_slot_missing",
-            "skill_card_empty_slot_unstable",
-            "skill_card_duplicate_marker_unstable",
-            "p_item_unknown",
-            "p_item_detail_parser_failed",
-            "p_item_detail_ambiguous",
-            "p_item_detail_open_or_title_failed",
-            "p_item_detail_budget_exceeded",
-            "p_item_content_generation_unstable",
-            "p_item_source_generation_unstable",
-        }:
-            return error.code
-        return None
+        return member_recognition_error_code(error)
 
     @staticmethod
-    def _member_reopen_error_code(
-        error: Exception, *, during_close: bool,
-    ) -> str | None:
-        """Follow explicit UI causes without treating OCR ambiguity as UI proof."""
-
-        current: BaseException | None = error
-        seen: set[int] = set()
-        p_item_restore = False
-        while current is not None and id(current) not in seen:
-            seen.add(id(current))
-            if not isinstance(current, ArenaReaderError):
-                return None
-            if current.code in {
-                "skill_card_close_failed",
-                "skill_card_close_left_member",
-                "skill_card_detail_disappeared",
-                "skill_card_detail_missing",
-                "p_item_source_restore_unproven",
-            }:
-                return current.code
-            if current.code == "member_detail_anchor_missing" and (
-                during_close or p_item_restore
-            ):
-                return current.code
-            if during_close and current.code == "stage_member_list_timeout":
-                return current.code
-            if current.code == "p_item_detail_recovery_failed":
-                # This production wrapper is emitted only around source-page
-                # restoration, including its fallback member-anchor check.
-                p_item_restore = True
-            elif current.code != "skill_card_badge_detail_inference_ambiguous":
-                return None
-            current = current.__cause__
-        return None
+    def _member_reopen_error_code(error: Exception, *, during_close: bool) -> str | None:
+        return member_reopen_error_code(error, during_close=during_close)
 
     def _read_member_observation_once(
         self,

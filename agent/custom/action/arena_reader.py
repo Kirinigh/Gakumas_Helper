@@ -77,12 +77,12 @@ from p_item_recognition import (
     measure_p_item_content_generation_from_signatures,
 )
 from card_selection.model import frame_identifier, frame_identifiers, isolate_card_candidates
-from arena_winrate.recovery import error_retry_box
 from arena_winrate.task_log import arena_task_log, diagnostic_logger
 from card_selection.embedding import OnnxCardEmbedder
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded, cancellation_for
 from arena_winrate._reader_visual import _box, _text, _value
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
+from arena_winrate._arena_page_flow import ArenaPageFlow, PageRecoveryState
 from arena_winrate._detail_identity import (
     DetailIdentityTransaction,
     build_detail_identity_proof,
@@ -102,10 +102,12 @@ from arena_winrate._reader_evidence import (
 from arena_winrate.badge_glyph_pool import BadgeGlyphDomain, badge_glyph_task_pools
 from arena_winrate._reader_resources import manifest_identity, reader_resource_pools
 from arena_winrate.recognition_probe import RecognitionProbe
+from arena_winrate._card_detail_state import CardDetailState, card_detail_field, card_detail_state
 from arena_winrate._detail_text_layout import (
     recover_distant_number_text,
     recover_wrapped_signed_text,
 )
+from arena_winrate._skill_detail_retry import SkillDetailRetrySession
 from arena_winrate._detail_title_region import isolated_title_region
 from arena_winrate._skill_detail_session import SkillDetailSession
 from arena_winrate._p_item_detail_session import PItemDetailSession
@@ -478,6 +480,66 @@ class ArenaReaderDiagnosticPort:
         return self._backend._card_recognizer(*args, **kwargs)
 
 
+class _ArenaPageFlowPort:
+    """Expose page capabilities without copying reader state or binding overrides."""
+
+    def __init__(self, backend: "MaaArenaReaderBackend") -> None:
+        self._backend = backend
+
+    @property
+    def state(self) -> PageRecoveryState:
+        return self._backend._page_recovery_state
+
+    def capture(self) -> Any:
+        return self._backend._capture()
+
+    def ocr(self, image: Any, expected: str) -> Any:
+        return self._backend._ocr(image, expected)
+
+    def recognize(self, entry: str, image: Any) -> Any:
+        return self._backend._recognize(entry, image)
+
+    def run_recognition(self, *args: Any, **kwargs: Any) -> Any:
+        return self._backend._run_recognition(*args, **kwargs)
+
+    def click(self, box: Any, **kwargs: Any) -> Any:
+        return self._backend._click(box, **kwargs)
+
+    def sleep(self, seconds: float) -> Any:
+        return self._backend._sleep(seconds)
+
+    def check_cancelled(self) -> Any:
+        return self._backend._check_cancelled()
+
+    def arena_page_state(self, image: Any) -> Any:
+        return self._backend._arena_page_state(image)
+
+    def matching_ocr_items(self, items: Sequence[Any], expected: str) -> Any:
+        return self._backend._matching_ocr_items(items, expected)
+
+    def box_center_point(self, box: Any) -> Any:
+        return self._backend._box_center_point(box)
+
+    def increment(self, name: str) -> Any:
+        return self._backend._increment(name)
+
+    def add_timing(self, name: str, elapsed: float) -> Any:
+        return self._backend._add_timing(name, elapsed)
+
+    def record_duration_sample(self, name: str, elapsed: float) -> Any:
+        return self._backend._record_duration_sample(name, elapsed)
+
+    def back(self, *, image: Any = None) -> Any:
+        return self._backend._back(image=image)
+
+    def dismiss_known_blocking_overlay(self, image: Any, *, items: Sequence[Any] | None = None) -> Any:
+        return self._backend._dismiss_known_blocking_overlay(image, items=items)
+
+    def dismiss_contest_details_items(self, image: Any, items: Sequence[Any]) -> Any:
+        return self._backend._dismiss_contest_details_items(image, items)
+
+    def retry_transient_communication_items(self, items: Sequence[Any]) -> Any:
+        return self._backend._retry_transient_communication_items(items)
 
 
 class MaaArenaReaderBackend:
@@ -565,9 +627,7 @@ class MaaArenaReaderBackend:
         self._detail_semantic_confirmations: dict[
             tuple[int, int], dict[str, Any]
         ] = {}
-        self._detail_identity_proofs: dict[
-            tuple[int, int], _DetailIdentityProof
-        ] = {}
+        self._card_detail_state = CardDetailState()
         self._detail_title_disambiguations: list[dict[str, Any]] = []
         self._badge_local_results: dict[int, tuple[Any, ...]] = {}
         self._badge_glyph_observations: dict[
@@ -593,14 +653,6 @@ class MaaArenaReaderBackend:
         ] = []
         self._inferred_clicked_cards: dict[tuple[int, int], ClickedSkillCard] = {}
         self._active_inferred_clicked_card: tuple[int, int] | None = None
-        self._card_detail_open_ids: dict[tuple[int, int], int] = {}
-        self._card_detail_rebind_ids: dict[tuple[int, int], int] = {}
-        self._card_detail_texts: dict[tuple[int, int], str] = {}
-        self._card_detail_images: dict[tuple[int, int], Any] = {}
-        self._card_detail_last_contact_released_at: dict[
-            tuple[int, int], float
-        ] = {}
-        self._card_detail_capture_started_at: dict[tuple[int, int], float] = {}
         self._p_item_diagnostics: tuple[dict[str, Any], ...] = ()
         self._p_item_generation_evidence: dict[str, Any] = {}
         self._card_recognizers: dict[bool, tuple[EmbeddingCardRecognizer, float, float]] = {}
@@ -616,19 +668,6 @@ class MaaArenaReaderBackend:
         self._zero_card_detail_candidates: dict[tuple[int, int], tuple[int, ...]] = {}
         self._badge_worker_calibrator = BadgeWorkerCalibrator()
         self._badge_worker_selection: BadgeWorkerSelection | None = None
-        self._card_transaction_started: dict[tuple[int, int], float] = {}
-        self._card_transaction_serial = 0
-        self._card_transaction_tokens: dict[tuple[int, int], int] = {}
-        self._card_transaction_source_boxes: dict[
-            tuple[int, int], tuple[int, int, int, int]
-        ] = {}
-        self._card_transaction_interaction_boxes: dict[
-            tuple[int, int], tuple[int, int, int, int]
-        ] = {}
-        self._card_transaction_kinds: dict[tuple[int, int], str] = {}
-        self._card_transaction_ocr_started: dict[
-            tuple[int, int], tuple[int, int]
-        ] = {}
         self._badge_candidate_detail_checks: list[dict[str, Any]] = []
         self._secondary_fixed_slot_fallback_enabled = False
         self._secondary_presence_diagnostics: tuple[dict[str, Any], ...] = ()
@@ -658,11 +697,62 @@ class MaaArenaReaderBackend:
         self._skill_card_reference_gallery_ids: tuple[int, ...] = ()
         self._skill_card_reference_missing_catalog_ids: tuple[int, ...] = ()
 
+    # Legacy session/diagnostic entry points all address the same state owner.
+    _card_transaction_serial = card_detail_field("serial")
+    _card_transaction_started = card_detail_field("started")
+    _card_transaction_tokens = card_detail_field("tokens")
+    _card_transaction_contact_counts = card_detail_field("contact_counts")
+    _card_transaction_source_boxes = card_detail_field("source_boxes")
+    _card_transaction_interaction_boxes = card_detail_field("interaction_boxes")
+    _card_transaction_kinds = card_detail_field("kinds")
+    _card_transaction_ocr_started = card_detail_field("ocr_started")
+    _card_detail_open_ids = card_detail_field("open_ids")
+    _card_detail_rebind_ids = card_detail_field("rebind_ids")
+    _card_detail_texts = card_detail_field("texts")
+    _card_detail_images = card_detail_field("images")
+    _card_detail_last_contact_released_at = card_detail_field("contact_released_at")
+    _card_detail_capture_started_at = card_detail_field("capture_started_at")
+    _detail_identity_proofs = card_detail_field("identity_proofs")
+
     @property
     def grade(self) -> int | None:
         """Return the recognized or explicitly injected Grade for this session."""
 
         return self._grade
+
+    @property
+    def _page_recovery_state(self) -> PageRecoveryState:
+        # Lazy creation preserves minimal diagnostic/test readers. Cleanup of a
+        # member never replaces this reader-lifetime input budget.
+        state = self.__dict__.get("_page_recovery")
+        if state is None:
+            state = PageRecoveryState()
+            self.__dict__["_page_recovery"] = state
+        return state
+
+    @property
+    def _arena_communication_retry_attempted(self) -> bool:
+        return self._page_recovery_state.communication_retry_attempted
+
+    @_arena_communication_retry_attempted.setter
+    def _arena_communication_retry_attempted(self, value: bool) -> None:
+        self._page_recovery_state.communication_retry_attempted = value
+
+    @property
+    def _contest_details_close_attempts(self) -> int:
+        return self._page_recovery_state.contest_details_close_attempts
+
+    @_contest_details_close_attempts.setter
+    def _contest_details_close_attempts(self, value: int) -> None:
+        self._page_recovery_state.contest_details_close_attempts = value
+
+    @property
+    def _last_retry_dialog_seen(self) -> bool:
+        return self._page_recovery_state.last_retry_dialog_seen
+
+    @_last_retry_dialog_seen.setter
+    def _last_retry_dialog_seen(self, value: bool) -> None:
+        self._page_recovery_state.last_retry_dialog_seen = value
 
     def _add_timing(self, name: str, elapsed: float) -> None:
         self._runtime_timing_seconds[name] = (
@@ -1136,25 +1226,7 @@ class MaaArenaReaderBackend:
     ) -> None:
         if failed:
             self._retain_failed_skill_detail_identity(key)
-        getattr(self, "_card_detail_open_ids", {}).pop(key, None)
-        getattr(self, "_card_detail_rebind_ids", {}).pop(key, None)
-        started = self._card_transaction_started.pop(key, None)
-        getattr(self, "_detail_identity_proofs", {}).pop(key, None)
-        getattr(self, "_card_transaction_tokens", {}).pop(key, None)
-        getattr(self, "_card_transaction_contact_counts", {}).pop(key, None)
-        getattr(self, "_card_transaction_source_boxes", {}).pop(key, None)
-        getattr(self, "_card_transaction_interaction_boxes", {}).pop(key, None)
-        getattr(self, "_card_detail_last_contact_released_at", {}).pop(key, None)
-        getattr(self, "_card_detail_capture_started_at", {}).pop(key, None)
-        ocr_started = getattr(
-            self,
-            "_card_transaction_ocr_started",
-            {},
-        ).pop(key, None)
-        kind = self._card_transaction_kinds.pop(
-            key,
-            "necessary_skill_card_detail_transaction",
-        )
+        started, kind, ocr_started = card_detail_state(self).finish(key)
         if started is None:
             return
         elapsed = time.perf_counter() - started
@@ -7335,27 +7407,10 @@ class MaaArenaReaderBackend:
         last_text = ""
         last_error = ""
         open_started = time.perf_counter()
-        transaction_started = self._card_transaction_started.get(key, open_started)
-        transaction_token = int(getattr(self, "_card_transaction_serial", 0)) + 1
-        self._card_transaction_serial = transaction_token
-        getattr(self, "_detail_identity_proofs", {}).pop(key, None)
-        transaction_ocr_started = getattr(self, "_card_transaction_ocr_started", {}).get(key, (
-            self._runtime_counts.get(
-                "detail_capture_broad_ocr_backend_calls",
-                0,
-            ),
-            self._runtime_counts.get(
-                "detail_capture_broad_ocr_cache_hits",
-                0,
-            ),
-        ))
-        contact_counts = getattr(self, "_card_transaction_contact_counts", None)
-        if contact_counts is None:
-            contact_counts = {}
-            self._card_transaction_contact_counts = contact_counts
+        detail_state = card_detail_state(self)
+        opening = detail_state.prepare_open(key, open_started, self._runtime_counts)
         for attempt in range(contact_start_index, 2):
-            getattr(self, "_card_detail_open_ids", {}).pop(key, None)
-            contact_counts[key] = attempt + 1
+            detail_state.record_contact(key, attempt + 1)
             click_box = primary_click_box if attempt == 0 else retry_click_box
             self._increment("skill_card_detail_clicks")
             self._increment("skill_card_safe_region_clicks")
@@ -7400,64 +7455,11 @@ class MaaArenaReaderBackend:
                         break
                     self._card_detail_texts[key] = last_text
                     self._note_confirmed_detail_name(confirmed_card_id)
-                    self._card_detail_images[key] = detail_image
-                    contact_times = getattr(
-                        self,
-                        "_card_detail_last_contact_released_at",
-                        None,
-                    )
-                    if contact_times is None:
-                        contact_times = {}
-                        self._card_detail_last_contact_released_at = contact_times
-                    contact_times[key] = last_contact_released_at
-                    capture_times = getattr(
-                        self,
-                        "_card_detail_capture_started_at",
-                        None,
-                    )
-                    if capture_times is None:
-                        capture_times = {}
-                        self._card_detail_capture_started_at = capture_times
-                    capture_times[key] = detail_capture_started_at
-                    self._card_transaction_started[key] = transaction_started
-                    transaction_tokens = getattr(
-                        self,
-                        "_card_transaction_tokens",
-                        None,
-                    )
-                    if transaction_tokens is None:
-                        transaction_tokens = {}
-                        self._card_transaction_tokens = transaction_tokens
-                    transaction_tokens[key] = transaction_token
-                    source_boxes = getattr(
-                        self,
-                        "_card_transaction_source_boxes",
-                        None,
-                    )
-                    if source_boxes is None:
-                        source_boxes = {}
-                        self._card_transaction_source_boxes = source_boxes
-                    source_boxes[key] = tuple(card_box)
-                    interaction_boxes = getattr(
-                        self,
-                        "_card_transaction_interaction_boxes",
-                        None,
-                    )
-                    if interaction_boxes is None:
-                        interaction_boxes = {}
-                        self._card_transaction_interaction_boxes = interaction_boxes
-                    interaction_boxes[key] = tuple(click_box)
-                    ocr_started = getattr(
-                        self,
-                        "_card_transaction_ocr_started",
-                        None,
-                    )
-                    if ocr_started is None:
-                        ocr_started = {}
-                        self._card_transaction_ocr_started = ocr_started
-                    ocr_started[key] = transaction_ocr_started
-                    self._card_transaction_kinds.setdefault(
-                        key, "necessary_skill_card_detail_transaction",
+                    detail_state.accept_open(
+                        key, opening, image=detail_image,
+                        contact_released_at=last_contact_released_at,
+                        capture_started_at=detail_capture_started_at,
+                        source_box=card_box, interaction_box=click_box,
                     )
                     diagnostic = getattr(self, "_detail_failure_frames", None)
                     if diagnostic is not None and "confirmed_open" not in diagnostic:
@@ -9507,73 +9509,13 @@ class MaaArenaReaderBackend:
         member_slot: int | None = None,
     ) -> ClickedSkillCard:
         """Reopen a prematurely vanished detail using only its unused contact."""
-        arguments = {
-            "expected_customization_count": expected_customization_count,
-            "timeout_seconds": timeout_seconds,
-            "allow_zero_without_badge_count": allow_zero_without_badge_count,
-            "target": target, "stage_number": stage_number, "member_slot": member_slot,
-        }
-        try:
-            return self._read_resolved_card_detail_once(key, candidate_ids, **arguments)
-        except ArenaReaderError as error:
-            diagnostic = getattr(self, "_detail_failure_frames", None)
-            if diagnostic is not None:
-                diagnostic["error"] = str(error)
-            used_contacts = getattr(self, "_card_transaction_contact_counts", {}).get(key)
-            if error.code not in {
-                "skill_card_detail_disappeared", "skill_card_detail_id_changed",
-                "skill_card_detail_upgrade_mark_missing",
-                "skill_card_detail_title_unresolved",
-            } or used_contacts != 1:
-                raise
-            original_error = str(error)
-            error_code = error.code
-        except Exception as error:
-            diagnostic = getattr(self, "_detail_failure_frames", None)
-            if diagnostic is not None:
-                diagnostic["error"] = str(error)
-            raise
-        started = time.perf_counter()
-        before = dict(self._runtime_counts)
-        succeeded = False
-        self._increment("skill_card_detail_reopen_attempts")
-        try:
-            if error_code in {"skill_card_detail_id_changed", "skill_card_detail_upgrade_mark_missing", "skill_card_detail_title_unresolved"}:
-                self._dismiss_skill_card_detail()
-                self._assert_card_group_visible(key[0], card_slot=key[1])
-                self._increment("skill_card_detail_source_resets")
-            # A disappeared detail already proved two source frames before any
-            # dismissal. Reuse the original retry contact, never a new budget.
-            self._open_skill_card_once(
-                target, stage_number, member_slot, key[0], key[1],
-                1 if expected_customization_count is None else expected_customization_count,
-                contact_start_index=used_contacts,
-            )
-            resolved = self._read_resolved_card_detail_once(key, candidate_ids, **arguments)
-            succeeded = True
-            self._increment("skill_card_detail_reopen_successes")
-            return resolved
-        except Exception as error:
-            diagnostic = getattr(self, "_detail_failure_frames", None)
-            if diagnostic is not None:
-                diagnostic["error"] = str(error)
-            raise
-        finally:
-            elapsed = time.perf_counter() - started
-            self._record_duration_sample("skill_card_detail_reopen", elapsed)
-            logger.info(json.dumps({
-                "event": "arena_reader_recovery", "action": "skill_card_detail_reopen",
-                "team_id": None if target is None else target.team_id,
-                "stage_number": stage_number, "member_slot": member_slot,
-                "group_index": key[0], "card_slot": key[1],
-                "reason": original_error, "succeeded": succeeded,
-                "wall_seconds": round(elapsed, 6),
-                "extra_counts": {
-                    name: value - before.get(name, 0)
-                    for name, value in self._runtime_counts.items()
-                    if value > before.get(name, 0)
-                },
-            }, ensure_ascii=False, sort_keys=True))
+        return SkillDetailRetrySession(self, clock=time, logger=logger).run(
+            key, candidate_ids,
+            expected_customization_count=expected_customization_count,
+            timeout_seconds=timeout_seconds,
+            allow_zero_without_badge_count=allow_zero_without_badge_count,
+            target=target, stage_number=stage_number, member_slot=member_slot,
+        )
 
     def _read_resolved_card_detail_once(
         self,
@@ -10353,27 +10295,8 @@ class MaaArenaReaderBackend:
         return title_matches == 1
 
     def _read_member_recovery_page(self, image: Any = None) -> tuple[Any, Sequence[Any]]:
-        deadline = time.monotonic() + 2.0
-        for observation in range(3):
-            if image is None:
-                image = self._capture()
-            items = self._ocr(image, r".+")
-            communication = self._retry_transient_communication_items(items)
-            contest_details = not communication and self._dismiss_contest_details_items(image, items)
-            if not communication and not contest_details:
-                return image, items
-            if observation == 2 or time.monotonic() >= deadline:
-                break
-            self._sleep(0.1)
-            image = None
-        if contest_details:
-            raise ArenaReaderError(
-                "arena_contest_details_close_failed",
-                "contest details did not return within the member recovery observations; no back sent",
-            )
-        raise ArenaReaderError(
-            "arena_communication_retry_exhausted",
-            "member recovery still sees a communication dialog after its existing Retry opportunity",
+        return ArenaPageFlow(_ArenaPageFlowPort(self), time, logger).read_member_recovery_page(
+            image,
         )
 
     def recover_member_preview(
@@ -10440,8 +10363,8 @@ class MaaArenaReaderBackend:
 
         self._card_stage_plan = None
         self._card_rows.clear()
-        getattr(self, "_card_detail_open_ids", {}).clear()
-        getattr(self, "_card_detail_rebind_ids", {}).clear()
+        detail_state = card_detail_state(self)
+        detail_state.clear_open_identity()
         self._card_predictions.clear()
         self._card_candidate_groups.clear()
         self._card_images.clear()
@@ -10472,20 +10395,12 @@ class MaaArenaReaderBackend:
         getattr(self, "_badge_glyph_runtime_labels", {}).clear()
         self._inferred_clicked_cards.clear()
         self._active_inferred_clicked_card = None
-        self._card_detail_texts.clear()
-        self._card_detail_images.clear()
-        getattr(self, "_card_detail_last_contact_released_at", {}).clear()
-        getattr(self, "_card_detail_capture_started_at", {}).clear()
+        detail_state.clear_member_observations()
         self._p_item_diagnostics = ()
         self._p_item_generation_evidence.clear()
         for key in tuple(self._card_transaction_started):
             self._finish_card_transaction(key, failed=True)
-        getattr(self, "_card_transaction_tokens", {}).clear()
-        getattr(self, "_card_transaction_contact_counts", {}).clear()
-        getattr(self, "_card_transaction_source_boxes", {}).clear()
-        getattr(self, "_card_transaction_interaction_boxes", {}).clear()
-        self._card_transaction_kinds.clear()
-        getattr(self, "_card_transaction_ocr_started", {}).clear()
+        detail_state.clear_transaction_metadata()
         self._secondary_fixed_slot_fallback_enabled = False
         self._secondary_presence_diagnostics = ()
         self._secondary_presence_cache.clear()
@@ -10537,175 +10452,24 @@ class MaaArenaReaderBackend:
         error_code: str,
         require_opponents: bool,
     ) -> None:
-        unavailable_reads = 0
-        steps = 0
-        loading_reads = 0
-        loading_deadline: float | None = None
-        while steps < maximum_steps:
-            image = self._capture()
-            self._last_retry_dialog_seen = False
-            state, _ = self._arena_page_state(image)
-            if arena_page_allows_team_entry(
-                state,
-                require_opponents=require_opponents,
-            ):
-                return
-            items = self._ocr(image, r".+")
-            if self._matching_ocr_items(items, r"(?i)^\s*NOW\s*LOADING[.\s…]*$"):
-                loading_reads += 1
-                self._increment("arena_recovery_loading_frames")
-                if loading_deadline is None:
-                    loading_deadline = time.monotonic() + 5.0
-                if loading_reads >= 12 or time.monotonic() >= loading_deadline:
-                    raise ArenaReaderError(
-                        "arena_recovery_loading_timeout",
-                        "arena recovery stayed in NOW LOADING within its 12-frame/5-second budget; no back sent",
-                    )
-                started = time.perf_counter()
-                try:
-                    self._sleep(0.25)
-                finally:
-                    self._add_timing("arena_recovery_loading_wait", time.perf_counter() - started)
-                continue
-            steps += 1
-            if state is ArenaPageState.OPPONENTS_UNAVAILABLE:
-                unavailable_reads += 1
-                if unavailable_reads >= 3:
-                    raise ArenaReaderError(
-                        "arena_opponents_unavailable",
-                        "opponent cards stayed absent on the arena main page; recovery will not navigate away",
-                    )
-                self._sleep(0.25)
-                continue
-            unavailable_reads = 0
-            if self._dismiss_known_blocking_overlay(image, items=items):
-                self._sleep(0.25)
-                continue
-            # Navigation must use the frame whose page/overlays were checked.
-            try:
-                self._back(image=image)
-            except ArenaReaderError as error:
-                if error.code != "maa_back_anchor_ambiguous" or "found 0 " not in error.detail:
-                    raise
-                if steps >= maximum_steps:
-                    raise
-                # A returned click/recognition can precede the next page's
-                # render. Spend the existing recovery steps on new frames.
-                self._sleep(0.1)
-        if getattr(self, "_last_retry_dialog_seen", False):
-            raise ArenaReaderError(
-                "arena_communication_retry_exhausted",
-                "the error dialog remained after its one retry and bounded recovery wait",
-            )
-        required_state = "with three opponents" if require_opponents else "with the rehearsal anchor"
-        raise ArenaReaderError(
-            error_code,
-            f"back navigation did not reach an arena main page {required_state}",
+        return ArenaPageFlow(_ArenaPageFlowPort(self), time, logger).recover_arena_main(
+            maximum_steps=maximum_steps, error_code=error_code, require_opponents=require_opponents,
         )
 
     def _dismiss_contest_details_items(self, image: Any, items: Sequence[Any]) -> bool:
-        """Close a proven contest overlay using recovery's existing OCR frame."""
-        self._check_cancelled()
-        titles = self._matching_ocr_items(items, r"^コンテスト\s*詳細$")
-        if not titles:
-            return False
-        height, width = image.shape[:2]
-        closes = self._matching_ocr_items(items, r"^閉じる$")
-        if (
-            len(titles) != 1 or len(closes) != 1
-            or not 0 <= _box(titles[0])[1] < height * 0.25
-            or not height * 0.75 <= _box(closes[0])[1] < height
-            or not 0 <= _box(closes[0])[0] < width
-        ):
-            raise ArenaReaderError(
-                "arena_contest_details_close_ambiguous",
-                "contest details is open but its title/close anchors are not unique; no back sent",
-            )
-        attempts = getattr(self, "_contest_details_close_attempts", 0)
-        if attempts >= 2:
-            raise ArenaReaderError(
-                "arena_contest_details_close_failed",
-                "contest details remains after two close attempts shared by member and arena recovery; no back sent",
-            )
-        # Consume before input. Member cleanup and outer recovery must not renew it.
-        self._contest_details_close_attempts = attempts + 1
-        self._increment("arena_contest_details_close_attempts")
-        started = time.perf_counter()
-        sent = False
-        try:
-            self._click(_box(closes[0]), settle_seconds=0)
-            sent = True
-        finally:
-            elapsed = time.perf_counter() - started
-            self._record_duration_sample("arena_contest_details_close", elapsed)
-            logger.info(json.dumps({
-                "event": "arena_reader_recovery", "action": "contest_details_close",
-                "attempt": attempts + 1, "click_sent": sent,
-                "extra_ocr": 0, "extra_clicks": 1,
-                "wall_seconds": round(elapsed, 6),
-            }, ensure_ascii=False, sort_keys=True))
-        return True
+        return ArenaPageFlow(_ArenaPageFlowPort(self), time, logger).dismiss_contest_details_items(
+            image, items,
+        )
 
     def _dismiss_known_blocking_overlay(self, image: Any, *, items: Sequence[Any] | None = None) -> bool:
-        """Dismiss only overlays proven by independent page-specific anchors."""
-
-        # Recovery gets one full-frame problem check; reuse the same OCR boxes.
-        if items is None:
-            items = self._ocr(image, r".+")
-        if self._retry_transient_communication_items(items):
-            return True
-        if self._dismiss_contest_details_items(image, items):
-            return True
-        menu_profile = self._matching_ocr_items(items, r"^プロフィール$")
-        menu_settings = self._matching_ocr_items(items, r"^設定$")
-        if len(menu_profile) == 1 and len(menu_settings) == 1:
-            height, width = image.shape[:2]
-            # The upper-centre backdrop is outside the menu's functional grid
-            # at every supported aspect ratio.  A click there dismisses the
-            # proven menu without relying on a scale-sensitive close template.
-            self._click((int(width * 0.50), int(height * 0.16), 1, 1))
-            self._increment("arena_menu_overlays_dismissed")
-            return True
-
-        error_titles = self._matching_ocr_items(items, r"^通信エラ(?:ー)?$")
-        failure_details = self._matching_ocr_items(items, r"^アセット取得に失敗$")
-        if len(error_titles) != 1 or len(failure_details) != 1:
-            return False
-        close_buttons = self._recognize("CloseRoundButton", image)
-        if len(close_buttons) != 1:
-            raise ArenaReaderError(
-                "arena_blocking_overlay_close_ambiguous",
-                "a communication-error overlay is proven but its close button is not unique",
-            )
-        self._click(_box(close_buttons[0]))
-        self._increment("arena_blocking_overlays_dismissed")
-        return True
+        return ArenaPageFlow(_ArenaPageFlowPort(self), time, logger).dismiss_known_blocking_overlay(
+            image, items=items,
+        )
 
     def _retry_transient_communication_items(self, items: Sequence[Any]) -> bool:
-        """Return whether a proven dialog occupies this already-read frame."""
-        self._check_cancelled()
-        retry_box = error_retry_box(items)
-        self._last_retry_dialog_seen = retry_box is not None
-        if retry_box is None:
-            return False
-        if getattr(self, "_arena_communication_retry_attempted", False):
-            # The original deadline may still be observing the sent Retry's
-            # transition. Do not resend and do not extend that deadline.
-            return True
-        self._arena_communication_retry_attempted = True
-        started = time.perf_counter()
-        succeeded = False
-        try:
-            self._click(retry_box, settle_seconds=0)
-            self._increment("arena_communication_retries")
-            succeeded = True
-        finally:
-            logger.info(json.dumps({
-                "event": "arena_reader_recovery", "action": "communication_retry",
-                "succeeded": succeeded, "extra_ocr": 0, "extra_clicks": 1,
-                "wall_seconds": round(time.perf_counter() - started, 6),
-            }, ensure_ascii=False, sort_keys=True))
-        return True
+        return ArenaPageFlow(_ArenaPageFlowPort(self), time, logger).retry_transient_communication_items(
+            items,
+        )
 
     def _check_cancelled(self) -> None:
         # Any intervening reader operation invalidates the one-use preview.
@@ -11040,26 +10804,9 @@ class MaaArenaReaderBackend:
             raise ArenaReaderError("maa_swipe_failed", f"Maa could not swipe {vertical}")
 
     def _back(self, *, image: Any = None) -> None:
-        if image is None:
-            image = self._capture()
-        height, width = image.shape[:2]
-        detail = self._run_recognition(
-            "ChallengeBack",
-            image,
-            pipeline_override={
-                "ChallengeBack": {
-                    "recognition": "TemplateMatch",
-                    "template": "back.png",
-                    "roi": [0, int(height * 0.8), int(width * 0.5), int(height * 0.2)],
-                    "threshold": 0.7,
-                    "order_by": "Score",
-                }
-            },
+        return ArenaPageFlow(_ArenaPageFlowPort(self), time, logger).back(
+            image=image,
         )
-        results = list((detail.filtered_results or detail.all_results or [])) if detail and detail.hit else []
-        if len(results) != 1:
-            raise ArenaReaderError("maa_back_anchor_ambiguous", f"found {len(results)} back-button anchors")
-        self._click(self._box_center_point(_box(results[0])))
 
     def _close_overlay(self) -> None:
         self._check_cancelled()
@@ -11192,22 +10939,8 @@ class MaaArenaReaderBackend:
         expected_total_counts: tuple[int, ...],
         timeout_seconds: float = 3.0,
     ) -> None:
-        deadline = time.monotonic() + timeout_seconds
-        last_stage_count = 0
-        last_total_count = 0
-        while time.monotonic() < deadline:
-            image = self._capture()
-            items = self._ocr(image, r".+")
-            last_stage_count = len(self._matching_ocr_items(items, r"^ステージ\s*[123]$"))
-            last_total_count = len(self._matching_ocr_items(items, r"^総合力$"))
-            communication_dialog = self._retry_transient_communication_items(items)
-            if not communication_dialog and last_stage_count >= 3 and last_total_count in expected_total_counts:
-                return
-            self._sleep(0.25)
-        raise ArenaReaderError(
-            "stage_member_list_timeout",
-            f"stage anchors={last_stage_count}, total anchors={last_total_count}, "
-            f"expected totals={expected_total_counts!r}",
+        return ArenaPageFlow(_ArenaPageFlowPort(self), time, logger).wait_for_stage_member_list(
+            expected_total_counts, timeout_seconds=timeout_seconds,
         )
 
     def _stage_total_anchors(self, image: Any) -> tuple[tuple[int, int, int, int], ...]:
