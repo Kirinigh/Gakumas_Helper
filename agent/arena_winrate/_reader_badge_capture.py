@@ -89,6 +89,8 @@ class BadgeCapturePort(Protocol):
 
     _card_count_frames: Any
 
+    _card_detection_observation: Any
+
     _card_empty_flags: Any
 
     _card_excluded_duplicate_flags: Any
@@ -606,10 +608,21 @@ class BadgeCapture:
                 "skill_card_badge_batch_missing",
                 f"group {requested_group} has no stable three-frame card observation",
             )
-        frame_rows = {
-            group_index: tuple(self.port._validated_card_group_row(image, group_index) for image in self.port._card_count_frames[group_index])
-            for group_index in visible_groups
-        }
+        previous_observation = getattr(self.port, "_card_detection_observation", None)
+        observations: dict[int, list[Any]] = {}
+        frame_rows = {}
+        try:
+            # Keep group/frame validation order; only detector output is shared
+            # when both rows refer to the same frozen image in this batch.
+            for group_index in visible_groups:
+                rows = []
+                for image in self.port._card_count_frames[group_index]:
+                    observation = observations.setdefault(id(image), [image, None])
+                    self.port._card_detection_observation = observation
+                    rows.append(self.port._validated_card_group_row(image, group_index))
+                frame_rows[group_index] = tuple(rows)
+        finally:
+            self.port._card_detection_observation = previous_observation
         duplicate_flags = {
             group_index: self.port._card_excluded_duplicate_flags.get(
                 group_index,

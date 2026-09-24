@@ -140,6 +140,7 @@ class GenericCostReferenceGallery:
         if len(self._template_indices) != template_count:
             raise GenericCostReferenceError("generic-cost templates repeat a kind/value pair")
         digit_reference_pools: dict[tuple[str, int], list[Any]] = {}
+        base_digit_descriptors: list[Any | None] = []
         for kind, value, symbol in zip(
             self.cost_kinds,
             self.base_values,
@@ -147,8 +148,10 @@ class GenericCostReferenceGallery:
             strict=True,
         ):
             digit = self._digit_descriptor(symbol)
+            base_digit_descriptors.append(digit)
             if digit is not None:
                 digit_reference_pools.setdefault((kind, int(value)), []).append(digit)
+        template_digit_descriptors: list[Any | None] = []
         for kind, value, symbol in zip(
             self.template_kinds,
             self.template_values,
@@ -156,8 +159,13 @@ class GenericCostReferenceGallery:
             strict=True,
         ):
             digit = self._digit_descriptor(symbol)
+            template_digit_descriptors.append(digit)
             if digit is not None:
                 digit_reference_pools.setdefault((kind, int(value)), []).append(digit)
+        # These derive only from this gallery's fixed references. Live query
+        # descriptors are still calculated independently for every observation.
+        self._base_digit_descriptors = tuple(base_digit_descriptors)
+        self._template_digit_descriptors = tuple(template_digit_descriptors)
         self._digit_reference_pools = {
             key: tuple(references)
             for key, references in digit_reference_pools.items()
@@ -737,8 +745,13 @@ class GenericCostReferenceGallery:
                 )
             digit_references = tuple(
                 digit
-                for reference in symbol_references
-                if (digit := self._digit_descriptor(reference)) is not None
+                for digit in (
+                    self._base_digit_descriptors[card_index]
+                    if value == base_value else None,
+                    self._template_digit_descriptors[template_index]
+                    if template_index is not None else None,
+                )
+                if digit is not None
             )
             if digit_query is not None and digit_references:
                 digit_ranked.append(
@@ -968,18 +981,15 @@ class GenericCostReferenceGallery:
             if value == 0:
                 continue
             template_index = self._template_indices.get((kind, value))
-            symbol_references = []
-            if value == base_value:
-                symbol_references.append(self.base_symbols[card_index])
-            if template_index is not None:
-                symbol_references.append(self.template_symbols[template_index])
             digit_references = tuple(
                 reference_digit
-                for reference in symbol_references
-                if (
-                    reference_digit := self._digit_descriptor(reference)
+                for reference_digit in (
+                    self._base_digit_descriptors[card_index]
+                    if value == base_value else None,
+                    self._template_digit_descriptors[template_index]
+                    if template_index is not None else None,
                 )
-                is not None
+                if reference_digit is not None
             )
             if digit_references:
                 ranked.append(
