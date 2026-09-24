@@ -19,6 +19,12 @@ from arena_winrate import (
 )
 from arena_winrate._reader_visual import _box, _text
 from arena_winrate._reader_evidence import _DetailIdentityProof
+from arena_winrate._member_read_session import (
+    MemberDetailRecovery,
+    record_member_diagnostic,
+    member_detail_recovery_state,
+    consume_member_detail_recovery,
+)
 
 
 class MemberNavigationReaderPort(Protocol):
@@ -516,26 +522,31 @@ class MemberNavigationReader:
 
     def _retain_failed_skill_detail_identity(self, key: tuple[int, int]) -> None:
         """Keep the failed transaction's proven title until its member recovery."""
-        member = getattr(self.port, "_member_failure_frames", None)
+        state = member_detail_recovery_state(self.port)
         proof = getattr(self.port, "_detail_identity_proofs", {}).get(key)
-        if member is None or not isinstance(proof, _DetailIdentityProof):
+        if state.position is None or not isinstance(proof, _DetailIdentityProof):
             return
         if not self.port._detail_identity_proof_matches(key, proof.card_id, proof.source_card_box):
             return
-        position = member["position"]
-        member["skill_detail_recovery"] = {
-            "team_id": position.get("team_id"),
-            "stage_number": position.get("stage_number"),
-            "member_slot": position.get("member_slot"),
+        team_id, stage_number, member_slot = state.position
+        detail: MemberDetailRecovery = {
+            "team_id": team_id,
+            "stage_number": stage_number,
+            "member_slot": member_slot,
             "group_index": key[0],
             "card_slot": key[1],
             "card_id": proof.card_id,
             "title": proof.title,
         }
+        state.detail = detail
+        member = getattr(self.port, "_member_failure_frames", None)
+        if isinstance(member, dict):
+            # A compatibility view of this exact record, never a recovery source.
+            member["skill_detail_recovery"] = detail
         diagnostic = getattr(self.port, "_detail_failure_frames", None)
-        if diagnostic is not None:
+        if isinstance(diagnostic, dict) and isinstance(diagnostic.get("position"), dict):
             diagnostic["position"].update(group_index=key[0], card_slot=key[1])
-            self.port._note_confirmed_detail_name(proof.card_id)
+            record_member_diagnostic(self.port, self.logger, "_note_confirmed_detail_name", proof.card_id)
 
     def _member_recovery_page_matches(
         self,
@@ -582,8 +593,7 @@ class MemberNavigationReader:
             expected_totals = (1, 2, 3) if target.is_own_team else (6,)
             stages = self.port._matching_ocr_items(items, r"^ステージ\s*[123]$")
             totals = self.port._matching_ocr_items(items, r"^総合力$")
-            member = getattr(self.port, "_member_failure_frames", None)
-            detail = member.pop("skill_detail_recovery", None) if member is not None else None
+            detail = consume_member_detail_recovery(self.port)
             detail_matches_member = bool(
                 detail is not None
                 and error_code == "skill_card_close_failed"

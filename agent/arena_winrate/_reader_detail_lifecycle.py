@@ -11,6 +11,7 @@ from arena_winrate import (
     ArenaReaderError,
     ClickedSkillCard,
     ArenaCatalogError,
+    ArenaEntityCatalog,
     BadgeReferenceError,
     stable_reference_business_candidates,
 )
@@ -24,8 +25,17 @@ from arena_winrate._detail_identity import (
 )
 from arena_winrate._reader_evidence import _DetailIdentityProof, _DetailIdentityObservation
 from arena_winrate.recognition_probe import RecognitionProbe
-from arena_winrate._card_detail_state import card_detail_state
+from arena_winrate._card_detail_state import CardBox, CardKey, CardDetailState, ClosedCardDetail, card_detail_state
 from arena_winrate._detail_capture_evidence import _FullFrameOcrEvidence
+
+
+class DetailLifecycleIoPort(Protocol):
+    """Live input/capture operations, retaining the existing cancellation guards."""
+
+    def _capture(self) -> Any: ...
+    def _click(self, box: tuple[int, int, int, int], *, settle_seconds: float = ...) -> None: ...
+    def _short_press(self, box: tuple[int, int, int, int], *, duration_ms: int) -> None: ...
+    def _sleep(self, seconds: float) -> None: ...
 
 
 class DetailLifecycleReaderPort(Protocol):
@@ -33,7 +43,8 @@ class DetailLifecycleReaderPort(Protocol):
 
     def _accept_skill_detail_open_id(self, key: tuple[int, int], card_id: int, attempt: int) -> bool: ...
 
-    _active_inferred_clicked_card: Any
+    _card_detail_state: CardDetailState
+    _active_inferred_clicked_card: CardKey | None
 
     def _assert_card_group_visible(
         self, group_index: int, timeout_seconds: float = ..., *, card_slot: int | None = ..., expected_card_id: int | None = ...
@@ -49,32 +60,19 @@ class DetailLifecycleReaderPort(Protocol):
     ) -> str | None: ...
     def _begin_detail_diagnostics(self, *, source: Any = ..., **position: Any) -> None: ...
     def _cached_full_frame_ocr_evidence(self, image: Any) -> _FullFrameOcrEvidence | None: ...
-    def _capture(self) -> Any: ...
 
-    _card_candidate_groups: Any
-    _card_detail_capture_started_at: Any
-    _card_detail_images: Any
-    _card_detail_last_contact_released_at: Any
-    _card_detail_open_ids: Any
-    _card_detail_rebind_ids: Any
-    _card_detail_texts: Any
-    _card_excluded_duplicate_flags: Any
-    _card_identity_frames: Any
-    _card_images: Any
-    _card_predictions: Any
-    _card_restoration_signatures: Any
-    _card_rows: Any
-    _card_source_guard_frames: Any
-    _card_transaction_interaction_boxes: Any
-    _card_transaction_kinds: Any
-    _card_transaction_source_boxes: Any
-    _card_transaction_started: Any
-    _card_transaction_tokens: Any
+    _card_candidate_groups: dict[CardKey, tuple[int, ...]]
+    _card_excluded_duplicate_flags: dict[int, tuple[bool, ...]]
+    _card_identity_frames: dict[int, tuple[tuple[dict[str, Any], ...], ...]]
+    _card_images: dict[int, Any]
+    _card_predictions: dict[CardKey, int]
+    _card_restoration_signatures: dict[int, tuple[tuple[tuple[str, Any], ...], ...]]
+    _card_rows: dict[int, tuple[CardBox, ...]]
+    _card_source_guard_frames: dict[int, tuple[Any, ...]]
 
     def _card_visual_family_candidates(
         self, *, stage_number: int, image: Any, box: tuple[int, int, int, int], slot_index: int
     ) -> tuple[int, ...]: ...
-    def _click(self, box: tuple[int, int, int, int], *, settle_seconds: float = ...) -> None: ...
     def _close_skill_card_once(self, target: TeamTarget, stage_number: int, member_slot: int, group_index: int, card_slot: int) -> None: ...
     def _confirm_clicked_skill_card_id(
         self,
@@ -88,13 +86,12 @@ class DetailLifecycleReaderPort(Protocol):
         source_card_slot: int | None = ...,
     ) -> int: ...
 
-    _detail_failure_frames: Any
-    _detail_identity_proofs: Any
+    _detail_failure_frames: dict[str, Any] | None
 
     def _detail_identity_transaction(self, key: tuple[int, int]) -> DetailIdentityTransaction: ...
 
-    _detail_kind_hint: Any
-    _detail_semantic_confirmations: Any
+    _detail_kind_hint: str
+    _detail_semantic_confirmations: dict[CardKey, dict[str, Any]]
 
     def _dismiss_skill_card_detail(self) -> None: ...
     def _finish_card_transaction(
@@ -105,9 +102,9 @@ class DetailLifecycleReaderPort(Protocol):
         self, target: TeamTarget, stage_number: int, member_slot: int, group_index: int, card_slot: int, candidate_ids: Sequence[int]
     ) -> ClickedSkillCard: ...
 
-    _inferred_clicked_cards: Any
-    _matching_ocr_items: Any
-    _member_failure_frames: Any
+    _inferred_clicked_cards: dict[CardKey, ClickedSkillCard]
+    def _matching_ocr_items(self, items: Sequence[Any], expected: str) -> list[Any]: ...
+    _member_failure_frames: dict[str, Any] | None
 
     def _note_confirmed_detail_name(self, card_id: int) -> None: ...
     def _ocr(self, image: Any, expected: str, *, roi: tuple[int, int, int, int] | None = ..., only_rec: bool = ...) -> list[Any]: ...
@@ -138,30 +135,32 @@ class DetailLifecycleReaderPort(Protocol):
         member_slot: int | None = ...,
     ) -> ClickedSkillCard: ...
     def _record_duration_sample(self, name: str, elapsed: float) -> None: ...
+    def _retain_failed_skill_detail_identity(self, key: CardKey) -> None: ...
+    def _report_card_transaction_end(
+        self, closed: ClosedCardDetail, *, failed: bool = ..., error: str | None = ..., superseded: bool = ..., cancelled: bool = ...
+    ) -> None: ...
     def _resolve_proven_skill_card_title(self, title_text: str, *, allow_one_character: bool = ...) -> int: ...
     def _retry_transient_communication_items(self, items: Sequence[Any]) -> bool: ...
 
-    _runtime_counts: Any
+    _runtime_counts: dict[str, int]
 
     def _same_proven_skill_card_title(self, first: str, second: str, card_id: int) -> bool: ...
-    def _short_press(self, box: tuple[int, int, int, int], *, duration_ms: int) -> None: ...
     def _skill_card_detail_close_retry_proven(
         self, group_index: int, expected_card_id: int, source_card_box: tuple[int, int, int, int] | None = ...
     ) -> bool: ...
     def _skill_card_detail_ocr_text(self, image: Any, *, phase: str) -> str: ...
 
-    _skill_card_detail_overlay_guard_boxes: Any
-    _skill_card_interaction_box: Any
-    _skill_card_retry_interaction_box: Any
+    def _skill_card_detail_overlay_guard_boxes(self, image: Any) -> tuple[CardBox, ...]: ...
+    def _skill_card_interaction_box(self, box: CardBox) -> CardBox: ...
+    def _skill_card_retry_interaction_box(self, box: CardBox) -> CardBox: ...
 
     def _skill_card_source_box(self, key: tuple[int, int] | None) -> tuple[int, int, int, int] | None: ...
     def _skill_detail_other_source_slots(self, key: tuple[int, int], card_id: int) -> list[tuple[int, int]]: ...
     def _skill_detail_visual_ids(self, key: tuple[int, int]) -> tuple[int, ...]: ...
-    def _sleep(self, seconds: float) -> None: ...
     def _stable_skill_card_source_ocr_counts(self, group_index: int) -> dict[str, int]: ...
 
-    _source_restore_poll_seconds: Any
-    catalog: Any
+    _source_restore_poll_seconds: float
+    catalog: ArenaEntityCatalog
 
     def open_skill_card(
         self, target: TeamTarget, stage_number: int, member_slot: int, group_index: int, card_slot: int, expected_customization_count: int
@@ -175,18 +174,51 @@ class DetailLifecycleReader:
         self,
         port: DetailLifecycleReaderPort,
         *,
-        content_error_limit: Any,
+        io: DetailLifecycleIoPort,
+        content_error_limit: float,
         logger: Any,
         source_signature_errors: Any,
         source_signatures: Any,
         clock: Any,
     ) -> None:
         self.port = port
+        self.io = io
         self.content_error_limit = content_error_limit
         self.logger = logger
         self.source_signature_errors = source_signature_errors
         self.source_signatures = source_signatures
         self.clock = clock
+
+    @property
+    def state(self) -> CardDetailState:
+        """Resolve the owner's current state; never retain a copied cache view."""
+        return card_detail_state(self.port)
+
+    def _finish_card_transaction(
+        self, key: CardKey, *, failed: bool = False, error: str | None = None, superseded: bool = False, cancelled: bool = False
+    ) -> None:
+        if failed:
+            self.port._retain_failed_skill_detail_identity(key)
+        closed = self.state.finish(key)
+        if closed.started is None:
+            return
+        self.port._report_card_transaction_end(
+            closed, failed=failed, error=error, superseded=superseded, cancelled=cancelled
+        )
+
+    def finish_member_transactions(self, *, succeeded: bool, superseded: bool) -> None:
+        """Invalidate every pending identity before calling optional reporters."""
+        if succeeded and not superseded:
+            return
+        closed_details = []
+        for key in tuple(self.state.started):
+            if not superseded:
+                self.port._retain_failed_skill_detail_identity(key)
+            closed = self.state.finish(key)
+            if closed.started is not None:
+                closed_details.append(closed)
+        for closed in closed_details:
+            self.port._report_card_transaction_end(closed, failed=not superseded, superseded=superseded)
 
     def _skill_detail_visual_ids(self, key: tuple[int, int]) -> tuple[int, ...]:
         # Embeddings only supply candidates. A single first-place ID is not
@@ -218,9 +250,9 @@ class DetailLifecycleReader:
         visual_ids = self.port._skill_detail_visual_ids(key)
         if visual_ids and card_id not in visual_ids:
             self.port._increment("skill_card_detail_id_mismatches")
-            rebind = getattr(self.port, "_card_detail_rebind_ids", None)
+            rebind = self.state.rebind_ids
             if rebind is None:
-                rebind = self.port._card_detail_rebind_ids = {}
+                rebind = self.state.rebind_ids = {}
             other_slots = self.port._skill_detail_other_source_slots(key, card_id)
             # The same ID may legitimately appear in both six-card groups.
             # Other slots are diagnostic context, not proof of a wrong click.
@@ -259,16 +291,16 @@ class DetailLifecycleReader:
             # Two independent openings plus the existing source-return and full
             # body confirmation retain detail priority over an incorrect image ID.
             self.port._increment("skill_card_detail_reopened_title_rebinds")
-        if attempt == 1 and key in getattr(self.port, "_card_detail_rebind_ids", {}):
+        if attempt == 1 and key in self.state.rebind_ids:
             self.port._increment("skill_card_detail_id_reopen_successes")
-        opened = getattr(self.port, "_card_detail_open_ids", None)
+        opened = self.state.open_ids
         if opened is None:
-            opened = self.port._card_detail_open_ids = {}
+            opened = self.state.open_ids = {}
         opened[key] = card_id
         return True
 
     def _assert_skill_detail_open_id(self, key: tuple[int, int] | None, card_id: int) -> None:
-        expected = getattr(self.port, "_card_detail_open_ids", {}).get(key)
+        expected = self.state.open_ids.get(key)
         if expected is not None and expected != card_id:
             upgrade_pair = getattr(self.port.catalog, "is_skill_card_upgrade_pair", None)
             if upgrade_pair is not None and upgrade_pair(card_id, expected):
@@ -395,9 +427,9 @@ class DetailLifecycleReader:
                 self.port._increment("skill_card_detail_click_retries")
                 self.port._increment("skill_card_detail_contact_retries")
             if attempt == 0:
-                self.port._short_press(click_box, duration_ms=80)
+                self.io._short_press(click_box, duration_ms=80)
             else:
-                self.port._short_press(click_box, duration_ms=120)
+                self.io._short_press(click_box, duration_ms=120)
             last_contact_released_at = self.clock.monotonic()
             deadline = self.clock.monotonic() + 1.5
             while self.clock.monotonic() < deadline:
@@ -413,7 +445,7 @@ class DetailLifecycleReader:
                     self.port._increment("skill_card_source_title_ocr_unavailable")
                 try:
                     detail_capture_started_at = self.clock.monotonic()
-                    detail_image = self.port._capture()
+                    detail_image = self.io._capture()
                     last_text = self.port._skill_card_detail_ocr_text(
                         detail_image,
                         phase="open",
@@ -451,7 +483,7 @@ class DetailLifecycleReader:
                             f"actual_detail_id={confirmed_card_id}"
                         )
                         break
-                    self.port._card_detail_texts[key] = last_text
+                    self.state.texts[key] = last_text
                     self.port._note_confirmed_detail_name(confirmed_card_id)
                     detail_state.accept_open(
                         key,
@@ -477,9 +509,9 @@ class DetailLifecycleReader:
                     last_error = str(error)
                     evidence = self.port._cached_full_frame_ocr_evidence(detail_image)
                     if evidence is not None and self.port._retry_transient_communication_items(evidence.filtered_items):
-                        self.port._sleep(0.25)
+                        self.io._sleep(0.25)
                         continue
-                self.port._sleep(0.25)
+                self.io._sleep(0.25)
             # A failed OCR/identity read does not prove that the overlay stayed
             # closed. The same card point is a toggle while a detail is open,
             # so every retry first performs an inert backdrop dismissal and
@@ -576,7 +608,7 @@ class DetailLifecycleReader:
                 (1 if expected_customization_count is None else expected_customization_count),
             )
             overlay_opened = True
-            self.port._card_transaction_kinds[key] = detail_kind
+            self.state.kinds[key] = detail_kind
             inferred = self.port._read_resolved_card_detail(
                 key,
                 candidate_ids,
@@ -605,11 +637,11 @@ class DetailLifecycleReader:
                 interruption = error
                 raise
             except Exception as error:
-                if key in getattr(self.port, "_card_transaction_started", {}):
+                if key in self.state.started:
                     self.port._finish_card_transaction(key, failed=True, error=str(error))
                 raise
             finally:
-                if key in getattr(self.port, "_card_transaction_started", {}):
+                if key in self.state.started:
                     if interruption is not None:
                         self.port._finish_card_transaction(
                             key,
@@ -629,7 +661,7 @@ class DetailLifecycleReader:
                 expected_card_id=inferred.card_id,
             )
         except Exception as error:
-            if key in getattr(self.port, "_card_transaction_started", {}):
+            if key in self.state.started:
                 self.port._finish_card_transaction(key, failed=True, error=str(error))
             raise
         self.port._finish_card_transaction(key)
@@ -684,7 +716,7 @@ class DetailLifecycleReader:
                 0,
             )
             overlay_opened = True
-            self.port._card_transaction_kinds[key] = "zero_identity_detail_transaction"
+            self.state.kinds[key] = "zero_identity_detail_transaction"
             inferred = self.port._read_resolved_card_detail(
                 key,
                 candidate_ids,
@@ -738,29 +770,13 @@ class DetailLifecycleReader:
     ) -> _DetailIdentityObservation | None:
         """Return exact-title evidence bound to the current post-contact frame."""
 
-        transaction_started = getattr(self.port, "_card_transaction_started", {}).get(key)
-        transaction_token = getattr(self.port, "_card_transaction_tokens", {}).get(key)
-        source_card_box = getattr(
-            self.port,
-            "_card_transaction_source_boxes",
-            {},
-        ).get(key)
-        interaction_box = getattr(
-            self.port,
-            "_card_transaction_interaction_boxes",
-            {},
-        ).get(key)
-        contact_released_at = getattr(
-            self.port,
-            "_card_detail_last_contact_released_at",
-            {},
-        ).get(key)
-        capture_started_at = getattr(
-            self.port,
-            "_card_detail_capture_started_at",
-            {},
-        ).get(key)
-        detail_image = getattr(self.port, "_card_detail_images", {}).get(key)
+        transaction_started = self.state.started.get(key)
+        transaction_token = self.state.tokens.get(key)
+        source_card_box = self.state.source_boxes.get(key)
+        interaction_box = self.state.interaction_boxes.get(key)
+        contact_released_at = self.state.contact_released_at.get(key)
+        capture_started_at = self.state.capture_started_at.get(key)
+        detail_image = self.state.images.get(key)
         if (
             not isinstance(transaction_token, int)
             or isinstance(transaction_token, bool)
@@ -845,13 +861,13 @@ class DetailLifecycleReader:
         """Read current evidence references without copying frames or renewing them."""
 
         return DetailIdentityTransaction(
-            transaction_started=getattr(self.port, "_card_transaction_started", {}).get(key),
-            transaction_token=getattr(self.port, "_card_transaction_tokens", {}).get(key),
-            source_card_box=getattr(self.port, "_card_transaction_source_boxes", {}).get(key),
-            interaction_box=getattr(self.port, "_card_transaction_interaction_boxes", {}).get(key),
-            contact_released_at=getattr(self.port, "_card_detail_last_contact_released_at", {}).get(key),
-            capture_started_at=getattr(self.port, "_card_detail_capture_started_at", {}).get(key),
-            detail_image=getattr(self.port, "_card_detail_images", {}).get(key),
+            transaction_started=self.state.started.get(key),
+            transaction_token=self.state.tokens.get(key),
+            source_card_box=self.state.source_boxes.get(key),
+            interaction_box=self.state.interaction_boxes.get(key),
+            contact_released_at=self.state.contact_released_at.get(key),
+            capture_started_at=self.state.capture_started_at.get(key),
+            detail_image=self.state.images.get(key),
             source_guard_frames=getattr(self.port, "_card_source_guard_frames", {}).get(key[0]),
             restoration_signatures=getattr(self.port, "_card_restoration_signatures", {}).get(key[0]),
             identity_frames=getattr(self.port, "_card_identity_frames", {}).get(key[0]),
@@ -865,10 +881,10 @@ class DetailLifecycleReader:
     ) -> None:
         """Publish independent identity only after checking the current opening."""
 
-        proofs = getattr(self.port, "_detail_identity_proofs", None)
+        proofs = self.state.identity_proofs
         if proofs is None:
             proofs = {}
-            self.port._detail_identity_proofs = proofs
+            self.state.identity_proofs = proofs
         proofs.pop(key, None)
         proof = build_detail_identity_proof(
             resolved,
@@ -890,9 +906,9 @@ class DetailLifecycleReader:
     ) -> bool:
         """Return whether an active transaction carries exact semantic identity."""
 
-        if expected_card_id is None or source_card_box is None or key not in getattr(self.port, "_card_transaction_started", {}):
+        if expected_card_id is None or source_card_box is None or key not in self.state.started:
             return False
-        proof = getattr(self.port, "_detail_identity_proofs", {}).get(key)
+        proof = self.state.identity_proofs.get(key)
         if not isinstance(proof, _DetailIdentityProof):
             return False
         return detail_identity_proof_matches(
@@ -920,8 +936,8 @@ class DetailLifecycleReader:
         """
         if (
             transaction_token is None
-            or getattr(self.port, "_card_transaction_tokens", {}).get(key) != transaction_token
-            or key not in getattr(self.port, "_card_transaction_started", {})
+            or self.state.tokens.get(key) != transaction_token
+            or key not in self.state.started
             or source_frames is None
             or len(source_frames) != 3
             or getattr(self.port, "_card_source_guard_frames", {}).get(key[0]) is not source_frames
@@ -931,7 +947,7 @@ class DetailLifecycleReader:
             or not opened_capture_time < recent_frames[0][0] < recent_frames[1][0]
             or recent_frames[0][1] is recent_frames[1][1]
             or any(image is opened_image for _, image in recent_frames)
-            or self.port._card_detail_images.get(key) is not recent_frames[-1][1]
+            or self.state.images.get(key) is not recent_frames[-1][1]
         ):
             return False
         started = self.clock.perf_counter()
@@ -1035,7 +1051,7 @@ class DetailLifecycleReader:
                 expected_card_id=self.port._card_predictions.get(key),
             )
         except ArenaReaderError:
-            image = self.port._capture()
+            image = self.io._capture()
             if len(self.port._ocr(image, r"^ステージ\s*[123]$")) >= 3:
                 raise ArenaReaderError(
                     "skill_card_close_left_member",
@@ -1059,7 +1075,7 @@ class DetailLifecycleReader:
         # limited to the sole active transaction; failed opens, P-item flows,
         # diagnostic calls, malformed frames, and inconsistent state retain
         # the original capture fallback.
-        active_keys = tuple(getattr(self.port, "_card_transaction_started", {}))
+        active_keys = tuple(self.state.started)
         dimensions: tuple[int, int] | None = None
         # Progressive cleanup has just captured and checked this frame. Only
         # its dimensions are needed for dismissal; no pixels are reused later.
@@ -1067,7 +1083,7 @@ class DetailLifecycleReader:
         if len(shape) >= 2 and int(shape[0]) > 0 and int(shape[1]) > 0:
             dimensions = (int(shape[0]), int(shape[1]))
             self.port._increment("skill_card_detail_dismiss_shape_reuses")
-        detail_images = getattr(self.port, "_card_detail_images", {})
+        detail_images = self.state.images
         if dimensions is None and len(active_keys) == 1 and active_keys[0] in detail_images:
             detail_image = detail_images[active_keys[0]]
             shape = getattr(detail_image, "shape", ())
@@ -1077,12 +1093,12 @@ class DetailLifecycleReader:
                     dimensions = (height, width)
                     self.port._increment("skill_card_detail_dismiss_shape_reuses")
         if dimensions is None:
-            image = self.port._capture()
+            image = self.io._capture()
             height, width = image.shape[:2]
         else:
             height, width = dimensions
         self.port._increment("skill_card_detail_event_driven_dismissals")
-        self.port._click(
+        self.io._click(
             (
                 max(1, int(width * 0.015)),
                 max(1, int(height * 0.04)),
@@ -1108,7 +1124,7 @@ class DetailLifecycleReader:
         if exact_resolver is None:
             return False
         for frame_index in range(2):
-            image = self.port._capture()
+            image = self.io._capture()
             title_text = self.port._authoritative_skill_card_title_text(
                 group_index,
                 image,
@@ -1125,7 +1141,7 @@ class DetailLifecycleReader:
                 return False
             self.port._increment("skill_card_detail_close_retry_evidence_frames")
             if frame_index == 0:
-                self.port._sleep(self.port._source_restore_poll_seconds)
+                self.io._sleep(self.port._source_restore_poll_seconds)
         return True
 
     def _assert_inferred_card_group_visible_after_dismiss(

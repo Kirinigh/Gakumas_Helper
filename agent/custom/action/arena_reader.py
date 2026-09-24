@@ -69,7 +69,7 @@ from arena_winrate._reader_resources import manifest_identity, reader_resource_p
 from arena_winrate._reader_telemetry import TelemetryReader
 from arena_winrate._reader_telemetry import _member_read_metrics_event as _component_function_member_read_metrics_event
 from arena_winrate.recognition_probe import RecognitionProbe
-from arena_winrate._card_detail_state import CardDetailState, card_detail_field, card_detail_state
+from arena_winrate._card_detail_state import CardDetailState, ClosedCardDetail, card_detail_field, card_detail_state
 from arena_winrate._detail_effect_ocr import DetailEffectOcr
 from arena_winrate._detail_text_layout import (
     recover_distant_number_text,
@@ -84,6 +84,12 @@ from arena_winrate._reader_card_layout import (
     _reference_identity_projection_is_strict as _component_function_reference_identity_projection_is_strict,
 )
 from arena_winrate._skill_detail_retry import SkillDetailRetrySession
+from arena_winrate._member_read_session import (
+    MemberDetailRecoveryState,
+    end_member_detail_recovery,
+    begin_member_detail_recovery,
+    member_detail_recovery_state,
+)
 from arena_winrate._p_item_read_workflow import PItemReadWorkflow, PItemDetailWorkflow
 from arena_winrate._p_item_read_workflow import p_item_decision_evidence as _component_function_p_item_decision_evidence
 from arena_winrate._reader_badge_capture import BadgeCapture
@@ -109,7 +115,7 @@ from arena_winrate._detail_title_identity import skill_card_title_ocr_segments a
 from arena_winrate._p_item_detail_session import PItemDetailSession
 from arena_winrate._reader_badge_inference import BadgeInference
 from arena_winrate._source_restore_session import SourceRestoreSession
-from arena_winrate._detail_capture_evidence import DetailCaptureEvidence
+from arena_winrate._detail_capture_evidence import FrameEvidenceState, DetailCaptureEvidence, frame_evidence_field, frame_evidence_state
 from arena_winrate._detail_capture_evidence import _FullFrameOcrEvidence as _FullFrameOcrEvidence
 from arena_winrate._detail_capture_evidence import _TitleAnchorOcrEvidence as _TitleAnchorOcrEvidence
 from arena_winrate._detail_capture_evidence import _TrustedSkillCardTitleRowsEvidence as _TrustedSkillCardTitleRowsEvidence
@@ -562,16 +568,7 @@ class MaaArenaReaderBackend:
         # boxes from that exact capture rather than asking the OCR backend to
         # interpret the same pixels repeatedly.  Identity, not image bytes, is
         # the boundary: a fresh capture must always receive fresh recognition.
-        self._full_frame_ocr_evidence: dict[int, _FullFrameOcrEvidence] = {}
-        self._title_anchor_ocr_evidence: dict[tuple[int, str], _TitleAnchorOcrEvidence] = {}
-        self._trusted_skill_card_title_rows_cache: dict[
-            tuple[
-                int,
-                tuple[int, ...],
-                tuple[int, int, int, int] | None,
-            ],
-            _TrustedSkillCardTitleRowsEvidence,
-        ] = {}
+        self._frame_evidence_state = FrameEvidenceState()
         self._card_source_guard_frames: dict[int, tuple[Any, ...]] = {}
         self._card_source_guard_signature_cache: dict[
             tuple[tuple[int, ...], tuple[tuple[int, int, int, int], ...]],
@@ -589,6 +586,7 @@ class MaaArenaReaderBackend:
         self._detail_count_overrides: dict[tuple[int, int], dict[str, Any]] = {}
         self._detail_semantic_confirmations: dict[tuple[int, int], dict[str, Any]] = {}
         self._card_detail_state = CardDetailState()
+        self._member_detail_recovery = MemberDetailRecoveryState()
         self._detail_title_disambiguations: list[dict[str, Any]] = []
         self._badge_local_results: dict[int, tuple[Any, ...]] = {}
         self._badge_glyph_observations: dict[tuple[int, int], tuple[dict[str, Any], ...]] = {}
@@ -650,6 +648,13 @@ class MaaArenaReaderBackend:
         self._skill_card_reference_missing_catalog_ids: tuple[int, ...] = ()
 
     # Legacy session/diagnostic entry points all address the same state owner.
+    _full_frame_ocr_evidence = frame_evidence_field("full_frame_ocr_evidence")
+    _title_anchor_ocr_evidence = frame_evidence_field("title_anchor_ocr_evidence")
+    _trusted_skill_card_title_rows_cache = frame_evidence_field("trusted_skill_card_title_rows_cache")
+    _skill_card_recovered_title_frames = frame_evidence_field("skill_card_recovered_title_frames")
+    _upgrade_title_roi_evidence = frame_evidence_field("upgrade_title_roi_evidence")
+    _isolated_title_evidence = frame_evidence_field("isolated_title_evidence")
+
     _card_transaction_serial = card_detail_field("serial")
     _card_transaction_started = card_detail_field("started")
     _card_transaction_tokens = card_detail_field("tokens")
@@ -818,13 +823,40 @@ class MaaArenaReaderBackend:
         return self._component_telemetry_reader()._emit_detail_fallback_diagnostic(outcome, error)
 
     def begin_member_read_diagnostics(self, target: TeamTarget, stage_number: int, member_slot: int) -> None:
+        # Preserve direct diagnostic callers; the read session owns this hook
+        # independently so disabling diagnostics cannot disable recovery.
+        if not member_detail_recovery_state(self).managed_by_session:
+            begin_member_detail_recovery(self, target, stage_number, member_slot)
         return self._component_telemetry_reader().begin_member_read_diagnostics(target, stage_number, member_slot)
+
+    def _begin_member_read_attempt(self, target: TeamTarget, stage_number: int, member_slot: int) -> None:
+        begin_member_detail_recovery(self, target, stage_number, member_slot, managed_by_session=True)
+
+    def _end_member_read_attempt(self) -> None:
+        end_member_detail_recovery(self)
+
+    def _finalize_member_read_attempt(
+        self, target: TeamTarget, stage_number: int, member_slot: int, *, succeeded: bool, superseded: bool
+    ) -> None:
+        if superseded:
+            diagnostic = getattr(self, "_member_failure_frames", None)
+            position = diagnostic.get("position") if isinstance(diagnostic, dict) else None
+            self._progressive_abandoned_member = dict(position) if isinstance(position, dict) else {}
+            self._progressive_abandoned_member.update(
+                team_id=target.team_id, opponent_position=target.opponent_position,
+                stage_number=stage_number, member_slot=member_slot,
+            )
+        self._component_detail_lifecycle_reader().finish_member_transactions(succeeded=succeeded, superseded=superseded)
 
     def set_member_read_phase(self, phase: str, **position: Any) -> None:
         return self._component_telemetry_reader().set_member_read_phase(phase, **position)
 
     def end_member_read_diagnostics(self) -> None:
-        return self._component_telemetry_reader().end_member_read_diagnostics()
+        try:
+            return self._component_telemetry_reader().end_member_read_diagnostics()
+        finally:
+            if not member_detail_recovery_state(self).managed_by_session:
+                end_member_detail_recovery(self)
 
     def note_member_confirmed_card(self, card_id: int) -> None:
         return self._component_telemetry_reader().note_member_confirmed_card(card_id)
@@ -867,6 +899,8 @@ class MaaArenaReaderBackend:
         sample_cursor: Mapping[str, int] | None = None,
         superseded: bool = False,
     ) -> None:
+        if not member_detail_recovery_state(self).managed_by_session:
+            self._finalize_member_read_attempt(target, stage_number, member_slot, succeeded=succeeded, superseded=superseded)
         return self._component_telemetry_reader().record_member_read_attempt(
             target,
             stage_number,
@@ -886,8 +920,15 @@ class MaaArenaReaderBackend:
     def _finish_card_transaction(
         self, key: tuple[int, int], *, failed: bool = False, error: str | None = None, superseded: bool = False, cancelled: bool = False
     ) -> None:
-        return self._component_telemetry_reader()._finish_card_transaction(
+        return self._component_detail_lifecycle_reader()._finish_card_transaction(
             key, failed=failed, error=error, superseded=superseded, cancelled=cancelled
+        )
+
+    def _report_card_transaction_end(
+        self, closed: ClosedCardDetail, *, failed: bool = False, error: str | None = None, superseded: bool = False, cancelled: bool = False
+    ) -> None:
+        return self._component_telemetry_reader().record_card_transaction_end(
+            closed, failed=failed, error=error, superseded=superseded, cancelled=cancelled
         )
 
     def runtime_metrics(self) -> dict[str, Any]:
@@ -1846,12 +1887,7 @@ class MaaArenaReaderBackend:
         self._card_count_frames.clear()
         self._card_identity_frames.clear()
         self._card_source_ocr_counts.clear()
-        getattr(self, "_full_frame_ocr_evidence", {}).clear()
-        getattr(self, "_title_anchor_ocr_evidence", {}).clear()
-        getattr(self, "_trusted_skill_card_title_rows_cache", {}).clear()
-        getattr(self, "_skill_card_recovered_title_frames", {}).clear()
-        getattr(self, "_upgrade_title_roi_evidence", {}).clear()
-        getattr(self, "_isolated_title_evidence", {}).clear()
+        frame_evidence_state(self).clear_member_observations()
         self._card_source_guard_frames.clear()
         getattr(self, "_card_source_guard_signature_cache", {}).clear()
         self._card_restoration_signatures.clear()
@@ -2154,6 +2190,7 @@ class MaaArenaReaderBackend:
     def _component_detail_lifecycle_reader(self) -> DetailLifecycleReader:
         return DetailLifecycleReader(
             self,
+            io=self,
             content_error_limit=CARD_CONTENT_STABILITY_MAX_MEAN_ABS_ERROR,
             logger=logger,
             source_signature_errors=measure_p_item_content_generation_from_signatures,

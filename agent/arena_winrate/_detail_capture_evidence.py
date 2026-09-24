@@ -42,6 +42,65 @@ class _TrustedSkillCardTitleRowsEvidence(NamedTuple):
     unmatched_rows: tuple[tuple[str, tuple[int, int, int, int]], ...] = ()
 
 
+class FrameEvidenceState:
+    """Member-local frame evidence owned by the backend, never a component.
+
+    Recognition methods retain their existing keys, identity checks, negative
+    observations and entry limits. Grouping their dictionaries here only makes
+    their shared ownership and member lifetime explicit.
+    """
+
+    full_frame_ocr_evidence: dict[int, _FullFrameOcrEvidence]
+    title_anchor_ocr_evidence: dict[tuple[int, str], _TitleAnchorOcrEvidence]
+    trusted_skill_card_title_rows_cache: dict[
+        tuple[int, tuple[int, ...], tuple[int, int, int, int] | None],
+        _TrustedSkillCardTitleRowsEvidence,
+    ]
+    skill_card_recovered_title_frames: dict[tuple[int, int], tuple[Any, str]]
+    upgrade_title_roi_evidence: dict[tuple, tuple[Any, str | None, int | None]]
+    isolated_title_evidence: dict[tuple, tuple[Any, ...]]
+
+    def __init__(self) -> None:
+        self.full_frame_ocr_evidence = {}
+        self.title_anchor_ocr_evidence = {}
+        self.trusted_skill_card_title_rows_cache = {}
+        self.skill_card_recovered_title_frames = {}
+        self.upgrade_title_roi_evidence = {}
+        self.isolated_title_evidence = {}
+
+    def clear_member_observations(self) -> None:
+        """Release captures in the established order, retaining cache views."""
+        self.full_frame_ocr_evidence.clear()
+        self.title_anchor_ocr_evidence.clear()
+        self.trusted_skill_card_title_rows_cache.clear()
+        self.skill_card_recovered_title_frames.clear()
+        self.upgrade_title_roi_evidence.clear()
+        self.isolated_title_evidence.clear()
+
+
+def frame_evidence_state(owner: Any) -> FrameEvidenceState:
+    """Lazily support legacy backends constructed without ``__init__``."""
+    state = getattr(owner, "_frame_evidence_state", None)
+    if state is None:
+        state = FrameEvidenceState()
+        owner._frame_evidence_state = state
+    return state
+
+
+def frame_evidence_field(name: str) -> property:
+    """Forward a legacy field to its current dictionary without copying it."""
+    if name not in FrameEvidenceState.__annotations__:
+        raise ValueError(f"unknown frame evidence state field: {name}")
+
+    def get(owner: Any) -> Any:
+        return getattr(frame_evidence_state(owner), name)
+
+    def set_(owner: Any, value: Any) -> None:
+        setattr(frame_evidence_state(owner), name, value)
+
+    return property(get, set_)
+
+
 class _EvidenceClock(Protocol):
     def perf_counter(self) -> float: ...
 

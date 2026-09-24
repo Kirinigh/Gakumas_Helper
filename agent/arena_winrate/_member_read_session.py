@@ -8,7 +8,7 @@ observation is retained here.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 from logging import Logger
 from dataclasses import field, dataclass
 from collections.abc import Mapping
@@ -25,7 +25,7 @@ class _AttemptClock(Protocol):
 
 
 class MemberReadBackend(Protocol):
-    """Only recovery and optional diagnostics are visible to this session.
+    """Recovery, attempt lifecycle and optional diagnostics for this session.
 
     Hooks may be absent or non-callable on older/minimal backends; every use
     retains the runtime getattr/callable check. Missing recovery denies retry.
@@ -33,6 +33,14 @@ class MemberReadBackend(Protocol):
 
     def recover_member_preview(
         self, target: TeamTarget, stage_number: int, member_slot: int, *, error_code: str,
+    ) -> None: ...
+
+    def _begin_member_read_attempt(self, target: TeamTarget, stage_number: int, member_slot: int) -> None: ...
+
+    def _end_member_read_attempt(self) -> None: ...
+
+    def _finalize_member_read_attempt(
+        self, target: TeamTarget, stage_number: int, member_slot: int, *, succeeded: bool, superseded: bool,
     ) -> None: ...
 
     def begin_member_read_diagnostics(self, target: TeamTarget, stage_number: int, member_slot: int) -> None: ...
@@ -70,6 +78,65 @@ class MemberReadRecoveryState:
     attempt_closing: bool = False
 
 
+class MemberDetailRecovery(TypedDict):
+    team_id: str
+    stage_number: int
+    member_slot: int
+    group_index: int
+    card_slot: int
+    card_id: int
+    title: str
+
+
+@dataclass
+class MemberDetailRecoveryState:
+    """One attempt's proven failed detail, independent of diagnostic recording."""
+
+    position: tuple[str, int, int] | None = None
+    detail: MemberDetailRecovery | None = None
+    managed_by_session: bool = False
+
+
+def member_detail_recovery_state(owner: Any) -> MemberDetailRecoveryState:
+    state = getattr(owner, "_member_detail_recovery", None)
+    if state is None:
+        state = MemberDetailRecoveryState()
+        owner._member_detail_recovery = state
+    return state
+
+
+def _discard_member_detail_diagnostic_view(owner: Any) -> None:
+    diagnostic = getattr(owner, "_member_failure_frames", None)
+    if isinstance(diagnostic, dict):
+        diagnostic.pop("skill_detail_recovery", None)
+
+
+def begin_member_detail_recovery(
+    owner: Any, target: TeamTarget, stage_number: int, member_slot: int, *, managed_by_session: bool = False,
+) -> None:
+    state = member_detail_recovery_state(owner)
+    state.position = (target.team_id, stage_number, member_slot)
+    state.detail = None
+    state.managed_by_session = managed_by_session
+    _discard_member_detail_diagnostic_view(owner)
+
+
+def end_member_detail_recovery(owner: Any) -> None:
+    state = member_detail_recovery_state(owner)
+    state.position = None
+    state.detail = None
+    state.managed_by_session = False
+    _discard_member_detail_diagnostic_view(owner)
+
+
+def consume_member_detail_recovery(owner: Any) -> MemberDetailRecovery | None:
+    state = member_detail_recovery_state(owner)
+    detail = state.detail
+    state.detail = None
+    _discard_member_detail_diagnostic_view(owner)
+    return detail
+
+
 def record_member_diagnostic(backend: MemberReadBackend, logger: Logger, method: str, *args: Any, **kwargs: Any) -> None:
     recorder = getattr(backend, method, None)
     if callable(recorder):
@@ -93,6 +160,11 @@ class MemberReadSession:
     def _diagnostic(self, method: str, *args: Any, **kwargs: Any) -> None:
         record_member_diagnostic(self.backend, self.logger, method, *args, **kwargs)
 
+    def _attempt_lifecycle(self, method: str, *args: Any, **kwargs: Any) -> None:
+        hook = getattr(self.backend, method, None)
+        if callable(hook):
+            hook(*args, **kwargs)
+
     def run(
         self,
         target: TeamTarget,
@@ -106,119 +178,133 @@ class MemberReadSession:
         for attempt in range(4):
             reopened = attempt > 0
             started = self.clock.perf_counter()
-            self._diagnostic("begin_member_read_diagnostics", target, stage_number, member_slot)
-            succeeded = False
-            failure: Exception | None = None
-            superseded = False
-            sample_cursor = None
-            cursor_reader = getattr(self.backend, "runtime_sample_cursor", None)
-            if callable(cursor_reader):
-                try:
-                    sample_cursor = cursor_reader()
-                except Exception:
-                    self.logger.exception("Could not begin member read diagnostics")
-            self.state.attempt_closing = False
+            self._attempt_lifecycle("_begin_member_read_attempt", target, stage_number, member_slot)
             try:
-                observation = self.read_once(
-                    target,
-                    stage_number,
-                    member_slot,
-                    scope=scope,
-                    include_support_bonus=include_support_bonus,
-                )
-                succeeded = True
-                return observation
-            except ArenaReadSuperseded:
-                superseded = True
-                raise
-            except Exception as error:
-                failure = error
-                self._diagnostic("persist_member_read_failure", error)
-                recovery_code = member_reopen_error_code(
-                    error, during_close=self.state.attempt_closing,
-                )
-                recognition_code = member_recognition_error_code(error)
-                recognition_recovery = recognition_code is not None or (
-                    recovery_code is not None
-                    and isinstance(error, ArenaReaderError)
-                    and error.code.startswith(("skill_card_", "p_item_"))
-                )
-                recovery_code = recovery_code or recognition_code
-                used = self.state.recognition_reopens.get(position, 0)
-                exhausted = used >= 3 if recognition_recovery else self.state.ui_reopen_used
-                recover = getattr(self.backend, "recover_member_preview", None)
-                if (
-                    exhausted
-                    or recovery_code is None
-                    or not callable(recover)
-                ):
-                    if isinstance(error, ArenaReaderError) and (
-                        recovery_code is not None
-                        or error.code in {
-                            "skill_card_detail_ambiguous",
-                            "skill_card_badge_detail_inference_ambiguous",
-                            "skill_card_customization_detail_empty",
-                            "skill_card_customization_total_mismatch",
-                            "p_item_detail_parser_failed",
-                            "p_item_detail_ambiguous",
-                            "p_item_detail_open_or_title_failed",
-                            "p_item_detail_budget_exceeded",
-                            "p_item_detail_recovery_failed",
-                        }
-                    ):
-                        # These detail transactions already used their local
-                        # observations/retries. A new lineup read cannot renew
-                        # that budget or repair an unsupported catalog meaning.
-                        error.retry_whole_read = False
-                    raise
-                # Spend before navigation; a failed return cannot create another
-                # opportunity. The backend must prove the preview before rereading.
-                if recognition_recovery:
-                    self.state.recognition_reopens[position] = used + 1
-                else:
-                    self.state.ui_reopen_used = True
-                try:
-                    recover(
-                        target, stage_number, member_slot,
-                        error_code=recovery_code,
-                    )
-                except Exception as recovery_error:
-                    raise ArenaReaderError(
-                        "member_reopen_recovery_failed",
-                        f"member read failed: {error}; returning to its team "
-                        f"preview also failed: {recovery_error}",
-                        retry_whole_read=False,
-                    ) from recovery_error
-                # No partial observation escaped the failed invocation. The
-                # next invocation reopens and rereads this member completely.
-            finally:
-                elapsed = self.clock.perf_counter() - started
-                recorder = getattr(self.backend, "record_member_read_attempt", None)
-                if callable(recorder):
+                self._diagnostic("begin_member_read_diagnostics", target, stage_number, member_slot)
+                succeeded = False
+                failure: Exception | None = None
+                superseded = False
+                sample_cursor = None
+                cursor_reader = getattr(self.backend, "runtime_sample_cursor", None)
+                if callable(cursor_reader):
                     try:
-                        cursor_argument = (
-                            {} if sample_cursor is None
-                            else {"sample_cursor": sample_cursor}
-                        )
-                        if superseded:
-                            cursor_argument["superseded"] = True
-                        recorder(
+                        sample_cursor = cursor_reader()
+                    except Exception:
+                        self.logger.exception("Could not begin member read diagnostics")
+                self.state.attempt_closing = False
+                try:
+                    observation = self.read_once(
+                        target,
+                        stage_number,
+                        member_slot,
+                        scope=scope,
+                        include_support_bonus=include_support_bonus,
+                    )
+                    succeeded = True
+                    return observation
+                except ArenaReadSuperseded:
+                    superseded = True
+                    raise
+                except Exception as error:
+                    failure = error
+                    self._diagnostic("persist_member_read_failure", error)
+                    recovery_code = member_reopen_error_code(
+                        error, during_close=self.state.attempt_closing,
+                    )
+                    recognition_code = member_recognition_error_code(error)
+                    recognition_recovery = recognition_code is not None or (
+                        recovery_code is not None
+                        and isinstance(error, ArenaReaderError)
+                        and error.code.startswith(("skill_card_", "p_item_"))
+                    )
+                    recovery_code = recovery_code or recognition_code
+                    used = self.state.recognition_reopens.get(position, 0)
+                    exhausted = used >= 3 if recognition_recovery else self.state.ui_reopen_used
+                    recover = getattr(self.backend, "recover_member_preview", None)
+                    if (
+                        exhausted
+                        or recovery_code is None
+                        or not callable(recover)
+                    ):
+                        if isinstance(error, ArenaReaderError) and (
+                            recovery_code is not None
+                            or error.code in {
+                                "skill_card_detail_ambiguous",
+                                "skill_card_badge_detail_inference_ambiguous",
+                                "skill_card_customization_detail_empty",
+                                "skill_card_customization_total_mismatch",
+                                "p_item_detail_parser_failed",
+                                "p_item_detail_ambiguous",
+                                "p_item_detail_open_or_title_failed",
+                                "p_item_detail_budget_exceeded",
+                                "p_item_detail_recovery_failed",
+                            }
+                        ):
+                            # These detail transactions already used their local
+                            # observations/retries. A new lineup read cannot renew
+                            # that budget or repair an unsupported catalog meaning.
+                            error.retry_whole_read = False
+                        raise
+                    # Spend before navigation; a failed return cannot create another
+                    # opportunity. The backend must prove the preview before rereading.
+                    if recognition_recovery:
+                        self.state.recognition_reopens[position] = used + 1
+                    else:
+                        self.state.ui_reopen_used = True
+                    try:
+                        recover(
                             target, stage_number, member_slot,
-                            wall_seconds=elapsed,
-                            succeeded=succeeded,
-                            error_code=(
-                                None if failure is None
-                                else getattr(failure, "code", type(failure).__name__)
-                            ),
-                            reopened=reopened,
-                            **cursor_argument,
+                            error_code=recovery_code,
+                        )
+                    except Exception as recovery_error:
+                        raise ArenaReaderError(
+                            "member_reopen_recovery_failed",
+                            f"member read failed: {error}; returning to its team "
+                            f"preview also failed: {recovery_error}",
+                            retry_whole_read=False,
+                        ) from recovery_error
+                    # No partial observation escaped the failed invocation. The
+                    # next invocation reopens and rereads this member completely.
+                finally:
+                    elapsed = self.clock.perf_counter() - started
+                    try:
+                        self._attempt_lifecycle(
+                            "_finalize_member_read_attempt", target, stage_number, member_slot,
+                            succeeded=succeeded, superseded=superseded,
                         )
                     except Exception:
                         self.logger.exception(
-                            "Could not record member read attempt for %s/stage-%s/member-%s",
+                            "Could not finalize member read attempt for %s/stage-%s/member-%s",
                             target.team_id, stage_number, member_slot,
                         )
-                self._diagnostic("end_member_read_diagnostics")
+                    recorder = getattr(self.backend, "record_member_read_attempt", None)
+                    if callable(recorder):
+                        try:
+                            cursor_argument = (
+                                {} if sample_cursor is None
+                                else {"sample_cursor": sample_cursor}
+                            )
+                            if superseded:
+                                cursor_argument["superseded"] = True
+                            recorder(
+                                target, stage_number, member_slot,
+                                wall_seconds=elapsed,
+                                succeeded=succeeded,
+                                error_code=(
+                                    None if failure is None
+                                    else getattr(failure, "code", type(failure).__name__)
+                                ),
+                                reopened=reopened,
+                                **cursor_argument,
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "Could not record member read attempt for %s/stage-%s/member-%s",
+                                target.team_id, stage_number, member_slot,
+                            )
+                    self._diagnostic("end_member_read_diagnostics")
+            finally:
+                self._attempt_lifecycle("_end_member_read_attempt")
         raise AssertionError("member reopen budget exhausted without a result")
 
 

@@ -14,11 +14,7 @@ from .catalog import ArenaCatalogError, ArenaEntityCatalog
 from ._reader_errors import ArenaReaderError
 from ._reader_visual import _box, _text
 from ._detail_title_region import isolated_title_region
-from ._detail_capture_evidence import _TrustedSkillCardTitleRowsEvidence
-
-
-class _EvidenceClock(Protocol):
-    def perf_counter(self) -> float: ...
+from ._detail_capture_evidence import _EvidenceClock, _TrustedSkillCardTitleRowsEvidence
 
 
 class _EvidenceLogger(Protocol):

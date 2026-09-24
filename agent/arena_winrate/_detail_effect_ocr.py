@@ -17,12 +17,8 @@ from ._reader_errors import ArenaReaderError
 from ._reader_visual import _box, _text
 from ._reader_evidence import _TitleBoundEffectRoiText
 from ._detail_text_layout import ErrorNumericLayoutRecovery, ErrorWrappedSignedRecovery
-from ._detail_capture_evidence import _FullFrameOcrEvidence
+from ._detail_capture_evidence import _EvidenceClock, _FullFrameOcrEvidence
 from ._skill_card_effect_recovery import EffectBodyRecovery
-
-
-class _EvidenceClock(Protocol):
-    def perf_counter(self) -> float: ...
 
 
 class _EvidenceLogger(Protocol):

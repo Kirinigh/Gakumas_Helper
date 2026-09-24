@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 
 from arena_winrate import TeamTarget, ArenaReaderError, _reader_metrics
 from arena_winrate.recognition_probe import RecognitionProbe
-from arena_winrate._card_detail_state import card_detail_state
+from arena_winrate._card_detail_state import ClosedCardDetail
 
 
 class TelemetryReaderPort(Protocol):
@@ -42,9 +42,6 @@ class TelemetryReaderPort(Protocol):
     _detail_title_disambiguations: Any
 
     def _emit_detail_fallback_diagnostic(self, outcome: str, error: str | None = ...) -> None: ...
-    def _finish_card_transaction(
-        self, key: tuple[int, int], *, failed: bool = ..., error: str | None = ..., superseded: bool = ..., cancelled: bool = ...
-    ) -> None: ...
     def _increment(self, name: str) -> None: ...
 
     _last_detail_failure_location: Any
@@ -60,11 +57,9 @@ class TelemetryReaderPort(Protocol):
 
     def _persist_detail_failure(self, error: str) -> None: ...
 
-    _progressive_abandoned_member: Any
     _recognition_probe: Any
 
     def _record_duration_sample(self, name: str, elapsed: float) -> None: ...
-    def _retain_failed_skill_detail_identity(self, key: tuple[int, int]) -> None: ...
 
     _runtime_badge_glyph_exemplar_comparisons: Any
     _runtime_badge_glyph_exemplar_diagnostics: Any
@@ -540,18 +535,10 @@ class TelemetryReader:
     ) -> None:
         self.port._record_duration_sample("member_read_attempt", wall_seconds)
         if superseded:
-            diagnostic = getattr(self.port, "_member_failure_frames", None)
-            self.port._progressive_abandoned_member = dict(diagnostic["position"]) if diagnostic is not None else None
             self.port._record_duration_sample("member_read_superseded", wall_seconds)
             self.port._emit_detail_fallback_diagnostic("superseded")
-            for key in tuple(self.port._card_transaction_started):
-                self.port._finish_card_transaction(key, superseded=True)
         elif not succeeded:
             self.port._record_duration_sample("member_read_failed_attempt", wall_seconds)
-            # Finish only real accepted transactions. Open failures use a
-            # separate diagnostic timer and never create an active identity.
-            for key in tuple(self.port._card_transaction_started):
-                self.port._finish_card_transaction(key, failed=True)
         baseline = self.port._member_metric_baseline
         cursor = sample_cursor if sample_cursor is not None else baseline[2] if baseline is not None else self.port.runtime_sample_cursor()
         self.logger.info(
@@ -575,18 +562,17 @@ class TelemetryReader:
             )
         )
 
-    def _finish_card_transaction(
+    def record_card_transaction_end(
         self,
-        key: tuple[int, int],
+        closed: ClosedCardDetail,
         *,
         failed: bool = False,
         error: str | None = None,
         superseded: bool = False,
         cancelled: bool = False,
     ) -> None:
-        if failed:
-            self.port._retain_failed_skill_detail_identity(key)
-        started, kind, ocr_started = card_detail_state(self.port).finish(key)
+        """Report an already closed transaction; never mutate its identity/budget."""
+        started, kind, ocr_started = closed
         if started is None:
             return
         elapsed = self.clock.perf_counter() - started
