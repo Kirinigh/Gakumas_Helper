@@ -130,6 +130,43 @@ def _communication_retry_box(rows):
     return error_retry_box(rows)
 
 
+def recognize_pending_outcome(context, image, store=None):
+    """Observe the normal intermediate result page without input or budget writes."""
+    cancellation_for(context).check()
+    store = ArenaChallengeRecordStore() if store is None else store
+    pending = store.load_pending()
+    if (pending is None or not pending.get("battle_started")
+            or pending.get("lifecycle_state") != CHALLENGE_LIFECYCLE_INTENT):
+        return None
+    capture_id = str(pending["capture_id"])
+    if store.recorded_result_path(capture_id) is not None:
+        return None
+    rows = _full_ocr(context, image)
+    shape = getattr(image, "shape", (1280, 720))
+    box = battle_outcome_tap_box(rows, frame_size=(shape[1], shape[0]))
+    if box is not None:
+        logger.info(json.dumps({
+            "event": "arena_challenge_outcome_page_ready", "capture_id": capture_id,
+            "extra_captures": 0, "ocr_calls": 1, "tap_box": list(box),
+        }, ensure_ascii=False, sort_keys=True))
+    return None if box is None else {"box": box, "capture_id": capture_id}
+
+
+def _require_outcome_recognition_capture(argv, pending):
+    """Bind the normal continuation to the challenge seen by its recognizer."""
+    result = getattr(getattr(argv, "reco_detail", None), "best_result", None)
+    detail = getattr(result, "detail", None)
+    if isinstance(detail, str):
+        try:
+            detail = json.loads(detail)
+        except ValueError:
+            detail = None
+    if (not isinstance(detail, dict) or detail.get("capture_id") != pending.get("capture_id")
+            or not pending.get("battle_started")
+            or pending.get("lifecycle_state") != CHALLENGE_LIFECYCLE_INTENT):
+        raise ArenaChallengeFlowError("outcome continuation no longer belongs to the recognized battle")
+
+
 _DEFAULT_ACTION_NEXT = {
     "ChallengeError": [],
     "ChallengeResultRecord": ["ChallengeNext"],
@@ -138,7 +175,8 @@ _DEFAULT_ACTION_NEXT = {
     "ChallengeResumeNext": ["ChallengeResumeVerify"],
     "ChallengeRetryAfterStart": ["ChallengeReady", "[JumpBack]ChallengeUnformation"],
     "ChallengeRetryBeforeSkip": ["ChallengeSkip"],
-    "ChallengeRetryBeforeResult": ["ChallengeResultRecord", "ChallengeSkip"],
+    "ChallengeRetryBeforeResult": ["ChallengeResultRecord", "ChallengeSkip", "ChallengeOutcomeContinue"],
+    "ChallengeOutcomeContinue": ["ChallengeResultRecord"],
     "ChallengeRetryBeforeFinish": ["ChallengeFinish"],
     "ChallengeRetryBeforeReturn": ["ChallengeVerifyRefresh"],
     "ChallengeRetryBeforeResumeReturn": ["ChallengeResumeVerify"],
@@ -573,8 +611,12 @@ class ArenaChallengeRetryCurrentBattleAction(CustomAction):
             pending = self._record_store.load_pending()
             if pending is None:
                 raise ArenaChallengeFlowError("communication retry has no pending challenge")
+            if getattr(argv, "node_name", None) == "ChallengeOutcomeContinue":
+                _require_outcome_recognition_capture(argv, pending)
             capture_id = str(pending.get("capture_id", ""))
             unresolved = self._record_store.recorded_result_path(capture_id) is None
+            if getattr(argv, "node_name", None) == "ChallengeOutcomeContinue" and not unresolved:
+                raise ArenaChallengeFlowError("recorded battle cannot use the normal outcome continuation")
             image = _capture(context)
             rows = _full_ocr(context, image)
             shape = getattr(image, "shape", (1280, 720))

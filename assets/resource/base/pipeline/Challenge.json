@@ -383,6 +383,20 @@
       "[JumpBack]ClickCenter"
     ]
   },
+  "ChallengeOutcomeContinue": {
+    "recognition": {
+      "type": "Custom",
+      "param": {"custom_recognition": "ArenaChallengeOutcomePage"}
+    },
+    "action": {
+      "type": "Custom",
+      "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}
+    },
+    "pre_delay": 0,
+    "post_delay": 0,
+    "next": ["ChallengeResultRecord"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
   "ChallengeResultRecord": {
     "recognition": {
       "type": "TemplateMatch",
@@ -518,7 +532,7 @@
   "ChallengeRetryBeforeResult": {
     "recognition": {"type": "DirectHit", "param": {}},
     "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
-    "next": ["ChallengeResultRecord", "ChallengeSkip"],
+    "next": ["ChallengeResultRecord", "ChallengeSkip", "ChallengeOutcomeContinue"],
     "on_error": ["ChallengeWinRateStop"]
   },
   "ChallengeRetryBeforeFinish": {

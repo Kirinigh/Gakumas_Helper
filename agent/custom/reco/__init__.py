@@ -2,6 +2,7 @@ from .work import *
 from .utils import *
 from .produce import *
 from .society import *
+from .challenge import *
 
 __all__ = [
     "WorkChooseAuto",
@@ -13,4 +14,5 @@ __all__ = [
     "ProduceShowEnd",
     "ProduceCardsFlagAuto",
     "ScreenRotateCheck",
+    "ArenaChallengeOutcomePage",
 ]

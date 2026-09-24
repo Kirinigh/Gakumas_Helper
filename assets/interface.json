@@ -1285,7 +1285,8 @@
         "ChallengeSkip": {
           "next": [
             "ChallengeResultRecord",
-            "ChallengeSkip"
+            "ChallengeSkip",
+            "ChallengeOutcomeContinue"
           ]
         }
       }
