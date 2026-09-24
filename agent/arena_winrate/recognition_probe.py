@@ -31,11 +31,20 @@ def release_probe_settings(package_root: Path | None = None) -> dict:
         build = json.loads(path.read_text(encoding="utf-8"))
         if build.get("product") != "MaaGakumasu":
             return {}
+        identity = {"version": build.get("derived_version"),
+                    "release_source": build.get("source", {}).get("revision")}
+        framework = build.get("framework")
+        if isinstance(framework, dict) and isinstance(framework.get("version"), str):
+            identity["framework"] = framework["version"]
+        patches = build.get("local_patches")
+        if isinstance(patches, list) and patches and isinstance(patches[-1], dict):
+            revision = patches[-1].get("source_revision")
+            if isinstance(revision, str) and re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+                identity["patch_source"] = revision
         return {"enabled": True, "campaign": CAMPAIGN,
                 "starts_at": "2026-09-20T00:00:00+08:00", "expires_at": EXPIRES_AT,
                 "max_samples": 20, "max_bytes": 128 * 1024 * 1024,
-                "build": {"version": build.get("derived_version"),
-                          "release_source": build.get("source", {}).get("revision")}}
+                "build": identity}
     except (OSError, ValueError, TypeError, AttributeError):
         return {}
 
@@ -82,26 +91,42 @@ class RecognitionProbe:
             path.unlink()
         group.rmdir()
 
-    def _records(self, folder: Path) -> list[dict]:
+    def _records(self, folder: Path, *, incomplete: list[Path] | None = None) -> list[dict]:
         records = []
         for group in folder.glob("probe-*"):
             if not re.fullmatch(r"probe-[0-9a-f]{32}", group.name):
                 continue
             try:
                 files = self._group_files(group, folder)
+            except OSError:
+                # Unknown contents and links remain outside probe ownership.
+                continue
+            try:
                 metadata = group / "evidence.json"
                 if metadata.stat().st_size > 1024 * 1024:
-                    continue
+                    raise ValueError("probe metadata is oversized")
                 value = json.loads(metadata.read_text(encoding="utf-8"))
                 if value.get("event") != "arena_recognition_probe_sample":
                     continue
                 recorded = datetime.fromisoformat(value["recorded_at"])
                 if recorded.tzinfo is None:
-                    continue
+                    raise ValueError("probe timestamp has no timezone")
+                sizes = {path.name: path.stat().st_size for path in files}
+                frames = [frame["file"] for frame in value["frames"]]
+                if (not frames or len(frames) != len(set(frames))
+                        or any(not isinstance(name, str) or not _FRAME_NAME.fullmatch(name)
+                               or sizes.get(name, 0) <= 0 for name in frames)):
+                    raise ValueError("probe frame set is incomplete")
+                replaced = value.get("replaced_groups", [])
+                if (not isinstance(replaced, list)
+                        or any(not isinstance(name, str) or not re.fullmatch(r"probe-[0-9a-f]{32}", name)
+                               for name in replaced)):
+                    raise ValueError("probe replacement groups are invalid")
                 records.append({"path": group, "value": value, "at": recorded.timestamp(),
-                                "bytes": sum(p.stat().st_size for p in files)})
+                                "bytes": sum(sizes.values())})
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
-                continue
+                if incomplete is not None:
+                    incomplete.append(group)
         return sorted(records, key=lambda r: (r["at"], r["path"].name))
 
     def _evictions(self, records, category, key, size, max_samples, max_bytes):
@@ -211,10 +236,18 @@ class RecognitionProbe:
         if folder.exists():
             if not stat.S_ISDIR(_plain_stat(folder).st_mode):
                 return None
-        records = self._records(folder)
+        incomplete = []
+        records = self._records(folder, incomplete=incomplete)
         max_samples = min(self.MAX_SAMPLES, int(self.settings.get("max_samples", self.MAX_SAMPLES)))
         max_bytes = min(self.MAX_BYTES, int(self.settings.get("max_bytes", self.MAX_BYTES)))
         if max_samples <= 0 or max_bytes <= 0:
+            return None
+        # A failed rollback/cleanup may leave residue or one replacement overlap.
+        # Do not add files, even after restart, until existing cleanup removes it.
+        if incomplete or len(records) > max_samples or sum(r["bytes"] for r in records) > max_bytes:
+            return None
+        if any((folder / name).exists() for record in records
+               for name in record["value"].get("replaced_groups", [])):
             return None
         if shutil.disk_usage(self.root).free < max_bytes + 256 * 1024 * 1024:
             return None
@@ -288,31 +321,61 @@ class RecognitionProbe:
             "truth_status": "unreviewed_observation_not_training_label",
             "extra_screenshots": 0, "extra_ocr": 0, "extra_clicks": 0,
         }
-        metadata = json.dumps(evidence, ensure_ascii=False, indent=2).encode("utf-8")
-        size = sum(map(len, encoded_frames)) + len(metadata)
-        if size > max_bytes:
-            return None
-        victims = self._evictions(records, category, key, size, max_samples, max_bytes)
-        if victims is None:
-            return None
+        victims = []
+        while True:
+            # Persist replacement ownership before deletion, even below the
+            # global limits. Added names can require another byte-budget victim.
+            evidence["replaced_groups"] = [victim.name for victim in victims]
+            metadata = json.dumps(evidence, ensure_ascii=False, indent=2).encode("utf-8")
+            size = sum(map(len, encoded_frames)) + len(metadata)
+            if size > max_bytes:
+                return None
+            selected = self._evictions(records, category, key, size, max_samples, max_bytes)
+            if selected is None:
+                return None
+            if selected == victims:
+                break
+            victims = selected
         destination = folder / ("probe-" + diagnostic["transaction_id"])
         if destination.exists():
             return None
-        destination.mkdir(parents=True, exist_ok=False)
+        try:
+            # Bounded by the existing sample budget; no extra backup files.
+            backups = {victim: {path.name: path.read_bytes()
+                                for path in self._group_files(victim, folder)}
+                       for victim in victims}
+        except OSError:
+            return None
         completed = False
         try:
+            destination.mkdir(parents=True, exist_ok=False)
             # Write metadata last; only complete new samples can replace old
             # samples. Avoid renaming newly written directories on Windows.
             for frame, data in zip(saved, encoded_frames, strict=True):
                 (destination / frame["file"]).write_bytes(data)
             (destination / "evidence.json").write_bytes(metadata)
+            completed = True
             for victim in victims:
                 self._remove_group(victim, folder)
-            completed = True
         except OSError:
+            if completed:
+                try:
+                    for victim, files in backups.items():
+                        victim.mkdir(exist_ok=True)
+                        self._group_files(victim, folder)
+                        for name, data in files.items():
+                            path = victim / name
+                            if not path.exists():
+                                path.write_bytes(data)
+                except OSError:
+                    # The complete replacement is now the only reliable copy.
+                    # Retain it; the inventory guard pauses further saves.
+                    return None
+            try:
+                if destination.exists():
+                    self._remove_group(destination, folder)
+            except OSError:
+                pass  # The next inventory scan also blocks partial new writes.
             return None
-        finally:
-            if not completed and destination.exists():
-                self._remove_group(destination, folder)
         return {"event": "arena_recognition_probe_saved", "folder": str(destination),
                 "card_id": card_id, "outcome": outcome, "frames": len(saved)}
