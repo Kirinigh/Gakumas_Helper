@@ -321,6 +321,7 @@ class EmbeddingGallery:
         self.model_sha256 = model_sha256.upper()
         self.gallery_sha256 = gallery_sha256.upper()
         self._eligible_scopes: dict[frozenset[int], tuple[Any, Any, dict[str, tuple[tuple[str, int], ...]]]] = {}
+        self._eligible_group_rows: dict[frozenset[int], dict[str, Any]] = {}
 
     def class_name_for_card_id(self, card_id: str) -> str:
         """Return the first gallery-row name for an already resolved business ID."""
@@ -341,13 +342,18 @@ class EmbeddingGallery:
         if not len(indices):
             raise ValueError("eligible card IDs contain no embedding references")
         members: dict[str, set[tuple[str, int]]] = {}
-        for index in indices:
+        group_rows: dict[str, list[int]] = {}
+        for local_index, index in enumerate(indices):
+            group_rows.setdefault(self.visual_group_ids[index], []).append(local_index)
             members.setdefault(self.visual_group_ids[index], set()).add(
                 (self.card_ids[index], self.upgrade_counts[index]),
             )
         grouped = {group: tuple(sorted(values, key=lambda item: int(item[0])))
                    for group, values in members.items()}
         cached = (indices, np.ascontiguousarray(self.embeddings[indices]), grouped)
+        self._eligible_group_rows[key] = {
+            group: np.asarray(rows, dtype=np.intp) for group, rows in group_rows.items()
+        }
         self._eligible_scopes[key] = cached
         return cached
 
@@ -474,8 +480,30 @@ class EmbeddingGallery:
             row_indices, vectors, scope_members = self._eligible_scope(eligible_card_ids)
         scores = vectors @ (query / norm)
 
+        group_rows = None if eligible_card_ids is None else self._eligible_group_rows.get(
+            frozenset(eligible_card_ids),
+        )
+        if (
+            group_rows is not None and isinstance(top_k, (int, np.integer))
+            and len(scores) >= 512 and top_k <= 5 and top_k < len(group_rows)
+        ):
+            # Keep every reference and the original dot products.  At small K,
+            # selecting maxima avoids sorting all the duplicate family rows.
+            # argmax chooses the earliest *winning* row on a tie, exactly as
+            # the former stable sort; the family's first row may not win.
+            # Small domains keep the sort: repeated maxima cost more there.
+            remaining = scores.copy()
+            order = []
+            for _ in range(top_k):
+                index = int(np.argmax(remaining))
+                order.append(index)
+                source_index = int(row_indices[index])
+                remaining[group_rows[self.visual_group_ids[source_index]]] = -np.inf
+        else:
+            order = np.argsort(-scores, kind="stable")
+
         best_by_group: dict[str, EmbeddingHit] = {}
-        for index in np.argsort(-scores, kind="stable"):
+        for index in order:
             source_index = int(index if row_indices is None else row_indices[index])
             card_id = self.card_ids[source_index]
             group_id = self.visual_group_ids[source_index]
