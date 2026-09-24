@@ -1055,6 +1055,7 @@ class MaaArenaReaderBackend:
     def _finish_card_transaction(
         self, key: tuple[int, int], *, failed: bool = False, error: str | None = None,
         superseded: bool = False,
+        cancelled: bool = False,
     ) -> None:
         if failed:
             self._retain_failed_skill_detail_identity(key)
@@ -1080,8 +1081,8 @@ class MaaArenaReaderBackend:
         if started is None:
             return
         elapsed = time.perf_counter() - started
-        if superseded:
-            self._record_duration_sample("skill_card_detail_superseded", elapsed)
+        if superseded or cancelled:
+            self._record_duration_sample("skill_card_detail_superseded" if superseded else "skill_card_detail_cancelled", elapsed)
         else:
             self._record_duration_sample("skill_card_detail_transaction", elapsed)
             self._record_duration_sample(kind, elapsed)
@@ -1096,7 +1097,7 @@ class MaaArenaReaderBackend:
                 or "skill_card_transaction_failed"
             )
         else:
-            self._emit_detail_fallback_diagnostic("superseded" if superseded else "completed")
+            self._emit_detail_fallback_diagnostic("superseded" if superseded else "cancelled" if cancelled else "completed")
             self._detail_failure_frames = None
         if ocr_started is not None:
             backend_started, cache_hits_started = ocr_started
@@ -7467,6 +7468,7 @@ class MaaArenaReaderBackend:
         overlay_opened = False
         inferred = None
         detail_failure: ArenaReaderError | None = None
+        interruption: BaseException | None = None
         try:
             self._open_detail_with_kind(
                 detail_kind,
@@ -7492,6 +7494,9 @@ class MaaArenaReaderBackend:
                 stage_number=stage_number,
                 member_slot=member_slot,
             )
+        except (ArenaReadSuperseded, ArenaTaskCancelled) as error:
+            interruption = error
+            raise
         except ArenaReaderError as error:
             detail_failure = error
             if error.code == "skill_card_detail_noninteractive":
@@ -7502,18 +7507,27 @@ class MaaArenaReaderBackend:
             ) from error
         finally:
             try:
-                if overlay_opened:
+                if overlay_opened and interruption is None:
                     self._dismiss_skill_card_detail()
+            except (ArenaReadSuperseded, ArenaTaskCancelled) as error:
+                interruption = error
+                raise
             except Exception as error:
                 if key in getattr(self, "_card_transaction_started", {}):
                     self._finish_card_transaction(key, failed=True, error=str(error))
                 raise
             finally:
-                if inferred is None and key in getattr(self, "_card_transaction_started", {}):
-                    self._finish_card_transaction(
-                        key, failed=True,
-                        error=None if detail_failure is None else str(detail_failure),
-                    )
+                if key in getattr(self, "_card_transaction_started", {}):
+                    if interruption is not None:
+                        self._finish_card_transaction(
+                            key, superseded=isinstance(interruption, ArenaReadSuperseded),
+                            cancelled=isinstance(interruption, ArenaTaskCancelled),
+                        )
+                    elif inferred is None:
+                        self._finish_card_transaction(
+                            key, failed=True,
+                            error=None if detail_failure is None else str(detail_failure),
+                        )
         try:
             self._assert_inferred_card_group_visible_after_dismiss(
                 group_index,
