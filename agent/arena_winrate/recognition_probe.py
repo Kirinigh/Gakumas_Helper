@@ -6,13 +6,16 @@ different event and explicitly unreviewed labels.
 """
 from __future__ import annotations
 
+import re
 import json
+import stat
 import shutil
 from typing import Any
 from pathlib import Path
 from datetime import datetime, timezone
-from collections import Counter
 from collections.abc import Mapping
+
+from .evidence_retention import _FRAME_NAME, _plain_stat
 
 CAMPAIGN = "arena-feedback-20260920"
 EXPIRES_AT = "2026-11-01T00:00:00+08:00"
@@ -38,13 +41,15 @@ def release_probe_settings(package_root: Path | None = None) -> dict:
 
 
 class RecognitionProbe:
-    TARGETS = frozenset({297, 299, 389, 553, 752})
+    TARGETS = frozenset({297, 553})
+    RETIRED_TARGETS = frozenset({299, 389, 752})
     MAX_SAMPLES = 20
     MAX_BYTES = 128 * 1024 * 1024
 
     def __init__(self, root: Path):
         self.root = root
         self.settings: dict[str, Any] = release_probe_settings()
+        release_build = self.settings.get("build")
         self.disabled = False
         try:
             path = root / "recognition-probe.json"
@@ -56,6 +61,77 @@ class RecognitionProbe:
                         self.settings = {}
         except (OSError, ValueError, TypeError):
             self.disabled = True
+        if release_build is not None:
+            # A retained user override controls capture, not the running version.
+            self.settings["build"] = release_build
+
+    @staticmethod
+    def _group_files(group: Path, folder: Path) -> list[Path]:
+        if group.resolve().parent != folder or not stat.S_ISDIR(_plain_stat(group).st_mode):
+            raise OSError("probe group outside evidence directory")
+        files = list(group.iterdir())
+        for path in files:
+            if (path.name != "evidence.json" and not _FRAME_NAME.fullmatch(path.name)) or not stat.S_ISREG(_plain_stat(path).st_mode):
+                raise OSError("unexpected probe group contents")
+        return files
+
+    @classmethod
+    def _remove_group(cls, group: Path, folder: Path) -> None:
+        files = cls._group_files(group, folder)
+        for path in sorted(files, key=lambda p: p.name == "evidence.json"):
+            path.unlink()
+        group.rmdir()
+
+    def _records(self, folder: Path) -> list[dict]:
+        records = []
+        for group in folder.glob("probe-*"):
+            if not re.fullmatch(r"probe-[0-9a-f]{32}", group.name):
+                continue
+            try:
+                files = self._group_files(group, folder)
+                metadata = group / "evidence.json"
+                if metadata.stat().st_size > 1024 * 1024:
+                    continue
+                value = json.loads(metadata.read_text(encoding="utf-8"))
+                if value.get("event") != "arena_recognition_probe_sample":
+                    continue
+                recorded = datetime.fromisoformat(value["recorded_at"])
+                if recorded.tzinfo is None:
+                    continue
+                records.append({"path": group, "value": value, "at": recorded.timestamp(),
+                                "bytes": sum(p.stat().st_size for p in files)})
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                continue
+        return sorted(records, key=lambda r: (r["at"], r["path"].name))
+
+    def _evictions(self, records, category, key, size, max_samples, max_bytes):
+        remaining = list(records)
+        victims = []
+
+        def remove(record):
+            remaining.remove(record)
+            victims.append(record["path"])
+
+        # Finished investigations and repeated positions cannot crowd out new
+        # evidence. A new transaction replaces the prior view of the same slot.
+        for record in list(remaining):
+            value = record["value"]
+            if value.get("probe_category") in {str(x) for x in self.RETIRED_TARGETS} or value.get("probe_key") == key:
+                remove(record)
+        category_limit = 1 if category == "p_item_return_control" else 3 if category != "control" else 5
+        same = [r for r in remaining if r["value"].get("probe_category") == category]
+        while len(same) >= category_limit:
+            remove(same.pop(0))
+        if not category.startswith("p_item_return_"):
+            cards = [r for r in remaining if not str(r["value"].get("probe_category", "")).startswith("p_item_return_")]
+            card_limit = max_samples - min(4, max_samples // 5)
+            while len(cards) >= card_limit:
+                remove(cards.pop(0))
+        while len(remaining) >= max_samples or sum(r["bytes"] for r in remaining) + size > max_bytes:
+            if not remaining:
+                return None
+            remove(remaining[0])
+        return victims
 
     def active(self) -> bool:
         try:
@@ -91,6 +167,8 @@ class RecognitionProbe:
         position = diagnostic["position"]
         card_id = position.get("observed_detail_card_id")
         p_item = position.get("kind") == "p_item"
+        if outcome in {"cancelled", "superseded"} or (not p_item and card_id in self.RETIRED_TARGETS):
+            return None
         if p_item and outcome != "completed" and "p_item_source_restore_unproven" not in str(error):
             return None
         target = card_id if card_id in self.TARGETS else None
@@ -101,27 +179,16 @@ class RecognitionProbe:
         )] + [card_id, outcome]
         if p_item:
             key.append(position.get("screen_slot"))
-        folder = self.root / "reader-failures"
-        records = []
-        used = 0
-        for sample in folder.glob("probe-*"):
-            if sample.is_dir():
-                used += sum(path.stat().st_size for path in sample.iterdir() if path.is_file())
-                metadata = sample / "evidence.json"
-                if metadata.exists():
-                    records.append(json.loads(metadata.read_text(encoding="utf-8")))
+        if not re.fullmatch(r"[0-9a-f]{32}", str(diagnostic.get("transaction_id", ""))):
+            return None
+        folder = self.root.resolve() / "reader-failures"
+        if folder.exists():
+            if not stat.S_ISDIR(_plain_stat(folder).st_mode):
+                return None
+        records = self._records(folder)
         max_samples = min(self.MAX_SAMPLES, int(self.settings.get("max_samples", self.MAX_SAMPLES)))
         max_bytes = min(self.MAX_BYTES, int(self.settings.get("max_bytes", self.MAX_BYTES)))
-        counts = Counter(record.get("probe_category") for record in records)
-        # Reserve four of the shared twenty samples for the return investigation.
-        if not p_item and sum(v for k, v in counts.items() if not str(k).startswith("p_item_return_")) >= max_samples - min(4, max_samples // 5):
-            return None
-        if len(records) >= max_samples or used >= max_bytes:
-            self.disabled = True
-            return None
-        category_limit = (1 if outcome == "completed" else 3) if p_item else (3 if target else 5)
-        if (counts[category] >= category_limit
-                or any(record.get("probe_key") == key for record in records)):
+        if max_samples <= 0 or max_bytes <= 0:
             return None
         if shutil.disk_usage(self.root).free < max_bytes + 256 * 1024 * 1024:
             return None
@@ -169,19 +236,36 @@ class RecognitionProbe:
             "stage_plan": diagnostic.get("probe_stage_plan"),
             "body_text": diagnostic.get("probe_body_text"),
             "p_item_restore": diagnostic.get("p_item_restore"),
-            "reader_probe_revision": "arena-feedback-20260920-v1",
+            "reader_probe_revision": "arena-feedback-20260921-rolling-v2",
             "build": self.settings.get("build"),
             "truth_status": "unreviewed_observation_not_training_label",
             "extra_screenshots": 0, "extra_ocr": 0, "extra_clicks": 0,
         }
         metadata = json.dumps(evidence, ensure_ascii=False, indent=2).encode("utf-8")
-        if used + sum(map(len, encoded_frames)) + len(metadata) > max_bytes:
+        size = sum(map(len, encoded_frames)) + len(metadata)
+        if size > max_bytes:
+            return None
+        victims = self._evictions(records, category, key, size, max_samples, max_bytes)
+        if victims is None:
             return None
         destination = folder / ("probe-" + diagnostic["transaction_id"])
+        if destination.exists():
+            return None
         destination.mkdir(parents=True, exist_ok=False)
-        # Write metadata last: incomplete files cannot masquerade as a complete pair.
-        for frame, data in zip(saved, encoded_frames, strict=True):
-            (destination / frame["file"]).write_bytes(data)
-        (destination / "evidence.json").write_bytes(metadata)
+        completed = False
+        try:
+            # Write metadata last; only complete new samples can replace old
+            # samples. Avoid renaming newly written directories on Windows.
+            for frame, data in zip(saved, encoded_frames, strict=True):
+                (destination / frame["file"]).write_bytes(data)
+            (destination / "evidence.json").write_bytes(metadata)
+            for victim in victims:
+                self._remove_group(victim, folder)
+            completed = True
+        except OSError:
+            return None
+        finally:
+            if not completed and destination.exists():
+                self._remove_group(destination, folder)
         return {"event": "arena_recognition_probe_saved", "folder": str(destination),
                 "card_id": card_id, "outcome": outcome, "frames": len(saved)}
