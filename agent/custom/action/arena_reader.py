@@ -2398,11 +2398,14 @@ class MaaArenaReaderBackend:
             diagnostic["capture_size"] = list(self._badge_glyph_pool_size)
             diagnostic["task_id"] = self._badge_glyph_task_pool.task_id
         if descriptor in polluted:
-            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
-            raise ArenaReaderError(
-                "skill_card_badge_glyph_exemplar_polluted",
-                f"{key!r} exact glyph descriptor was already mapped to multiple counts",
+            # Quarantine applies to reuse, not to independently confirmed
+            # detail truth. Still reject any contradiction of a prior inference.
+            self._validate_authoritative_badge_glyph_runtime_transition(
+                key, descriptor, count=count,
             )
+            getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
+            self._increment("skill_card_badge_glyph_quarantined_learning_skips")
+            return False
         existing = exemplars.get(descriptor)
         runtime_labels = getattr(self, "_badge_glyph_runtime_labels", None)
         if runtime_labels is None:
@@ -2411,13 +2414,24 @@ class MaaArenaReaderBackend:
         if existing is not None and existing.get("count") != count:
             exemplars.pop(descriptor, None)
             polluted.add(descriptor)
-            runtime_labels.pop(descriptor, None)
+            # Keep consumed labels: a later detail retry must not erase a
+            # contradiction merely because the descriptor is quarantined.
+            if existing.get("used_for_inference"):
+                runtime_labels[descriptor] = existing["count"]
+                pool_domain = getattr(self, "_badge_glyph_domain", None)
+                if pool_domain is not None:
+                    pool_domain.consumed_labels[descriptor] = existing["count"]
             # A prior ambiguous card may already have consumed this exemplar
             # and cached its count.  Invalidate every member-local glyph
             # decision before aborting so no bounded retry can reuse the
             # now-disproved label.
             getattr(self, "_badge_glyph_count_diagnostics", {}).clear()
             self._increment("skill_card_badge_glyph_exemplar_collisions")
+            runtime_diagnostics.append({
+                **diagnostic, "status": "quarantined_conflict",
+                "previous_count": existing.get("count"),
+                "previous_source": existing.get("source"),
+            })
             raise ArenaReaderError(
                 "skill_card_badge_glyph_exemplar_collision",
                 f"{key!r} authoritatively maps an already consumed exact glyph "
@@ -3135,6 +3149,9 @@ class MaaArenaReaderBackend:
             count=count,
             evidence="bounded first-frame glyph",
         )
+        # Exact known exemplars are not approximate inference claims. Remember
+        # their use on the exemplar so a later collision can invalidate it.
+        exemplar["used_for_inference"] = True
         return count
 
     def _auxiliary_badge_glyph_count(
