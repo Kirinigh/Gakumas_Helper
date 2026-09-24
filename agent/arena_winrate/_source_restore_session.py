@@ -224,6 +224,7 @@ class SourceRestoreSession:
 
     def _observe_frame(self):
         self.guard_confirmation_wait_from_capture = False
+        previous_detection = getattr(self.backend, "_card_detection_observation", None)
         try:
             capture_started_at = self.clock.monotonic()
             if self.previous_capture_started_at is not None:
@@ -233,6 +234,9 @@ class SourceRestoreSession:
                 )
             self.previous_capture_started_at = capture_started_at
             self.image = self.backend._capture()
+            # Both rows still validate independently, after the same guards;
+            # only their raw detector boxes share this synchronous frame.
+            self.backend._card_detection_observation = [self.image, None]
             detected_row = self.backend._validated_card_group_row(self.image, self.group_index)
             self.row = detected_row
             if len(self.accepted_row) == 6:
@@ -287,6 +291,8 @@ class SourceRestoreSession:
         except ArenaReaderError as error:
             self.reset_consecutive_evidence()
             self.last_error = str(error)
+        finally:
+            self.backend._card_detection_observation = previous_detection
         return False
 
     def _raise_failure(self):
