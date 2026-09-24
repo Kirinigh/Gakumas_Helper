@@ -259,12 +259,15 @@ def register_arena_log_sinks(agent_server, logger):
     from maa.tasker import TaskerEventSink
     from maa.event_sink import NotificationType
 
+    from ._reader_resources import reader_resource_pools
+
     class TaskSink(TaskerEventSink):
         def on_tasker_task(self, tasker, noti_type, detail):
             if detail.entry != "Challenge":
                 return
             if noti_type == NotificationType.Starting:
                 badge_glyph_task_pools.start(detail.task_id)
+                reader_resource_pools.start(detail.task_id)
                 arena_task_log.start(detail.task_id)
             elif noti_type in (NotificationType.Succeeded, NotificationType.Failed):
                 try:
@@ -273,6 +276,7 @@ def register_arena_log_sinks(agent_server, logger):
                     arena_task_log.finish(detail.task_id, succeeded=noti_type == NotificationType.Succeeded, logger=logger)
                 finally:
                     badge_glyph_task_pools.finish(detail.task_id)
+                    reader_resource_pools.finish(detail.task_id)
 
     sinks = (TaskSink(),)
     agent_server.add_tasker_sink(sinks[0])

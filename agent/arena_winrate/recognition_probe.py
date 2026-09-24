@@ -41,7 +41,7 @@ def release_probe_settings(package_root: Path | None = None) -> dict:
 
 
 class RecognitionProbe:
-    TARGETS = frozenset({31, 297, 553})
+    TARGETS = frozenset({31, 297, 403, 553})
     RETIRED_TARGETS = frozenset({299, 389, 752})
     MAX_SAMPLES = 20
     MAX_BYTES = 128 * 1024 * 1024
@@ -161,6 +161,32 @@ class RecognitionProbe:
             # Preserve the first two observations and four most recent ones.
             del frames[2]
 
+    @staticmethod
+    def observe_identity_check(diagnostic: dict | None, image: Any, *, card_id: int, contact: int, accepted: bool) -> None:
+        """Pin two existing opening observations before the rolling window drops them."""
+        if diagnostic is None or "probe_sources" not in diagnostic:
+            return
+        frames = diagnostic.get("probe_frames", ())
+        observation = next((frame for frame in frames if frame["image"] is image), None)
+        if observation is None:
+            return
+        checks = diagnostic.get("probe_identity_checks", ())
+        if contact == 1 and not accepted:
+            candidates = diagnostic.get("probe_candidates", ())
+            if not candidates or card_id in candidates:
+                return
+            role = "candidate-mismatch-open"
+        elif contact == 2 and accepted and checks:
+            role = "candidate-reopen-confirmed"
+        else:
+            return
+        if any(check["role"] == role for check in checks):
+            return
+        diagnostic.setdefault("probe_identity_checks", []).append({
+            **observation, "role": role, "card_id": card_id,
+            "contact": contact, "accepted": accepted,
+        })
+
     def save(self, diagnostic: dict, outcome: str, error: str | None) -> dict | None:
         if not self.active() or "probe_sources" not in diagnostic:
             return None
@@ -197,10 +223,23 @@ class RecognitionProbe:
         images = []
         for index, image in enumerate(diagnostic["probe_sources"]):
             images.append((f"source-{index + 1}", image, None))
-        for frame in diagnostic["probe_frames"]:
-            if not any(image is frame["image"] for _, image, _ in images):
-                images.append(("observed-" + frame["phase"], frame["image"], frame["ocr"]))
+        identity_checks = diagnostic.get("probe_identity_checks", ())
+        for check in identity_checks:
+            if not any(image is check["image"] for _, image, _ in images):
+                images.append((check["role"], check["image"], check["ocr"]))
         confirmed = diagnostic.get("confirmed_open")
+        if identity_checks and confirmed is not None and not any(image is confirmed[1] for _, image, _ in images):
+            images.append(("title-confirmed-open", confirmed[1], None))
+        observations = [frame for frame in diagnostic["probe_frames"]
+                        if not any(image is frame["image"] for _, image, _ in images)]
+        if identity_checks:
+            remaining_slots = max(0, 10 - len(images))
+            if len(observations) > remaining_slots:
+                recent_count = min(4, remaining_slots)
+                observations = (observations[:remaining_slots - recent_count]
+                                + (observations[-recent_count:] if recent_count else []))
+        for frame in observations:
+            images.append(("observed-" + frame["phase"], frame["image"], frame["ocr"]))
         if confirmed is not None and not any(image is confirmed[1] for _, image, _ in images):
             images.append(("title-confirmed-open", confirmed[1], None))
         if not images:
@@ -224,6 +263,14 @@ class RecognitionProbe:
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             "outcome": outcome, "error": error, "actions": list(diagnostic["actions"]),
             "frames": saved, "probe_category": category, "probe_key": key,
+            "detail_id_checks": [
+                {"file": f"{index:02d}.png", "role": check["role"],
+                 "card_id": check["card_id"], "contact": check["contact"],
+                 "accepted": check["accepted"], "reco_id": check.get("reco_id"),
+                 "seconds": check.get("seconds")}
+                for index, (_, img, _) in enumerate(images[:10])
+                for check in identity_checks if check["image"] is img
+            ],
             "observations": [{"file": f"{index:02d}.png", "phase": frame["phase"],
                               "reco_id": frame.get("reco_id"), "seconds": frame.get("seconds")}
                              for index, (_, img, _) in enumerate(images[:10])
@@ -236,7 +283,7 @@ class RecognitionProbe:
             "stage_plan": diagnostic.get("probe_stage_plan"),
             "body_text": diagnostic.get("probe_body_text"),
             "p_item_restore": diagnostic.get("p_item_restore"),
-            "reader_probe_revision": "arena-feedback-20260921-rolling-v2",
+            "reader_probe_revision": "arena-feedback-20260922-candidate-pairs-v3",
             "build": self.settings.get("build"),
             "truth_status": "unreviewed_observation_not_training_label",
             "extra_screenshots": 0, "extra_ocr": 0, "extra_clicks": 0,

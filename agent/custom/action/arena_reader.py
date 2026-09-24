@@ -91,6 +91,7 @@ from arena_winrate._reader_evidence import (
     _effect_roi_observation_count,
 )
 from arena_winrate.badge_glyph_pool import BadgeGlyphDomain, badge_glyph_task_pools
+from arena_winrate._reader_resources import manifest_identity, reader_resource_pools
 from arena_winrate.recognition_probe import RecognitionProbe
 from arena_winrate._detail_text_layout import (
     recover_distant_number_text,
@@ -491,7 +492,14 @@ class MaaArenaReaderBackend:
         self.context = context
         self._cancellation = cancellation_for(context)
         self.season = season
-        self.catalog = ArenaEntityCatalog.from_bundle(bundle_dir)
+        self._runtime_timing_seconds: dict[str, float] = {}
+        self._runtime_counts: dict[str, int] = {}
+        self._runtime_duration_samples: dict[str, list[float]] = {}
+        self._reader_resources = reader_resource_pools.for_context(context)
+        self._reader_bundle_identity = manifest_identity(bundle_dir)
+        self.catalog = self._load_static_resource(
+            "catalog", bundle_dir, lambda: ArenaEntityCatalog.from_bundle(bundle_dir),
+        )
         self.p_item_reader = p_item_reader
         self._card_swipe_duration_ms = card_swipe_duration_ms
         self._grade = known_grade
@@ -595,9 +603,6 @@ class MaaArenaReaderBackend:
         self._zero_card_detail_candidates: dict[tuple[int, int], tuple[int, ...]] = {}
         self._badge_worker_calibrator = BadgeWorkerCalibrator()
         self._badge_worker_selection: BadgeWorkerSelection | None = None
-        self._runtime_timing_seconds: dict[str, float] = {}
-        self._runtime_counts: dict[str, int] = {}
-        self._runtime_duration_samples: dict[str, list[float]] = {}
         self._card_transaction_started: dict[tuple[int, int], float] = {}
         self._card_transaction_serial = 0
         self._card_transaction_tokens: dict[tuple[int, int], int] = {}
@@ -653,6 +658,57 @@ class MaaArenaReaderBackend:
 
     def _increment(self, name: str) -> None:
         self._runtime_counts[name] = self._runtime_counts.get(name, 0) + 1
+
+    def _reader_compute(self, metric: str, operation: Callable[[], Any]) -> Any:
+        """Time one existing call; cancellation forbids starting its successor."""
+        self._check_cancelled()
+        started = time.perf_counter()
+        try:
+            result = operation()
+        finally:
+            if hasattr(self, "_runtime_timing_seconds"):
+                self._add_timing(metric, time.perf_counter() - started)
+            if hasattr(self, "_runtime_counts"):
+                self._increment(metric + "_calls")
+        self._check_cancelled()
+        return result
+
+    def _load_static_resource(self, name: str, root: str | Path, factory: Callable[[], Any]) -> Any:
+        self._check_cancelled()
+        pool = getattr(self, "_reader_resources", None)
+        bundle = getattr(self, "_reader_bundle_identity", None)
+        asset = bundle if name == "catalog" else manifest_identity(root)
+        identity = (bundle, asset) if bundle is not None and asset is not None else None
+        def load():
+            return self._reader_compute("reader_resource_load_" + name, factory)
+
+        if pool is None:
+            return load()
+        value, cache_hit = pool.load(name, identity, load)
+        self._check_cancelled()
+        if cache_hit:
+            self._increment("reader_resource_cache_hits_" + name)
+        return value
+
+    def _classify_card_candidate(self, recognizer, image, candidate, **kwargs):
+        """Keep the existing single-candidate contract, exposing its CPU costs."""
+        if type(recognizer) is not EmbeddingCardRecognizer:
+            return self._reader_compute(
+                "card_candidate_inference", lambda: recognizer.classify(image, candidate, **kwargs),
+            )
+        tensor = self._reader_compute(
+            "card_candidate_preprocess", lambda: recognizer.embedder.preprocess(image, candidate.box),
+        )
+        if recognizer.embedder._session is None:
+            self._reader_compute("card_model_session_load", recognizer.embedder._load_session)
+        embedding = self._reader_compute(
+            "card_candidate_encode", lambda: recognizer.embedder.embed_tensor(tensor),
+        )
+        kwargs.setdefault("resolve_upgrade_state", True)
+        return self._reader_compute(
+            "card_candidate_retrieval",
+            lambda: recognizer.classify_embedding(embedding, candidate, upgrade_image=image, **kwargs),
+        )
 
     def _record_duration_sample(self, name: str, elapsed: float) -> None:
         samples = getattr(self, "_runtime_duration_samples", None)
@@ -1385,7 +1441,10 @@ class MaaArenaReaderBackend:
         if self._card_reference_gallery is not None:
             return self._card_reference_gallery
         try:
-            self._card_reference_gallery = BadgeReferenceGallery.load(CARD_REFERENCE_ROOT)
+            self._card_reference_gallery = self._load_static_resource(
+                "card_reference", CARD_REFERENCE_ROOT,
+                lambda: BadgeReferenceGallery.load(CARD_REFERENCE_ROOT),
+            )
         except (OSError, KeyError, TypeError, ValueError, BadgeReferenceError) as error:
             raise ArenaReaderError(
                 "skill_card_reference_unavailable",
@@ -1397,8 +1456,9 @@ class MaaArenaReaderBackend:
         if self._card_cost_reference_gallery is not None:
             return self._card_cost_reference_gallery
         try:
-            self._card_cost_reference_gallery = GenericCostReferenceGallery.load(
-                CARD_COST_REFERENCE_ROOT
+            self._card_cost_reference_gallery = self._load_static_resource(
+                "card_cost_reference", CARD_COST_REFERENCE_ROOT,
+                lambda: GenericCostReferenceGallery.load(CARD_COST_REFERENCE_ROOT),
             )
         except (
             OSError,
@@ -3803,20 +3863,23 @@ class MaaArenaReaderBackend:
                 return cached
             root = ARENA_CARD_MODEL_ROOT if customized else CARD_MODEL_ROOT
             try:
-                manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8-sig"))
-                recognizer = EmbeddingCardRecognizer.load(root)
-                runtime = manifest["runtime"]
-                if "acceptance_threshold" not in runtime or "minimum_margin" not in runtime:
-                    raise KeyError("runtime candidate-source metadata")
-                acceptance_threshold = 0.000001
-                minimum_margin = 0.0
+                def load():
+                    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8-sig"))
+                    recognizer = EmbeddingCardRecognizer.load(root)
+                    runtime = manifest["runtime"]
+                    if "acceptance_threshold" not in runtime or "minimum_margin" not in runtime:
+                        raise KeyError("runtime candidate-source metadata")
+                    return recognizer, 0.000001, 0.0
+
+                loaded = self._load_static_resource(
+                    "card_model_custom" if customized else "card_model_base", root, load,
+                )
             except (OSError, KeyError, TypeError, ValueError, ImportError) as error:
                 model_label = "arena custom-card" if customized else "base card"
                 raise ArenaReaderError(
                     "skill_card_runtime_not_approved",
                     f"{model_label} embedding candidate assets are unavailable",
                 ) from error
-            loaded = (recognizer, acceptance_threshold, minimum_margin)
             self._card_recognizers[customized] = loaded
             return loaded
 
@@ -3850,7 +3913,8 @@ class MaaArenaReaderBackend:
             recognizer, acceptance_threshold, minimum_margin = self._card_recognizer(
                 customized=customized
             )
-            prediction = recognizer.classify(
+            prediction = self._classify_card_candidate(
+                recognizer,
                 image,
                 candidate_box,
                 frame_id=frame_identifier(image, slot_index + (100 if customized else 200)),
@@ -4141,13 +4205,25 @@ class MaaArenaReaderBackend:
         )
 
     def select_stage(self, target: TeamTarget, stage_number: int) -> None:
+        self._pending_stage_preview = None
         if stage_number not in (1, 2, 3):
             raise ArenaReaderError("stage_number_invalid", f"stage number is outside 1..3: {stage_number}")
-        self._team_stage_total_anchors(target, self._capture())
-
-    def member_slots(self, target: TeamTarget, stage_number: int) -> Sequence[int]:
         image = self._capture()
         totals = self._team_stage_total_anchors(target, image)
+        # No stage-selection input exists on this three-stage preview. The
+        # immediately following slot read consumes this fresh observation once.
+        self._pending_stage_preview = (target, stage_number, image, totals)
+
+    def member_slots(self, target: TeamTarget, stage_number: int) -> Sequence[int]:
+        preview = getattr(self, "_pending_stage_preview", None)
+        self._pending_stage_preview = None
+        if preview is not None and preview[:2] == (target, stage_number):
+            self._check_cancelled()
+            _, _, image, totals = preview
+            self._increment("stage_preview_observation_reuses")
+        else:
+            image = self._capture()
+            totals = self._team_stage_total_anchors(target, image)
         anchor = totals[stage_number - 1]
         height, width = image.shape[:2]
         if self._grade is None:
@@ -5013,7 +5089,9 @@ class MaaArenaReaderBackend:
     ) -> Sequence[int]:
         self._p_item_source_ocr_cache = {}
         if self.p_item_reader is None:
-            self.p_item_reader = Task085PItemReader.from_model_root()
+            self.p_item_reader = self._load_static_resource(
+                "p_item_reference", P_ITEM_REFERENCE_ROOT, Task085PItemReader.from_model_root,
+            )
         plan = self.season.stages[stage_number - 1].plan
         self._assert_p_item_reference_catalog_compatibility()
         catalog = getattr(self, "catalog", None)
@@ -6130,7 +6208,8 @@ class MaaArenaReaderBackend:
         for frame_index, frame in enumerate(frames):
             row = self._validated_card_group_row(frame, group_index)
             box = row[slot_index]
-            prediction = recognizer.classify(
+            prediction = self._classify_card_candidate(
+                recognizer,
                 frame,
                 CandidateBox(
                     slot=slot_index,
@@ -7316,7 +7395,12 @@ class MaaArenaReaderBackend:
                         source_card_box=card_box,
                         source_card_slot=card_slot,
                     )
-                    if not self._accept_skill_detail_open_id(key, confirmed_card_id, attempt):
+                    accepted_open = self._accept_skill_detail_open_id(key, confirmed_card_id, attempt)
+                    RecognitionProbe.observe_identity_check(
+                        getattr(self, "_detail_failure_frames", None), detail_image,
+                        card_id=confirmed_card_id, contact=attempt + 1, accepted=accepted_open,
+                    )
+                    if not accepted_open:
                         last_error = (f"skill_card_detail_id_mismatch: target {key!r}; "
                                       f"visual_ids={self._skill_detail_visual_ids(key)!r}; "
                                       f"actual_detail_id={confirmed_card_id}")
@@ -7802,7 +7886,8 @@ class MaaArenaReaderBackend:
                 recognizer, acceptance_threshold, minimum_margin = self._card_recognizer(
                     customized=True
                 )
-                prediction = recognizer.classify(
+                prediction = self._classify_card_candidate(
+                    recognizer,
                     image,
                     CandidateBox(
                         slot=index - 1,
@@ -10739,6 +10824,9 @@ class MaaArenaReaderBackend:
         return True
 
     def _check_cancelled(self) -> None:
+        # Any intervening reader operation invalidates the one-use preview.
+        # member_slots takes its local reference before this boundary check.
+        self._pending_stage_preview = None
         cancellation = getattr(self, "_cancellation", None)
         if cancellation is None:
             cancellation = cancellation_for(getattr(self, "context", None))
