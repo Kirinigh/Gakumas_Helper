@@ -75,9 +75,10 @@ from p_item_recognition import (
     p_item_content_generation_signatures,
     measure_p_item_content_generation_from_signatures,
 )
-from card_selection.model import frame_identifier, isolate_card_candidates
+from card_selection.model import frame_identifier, frame_identifiers, isolate_card_candidates
 from arena_winrate.recovery import error_retry_box
 from arena_winrate.task_log import arena_task_log, diagnostic_logger
+from card_selection.embedding import OnnxCardEmbedder
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded, cancellation_for
 from arena_winrate._reader_visual import _box, _text, _value
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
@@ -690,15 +691,30 @@ class MaaArenaReaderBackend:
             self._increment("reader_resource_cache_hits_" + name)
         return value
 
-    def _classify_card_candidate(self, recognizer, image, candidate, **kwargs):
+    def _classify_card_candidate(self, recognizer, image, candidate, *, preprocess_cache=None, **kwargs):
         """Keep the existing single-candidate contract, exposing its CPU costs."""
         if type(recognizer) is not EmbeddingCardRecognizer:
             return self._reader_compute(
                 "card_candidate_inference", lambda: recognizer.classify(image, candidate, **kwargs),
             )
-        tensor = self._reader_compute(
-            "card_candidate_preprocess", lambda: recognizer.embedder.preprocess(image, candidate.box),
-        )
+        self._check_cancelled()
+        embedder = recognizer.embedder
+        contract = None
+        if (
+            preprocess_cache is not None and type(embedder) is OnnxCardEmbedder
+            and getattr(embedder.preprocess, "__func__", None) is OnnxCardEmbedder.preprocess
+        ):
+            contract = (embedder.source_color_order, embedder.INPUT_SIZE, OnnxCardEmbedder.preprocess)
+        cached = preprocess_cache.get(contract) if contract is not None else None
+        if cached is not None and cached[0] is image and cached[1] == candidate.box:
+            tensor = cached[2]
+            self._increment("card_candidate_preprocess_reuse_hits")
+        else:
+            tensor = self._reader_compute(
+                "card_candidate_preprocess", lambda: embedder.preprocess(image, candidate.box),
+            )
+            if contract is not None:
+                preprocess_cache[contract] = (image, candidate.box, tensor)
         if recognizer.embedder._session is None:
             self._reader_compute("card_model_session_load", recognizer.embedder._load_session)
         embedding = self._reader_compute(
@@ -1708,13 +1724,7 @@ class MaaArenaReaderBackend:
                 frames.append(image)
                 capture_times.append(capture_started)
                 try:
-                    observed = {
-                        group_index: self._validated_card_group_row(
-                            image,
-                            group_index,
-                        )
-                        for group_index in groups
-                    }
+                    observed = self._validated_card_group_rows(image, groups)
                 except ArenaReaderError:
                     return reject("source")
                 if any(
@@ -3909,7 +3919,12 @@ class MaaArenaReaderBackend:
             detector_score=1.0,
         )
         candidates: list[int] = []
-        for customized in (True, False):
+        frame_ids = self._reader_compute(
+            "card_frame_identifier",
+            lambda: frame_identifiers(image, (slot_index + 100, slot_index + 200)),
+        )
+        preprocess_cache: dict[Any, Any] = {}
+        for customized, frame_id in zip((True, False), frame_ids, strict=True):
             recognizer, acceptance_threshold, minimum_margin = self._card_recognizer(
                 customized=customized
             )
@@ -3917,7 +3932,8 @@ class MaaArenaReaderBackend:
                 recognizer,
                 image,
                 candidate_box,
-                frame_id=frame_identifier(image, slot_index + (100 if customized else 200)),
+                frame_id=frame_id,
+                preprocess_cache=preprocess_cache,
                 plan=plan,
                 acceptance_threshold=acceptance_threshold,
                 min_margin=minimum_margin,
@@ -5844,14 +5860,9 @@ class MaaArenaReaderBackend:
             next_capture_not_before = capture_started + interval_seconds
             image = self._capture()
             try:
-                observed = {
-                    index: self._validated_card_group_row(
-                        image,
-                        index,
-                        allow_fixed_secondary=allow_fixed_secondary,
-                    )
-                    for index in groups
-                }
+                observed = self._validated_card_group_rows(
+                    image, groups, allow_fixed_secondary=allow_fixed_secondary,
+                )
             except ArenaReaderError as error:
                 last_error = str(error)
                 last_failure_code = "skill_card_layout_incomplete"
@@ -8026,13 +8037,14 @@ class MaaArenaReaderBackend:
         target_slots: Sequence[int],
         *,
         phase: str,
+        visual_features_by_slot: Sequence[Sequence[dict[str, Any]]] | None = None,
     ) -> tuple[tuple[tuple[bool, ...], ...], list[dict[str, Any]]]:
         import cv2
 
         observations = []
         diagnostics = []
         targets = set(int(index) for index in target_slots)
-        for image in frames:
+        for frame_index, image in enumerate(frames):
             height, width = image.shape[:2]
             flags = [False] * len(row)
             frame_diagnostics = []
@@ -8052,7 +8064,11 @@ class MaaArenaReaderBackend:
                     card_x : card_x + card_width,
                     :3,
                 ]
-                visual_features = duplicate_marker_visual_features(card_crop)
+                visual_features = (
+                    visual_features_by_slot[index][frame_index]
+                    if visual_features_by_slot is not None
+                    else duplicate_marker_visual_features(card_crop)
+                )
                 texts_by_variant: dict[str, list[str]] = {}
                 if crop.size:
                     enlarged = cv2.resize(
@@ -8171,6 +8187,7 @@ class MaaArenaReaderBackend:
             row,
             candidate_slots,
             phase="targeted",
+            visual_features_by_slot=repeated_visual_features,
         )
         diagnostics.insert(0, visual_diagnostic)
         stable = stable_excluded_duplicate_card_flags(targeted)
@@ -11722,6 +11739,18 @@ class MaaArenaReaderBackend:
     def _detect_card_rows(self, image: Any) -> tuple[tuple[tuple[int, int, int, int], ...], ...]:
         return canonical_skill_card_rows(image.shape, self._raw_card_candidate_boxes(image))
 
+    def _validated_card_group_rows(self, image: Any, groups: Sequence[int], **kwargs):
+        """Share detector output only during this synchronous frame observation."""
+        previous = getattr(self, "_card_detection_observation", None)
+        self._card_detection_observation = [image, None]
+        try:
+            return {
+                index: self._validated_card_group_row(image, index, **kwargs)
+                for index in groups
+            }
+        finally:
+            self._card_detection_observation = previous
+
     def _validated_card_group_row(
         self,
         image: Any,
@@ -11912,6 +11941,21 @@ class MaaArenaReaderBackend:
     def _raw_card_candidate_boxes(
         self,
         image: Any,
+    ) -> tuple[tuple[int, int, int, int], ...]:
+        self._check_cancelled()
+        observation = getattr(self, "_card_detection_observation", None)
+        if observation is not None and observation[0] is image and observation[1] is not None:
+            self._increment("card_detection_reuse_hits")
+            return observation[1]
+        boxes = self._reader_compute(
+            "card_detection", lambda: self._detect_raw_card_candidate_boxes(image),
+        )
+        if observation is not None and observation[0] is image:
+            observation[1] = boxes
+        return boxes
+
+    def _detect_raw_card_candidate_boxes(
+        self, image: Any,
     ) -> tuple[tuple[int, int, int, int], ...]:
         import cv2
 

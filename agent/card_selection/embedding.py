@@ -301,10 +301,12 @@ class EmbeddingGallery:
         normalised = vectors / norms[:, None]
         if float(np.max(np.abs(norms - 1.0))) > 1e-3:
             raise ModelIntegrityError("gallery embeddings must be L2-normalised")
+        first_class_names: dict[str, str] = {}
         for class_name, card_id in zip(names, ids, strict=True):
             expected_id = class_name.split("_", 1)[0]
             if not card_id.isdigit() or card_id != expected_id:
                 raise ModelIntegrityError(f"invalid business-card mapping: {class_name} -> {card_id}")
+            first_class_names.setdefault(card_id, class_name)
         if any(not group for group in groups) or any(value not in {0, 1} for value in upgrades):
             raise ModelIntegrityError("gallery visual-group metadata is invalid")
         if markers is not None and (markers.shape != (len(ids), 24, 24, 3) or not np.isfinite(markers).all()):
@@ -312,12 +314,17 @@ class EmbeddingGallery:
         self.embeddings = np.ascontiguousarray(normalised, dtype=np.float32)
         self.class_names = names
         self.card_ids = ids
+        self._first_class_names = first_class_names
         self.visual_group_ids = groups
         self.upgrade_counts = upgrades
         self.upgrade_markers = markers
         self.model_sha256 = model_sha256.upper()
         self.gallery_sha256 = gallery_sha256.upper()
         self._eligible_scopes: dict[frozenset[int], tuple[Any, Any, dict[str, tuple[tuple[str, int], ...]]]] = {}
+
+    def class_name_for_card_id(self, card_id: str) -> str:
+        """Return the first gallery-row name for an already resolved business ID."""
+        return self._first_class_names[card_id]
 
     def _eligible_scope(self, eligible_card_ids: frozenset[int]):
         import numpy as np
@@ -760,11 +767,7 @@ class EmbeddingCardRecognizer:
         elif margin < min_margin:
             accepted = False
             reason = "below_margin_threshold"
-        class_name = next(
-            name
-            for name, card_id in zip(self.gallery.class_names, self.gallery.card_ids, strict=True)
-            if card_id == exact.card_id
-        )
+        class_name = self.gallery.class_name_for_card_id(exact.card_id)
         return self._prediction(
             candidate,
             frame_id=frame_id,

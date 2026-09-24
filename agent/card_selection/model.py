@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 from pathlib import Path
 
 from .types import CandidateBox
@@ -22,14 +22,26 @@ def sha256_file(path: str | Path) -> str:
 def frame_identifier(image: Any, capture_index: int = 0) -> str:
     """Return a deterministic, non-secret frame ID without writing the frame."""
 
+    return frame_identifiers(image, (capture_index,))[0]
+
+
+def frame_identifiers(image: Any, capture_indices: Iterable[int]) -> tuple[str, ...]:
+    """Give one unchanged frame several capture IDs using one transient digest."""
+
+    indices = tuple(capture_indices)
+    if not indices:
+        return ()
     try:
-        payload = memoryview(image).tobytes()
+        view = memoryview(image)
+        payload = view if view.c_contiguous else view.tobytes()
         shape = str(tuple(image.shape)).encode("ascii")
     except (TypeError, AttributeError):
         payload = bytes(image)
         shape = b"unknown"
-    digest = hashlib.sha256(shape + payload).hexdigest()[:16]
-    return f"frame-{capture_index:02d}-{digest}"
+    digest = hashlib.sha256(shape)
+    digest.update(payload)
+    suffix = digest.hexdigest()[:16]
+    return tuple(f"frame-{capture_index:02d}-{suffix}" for capture_index in indices)
 
 
 def isolate_card_candidates(
