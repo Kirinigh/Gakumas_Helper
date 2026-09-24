@@ -32,8 +32,10 @@ def _named_file_set_sha256(paths: tuple[Path, ...]) -> str:
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog-dir", type=Path, required=True)
-    parser.add_argument("--badge-gallery", type=Path, required=True)
-    parser.add_argument("--reference-root", type=Path, required=True)
+    parser.add_argument("--badge-gallery", type=Path)
+    parser.add_argument("--reference-root", type=Path)
+    parser.add_argument("--derive-from-promoted", type=Path,
+                        help="Extend frozen cost references using their existing templates only")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--source-revision", required=True)
     return parser.parse_args()
@@ -46,6 +48,14 @@ def main() -> int:
     from arena_winrate.card_cost import GenericCostReferenceGallery
 
     args = _arguments()
+    if args.derive_from_promoted:
+        from tools.card_cost_template_derivation import build
+        if args.badge_gallery or args.reference_root:
+            raise ValueError("template derivation must not read identity placeholder images")
+        build(args.derive_from_promoted, args.catalog_dir, args.output_dir, args.source_revision)
+        return 0
+    if not args.badge_gallery or not args.reference_root:
+        raise ValueError("image build requires badge gallery and reference root")
     catalog_dir = args.catalog_dir.resolve()
     cards = json.loads((catalog_dir / "skill_cards.json").read_text(encoding="utf-8"))
     customizations = json.loads(

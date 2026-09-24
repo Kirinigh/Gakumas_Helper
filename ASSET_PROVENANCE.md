@@ -33,3 +33,13 @@ No raw source image or new encoder is distributed. Existing source rights and
 redistribution qualifications remain unchanged. User-authorized enablement precedes
 pending real-negative, full-flow latency and opponent acceptance; it must
 not be described as successful real-device acceptance. The base gallery is unchanged.
+
+### Cost reference extension for catalog 2c575a46 (2026-09-25)
+
+The 54th cost entry (880, green cost 3 with legal values 3/1) derives its base
+mask and symbol descriptor directly from the previously promoted cost-3 template.
+It is not an independent screenshot of card 880. All 53 previous base rows and
+all 12 templates remain unchanged. The borrowed normal-state identity image,
+which displays cost 4, is excluded from this cost build. Provenance binds the
+previous three-file handoff and the new fixed catalog; the builder and release
+validator verify the exact derivation. Independent live validation remains PENDING.

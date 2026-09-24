@@ -882,6 +882,13 @@ def _require_file_inventory(
         )
 
 
+def _build_contract(component: str, manifest: Mapping[str, Any]) -> str:
+    if component == "arena_cost_reference" and manifest.get("source", {}).get("template_derivation") is not None:
+        from tools.card_cost_template_derivation import CONTRACT
+        return CONTRACT
+    return _contract(component)["build_tool_contract"]
+
+
 def _candidate_manifest(
     component: str,
     manifest: Mapping[str, Any],
@@ -891,7 +898,7 @@ def _candidate_manifest(
         raise StaticReferenceHandoffError("candidate already contains evaluation metadata")
     expected_build = {
         "deterministic_output": "NPZ_AND_CANONICAL_LF_JSON",
-        "tool_contract": contract["build_tool_contract"],
+        "tool_contract": _build_contract(component, manifest),
     }
     expected_handoff = {
         "reason": contract["candidate_reason"],
@@ -1188,6 +1195,13 @@ def _evaluate_cost(
     manifest: Mapping[str, Any],
     gallery_path: Path,
 ) -> dict[str, Any]:
+    from tools.card_cost_template_derivation import validate_derivation
+
+    try:
+        with np.load(gallery_path, allow_pickle=False) as payload:
+            validate_derivation(manifest, {key: payload[key] for key in payload.files})
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise StaticReferenceHandoffError("arena cost template derivation is invalid") from error
     gallery_info = manifest.get("gallery")
     runtime = manifest.get("runtime")
     source = manifest.get("source")
@@ -2359,7 +2373,7 @@ def validate_promoted_component(
         or build
         != {
             "deterministic_output": "NPZ_AND_CANONICAL_LF_JSON",
-            "tool_contract": contract["build_tool_contract"],
+            "tool_contract": _build_contract(component, manifest),
         }
         or not isinstance(handoff, Mapping)
         or handoff != {"reason": _promoted_reason(component, manifest), "status": PROMOTED_STATUS}

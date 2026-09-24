@@ -1,12 +1,12 @@
 {
   "build": {
     "deterministic_output": "NPZ_AND_CANONICAL_LF_JSON",
-    "tool_contract": "task095-arena-card-cost-reference-v1"
+    "tool_contract": "card-cost-frozen-template-derivation-v1"
   },
   "component": "task410_arena_card_face_cost_reference",
   "evaluation": {
     "path": "production_handoff_evaluation.json",
-    "sha256": "D73220AB0034ED7FF566C60830CF64879A3C724906817B9413307FFFC4C1545D",
+    "sha256": "699108372CB3A5D921D74C49B9B6DB34DA9EFB56748998CC667F0DAB5DC84325",
     "status": "PASS",
     "tool_contract": "task095-static-reference-production-promotion-v1"
   },
@@ -15,7 +15,7 @@
       24,
       24
     ],
-    "generic_card_count": 53,
+    "generic_card_count": 54,
     "normalization_size": [
       96,
       96
@@ -27,7 +27,7 @@
       32,
       34
     ],
-    "sha256": "5DC6BB337A2379567FC49C85B1DBD0469F7499006F8AF8BE8004817152636DA5",
+    "sha256": "D99A1BF02BA6DB222B170E9F50F7A44D0321AABD450AFBF92DF23AC4366F9B2F",
     "symbol_shape": [
       2,
       24,
@@ -53,10 +53,28 @@
   },
   "schema_version": 1,
   "source": {
-    "catalog_file_set_sha256": "A7F1B4B1AB2A3F3ED4290067B01911BBC3DBF2FF0C8DCBA1AE600F240B2111F0",
+    "catalog_file_set_sha256": "0F9F2309335901A1CF3D032733A1B7F60DA0306E14F2AC1958F1BE5232E16280",
     "license": "BSD-3-Clause",
     "repository": "https://github.com/surisuririsu/gakumas-tools",
-    "revision": "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6",
-    "source_set_sha256": "620DFC2F503182F2138BBF7853CC60877EEF5388E1D78A7313F09F8817C74A1C"
+    "revision": "2c575a4610b9628e7944032f1e50fedb726b0dcd",
+    "source_set_sha256": "F212CD1B2DCC19F39964238299C7E9175C83253589225D2767A467997E15B92B",
+    "template_derivation": {
+      "base_files": {
+        "card_cost_reference.npz": "5DC6BB337A2379567FC49C85B1DBD0469F7499006F8AF8BE8004817152636DA5",
+        "manifest.json": "3574F3C013EEED5F887EB18D1742BF0715E51120C3CB7404BD337CD5CFD14825",
+        "production_handoff_evaluation.json": "D73220AB0034ED7FF566C60830CF64879A3C724906817B9413307FFFC4C1545D"
+      },
+      "rows": [
+        {
+          "business_id": 880,
+          "hypotheses": [
+            3,
+            1
+          ],
+          "kind": "cost",
+          "value": 3
+        }
+      ]
+    }
   }
 }

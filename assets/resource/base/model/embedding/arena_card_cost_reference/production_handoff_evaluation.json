@@ -1,14 +1,14 @@
 {
   "artifact": {
     "path": "card_cost_reference.npz",
-    "sha256": "5DC6BB337A2379567FC49C85B1DBD0469F7499006F8AF8BE8004817152636DA5"
+    "sha256": "D99A1BF02BA6DB222B170E9F50F7A44D0321AABD450AFBF92DF23AC4366F9B2F"
   },
-  "candidate_manifest_sha256": "33FA12F8AE646FEEEE1E36B3FF53026BF63E871A84201B108E1FBDD7C74A2451",
+  "candidate_manifest_sha256": "7CA2FF0A046AC24C2B8988ED8C200FA7837468CB7ECA33CF960C25395E18CE65",
   "component": "arena_cost_reference",
   "privacy": "PUBLIC_SAFE_AGGREGATE_ONLY",
   "promotion_evidence": {
-    "catalog_contract_sha256": "64B86C2AA43D57FC6F8BD06FF9441287334E757F8BE66EEBFD99FAF166BD81C6",
-    "catalog_file_set_sha256": "A7F1B4B1AB2A3F3ED4290067B01911BBC3DBF2FF0C8DCBA1AE600F240B2111F0",
+    "catalog_contract_sha256": "3CB7978E6F38F98909489A0E6EE42985AF873D5A4736C508F2CCCE4B615A33A5",
+    "catalog_file_set_sha256": "0F9F2309335901A1CF3D032733A1B7F60DA0306E14F2AC1958F1BE5232E16280",
     "descriptor_fixture_set_sha256": "5740B066D36541962602D2D14DAB7C9618FCB565F7031635E673B0CBD1B416F7",
     "descriptor_replay": {
       "expanded_positive_cases": 98,
@@ -25,7 +25,7 @@
         617
       ]
     },
-    "generic_card_count": 53,
+    "generic_card_count": 54,
     "negative_perturbation": {
       "fixed_two_rejection_cases": 77,
       "invalid_topology_rejection_cases": 21,
@@ -40,25 +40,25 @@
   "validation": {
     "array_count": 9,
     "base_self_replay": {
-      "passed": 53,
-      "sample_count": 53
+      "passed": 54,
+      "sample_count": 54
     },
     "blank_rejection": {
-      "passed": 53,
-      "sample_count": 53
+      "passed": 54,
+      "sample_count": 54
     },
-    "generic_card_count": 53,
+    "generic_card_count": 54,
     "independent_live_holdout": "PENDING",
     "nonzero_alternate_self_replay": {
-      "passed": 46,
-      "sample_count": 46
+      "passed": 47,
+      "sample_count": 47
     },
     "rule_version": "arena-generic-cost-v8-id-independent-zero-topology",
-    "source_revision": "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6",
-    "source_set_sha256": "620DFC2F503182F2138BBF7853CC60877EEF5388E1D78A7313F09F8817C74A1C",
+    "source_revision": "2c575a4610b9628e7944032f1e50fedb726b0dcd",
+    "source_set_sha256": "F212CD1B2DCC19F39964238299C7E9175C83253589225D2767A467997E15B92B",
     "sparse_rejection": {
-      "passed": 53,
-      "sample_count": 53
+      "passed": 54,
+      "sample_count": 54
     },
     "template_count": 12
   }
