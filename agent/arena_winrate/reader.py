@@ -20,6 +20,7 @@ from collections.abc import Mapping, Callable, Sequence
 from .schema import SCHEMA_VERSION, validate_snapshot, validate_own_snapshot, validate_opponent_snapshot
 from .stages import ContestSeasonDefinition
 from .cancellation import ArenaReadSuperseded
+from ._reader_metrics import duration_percentiles
 
 
 class ArenaReaderError(RuntimeError):
@@ -649,26 +650,7 @@ class ArenaLineupReader:
                         }
                     )
 
-        def percentile(values: Sequence[float], quantile: float) -> float:
-            ordered = sorted(values)
-            if len(ordered) == 1:
-                return ordered[0]
-            position = (len(ordered) - 1) * quantile
-            lower = int(position)
-            upper = min(len(ordered) - 1, lower + 1)
-            fraction = position - lower
-            return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
-
-        duration_percentiles = {
-            name: {
-                "count": len(values),
-                "p50": round(percentile(values, 0.50), 6),
-                "p95": round(percentile(values, 0.95), 6),
-                "max": round(max(values), 6),
-            }
-            for name, values in sorted(samples.items())
-            if values
-        }
+        sample_summaries = duration_percentiles(samples)
         evidence_route_names = (
             "skill_card_detail_same_frame_effect_roi_recoveries",
             "skill_card_detail_enhanced_effect_roi_recoveries",
@@ -692,7 +674,7 @@ class ArenaLineupReader:
             },
             "counts": dict(sorted(counts.items())),
             "duration_percentile_method": "linear_interpolation_(n-1)q",
-            "duration_percentiles_seconds": duration_percentiles,
+            "duration_percentiles_seconds": sample_summaries,
             "assumptive_cost_fallbacks": [
                 dict(value)
                 for value in self.last_cost_customization_fallbacks()

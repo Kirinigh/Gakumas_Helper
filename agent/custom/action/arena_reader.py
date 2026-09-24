@@ -45,6 +45,7 @@ from arena_winrate import (
     CustomizationBadgeDecision,
     GenericCostReferenceGallery,
     _reader_visual,
+    _reader_metrics,
     stage_member_cap,
     classify_arena_page,
     classify_member_slot,
@@ -82,6 +83,13 @@ from card_selection.embedding import OnnxCardEmbedder
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded, cancellation_for
 from arena_winrate._reader_visual import _box, _text, _value
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
+from arena_winrate._detail_identity import (
+    DetailIdentityTransaction,
+    build_detail_identity_proof,
+    detail_identity_proof_matches,
+    detail_identity_proof_diagnostic,
+    matches_detail_identity_transaction,
+)
 from arena_winrate._reader_evidence import (
     _PItemPanelRow,
     _NormalizedPItemRow,
@@ -102,6 +110,10 @@ from arena_winrate._detail_title_region import isolated_title_region
 from arena_winrate._skill_detail_session import SkillDetailSession
 from arena_winrate._p_item_detail_session import PItemDetailSession
 from arena_winrate._p_item_detail_evidence import PItemDetailEvidence
+from arena_winrate._p_item_source_evidence import (
+    p_item_source_frame_evidence,
+    p_item_source_generation_evidence,
+)
 from arena_winrate._source_restore_session import SourceRestoreSession
 from arena_winrate._skill_card_effect_recovery import recover_skill_effect_body
 
@@ -1115,14 +1127,7 @@ class MaaArenaReaderBackend:
 
     @staticmethod
     def _percentile(values: Sequence[float], quantile: float) -> float:
-        ordered = sorted(values)
-        if len(ordered) == 1:
-            return ordered[0]
-        position = (len(ordered) - 1) * quantile
-        lower = int(position)
-        upper = min(len(ordered) - 1, lower + 1)
-        fraction = position - lower
-        return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
+        return _reader_metrics.percentile(values, quantile)
 
     def _finish_card_transaction(
         self, key: tuple[int, int], *, failed: bool = False, error: str | None = None,
@@ -1196,16 +1201,7 @@ class MaaArenaReaderBackend:
 
     def runtime_metrics(self) -> dict[str, Any]:
         selection = self._badge_worker_selection
-        sample_summaries = {
-            name: {
-                "count": len(values),
-                "p50": round(self._percentile(values, 0.50), 6),
-                "p95": round(self._percentile(values, 0.95), 6),
-                "max": round(max(values), 6),
-            }
-            for name, values in sorted(self._runtime_duration_samples.items())
-            if values
-        }
+        sample_summaries = _reader_metrics.duration_percentiles(self._runtime_duration_samples)
         return {
             "timing_seconds": {
                 key: round(value, 6)
@@ -1302,22 +1298,10 @@ class MaaArenaReaderBackend:
                 "member_observation_generation_missing",
                 f"stage-{stage_number}/member-{member_slot} has no active metric generation",
             )
-        timing_before, counts_before, sample_lengths = self._member_metric_baseline
-        timing_delta = {
-            key: round(value - timing_before.get(key, 0.0), 6)
-            for key, value in self._runtime_timing_seconds.items()
-            if value - timing_before.get(key, 0.0) > 0
-        }
-        counts_delta = {
-            key: value - counts_before.get(key, 0)
-            for key, value in self._runtime_counts.items()
-            if value - counts_before.get(key, 0) > 0
-        }
-        duration_samples = {
-            key: [round(value, 6) for value in values[sample_lengths.get(key, 0) :]]
-            for key, values in self._runtime_duration_samples.items()
-            if values[sample_lengths.get(key, 0) :]
-        }
+        metric_deltas = _reader_metrics.member_metric_deltas(
+            self._runtime_timing_seconds, self._runtime_counts,
+            self._runtime_duration_samples, self._member_metric_baseline,
+        )
         groups = []
         for group_index in (0, 1):
             groups.append(
@@ -1409,9 +1393,7 @@ class MaaArenaReaderBackend:
             "card_content_generation_diagnostics": [
                 dict(value) for value in self._card_content_generation_diagnostics
             ],
-            "timing_seconds": timing_delta,
-            "counts": counts_delta,
-            "duration_samples_seconds": duration_samples,
+            **metric_deltas,
             "badge_candidate_detail_checks": [
                 dict(value)
                 for value in self._badge_candidate_detail_checks
@@ -9259,104 +9241,43 @@ class MaaArenaReaderBackend:
             evidence_mode=resolved.detail_evidence_mode,
         )
 
+    def _detail_identity_transaction(self, key: tuple[int, int]) -> DetailIdentityTransaction:
+        """Read current evidence references without copying frames or renewing them."""
+
+        return DetailIdentityTransaction(
+            transaction_started=getattr(self, "_card_transaction_started", {}).get(key),
+            transaction_token=getattr(self, "_card_transaction_tokens", {}).get(key),
+            source_card_box=getattr(self, "_card_transaction_source_boxes", {}).get(key),
+            interaction_box=getattr(self, "_card_transaction_interaction_boxes", {}).get(key),
+            contact_released_at=getattr(self, "_card_detail_last_contact_released_at", {}).get(key),
+            capture_started_at=getattr(self, "_card_detail_capture_started_at", {}).get(key),
+            detail_image=getattr(self, "_card_detail_images", {}).get(key),
+            source_guard_frames=getattr(self, "_card_source_guard_frames", {}).get(key[0]),
+            restoration_signatures=getattr(self, "_card_restoration_signatures", {}).get(key[0]),
+            identity_frames=getattr(self, "_card_identity_frames", {}).get(key[0]),
+        )
+
     def _record_detail_identity_proof(
         self,
         key: tuple[int, int],
         resolved: ClickedSkillCard,
         observations: Sequence[_DetailIdentityObservation],
     ) -> None:
-        """Certify exact-title identity independently from customization evidence."""
+        """Publish independent identity only after checking the current opening."""
 
         proofs = getattr(self, "_detail_identity_proofs", None)
         if proofs is None:
             proofs = {}
             self._detail_identity_proofs = proofs
         proofs.pop(key, None)
-        selected = tuple(observations[-2:])
-        if not selected:
-            return
-        first = selected[0]
-        last = selected[-1]
-        expected_customizations = tuple(
-            sorted(
-                (str(customization_id), int(count))
-                for customization_id, count in resolved.customizations.items()
-            )
+        proof = build_detail_identity_proof(
+            resolved, observations, self._same_proven_skill_card_title,
         )
-        shared_fields_match = all(
-            observation.transaction_token == first.transaction_token
-            and observation.transaction_started == first.transaction_started
-            and observation.source_card_box == first.source_card_box
-            and observation.interaction_box == first.interaction_box
-            and observation.contact_released_at == first.contact_released_at
-            and observation.source_guard_frames is first.source_guard_frames
-            and observation.restoration_signatures is first.restoration_signatures
-            and observation.identity_frames is first.identity_frames
-            and self._same_proven_skill_card_title(
-                observation.title, first.title, resolved.card_id,
-            )
-            and observation.card_id == first.card_id == resolved.card_id
-            for observation in selected
-        )
-        capture_started_at = tuple(
-            observation.capture_started_at for observation in selected
-        )
-        detail_images = tuple(observation.detail_image for observation in selected)
-        captures_are_fresh = bool(
-            first.contact_released_at < capture_started_at[0]
-            and all(
-                earlier < later
-                for earlier, later in zip(
-                    capture_started_at,
-                    capture_started_at[1:],
-                    strict=False,
-                )
-            )
-            and len({id(image) for image in detail_images}) == len(detail_images)
-        )
-        if not (
-            shared_fields_match
-            and captures_are_fresh
-            and getattr(self, "_card_transaction_started", {}).get(key)
-            == last.transaction_started
-            and getattr(self, "_card_transaction_tokens", {}).get(key)
-            == last.transaction_token
-            and getattr(self, "_card_transaction_source_boxes", {}).get(key)
-            == last.source_card_box
-            and getattr(self, "_card_transaction_interaction_boxes", {}).get(key)
-            == last.interaction_box
-            and getattr(self, "_card_detail_last_contact_released_at", {}).get(key)
-            == last.contact_released_at
-            and getattr(self, "_card_detail_capture_started_at", {}).get(key)
-            == last.capture_started_at
-            and getattr(self, "_card_detail_images", {}).get(key)
-            is last.detail_image
-            and getattr(self, "_card_source_guard_frames", {}).get(key[0])
-            is last.source_guard_frames
-            and getattr(self, "_card_restoration_signatures", {}).get(key[0])
-            is last.restoration_signatures
-            and getattr(self, "_card_identity_frames", {}).get(key[0])
-            is last.identity_frames
+        # Read the active transaction AFTER the title comparisons, as before.
+        if proof is not None and matches_detail_identity_transaction(
+            proof, self._detail_identity_transaction(key),
         ):
-            return
-        proofs[key] = _DetailIdentityProof(
-            transaction_token=last.transaction_token,
-            transaction_started=last.transaction_started,
-            source_card_box=last.source_card_box,
-            interaction_box=last.interaction_box,
-            contact_released_at=last.contact_released_at,
-            capture_started_at=capture_started_at,
-            detail_images=detail_images,
-            source_guard_frames=last.source_guard_frames,
-            restoration_signatures=last.restoration_signatures,
-            identity_frames=last.identity_frames,
-            title=last.title,
-            card_id=last.card_id,
-            customizations=expected_customizations,
-            resolution_source=resolved.resolution_source,
-            evidence_mode=resolved.detail_evidence_mode,
-            detail_confirmation_reads=resolved.detail_confirmation_reads,
-        )
+            proofs[key] = proof
 
     def _detail_identity_proof_matches(
         self,
@@ -9375,65 +9296,11 @@ class MaaArenaReaderBackend:
         proof = getattr(self, "_detail_identity_proofs", {}).get(key)
         if not isinstance(proof, _DetailIdentityProof):
             return False
-        captures = proof.capture_started_at
-        images = proof.detail_images
-        observations_are_fresh = bool(
-            captures
-            and len(captures) == len(images)
-            and proof.contact_released_at < captures[0]
-            and all(
-                earlier < later
-                for earlier, later in zip(captures, captures[1:], strict=False)
-            )
-            and len({id(image) for image in images}) == len(images)
-        )
-        return bool(
-            proof.card_id == expected_card_id
-            and proof.source_card_box == tuple(source_card_box)
-            and proof.title.strip()
-            and observations_are_fresh
-            and getattr(self, "_card_transaction_started", {}).get(key)
-            == proof.transaction_started
-            and getattr(self, "_card_transaction_tokens", {}).get(key)
-            == proof.transaction_token
-            and getattr(self, "_card_transaction_source_boxes", {}).get(key)
-            == proof.source_card_box
-            and getattr(self, "_card_transaction_interaction_boxes", {}).get(key)
-            == proof.interaction_box
-            and getattr(self, "_card_detail_last_contact_released_at", {}).get(key)
-            == proof.contact_released_at
-            and getattr(self, "_card_detail_capture_started_at", {}).get(key)
-            == captures[-1]
-            and getattr(self, "_card_detail_images", {}).get(key)
-            is images[-1]
-            and getattr(self, "_card_source_guard_frames", {}).get(key[0])
-            is proof.source_guard_frames
-            and getattr(self, "_card_restoration_signatures", {}).get(key[0])
-            is proof.restoration_signatures
-            and getattr(self, "_card_identity_frames", {}).get(key[0])
-            is proof.identity_frames
+        return detail_identity_proof_matches(
+            proof, expected_card_id, source_card_box, self._detail_identity_transaction(key),
         )
 
-    @staticmethod
-    def _detail_identity_proof_diagnostic(
-        proof: _DetailIdentityProof,
-    ) -> dict[str, Any]:
-        """Return image-free provenance for one accepted conflict report."""
-
-        return {
-            "transaction_token": proof.transaction_token,
-            "transaction_started": proof.transaction_started,
-            "source_card_box": list(proof.source_card_box),
-            "interaction_box": list(proof.interaction_box),
-            "contact_released_at": proof.contact_released_at,
-            "capture_started_at": list(proof.capture_started_at),
-            "title": proof.title,
-            "card_id": proof.card_id,
-            "customizations": dict(proof.customizations),
-            "resolution_source": proof.resolution_source,
-            "evidence_mode": proof.evidence_mode,
-            "detail_confirmation_reads": proof.detail_confirmation_reads,
-        }
+    _detail_identity_proof_diagnostic = staticmethod(detail_identity_proof_diagnostic)
 
     def _recover_failed_skill_card_effect_text(
         self,
@@ -11627,20 +11494,15 @@ class MaaArenaReaderBackend:
     ) -> None:
         if len(source_images) < 2:
             return
-        try:
-            proof_boxes = self._p_item_source_proof_boxes(source_images[0], boxes)
-            errors = measure_p_item_content_generation(source_images, proof_boxes)
-        except (PItemReferenceError, TypeError, ValueError) as error:
-            raise ArenaReaderError(
-                "p_item_source_restore_evidence_invalid",
-                "P-item frozen source-page evidence could not be measured",
-            ) from error
         threshold = self.p_item_reader.content_generation_max_mean_abs_error
-        if any(value > threshold for value in errors):
+        evidence = p_item_source_generation_evidence(
+            source_images, boxes, threshold=threshold,
+        )
+        if not evidence.matches:
             raise ArenaReaderError(
                 "p_item_source_generation_unstable",
                 "P-item frozen source frames changed in an item or detail-panel "
-                f"guard region: errors={tuple(round(value, 6) for value in errors)!r}; "
+                f"guard region: errors={tuple(round(value, 6) for value in evidence.errors)!r}; "
                 f"threshold={threshold}",
             )
 
@@ -11673,52 +11535,14 @@ class MaaArenaReaderBackend:
             }
         else:
             anchors_visible = member_anchors_visible
-        if not source_images:
-            raise ArenaReaderError(
-                "p_item_source_restore_evidence_missing",
-                "P-item source-page evidence requires frozen source frames",
-            )
-        source_height, source_width = source_images[0].shape[:2]
-        image_height, image_width = image.shape[:2]
-        if (image_height, image_width) != (source_height, source_width):
-            raise ArenaReaderError(
-                "p_item_source_restore_evidence_invalid",
-                "P-item source and current captures have different dimensions",
-            )
-        proof_boxes = self._p_item_source_proof_boxes(source_images[0], boxes)
-        threshold = self.p_item_reader.content_generation_max_mean_abs_error
-        best_errors: tuple[float, ...] = ()
-        try:
-            for source_image in source_images:
-                if source_image.shape[:2] != (source_height, source_width):
-                    raise ArenaReaderError(
-                        "p_item_source_restore_evidence_invalid",
-                        "P-item frozen source captures have different dimensions",
-                    )
-                errors = tuple(
-                    float(value)
-                    for value in measure_p_item_content_generation(
-                        (source_image, image),
-                        proof_boxes,
-                    )
-                )
-                if not best_errors or max(errors) < max(best_errors):
-                    best_errors = errors
-                if anchors_visible and all(value <= threshold for value in errors):
-                    return True, errors
-                if (
-                    anchors_visible
-                    and all(value <= threshold for value in errors[len(boxes):])
-                    and self._p_item_border_only_change(source_image, image, boxes, threshold)
-                ):
-                    self._increment("p_item_source_border_animation_acceptances")
-                    return True, errors
-        except (PItemReferenceError, TypeError, ValueError) as error:
-            raise ArenaReaderError(
-                "p_item_source_restore_evidence_invalid",
-                "P-item source-row restore evidence could not be measured",
-            ) from error
-        return False, best_errors
+        evidence = p_item_source_frame_evidence(
+            source_images, image, boxes,
+            member_anchors_visible=anchors_visible,
+            threshold=self.p_item_reader.content_generation_max_mean_abs_error,
+        )
+        if evidence.border_animation_accepted:
+            self._increment("p_item_source_border_animation_acceptances")
+        return evidence.matches, evidence.errors
 
     _p_item_border_only_change = staticmethod(_reader_visual._p_item_border_only_change)
 
