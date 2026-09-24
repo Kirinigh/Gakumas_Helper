@@ -184,6 +184,24 @@ class TelemetryReader:
             position = detail["position"]
             key = (position.get("group_index"), position.get("card_slot"))
             detail["probe_body_text"] = getattr(self.port, "_card_detail_texts", {}).get(key)
+            cost_failure = getattr(self.port, "_card_face_cost_failed_sources", {}).get(key)
+            if (position.get("kind") == "skill_card" and cost_failure is not None
+                    and position.get("observed_detail_card_id") == cost_failure["card_id"]):
+                # Retain the exact observations rejected by the cost gate. The
+                # source guard may have advanced since these frames were read.
+                detail["probe_sources"] = cost_failure["frames"]
+                detail["probe_source_box"] = cost_failure["boxes"][-1]
+                detail["probe_row_boxes"] = None
+                detail["probe_cost_evidence"] = {
+                    name: cost_failure[name]
+                    for name in ("card_id", "hypotheses", "boxes", "error", "predictions")
+                }
+                fallback = getattr(
+                    self.port, "_cost_customization_fallbacks", {},
+                ).get(key)
+                detail["probe_cost_evidence"]["fallback"] = (
+                    fallback if fallback is not None and fallback.get("card_id") == cost_failure["card_id"] else None
+                )
             result = probe.save(detail, outcome, error)
             if result is not None:
                 self.logger.info(json.dumps(result, ensure_ascii=False))

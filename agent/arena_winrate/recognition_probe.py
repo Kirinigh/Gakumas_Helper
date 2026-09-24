@@ -218,13 +218,16 @@ class RecognitionProbe:
         position = diagnostic["position"]
         card_id = position.get("observed_detail_card_id")
         p_item = position.get("kind") == "p_item"
-        if outcome in {"cancelled", "superseded"} or (not p_item and card_id in self.RETIRED_TARGETS):
+        cost_evidence = diagnostic.get("probe_cost_evidence") if not p_item else None
+        if outcome in {"cancelled", "superseded"} or (not p_item and not cost_evidence and card_id in self.RETIRED_TARGETS):
             return None
         if p_item and outcome != "completed" and "p_item_source_restore_unproven" not in str(error):
             return None
         target = card_id if card_id in self.TARGETS else None
         # Non-target samples are controls, never automatically "unknown cards".
         category = ("p_item_return_control" if outcome == "completed" else "p_item_return_failed") if p_item else (str(target) if target else "control")
+        if cost_evidence:
+            category = "cost_evidence_inconclusive"
         key = [position.get(name) for name in (
             "team_id", "stage_number", "member_slot", "group_index", "card_slot",
         )] + [card_id, outcome]
@@ -316,7 +319,8 @@ class RecognitionProbe:
             "stage_plan": diagnostic.get("probe_stage_plan"),
             "body_text": diagnostic.get("probe_body_text"),
             "p_item_restore": diagnostic.get("p_item_restore"),
-            "reader_probe_revision": "arena-feedback-20260922-candidate-pairs-v3",
+            "cost_evidence": cost_evidence,
+            "reader_probe_revision": "arena-feedback-20260923-cost-evidence-v4",
             "build": self.settings.get("build"),
             "truth_status": "unreviewed_observation_not_training_label",
             "extra_screenshots": 0, "extra_ocr": 0, "extra_clicks": 0,

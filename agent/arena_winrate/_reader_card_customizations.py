@@ -819,6 +819,7 @@ class CardCustomizationsReader:
                 "frames": tuple(frames),
                 "boxes": boxes,
                 "error": detail,
+                "predictions": [asdict(prediction) for prediction in predictions],
             }
             # Keep rejected evidence too; a later abort may prevent the lineup
             # summary from being emitted. No new image or OCR is acquired here.
@@ -834,7 +835,7 @@ class CardCustomizationsReader:
                         "hypotheses": hypotheses,
                         "boxes": boxes,
                         "reason": detail,
-                        "predictions": [asdict(prediction) for prediction in predictions],
+                        "predictions": failed_sources[key]["predictions"],
                     },
                     ensure_ascii=False,
                 )
