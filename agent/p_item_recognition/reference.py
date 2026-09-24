@@ -33,6 +33,11 @@ class _PItemCoarseFineResult:
     guard_passed: bool
 
 
+# Private scores are valid only for one image, box, gallery and canonical size.
+# A classify call owns this mapping; shared gallery instances never retain it.
+_PItemScoreCache = dict[tuple[int, int], tuple[float, tuple[int, int]]]
+
+
 @dataclass(frozen=True)
 class PItemReferenceRuntime:
     source_color_order: str = "BGR"
@@ -534,6 +539,7 @@ class PItemRenderedReferenceGallery:
         deltas: Sequence[int],
         canonical_slot_size: tuple[int, int] | None = None,
         resize_candidates_only: bool = False,
+        score_cache: _PItemScoreCache | None = None,
     ) -> tuple[PItemReferenceHit, ...]:
         import cv2
 
@@ -585,12 +591,21 @@ class PItemRenderedReferenceGallery:
                     or candidate.shape[1] > query.shape[1]
                 ):
                     continue
-                response = cv2.matchTemplate(
-                    query,
-                    candidate,
-                    cv2.TM_CCOEFF_NORMED,
-                )
-                _, similarity, _, location = cv2.minMaxLoc(response)
+                key = (index, delta)
+                cached_score = None if score_cache is None else score_cache.get(key)
+                if cached_score is None:
+                    response = cv2.matchTemplate(
+                        query,
+                        candidate,
+                        cv2.TM_CCOEFF_NORMED,
+                    )
+                    _, similarity, _, location = cv2.minMaxLoc(response)
+                    if score_cache is not None:
+                        score_cache[key] = (similarity, location)
+                else:
+                    similarity, location = cached_score
+                # Preserve the original delta order and strict tie selection,
+                # even when a later delta was already scored by coarse ranking.
                 if similarity > best_similarity:
                     best_similarity = float(similarity)
                     best_size = (candidate_width, candidate_height)
@@ -617,6 +632,7 @@ class PItemRenderedReferenceGallery:
         *,
         profile: PItemReferenceAccelerationProfile | None = None,
         candidate_indexes: tuple[int, ...] | None = None,
+        score_cache: _PItemScoreCache | None = None,
     ) -> tuple[PItemReferenceHit, ...]:
         return self._rank_candidates(
             image,
@@ -628,6 +644,7 @@ class PItemRenderedReferenceGallery:
                 if profile is None
                 else (profile.canonical_slot_width, profile.canonical_slot_height)
             ),
+            score_cache=score_cache,
         )
 
     def _rank_coarse_fine(
@@ -637,7 +654,10 @@ class PItemRenderedReferenceGallery:
         *,
         profile: PItemReferenceAccelerationProfile,
         candidate_indexes: tuple[int, ...] | None = None,
+        score_cache: _PItemScoreCache | None = None,
     ) -> _PItemCoarseFineResult:
+        if score_cache is None:
+            score_cache = {}
         eligible_ids = (set(self.p_item_ids) if candidate_indexes is None
                         else {self.p_item_ids[index] for index in candidate_indexes})
         coarse = self._rank_candidates(
@@ -649,6 +669,7 @@ class PItemRenderedReferenceGallery:
                 profile.canonical_slot_width,
                 profile.canonical_slot_height,
             ),
+            score_cache=score_cache,
         )
         candidate_ids = {
             hit.p_item_id for hit in coarse[: profile.candidate_limit]
@@ -669,6 +690,7 @@ class PItemRenderedReferenceGallery:
                 profile.canonical_slot_width,
                 profile.canonical_slot_height,
             ),
+            score_cache=score_cache,
         )
         coarse_ranks = {
             hit.p_item_id: index
@@ -936,6 +958,10 @@ class PItemRenderedReferenceGallery:
                 frames_byte_identical=byte_identical,
                 ranking_route="not_ranked",
             )
+        # All ranking stages below use images[0], this slot and this profile.
+        # Reuse only identical candidate/scale scores within this classification;
+        # the three-frame stability/completeness checks above remain independent.
+        score_cache: _PItemScoreCache = {}
         def finish_full(
             ranking: tuple[PItemReferenceHit, ...], *, ranking_route: str, full_fallback_used: bool,
         ) -> PItemReferenceDecision:
@@ -964,6 +990,7 @@ class PItemRenderedReferenceGallery:
                     images[0], box, candidate_indexes=indexes, deltas=(-12, -10, -8),
                     canonical_slot_size=None if profile is None else reference_size,
                     resize_candidates_only=True,
+                    score_cache=score_cache,
                 )
                 merged = {hit.p_item_id: hit for hit in ranking}
                 for hit in extra:
@@ -992,14 +1019,14 @@ class PItemRenderedReferenceGallery:
 
         if profile is None:
             return finish_full(
-                self._rank_full(images[0], box, **ranking_scope),
+                self._rank_full(images[0], box, score_cache=score_cache, **ranking_scope),
                 ranking_route="full_rendered_reference",
                 full_fallback_used=False,
             )
-        accelerated = self._rank_coarse_fine(images[0], box, profile=profile, **ranking_scope)
+        accelerated = self._rank_coarse_fine(images[0], box, profile=profile, score_cache=score_cache, **ranking_scope)
         if not accelerated.guard_passed:
             return finish_full(
-                self._rank_full(images[0], box, profile=profile, **ranking_scope),
+                self._rank_full(images[0], box, profile=profile, score_cache=score_cache, **ranking_scope),
                 ranking_route="fixed_coarse_fine_guard_then_full_fallback",
                 full_fallback_used=True,
             )
@@ -1014,7 +1041,7 @@ class PItemRenderedReferenceGallery:
         }:
             return decision
         return finish_full(
-            self._rank_full(images[0], box, profile=profile, **ranking_scope),
+            self._rank_full(images[0], box, profile=profile, score_cache=score_cache, **ranking_scope),
             ranking_route="fixed_coarse_fine_then_full_fallback",
             full_fallback_used=True,
         )
