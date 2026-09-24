@@ -5796,8 +5796,9 @@ class MaaArenaReaderBackend:
                     time.perf_counter() - content_started,
                 )
                 geometry_shifted = bool(frames) and any(
-                    self._card_rows_shifted(observed[index], rows_by_group[index][-1])
+                    self._card_rows_shifted(observed[index], previous_row)
                     for index in groups
+                    for previous_row in rows_by_group[index]
                 )
                 content_deltas = (
                     {
@@ -5816,6 +5817,8 @@ class MaaArenaReaderBackend:
                     for delta in deltas
                 )
                 if geometry_shifted or content_shifted:
+                    if geometry_shifted:
+                        self._increment("skill_card_layout_geometry_drift_resets")
                     frames.clear()
                     capture_times.clear()
                     for values in rows_by_group.values():
