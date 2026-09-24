@@ -212,6 +212,8 @@ class SourceRestoreSession:
         while self.clock.monotonic() < deadline:
             if self._observe_frame():
                 return
+            # One wait per rejected observation. Inner evidence stages only
+            # report readiness so the normal first guard frame cannot wait twice.
             self.backend._sleep(self.backend._source_restore_poll_seconds)
         self._raise_failure()
 
@@ -371,11 +373,9 @@ class SourceRestoreSession:
                     f"{tuple(tuple(round(value, 6) for value in errors) for errors in guard_error_sets)!r}"
                 )
                 self.backend._increment("skill_card_source_restore_overlay_guard_mismatches")
-                self.backend._sleep(self.backend._source_restore_poll_seconds)
                 return False
             self.source_guard_consecutive += 1
             if self.source_guard_consecutive < 2:
-                self.backend._sleep(self.backend._source_restore_poll_seconds)
                 return False
         return True
 
@@ -392,7 +392,6 @@ class SourceRestoreSession:
                 self.reset_consecutive_evidence()
                 self.last_error = f"source card signature was not measurable after detail close: {error}"
                 self.backend._increment("skill_card_source_restore_signature_failures")
-                self.backend._sleep(self.backend._source_restore_poll_seconds)
                 return False
             finally:
                 self.backend._add_timing(
@@ -610,6 +609,5 @@ class SourceRestoreSession:
                     self.backend._increment("skill_card_source_restore_generation_mismatches")
                     if len(self.semantic_identity_frames) == 3:
                         self.reset_consecutive_evidence()
-                    self.backend._sleep(self.backend._source_restore_poll_seconds)
                     return False
         return True

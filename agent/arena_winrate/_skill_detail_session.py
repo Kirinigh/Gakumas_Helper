@@ -119,6 +119,8 @@ class SkillDetailSession:
 
         self.positive_confirmation_started_at: float | None = None
 
+        self.positive_confirmation_wait_from_capture = False
+
         self.cost_fallback_candidate: ClickedSkillCard | None = None
 
         self.cost_fallback_confirmation_reads = 0
@@ -175,6 +177,7 @@ class SkillDetailSession:
         return self._raise_failure()
 
     def _resolve_frame(self):
+        self.positive_confirmation_wait_from_capture = False
         self.auxiliary_badge_glyph_allowed = self.frame_is_settled
         try:
             step = self._resolve_current_text()
@@ -408,6 +411,7 @@ class SkillDetailSession:
             if image_evidence is not None and self.backend._retry_transient_communication_items(image_evidence.filtered_items):
                 self.text = ""
                 self.zero_candidate = self.positive_candidate = self.cost_fallback_candidate = None
+                self.positive_confirmation_wait_from_capture = False
                 return _FrameStep.REPEAT
             if error.code in {
                 "skill_card_detail_id_changed",
@@ -433,7 +437,15 @@ class SkillDetailSession:
         return _FrameStep.NEXT
 
     def _read_next_frame(self):
-        self.backend._sleep(0.08)
+        wait_seconds = 0.08
+        if self.positive_confirmation_wait_from_capture and self.frame_capture_started_at is not None:
+            # Only a clean first positive result may count its capture/OCR
+            # processing toward the existing 80 ms interval. The next vote
+            # still needs a new capture and OCR; settle/recovery waits stay fixed.
+            wait_seconds = max(0.0, self.frame_capture_started_at + 0.08 - self.clock.monotonic())
+        # One-shot permission: a failed capture/OCR must use the ordinary wait.
+        self.positive_confirmation_wait_from_capture = False
+        self.backend._sleep(wait_seconds)
         self.backend._increment("skill_card_detail_ocr_rereads")
         try:
             previous_capture_started_at = self.frame_capture_started_at
@@ -904,12 +916,20 @@ class SkillDetailSession:
                         self.clock.perf_counter() - self.positive_confirmation_started_at,
                     )
             else:
+                self.positive_confirmation_wait_from_capture = (
+                    self.positive_candidate is None
+                    and self.conservative_cost_assumption is None
+                    and not self.same_frame_effect_roi_attempted
+                    and not self.same_frame_body_recovery_attempted
+                    and not self.body_recovery_active
+                )
                 if self.positive_candidate is not None:
                     self.backend._increment("skill_card_detail_positive_confirmation_conflicts")
                 self.positive_candidate = self.resolved
                 if self.positive_confirmation_started_at is None:
                     self.positive_confirmation_started_at = self.clock.perf_counter()
                 if not self.positive_confirmation_extension_applied:
+                    # This is deadline grace, not a minimum capture interval.
                     self.deadline = max(
                         self.deadline,
                         self.clock.monotonic() + 0.25,
