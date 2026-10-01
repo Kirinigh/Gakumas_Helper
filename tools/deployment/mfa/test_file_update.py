@@ -11,7 +11,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from test_download_transport import SOURCE_SHA256
+from test_download_transport import SOURCE_SHA256, extract_method
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from tools.deployment import file_update
@@ -35,21 +35,25 @@ def run(args):
     start = checker.index("    internal sealed class UpdateFileTransaction")
     end = checker.index("    static void DeleteFileWithBackup", start)
     fixture = (HERE / "file_update_harness.cs").read_text().replace("// PRODUCTION_TRANSACTION", checker[start:end])
+    fixture = fixture.replace("// PRODUCTION_CHANGELOG", extract_method(checker, "SaveChangelog"))
     (work / "Program.cs").write_text(fixture, encoding="utf-8")
     dotnet = args.dotnet.resolve()
     sdk = sorted((dotnet.parent / "sdk").glob("10.*"))[-1]
+    json_lib = sdk / "Newtonsoft.Json.dll"
+    shutil.copy2(json_lib, work / json_lib.name)
     refs = sorted((dotnet.parent / "packs/Microsoft.NETCore.App.Ref").glob("10.*/ref/net10.0"))[-1]
     runtime = sorted((dotnet.parent / "shared/Microsoft.NETCore.App").glob("10.*"))[-1]
     output = work / "FileUpdateHarness.dll"
     response = work / "compile.rsp"
     response.write_text("\n".join([
         "/nostdlib+", "/target:exe", "/langversion:14", "/nullable:enable", f'/out:"{output}"',
+        f'/reference:"{json_lib}"',
         *(f'/reference:"{p}"' for p in sorted(refs.glob("*.dll"))), f'"{work / "Program.cs"}"',
         *(f'"{source / "MFAAvalonia/Helper" / name}"' for name in ("GitHubApiRequests.cs", "DerivedFileUpdate.cs")),
     ]), encoding="utf-8")
     (work / "FileUpdateHarness.runtimeconfig.json").write_text(json.dumps({"runtimeOptions": {
         "tfm": "net10.0", "framework": {"name": "Microsoft.NETCore.App", "version": runtime.name}}}))
-    compiled = subprocess.run([str(dotnet), str(sdk / "Roslyn/bincore/csc.dll"), "/noconfig", f"@{response}"],
+    compiled = subprocess.run([str(dotnet), str(sdk / "Roslyn/bincore/csc.dll"), "/noconfig", "/utf8output", f"@{response}"],
                               capture_output=True, text=True, encoding="utf-8", env=env)
     (work / "compile.log").write_text(compiled.stdout + compiled.stderr, encoding="utf-8")
     compiled.check_returncode()
@@ -99,6 +103,11 @@ def run(args):
         packages[version] = package
     results = []
     scenarios = [("adjacent", "v0.5.3", "execute", True, 1),
+                 ("downloaded_changelog", "v0.5.3", "execute", True, 1),
+                 ("chain_changelog", "v0.5.1", "execute", True, 3),
+                 ("full_changelog", "v0.4.9", "execute", False, 1),
+                 ("changelog_extra_code", "v0.5.3", "execute", False, 1),
+                 ("changelog_sidecar", "v0.5.3", "execute", False, 1),
                  ("runtime_drift", "v0.5.3", "execute", True, 1),
                  ("runtime_drift_chain", "v0.5.1", "execute", True, 3),
                  ("chain", "v0.5.1", "execute", True, 3),
@@ -131,8 +140,11 @@ def run(args):
             (dependency / "same.py").write_text("pip upgraded this unchanged release file")
             (dependency / "numpy.py").unlink()
             (dependency / "numpy-new.dist-info").write_text("new pip metadata")
-        if name == "extra_local_code":
+        if name in {"extra_local_code", "changelog_extra_code"}:
             (root / "local_patch.py").write_text("local patch")
+        if name == "changelog_sidecar":
+            (root / "resource").mkdir()
+            (root / "resource/Changelog.md.py").write_text("unknown code next to notes")
         catalog = json.loads(json.dumps([r for r in releases if name != "missing" or r["tag_name"] != "v0.5.2"]))
         case_assets = dict(assets)
         if name in {"explicit_full", "size_full", "corrupt_delta"}:
@@ -159,6 +171,7 @@ def run(args):
             metadata_asset["size"] = metadata_path.stat().st_size
         config = {"root": str(root), "work": str(case / "operation"), "from": base_version, "to": "v0.5.4",
                   "catalog": catalog, "assets": case_assets, "mode": mode,
+                  "save_changelog": "changelog" in name,
                   "locked": "obsolete.py" if name == "locked_delete" else "code.py"}
         if name == "corrupt_full":
             full = next(a for a in catalog[-1]["assets"] if a["name"].endswith(".zip"))
@@ -172,9 +185,9 @@ def run(args):
             config["rate_id"] = next(a["url"].rsplit("/", 1)[-1] for a in catalog[-1]["assets"] if a["name"].endswith(".json"))
         config_path = case / "input.json"
         config_path.write_text(json.dumps(config))
-        result = subprocess.run([str(dotnet), str(output), str(config_path)], capture_output=True, text=True,
-                                encoding="utf-8", env=env, timeout=60)
-        (case / "run.log").write_text(result.stdout + result.stderr)
+        result = subprocess.run([str(dotnet), str(output), str(config_path)], capture_output=True,
+                                env=env, timeout=60)
+        (case / "run.log").write_bytes(result.stdout + result.stderr)
         if name in {"corrupt_full", "budget_exhausted", "rate_limited"}:
             assert result.returncode != 0, "Invalid update must fail"
             expected_root = packages.get(base_version, packages["v0.5.1"])
@@ -191,6 +204,11 @@ def run(args):
         result.check_returncode()
         summary = json.loads(result.stdout.strip().splitlines()[-1])
         assert summary["chosen_delta"] == delta and summary["count"] == count, (name, summary)
+        if config["save_changelog"]:
+            assert (root / "resource/Changelog.md").read_text() == "downloaded release notes"
+            if delta:
+                full_ids = {a["url"].rsplit("/", 1)[-1] for r in catalog for a in r["assets"] if a["name"].endswith(".zip")}
+                assert not full_ids.intersection(summary["requests"]), "Announcement must not trigger full download"
         # The final shipped payload, including updater files and version metadata, must be byte-identical.
         for target in packages["v0.5.4"].rglob("*"):
             if target.is_file():

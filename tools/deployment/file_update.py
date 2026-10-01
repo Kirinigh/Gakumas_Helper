@@ -24,7 +24,8 @@ def runtime_refresh_path(relative: str) -> bool:
 
 def protected(relative: str) -> bool:
     parts = relative.lower().split("/")
-    return (parts[0] in MUTABLE or parts[-1] in MUTABLE_FILES
+    return (parts == ["resource", "changelog.md"]
+            or parts[0] in MUTABLE or parts[-1] in MUTABLE_FILES
             or "__pycache__" in parts or parts[-1].endswith((".pyc", ".backupmfa")))
 
 

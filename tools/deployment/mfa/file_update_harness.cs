@@ -9,6 +9,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using MFAAvalonia.Helper;
+using Newtonsoft.Json.Linq;
 
 namespace MFAAvalonia.Helper
 {
@@ -21,7 +22,13 @@ namespace MFAAvalonia.Helper
     static class VersionChecker
     {
         // PRODUCTION_TRANSACTION
+        // PRODUCTION_CHANGELOG
+        internal static void SaveNotes() => SaveChangelog(new JObject { ["body"] = "downloaded release notes" }, "body");
     }
+    static class AppPaths { public static string ResourceDirectory { get; set; } = ""; }
+    static class ChangelogViewModel { public const string ChangelogFileName = "Changelog.md"; }
+    static class ConfigurationKeys { public const string DoNotShowChangelogAgain = "DoNotShowChangelogAgain"; }
+    static class GlobalConfiguration { public static void SetValue(string key, string value) { } }
 }
 sealed class FixtureHandler(Dictionary<string, string> assets) : HttpMessageHandler
 {
@@ -61,6 +68,13 @@ static class Program
         }
         var input = JsonNode.Parse(File.ReadAllText(args[0]))!;
         var root = (string)input["root"]!;
+        if ((bool?)input["save_changelog"] == true)
+        {
+            AppPaths.ResourceDirectory = Path.Combine(root, "resource");
+            VersionChecker.SaveNotes();
+            if (!File.Exists(Path.Combine(AppPaths.ResourceDirectory, "Changelog.md")))
+                throw new Exception("Production SaveChangelog did not create the downloaded notes");
+        }
         var work = (string)input["work"]!;
         Directory.CreateDirectory(work);
         var assets = input["assets"]!.Deserialize<Dictionary<string, string>>()!;

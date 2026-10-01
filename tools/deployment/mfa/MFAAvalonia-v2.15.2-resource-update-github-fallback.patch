@@ -1995,7 +1995,7 @@ diff --git a/MFAAvalonia/Helper/DerivedFileUpdate.cs b/MFAAvalonia/Helper/Derive
 new file mode 100644
 --- /dev/null
 +++ b/MFAAvalonia/Helper/DerivedFileUpdate.cs
-@@ -0,0 +1,492 @@
+@@ -0,0 +1,493 @@
 +using System;
 +using System.IO;
 +using System.IO.Compression;
@@ -2086,7 +2086,8 @@ new file mode 100644
 +    internal static bool Protected(string relative)
 +    {
 +        var parts = relative.Replace('\\', '/').ToLowerInvariant().Split('/');
-+        return MutableRoots.Contains(parts[0]) || parts.Contains("__pycache__")
++        return (parts.Length == 2 && parts[0] == "resource" && parts[1] == "changelog.md")
++            || MutableRoots.Contains(parts[0]) || parts.Contains("__pycache__")
 +            || parts[^1] is "config.json" or "appsettings.json" or "maa.log" or "gui.log"
 +            || parts[^1].EndsWith(".pyc") || parts[^1].EndsWith(".backupmfa");
 +    }
