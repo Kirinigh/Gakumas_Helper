@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "revision": "task095-batch11-880-provisional",
+  "revision": "task095-batch12-886-joint-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
   "sources": {
-    "catalog_revision": "41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c",
-    "catalog_sha256": "DF5E597214B16A95155193F24199B7D84359A4E73842D8DE6EA0A222FDEFC92E",
-    "decoded_master_sha256": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
+    "catalog_revision": "9a305390a172cf927f168e63cafa8149b24b9448",
+    "catalog_sha256": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
+    "decoded_master_sha256": "3B2BECDF8591719C3ADF20BF5C861B697A1ACEB68856A6359CC9142C7592B4F7",
     "datasets": [
       {
         "dataset_id": "task075-authoritative-705100:0036",
@@ -32,6 +32,10 @@
       {
         "dataset_id": "task095-skill-card-extension-pc-705100-0062-41153f-published-ui-provisional-shared",
         "manifest_sha256": "48160BE76DADEB23C2B326D29C862F704BC8F8DBB3E2EDC18DF2B7FA436D98B0"
+      },
+      {
+        "dataset_id": "task095-skill-card-extension-pc-705100-0067-9a3053-joint-ui",
+        "manifest_sha256": "2FA9FC4ABF623F80BFCCC3FC5DDFE388ECE58BE749A0DF11C9565DCFF7F6EF23"
       }
     ]
   },
@@ -20296,6 +20300,216 @@
         "originCharacterId": "",
         "kind_basis": "official_support_origin"
       }
+    },
+    {
+      "business_id": 881,
+      "name": "悪戯ハートジャック",
+      "upgraded": false,
+      "internal_id": "p_card-03-ido-3_247",
+      "asset_id": "img_general_skillcard_ido-3_247",
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 157,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "catalog_source_with_joint_identity",
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 881,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
+            "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
+          }
+        }
+      }
+    },
+    {
+      "business_id": 882,
+      "name": "悪戯ハートジャック+",
+      "upgraded": true,
+      "internal_id": "p_card-03-ido-3_247",
+      "asset_id": "img_general_skillcard_ido-3_247",
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 157,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "catalog_source_with_joint_identity",
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 882,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
+            "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
+          }
+        }
+      }
+    },
+    {
+      "business_id": 883,
+      "name": "無自覚チャーム",
+      "upgraded": false,
+      "internal_id": "p_card-01-ido-3_246",
+      "asset_id": "img_general_skillcard_ido-3_246",
+      "plan": "sense",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 158,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "catalog_source_with_joint_identity",
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 883,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
+            "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
+          }
+        }
+      }
+    },
+    {
+      "business_id": 884,
+      "name": "無自覚チャーム+",
+      "upgraded": true,
+      "internal_id": "p_card-01-ido-3_246",
+      "asset_id": "img_general_skillcard_ido-3_246",
+      "plan": "sense",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 158,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "catalog_source_with_joint_identity",
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 884,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
+            "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
+          }
+        }
+      }
+    },
+    {
+      "business_id": 885,
+      "name": "なりきりデビル",
+      "upgraded": false,
+      "internal_id": "p_card-01-sup-3_253",
+      "asset_id": "img_general_skillcard_sup-3_253",
+      "plan": "sense",
+      "kind": "support",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "catalog_source_with_joint_identity",
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 885,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
+            "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
+          }
+        }
+      }
+    },
+    {
+      "business_id": 886,
+      "name": "なりきりデビル+",
+      "upgraded": true,
+      "internal_id": "p_card-01-sup-3_253",
+      "asset_id": "img_general_skillcard_sup-3_253",
+      "plan": "sense",
+      "kind": "support",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "catalog_source_with_joint_identity",
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 886,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
+            "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
+          }
+        }
+      }
     }
   ],
   "indexes": {
@@ -20644,7 +20858,11 @@
         866,
         869,
         870,
-        875
+        875,
+        883,
+        884,
+        885,
+        886
       ],
       "logic": [
         9,
@@ -21186,7 +21404,9 @@
         877,
         878,
         879,
-        880
+        880,
+        881,
+        882
       ]
     },
     "kind": {
@@ -21518,7 +21738,11 @@
         873,
         874,
         877,
-        878
+        878,
+        881,
+        882,
+        883,
+        884
       ],
       "support": [
         236,
@@ -21636,7 +21860,9 @@
         863,
         864,
         879,
-        880
+        880,
+        885,
+        886
       ],
       "basic": [
         1,
@@ -22533,7 +22759,13 @@
         877,
         878,
         879,
-        880
+        880,
+        881,
+        882,
+        883,
+        884,
+        885,
+        886
       ],
       "SR": [
         70,
@@ -22975,19 +23207,19 @@
   "counts": {
     "plan": {
       "free": 65,
-      "sense": 277,
+      "sense": 281,
       "logic": 301,
-      "anomaly": 237
+      "anomaly": 239
     },
     "kind": {
-      "p_idol": 328,
-      "support": 116,
+      "p_idol": 332,
+      "support": 118,
       "basic": 68,
       "other": 368
     },
     "rarity": {
       "L": 27,
-      "SSR": 424,
+      "SSR": 430,
       "SR": 204,
       "R": 144,
       "N": 81
@@ -22995,27 +23227,27 @@
   },
   "gallery_coverage": [
     {
-      "component": "card_embedding",
-      "manifest_sha256": "D128615AD6FF8D316468A5B539F27BA0DF48794FF7B0CA34F8ABB6CFD6F021F9",
-      "gallery_sha256": "53A3883246B2694B221B0DFB8CB391ED6B69B1A22B2F08304947EF61A921F3F8",
-      "row_count": 4180,
-      "business_id_count": 880,
+      "component": "skill-base-ready-a",
+      "manifest_sha256": "4C0A6212ACA32C18CF6676749DD390E472B78E528560201FB84FECD54888BD4A",
+      "gallery_sha256": "AB8A5F6DBFA557F170983D55559702F5A926F9DCD1BF1545BF3AA500AD0F06F1",
+      "row_count": 4186,
+      "business_id_count": 886,
       "join_key": "business_id"
     },
     {
-      "component": "arena_card",
-      "manifest_sha256": "F6C5A1FE44C970FFF35489ACBFF8BD999E4797BD102153586E7793C281A539E2",
-      "gallery_sha256": "CA409E94A2A38E31305F5877A1124D3397D318E489ED16D89361BA47352BAFC6",
-      "row_count": 4180,
-      "business_id_count": 880,
+      "component": "arena-full-ui-ready-a",
+      "manifest_sha256": "082726A72F4035CEFE294E7B0026DB02B40EF098C50A4DC632ACB76E6EC9A1FF",
+      "gallery_sha256": "9CD7BB5929CC792C250E091629F6B393945C1F3F25B5740388C6E287D0BE7111",
+      "row_count": 8362,
+      "business_id_count": 886,
       "join_key": "business_id"
     },
     {
-      "component": "arena_badge_reference",
-      "manifest_sha256": "A22D01D46FC198B9D71B29A0B11A3A084E8815592E3BF24698D2B1BBB624462E",
-      "gallery_sha256": "1ACF750E88CD3626F99FC9087B00CB0D69680A2B0D76498A081A74CFF9E1A715",
-      "row_count": 3413,
-      "business_id_count": 880,
+      "component": "badge-ready-a",
+      "manifest_sha256": "BD7C97B2A7C2145E3D0C53EEB62802ACD5E56A12B445AB22C411C5433DF060AA",
+      "gallery_sha256": "6B9AEE9B80A94597DDD7E05B8BDA76CD4DB89D6274C5FC9155EFFC320B04F671",
+      "row_count": 3419,
+      "business_id_count": 886,
       "join_key": "business_id"
     }
   ]

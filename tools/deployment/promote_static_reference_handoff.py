@@ -91,6 +91,7 @@ P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256_ALLOWLIST = frozenset(
         "BBBA253C9B7C40A7C3A4C1740788AAAF4AA6758465D36BCD15156F65D1B92650",
         "8BDBD63DEE07115167B96B2675ACE357B2FF50D850F168B2D745A50601DC5EDC",
         "A79D20EDA9C57B1527E5200B285BD80B4BF84C7CC72E618B32CDDEE3F466C562",
+        "5252BF4596C18038F77FEBDE20E1E42416CD150F88D11189DA566DD03A35638D",
     }
 )
 P_ITEM_PRODUCTION_REVISION = "d476e78b1d3b9fb8eac61924e3869b647ca82ab2"
@@ -600,7 +601,7 @@ def _validate_p_item_append_source_evidence(
             raise StaticReferenceHandoffError("P-item derived pairing is outside the source inventory")
         return
     if published:
-        if official.get("source_type") != ("user_provided_ui_crops" if evidence.get("schema_version") == 5 else "third_party_published_ui_crops"):
+        if official.get("source_type") not in ({"user_provided_ui_crops"} if evidence.get("schema_version") == 5 else {"third_party_published_ui_crops", "mixed_verified_ui_crops"}):
             raise StaticReferenceHandoffError("P-item UI evidence schema and source origin disagree")
         _validate_p_item_published_source(
             official, expected_ids=changed, catalog_revision=catalog_revision
@@ -685,7 +686,7 @@ def _validate_p_item_published_source(
     deployment = published.get("catalog_production_deployment")
     if (
         set(published) != {"source_type", "catalog_production_deployment", "references"}
-        or published.get("source_type") not in {"third_party_published_ui_crops", "user_provided_ui_crops"}
+        or published.get("source_type") not in {"third_party_published_ui_crops", "user_provided_ui_crops", "mixed_verified_ui_crops"}
         or not isinstance(deployment, Mapping)
         or set(deployment) != {"deployment_id", "revision", "status"}
         or isinstance(deployment.get("deployment_id"), bool)
@@ -1612,7 +1613,7 @@ def _evaluate_p_item(
             raise StaticReferenceHandoffError(str(error)) from error
         expected_source_revision += derived_source.SOURCE_REVISION_SUFFIX
     elif published:
-        if official.get("source_type") != ("user_provided_ui_crops" if provenance_schema_version == 6 else "third_party_published_ui_crops"):
+        if official.get("source_type") not in ({"user_provided_ui_crops"} if provenance_schema_version == 6 else {"third_party_published_ui_crops", "mixed_verified_ui_crops"}):
             raise StaticReferenceHandoffError("P-item UI provenance schema and source origin disagree")
         _validate_p_item_published_source(
             official, expected_ids=changed_ids, catalog_revision=catalog_revision

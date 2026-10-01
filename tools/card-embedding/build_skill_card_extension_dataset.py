@@ -232,8 +232,13 @@ def load_catalog(path: Path) -> tuple[CatalogCard, ...]:
 
 
 def _load_pcard(path: Path) -> list[dict[str, Any]]:
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from tools.joint_identity_source import load
+
     return _unwrap_rows(
-        _load_json(path, label="decoded pcard master"),
+        load(path),
         label="decoded pcard master",
         keys=("pcards", "cards", "items", "data"),
     )
@@ -797,6 +802,10 @@ def build_extension_dataset(
                     "license": CATALOG_LICENSE,
                 },
                 "fixed_icons": fixed_icon_source,
+                "joint_identity_sources": {
+                    str(row["identity_source"]["business_id"]): row["identity_source"]
+                    for row in _load_pcard(pcard_path) if "identity_source" in row
+                },
                 "catalog_record_count": len(catalog),
                 "decoded_pcard_record_count": len(mappings),
                 "official_manifest_revision": official_manifest.get("revision"),

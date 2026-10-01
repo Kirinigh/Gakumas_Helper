@@ -298,7 +298,7 @@ def _extension_references(
         ) from error
     sources = manifest.get("sources", {})
     fixed_icons = sources.get("fixed_icons") if isinstance(sources, Mapping) else None
-    if isinstance(fixed_icons, Mapping) and fixed_icons.get("source_type") == "third_party_published_ui_crops":
+    if isinstance(fixed_icons, Mapping) and fixed_icons.get("source_type") in {"third_party_published_ui_crops", "mixed_verified_ui_crops"}:
         project_root = Path(__file__).resolve().parents[2]
         if str(project_root) not in sys.path:
             sys.path.insert(0, str(project_root))
@@ -1551,7 +1551,7 @@ def build_badge_gallery(
             label="catalog",
         )
         source = dict(base_source)
-        if isinstance(fixed_icon_source, Mapping) and fixed_icon_source.get("source_type") == "third_party_published_ui_crops":
+        if isinstance(fixed_icon_source, Mapping) and fixed_icon_source.get("source_type") in {"third_party_published_ui_crops", "mixed_verified_ui_crops"}:
             for key in ("repository", "revision", "license"):
                 source.pop(key, None)
             source["fixed_icons"] = dict(fixed_icon_source)

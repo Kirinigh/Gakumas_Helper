@@ -7,6 +7,7 @@ Legend always belongs to other, including idol-associated Legend cards.
 from __future__ import annotations
 
 import re
+import sys
 import json
 import hashlib
 import argparse
@@ -97,7 +98,9 @@ def build(catalog_path, master_path, dataset_paths, component_roots, *, revision
     require(bool(revision.strip()), "index revision is required")
     catalog = indexed(read(catalog_path), lambda r: r["id"])
     require(all(type(i) is int and i > 0 for i in catalog), "invalid business ID")
-    master = indexed(read(master_path), lambda r: (r["id"], r["upgradeCount"]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools.joint_identity_source import load
+    master = indexed(load(master_path), lambda r: (r["id"], r["upgradeCount"]))
     mappings, datasets = {}, []
     for path in dataset_paths:
         manifest = read(path)
@@ -145,6 +148,12 @@ def build(catalog_path, master_path, dataset_paths, component_roots, *, revision
                 },
             }
         )
+        if "identity_source" in official:
+            source = cards[-1]["source"]
+            source["official_plan"] = None
+            source["official_rarity"] = None
+            source["joint_identity"] = official["identity_source"]
+            source["kind_basis"] = "catalog_source_with_joint_identity"
     galleries = []
     require(len(component_roots) == 3, "require base, arena and badge components")
     require(len({Path(p).resolve() for p in component_roots}) == 3, "duplicate component root")

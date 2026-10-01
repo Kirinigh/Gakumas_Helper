@@ -43,3 +43,33 @@ all 12 templates remain unchanged. The borrowed normal-state identity image,
 which displays cost 4, is excluded from this cost build. Provenance binds the
 previous three-file handoff and the new fixed catalog; the builder and release
 validator verify the exact derivation. Independent live validation remains PENDING.
+
+### Gallery batch 12 (2026-10-01)
+
+The frozen catalog is `surisuririsu/gakumas-tools@9a305390a172cf927f168e63cafa8149b24b9448`
+(successful production deployment 6763530892). Skill IDs 881–886 and P-item IDs
+491–494 are appended. The decoded Japanese master mirror is still at its previous
+revision. New identity records therefore explicitly use a joint source: catalog
+labels, public internal IDs from `pinisok/GakumasTranslationDataKor@6f1282f6739dc704047236135363119b9ce8f119`,
+official PC manifest 705100:0067 and actual complete UI references. These labels
+are not represented as decoded official master fields or imported translations.
+
+Skills 882/884/886 and items 492/494 use Game8 images; skill 885 uses the public
+kirin_mets_Xeno post 2105128331121471932. Normal skills 881/883 and items 491/493
+use user-authorized local Maa captures with Null input. Full screenshots and their
+fingerprints remain local; release provenance binds only the isolated card/item
+source crops. The native 64×64 item crops are resized to 130×130 without claiming
+additional detail. Public images retain UNKNOWN capture provenance, and local
+sources retain USER_AUTHORIZED_LOCAL_MAA. Neither becomes independent live
+acceptance evidence. No original screenshots or source crops are distributed.
+
+The base gallery contains 4,186 references; the arena gallery contains 8,362,
+including the unchanged 4,176 previously enabled full-UI references. Badge
+references total 3,419. All previous numerical references and both encoders are
+preserved. P-item references increase from 436 to 440 with all prior PNG bytes
+preserved. The P-item independent source evidence is
+`tools/p-item-embedding/evidence/p_item_production_source_mixed_ui_20261001.json`,
+SHA-256 `5252BF4596C18038F77FEBDE20E1E42416CD150F88D11189DA566DD03A35638D`.
+Classification covers 886 skills and 494 items; item 495 is precollected locally
+only. Source rights, release exclusions, runtime thresholds, the existing 880
+provisional identity treatment and pending live/latency acceptance remain unchanged.

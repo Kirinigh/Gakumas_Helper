@@ -2,9 +2,9 @@
   "build": {
     "tool_contract": "task095-arena-full-ui-union-v1",
     "mode": "GALLERY_ONLY",
-    "base_manifest_sha256": "F6C5A1FE44C970FFF35489ACBFF8BD999E4797BD102153586E7793C281A539E2",
-    "base_gallery_sha256": "CA409E94A2A38E31305F5877A1124D3397D318E489ED16D89361BA47352BAFC6",
-    "preserved_rows": 4180,
+    "base_manifest_sha256": "152E629C791CC48B0718F5BEA7F0C7679126AB9BFA46FD6D7C43B96DBF2408B9",
+    "base_gallery_sha256": "624A35C8AE22628B57D5FF104C87C59A39AA035B7686E5BD7B8DA392CB763C97",
+    "preserved_rows": 4186,
     "appended_rows": 4176,
     "frozen_gallery_sha256": "674B3B995926EC36D3743E41E544ADF0DF52A9A3EC99CBDC1126DE3BB0B65FF9",
     "reference_manifest_sha256s": [
@@ -27,14 +27,14 @@
   },
   "component": "arena_custom_card_embedding",
   "gallery": {
-    "bytes": 10601664,
-    "class_table_bytes": 151423,
+    "bytes": 10618042,
+    "class_table_bytes": 151483,
     "class_table_path": "arena_card_embedding_classes.json",
-    "class_table_sha256": "124A788796F6D8FD013AF379100F5FA6682BE33F60EC60D224E0E41A11B3337F",
+    "class_table_sha256": "12E13ED8B0B61F58D241BCEC32C1BE11F301A181A4CE04F5E7A968BFB7B48015",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "arena_card_embedding_gallery.npz",
-    "sha256": "4B9878293D4D77042D71A2723ECB19010535D3C5E41EA68EC577D0FD54A067D9"
+    "sha256": "9CD7BB5929CC792C250E091629F6B393945C1F3F25B5740388C6E287D0BE7111"
   },
   "model": {
     "bytes": 441780,
@@ -57,8 +57,8 @@
   },
   "schema_version": 1,
   "source": {
-    "business_card_id_count": 880,
-    "business_card_id_set_sha256": "C255715E30B7205ADB4543EBB636AE3DED256F3B3F70AC3994094A9FD14464F6",
+    "business_card_id_count": 886,
+    "business_card_id_set_sha256": "87729FE9367D93431D978417D46B8DAEA76CD727DDD6FAD6CAC4DDA18713520C",
     "business_card_ids": [
       1,
       2,
@@ -939,23 +939,31 @@
       877,
       878,
       879,
-      880
+      880,
+      881,
+      882,
+      883,
+      884,
+      885,
+      886
     ],
-    "dataset_id": "task095-skill-card-extension-pc-705100-0062-41153f-published-ui-provisional-shared",
+    "dataset_id": "task095-skill-card-extension-pc-705100-0067-9a3053-joint-ui",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "48160BE76DADEB23C2B326D29C862F704BC8F8DBB3E2EDC18DF2B7FA436D98B0",
-    "dataset_revision": "pc-705100-0062-41153f-published-ui-provisional-shared",
-    "extension_business_card_id_count": 4,
+    "dataset_manifest_sha256": "2FA9FC4ABF623F80BFCCC3FC5DDFE388ECE58BE749A0DF11C9565DCFF7F6EF23",
+    "dataset_revision": "pc-705100-0067-9a3053-joint-ui",
+    "extension_business_card_id_count": 6,
     "extension_business_card_ids": [
-      877,
-      878,
-      879,
-      880
+      881,
+      882,
+      883,
+      884,
+      885,
+      886
     ],
-    "image_class_count": 8356,
+    "image_class_count": 8362,
     "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES",
     "training_target": "encoder unchanged; gallery reference augmentation only",
-    "visual_identity_count": 452
+    "visual_identity_count": 455
   },
   "validation": {
     "state": "USER_AUTHORIZED_ENABLE_VALIDATION_PENDING",
@@ -965,6 +973,6 @@
       "opponent_full_flow",
       "current_297_and_553_failure_pairs"
     ],
-    "frozen_diagnostic_report_sha256": "E0002630C87CCD2282D7B2091403F45D1A3E15DF6A79D58A5890DCC8263A4316"
+    "frozen_diagnostic_report_sha256": "4B1591DDA6F1FDC516F9724828A8A0901753CC62E9937DCC027521F93EBF7B10"
   }
 }

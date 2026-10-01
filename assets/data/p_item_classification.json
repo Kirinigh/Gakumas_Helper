@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "task095-p-item-classification-490-v1",
+  "revision": "task095-p-item-classification-494-joint-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "p_item_plan_and_four_kinds_v1",
   "runtime_filtering_enabled": false,
@@ -8,16 +8,15 @@
     "catalog": {
       "repository": "https://github.com/surisuririsu/gakumas-tools",
       "path": "packages/gakumas-data/json/p_items.json",
-      "revision": "61608ec27bd2a56f0e4bd872fe8120229f2621d5",
-      "p_items_sha256": "2DB552D995E28A8F188AF7E99B7990A36A21B90CD8E817D452542D10C466066B"
+      "revision": "9a305390a172cf927f168e63cafa8149b24b9448",
+      "p_items_sha256": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B"
     },
     "official_master": {
       "file": "ProduceItem.yaml",
-      "url": "https://raw.githubusercontent.com/vertesan/gakumasu-diff/75eb2a94eb494a6e74053c0f295cb026e837e32a/ProduceItem.yaml",
-      "bytes": 17061492,
-      "sha256": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A"
+      "source_kind": "JOINT_SOURCE_NOT_OFFICIAL_MASTER",
+      "sha256": "65EA1749C8B50039A770E3180FB3065D6BBEBCD5BF91CA6B25CD721ED2E9EA00"
     },
-    "catalog_evidence_sha256": "9F5988796E573D3E2B2A0500A87ED18FE31CB6E8E7BE04B9CC0D3544D67CC414",
+    "catalog_evidence_sha256": "B3645E7890EB1AD617722BA549327662F676732D8DDD479C43AD136D77279B96",
     "visual_dataset_manifest_sha256": "78AA1885B75925D34C9186F15FFB3723D78A4DF1F6D183CE6A4523768D71492B",
     "visual_crosswalk_sha256": "9E7CCC422C9308F20CB157DAF922E048CB49CE03B1C8EA581EA1C60BB9544182"
   },
@@ -18021,6 +18020,138 @@
         }
       },
       "paired_business_id": null
+    },
+    {
+      "business_id": 491,
+      "name": "小悪魔の色気",
+      "upgraded": false,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 157,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_with_joint_identity",
+        "kind_basis": "catalog_source_and_mode_with_joint_identity",
+        "official_mapping": "joint_source_not_official_master",
+        "official": null,
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 491,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A",
+            "catalog": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "E51AA8505594F2B125E50860E9EAA29F2AF322F705BA05AF0D631F102E215D17"
+          }
+        }
+      },
+      "paired_business_id": 492
+    },
+    {
+      "business_id": 492,
+      "name": "小悪魔の色気+",
+      "upgraded": true,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 157,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_with_joint_identity",
+        "kind_basis": "catalog_source_and_mode_with_joint_identity",
+        "official_mapping": "joint_source_not_official_master",
+        "official": null,
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 492,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A",
+            "catalog": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "E51AA8505594F2B125E50860E9EAA29F2AF322F705BA05AF0D631F102E215D17"
+          }
+        }
+      },
+      "paired_business_id": 491
+    },
+    {
+      "business_id": 493,
+      "name": "天性の才能",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 158,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_with_joint_identity",
+        "kind_basis": "catalog_source_and_mode_with_joint_identity",
+        "official_mapping": "joint_source_not_official_master",
+        "official": null,
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 493,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A",
+            "catalog": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "E51AA8505594F2B125E50860E9EAA29F2AF322F705BA05AF0D631F102E215D17"
+          }
+        }
+      },
+      "paired_business_id": 494
+    },
+    {
+      "business_id": 494,
+      "name": "天性の才能+",
+      "upgraded": true,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 158,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_with_joint_identity",
+        "kind_basis": "catalog_source_and_mode_with_joint_identity",
+        "official_mapping": "joint_source_not_official_master",
+        "official": null,
+        "joint_identity": {
+          "contract": "catalog-public-id-official-art-ui-v1",
+          "business_id": 494,
+          "field_basis": "catalog_labels_public_internal_id_official_asset_name",
+          "sources": {
+            "base_master": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A",
+            "catalog": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
+            "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "ui_manifest": "E51AA8505594F2B125E50860E9EAA29F2AF322F705BA05AF0D631F102E215D17"
+          }
+        }
+      },
+      "paired_business_id": 493
     }
   ],
   "indexes": {
@@ -18231,7 +18362,9 @@
         478,
         479,
         482,
-        483
+        483,
+        493,
+        494
       ],
       "logic": [
         5,
@@ -18521,7 +18654,9 @@
         472,
         488,
         489,
-        490
+        490,
+        491,
+        492
       ]
     },
     "kind": {
@@ -18834,7 +18969,11 @@
         485,
         486,
         488,
-        489
+        489,
+        491,
+        492,
+        493,
+        494
       ],
       "support_inheritable": [
         71,
@@ -19028,12 +19167,12 @@
   "counts": {
     "plan": {
       "free": 50,
-      "sense": 154,
+      "sense": 156,
       "logic": 171,
-      "anomaly": 115
+      "anomaly": 117
     },
     "kind": {
-      "p_idol": 309,
+      "p_idol": 313,
       "support_inheritable": 50,
       "support_non_inheritable": 83,
       "other": 48
@@ -19048,14 +19187,18 @@
     436,
     437,
     438,
-    439
+    439,
+    491,
+    492,
+    493,
+    494
   ],
   "gallery_coverage": {
     "component": "p_item_reference",
     "join_key": "business_id",
-    "business_id_count": 436,
-    "manifest_sha256": "CE1036A5AAAF035C1C8F9945C605B631893D9D6C0945D037D8D416E88A95075C",
-    "gallery_sha256": "A0606F5FFD336DE04DA78C8D9DCD78F5952EC329692F45D1649E3D25002B8DED",
+    "business_id_count": 440,
+    "manifest_sha256": "9F0065BA66D1EB3B87A9C1EE06C48EF1158061AB7BC49987EB9B1A4AD0EF8B87",
+    "gallery_sha256": "1C8DDF0ABF66A2065E3C9050125B547BE9CE447450B7D7A2548A7CBD611B6211",
     "without_reference_business_ids": [
       1,
       2,

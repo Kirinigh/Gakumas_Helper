@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import json
 import hashlib
 import argparse
@@ -78,8 +79,8 @@ def classify(item, official):
         require(type(official["isExamEffect"]) is bool, "invalid official exam flag")
         require(official["isExamEffect"] == (mode == "stage"), f"mode conflict: {item['id']}")
         require(official["isUpgraded"] == item["upgraded"], "upgrade conflict")
-        require(not official["originIdolCardId"] or source == "pIdol", "idol source conflict")
-        require(not official["originSupportCardId"] or source == "support", "support source conflict")
+        require(not official.get("originIdolCardId") or source == "pIdol", "idol source conflict")
+        require(not official.get("originSupportCardId") or source == "support", "support source conflict")
         if plan != official_plan:
             require(PLAN_DIFFERENCES.get(item["id"]) == (plan, official_plan), "unreviewed plan conflict")
         if item["id"] in {406, 407, 408}:
@@ -124,7 +125,12 @@ def build(catalog_path, master_path, evidence_path, receipt_path, dataset_path, 
     crosswalk = unique(read(crosswalk_path), lambda r: r["business_id"])
     catalog = unique(read(catalog_path), lambda r: r["id"])
     require(all(type(i) is int and i > 0 for i in catalog), "invalid business ID")
-    master = yaml.load(Path(master_path).read_text(encoding="utf-8-sig"), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+    if Path(master_path).suffix == ".json":
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from tools.joint_identity_source import load
+        master = load(master_path)
+    else:
+        master = yaml.load(Path(master_path).read_text(encoding="utf-8-sig"), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
     unique(master, lambda r: r["id"])
     by_name = defaultdict(list)
     for row in master:
@@ -173,7 +179,7 @@ def build(catalog_path, master_path, evidence_path, receipt_path, dataset_path, 
             None
             if official is None
             else {
-                k: official[k]
+                k: official.get(k)
                 for k in (
                     "id",
                     "assetId",
@@ -193,6 +199,12 @@ def build(catalog_path, master_path, evidence_path, receipt_path, dataset_path, 
                 )
             }
         )
+        if official is not None and "identity_source" in official:
+            source["official"] = None
+            source["official_mapping"] = "joint_source_not_official_master"
+            source["joint_identity"] = official["identity_source"]
+            source["plan_basis"] = "catalog_plan_with_joint_identity"
+            source["kind_basis"] = "catalog_source_and_mode_with_joint_identity"
         row = {
             "business_id": bid,
             "name": item["name"],
