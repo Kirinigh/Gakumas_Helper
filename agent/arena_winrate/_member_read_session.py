@@ -351,6 +351,7 @@ def member_recognition_error_code(error: Exception) -> str | None:
         "skill_card_empty_slot_unstable",
         "skill_card_duplicate_marker_unstable",
         "p_item_unknown",
+        "p_item_intrinsic_owner_mismatch",
         "p_item_detail_parser_failed",
         "p_item_detail_ambiguous",
         "p_item_detail_open_or_title_failed",

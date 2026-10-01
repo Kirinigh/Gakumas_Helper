@@ -19,6 +19,7 @@ from collections.abc import Mapping, Callable, Sequence
 
 from .schema import SCHEMA_VERSION, validate_snapshot, validate_own_snapshot, validate_opponent_snapshot
 from .stages import ContestSeasonDefinition
+from .catalog import PIdolBindingError
 from .cancellation import ArenaReadSuperseded
 from ._reader_errors import ArenaReaderError
 from ._reader_metrics import duration_percentiles
@@ -1517,6 +1518,22 @@ class ArenaLineupReader:
                 "record_skill_card_group_observation", group_index, cards, customizations,
                 excluded_duplicate_flags, empty_flags,
             )
+        p_idol_binding = None
+        if scope is MemberObservationScope.COMPLETE:
+            catalog = getattr(self.backend, "catalog", None)
+            validate_binding = getattr(catalog, "validate_p_idol_binding", None)
+            if callable(validate_binding):
+                self._member_diagnostic("set_member_read_phase", "p_idol_binding")
+                try:
+                    # Read order is lower then upper; ownership belongs to the
+                    # upper first card, not the first card visited by the reader.
+                    p_idol_binding = validate_binding(p_item_ids[0], skill_groups[0][0])
+                except PIdolBindingError as error:
+                    raise ArenaReaderError(
+                        error.code,
+                        f"{target.team_id}/stage-{stage_number}/member-{member_slot}: {error}",
+                        retry_whole_read=False,
+                    ) from error
         slot_state_groups = tuple(
             tuple(
                 SkillCardSlotState.EXCLUDED_DUPLICATE
@@ -1555,6 +1572,8 @@ class ArenaLineupReader:
                 6,
             ),
         }
+        if p_idol_binding is not None:
+            evidence["p_idol_binding"] = p_idol_binding
         observation = MemberObservation(
             observation_id=observation_id,
             team_id=target.team_id,

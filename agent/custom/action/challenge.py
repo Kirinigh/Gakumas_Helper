@@ -35,6 +35,7 @@ from arena_winrate import (
 from maa.custom_action import CustomAction
 from arena_winrate.config import resolve_cached_arena_grade
 from arena_winrate.reader import ArenaPageState
+from arena_winrate.catalog import ArenaEntityCatalog
 from arena_winrate.decision import HIGHEST_WIN_RATE_FALLBACK_RULE
 from arena_winrate.task_log import arena_task_log, diagnostic_logger, opponent_rates_message
 from maa.agent.agent_server import AgentServer
@@ -52,6 +53,7 @@ from arena_winrate.user_messages import (
     win_rate_stop_user_status,
 )
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
+from arena_winrate._reader_resources import manifest_identity, reader_resource_pools
 from arena_winrate.upstream_component import reset_failed_arena_component_checks
 from arena_winrate.cost_fallback_logging import (
     cost_customization_fallback_log_payloads,
@@ -356,6 +358,19 @@ def _log_cost_customization_fallbacks(
     return records
 
 
+def _own_score_cache_catalog(context: Context, bundle_dir: str | Path) -> ArenaEntityCatalog:
+    """Reuse this task's fixed catalog without constructing a game reader."""
+
+    cancellation_for(context).check()
+    bundle_identity = manifest_identity(bundle_dir)
+    identity = (bundle_identity, bundle_identity) if bundle_identity is not None else None
+    catalog, _ = reader_resource_pools.for_context(context).load(
+        "catalog", identity, lambda: ArenaEntityCatalog.from_bundle(bundle_dir),
+    )
+    cancellation_for(context).check()
+    return catalog
+
+
 def _prepare_daily_own_score_cache(
     context: Context,
     *,
@@ -382,6 +397,7 @@ def _prepare_daily_own_score_cache(
         expected_upstream_commit=adapter.expected_upstream_commit,
         force_recalculate=True,
         before_cache_save=cancellation_for(context).check,
+        validate_loadout=backend.catalog.validate_p_idol_loadout,
     )
     if evaluation is None:
         raise OwnScoreCacheError("automatic recalculation did not produce an evaluation")
@@ -958,6 +974,9 @@ class ChallengeAuto(CustomAction):
                         force_recalculate=False,
                         require_prepared=auto_recalculate_own,
                         before_cache_save=cancellation_for(context).check,
+                        validate_loadout=_own_score_cache_catalog(
+                            context, component.bundle_dir,
+                        ).validate_p_idol_loadout,
                     )
                 except OwnScoreCacheError as error:
                     if auto_recalculate_own:

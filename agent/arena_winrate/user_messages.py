@@ -28,6 +28,8 @@ _ERROR_LABELS = (
     ("skill_card_close", "技能卡详情未能正常关闭或返回成员页面"),
     ("member_preview_recovery", "未能返回队伍预览并重新打开成员"),
     ("support_bonus", "支援加成页面未能打开或读取完整"),
+    ("p_item_intrinsic_owner_mismatch", "第1件 P 道具与上排第1张固有卡的 P 偶像归属不一致，重读后仍未确认"),
+    ("p_item_intrinsic_owner_unavailable", "当前资源无法确认第1件 P 道具与上排第1张固有卡的 P 偶像归属"),
     ("skill_card_reference_gallery_update_required", "技能卡图库尚未覆盖当前目录"),
     ("skill_card_title_ambiguous", "技能卡标题仍有多个可能，重读后未能区分"),
     ("skill_card_title_unrecognized", "技能卡标题未能识别，自动纠错与重读后仍未确认"),
@@ -211,7 +213,10 @@ def describe_arena_error(
             label += f"（{int(width)}×{int(height)}）"
     position = _location_text(
         location if location is not None else _raw_location(raw), raw,
-        member_only=gallery_gap or error_token in _SKILL_CARD_LAYOUT_ERRORS,
+        member_only=(
+            gallery_gap or error_token in _SKILL_CARD_LAYOUT_ERRORS
+            or error_token.startswith("p_item_intrinsic_owner_")
+        ),
     )
     prefix = f"{position}：" if position else ""
     return f"{prefix}{label}；请查看详细日志"

@@ -18,6 +18,7 @@ from .adapter import (
     OwnScoreBatch,
     SimulationBatch,
 )
+from .catalog import ArenaCatalogError
 from .decision import ArenaDecision, select_first_qualified
 from .own_cache import OwnScoreCacheError, OwnScoreCacheStore, OwnScoreResimulationRequired
 from .challenge_flow import contest_day_key
@@ -231,6 +232,7 @@ def prepare_own_score_cache(
     force_recalculate: bool,
     require_prepared: bool = False,
     before_cache_save: Callable[[], None] | None = None,
+    validate_loadout: Callable[[Mapping[str, Any]], object] | None = None,
 ) -> tuple[
     ArenaOwnScoreEvaluation | None,
     tuple[dict[str, Any], dict[str, Any]] | None,
@@ -244,6 +246,25 @@ def prepare_own_score_cache(
         reset_prepared_own_score_cache(cache_store)
     preparation_day = contest_day_key()
     evaluation: ArenaOwnScoreEvaluation | None = None
+
+    def validate_cached_snapshot(snapshot: Mapping[str, Any]) -> None:
+        if validate_loadout is None:
+            return
+        for stage in snapshot["own_team"]["stages"]:
+            for member in stage["members"]:
+                try:
+                    validate_loadout(member["loadout"])
+                except ArenaCatalogError as error:
+                    reason = (
+                        "归属不符"
+                        if getattr(error, "code", None) == "p_item_intrinsic_owner_mismatch"
+                        else "归属无法确认"
+                    )
+                    raise OwnScoreCacheError(
+                        f"旧己方缓存舞台{stage['stage_number']}/成员{member['slot']}的"
+                        f"P道具与上排第1张固有技能卡{reason}；请重算竞技场己方总分",
+                        technical_detail=getattr(error, "technical_detail", None) or str(error),
+                    ) from error
 
     def ensure_preparation_day() -> None:
         if contest_day_key() != preparation_day:
@@ -271,6 +292,8 @@ def prepare_own_score_cache(
             seed=seed,
             expected_upstream_commit=expected_upstream_commit,
         )
+        if cached is not None:
+            validate_cached_snapshot(cached[0])
     except OwnScoreResimulationRequired as error:
         if force_recalculate and evaluation is not None:
             return (
@@ -290,6 +313,8 @@ def prepare_own_score_cache(
         if snapshot is None:
             cached = None
         else:
+            validate_cached_snapshot(snapshot)
+
             class CachedOwnSnapshotProvider:
                 def read_own(self) -> Mapping[str, Any]:
                     return snapshot
@@ -314,6 +339,8 @@ def prepare_own_score_cache(
                     seed=seed,
                     expected_upstream_commit=expected_upstream_commit,
                 )
+                if cached is not None:
+                    validate_cached_snapshot(cached[0])
             except OwnScoreCacheError as error:
                 return (
                     replace(

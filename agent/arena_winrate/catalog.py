@@ -22,6 +22,14 @@ class ArenaCatalogError(ValueError):
     """Raised when clicked detail text cannot resolve one exact engine ID."""
 
 
+class PIdolBindingError(ArenaCatalogError):
+    """Raised when a member's P-item and intrinsic card cannot share an owner."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class CustomizationObservation:
     name: str
@@ -532,6 +540,53 @@ class ArenaEntityCatalog:
         """Return every P-item business ID declared by the active engine data."""
 
         return tuple(sorted(self._p_items_by_id))
+
+    def validate_p_idol_binding(
+        self, p_item_id: int, skill_card_id: int,
+    ) -> dict[str, int]:
+        """Check two independently resolved IDs against their active-catalog owner."""
+
+        item = self._p_items_by_id.get(p_item_id) if type(p_item_id) is int and p_item_id > 0 else None
+        card = self._cards_by_id.get(skill_card_id) if type(skill_card_id) is int and skill_card_id > 0 else None
+        descriptions = []
+        owners = []
+        for kind, entity_id, row in (("P-item", p_item_id, item), ("skill card", skill_card_id, card)):
+            row = row or {}
+            owner = row.get("pIdolId")
+            descriptions.append(
+                f"{kind} {row.get('name', '<unknown>')!r} "
+                f"(id={entity_id!r}, sourceType={row.get('sourceType')!r}, pIdolId={owner!r})"
+            )
+            owners.append(owner if row.get("sourceType") == "pIdol" and type(owner) is int and owner > 0 else None)
+        detail = "; ".join(descriptions)
+        if any(owner is None for owner in owners):
+            raise PIdolBindingError(
+                "p_item_intrinsic_owner_unavailable",
+                f"P-idol ownership is unavailable: {detail}",
+            )
+        if owners[0] != owners[1]:
+            raise PIdolBindingError(
+                "p_item_intrinsic_owner_mismatch",
+                f"P-item and first-group intrinsic card belong to different P-idols: {detail}",
+            )
+        return {"p_item_id": p_item_id, "skill_card_id": skill_card_id, "p_idol_id": owners[0]}
+
+    def validate_p_idol_loadout(self, loadout: Mapping[str, Any]) -> dict[str, int]:
+        """Validate only the primary P-item and the first card of the first group."""
+
+        def is_array(value: object, length: int) -> bool:
+            return isinstance(value, (list, tuple)) and len(value) == length
+
+        if isinstance(loadout, Mapping):
+            p_items = loadout.get("pItemIds")
+            groups = loadout.get("skillCardIdGroups")
+            if is_array(p_items, 4) and is_array(groups, 2) and all(is_array(group, 6) for group in groups):
+                return self.validate_p_idol_binding(p_items[0], groups[0][0])
+        raise PIdolBindingError(
+            "p_item_intrinsic_owner_unavailable",
+            "P-idol ownership is unavailable: loadout must contain four pItemIds "
+            "and two six-card skillCardIdGroups",
+        )
 
     def arena_p_item_reference_required_ids(
         self,
