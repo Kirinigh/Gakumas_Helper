@@ -448,7 +448,7 @@ def agent():
 
         Toolkit.init_option("./")
 
-        logger.debug(f"maafw Library version: {Library.version()}")
+        logger.info(f"MaaFW Library version: {Library.version()}")
 
         socket_id = sys.argv[-1]
 
