@@ -24,7 +24,7 @@ def runtime_refresh_path(relative: str) -> bool:
 
 def protected(relative: str) -> bool:
     parts = relative.lower().split("/")
-    return (parts == ["resource", "changelog.md"]
+    return ((len(parts) == 2 and parts[0] == "resource" and parts[1] in {"changelog.md", "release.md"})
             or parts[0] in MUTABLE or parts[-1] in MUTABLE_FILES
             or "__pycache__" in parts or parts[-1].endswith((".pyc", ".backupmfa")))
 
@@ -32,7 +32,7 @@ def protected(relative: str) -> bool:
 def safe_path(relative: str) -> str:
     if (not relative or "\\" in relative or ":" in relative
             or any(part in {"", ".", ".."} or part.endswith((".", " ")) for part in relative.split("/"))
-            or protected(relative)):
+            or protected(relative) or relative.casefold() in {"changes.json", STATE.casefold()}):
         raise ValueError(f"Invalid or mutable update path: {relative}")
     return relative
 

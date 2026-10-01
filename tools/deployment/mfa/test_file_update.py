@@ -36,6 +36,7 @@ def run(args):
     end = checker.index("    static void DeleteFileWithBackup", start)
     fixture = (HERE / "file_update_harness.cs").read_text().replace("// PRODUCTION_TRANSACTION", checker[start:end])
     fixture = fixture.replace("// PRODUCTION_CHANGELOG", extract_method(checker, "SaveChangelog"))
+    fixture = fixture.replace("// PRODUCTION_RELEASE", extract_method(checker, "SaveRelease"))
     (work / "Program.cs").write_text(fixture, encoding="utf-8")
     dotnet = args.dotnet.resolve()
     sdk = sorted((dotnet.parent / "sdk").glob("10.*"))[-1]
@@ -57,6 +58,13 @@ def run(args):
                               capture_output=True, text=True, encoding="utf-8", env=env)
     (work / "compile.log").write_text(compiled.stdout + compiled.stderr, encoding="utf-8")
     compiled.check_returncode()
+    network = subprocess.run([str(dotnet), str(output), "--network-timeout"], capture_output=True, timeout=10)
+    (work / "network-timeout.log").write_bytes(network.stdout + network.stderr)
+    network.check_returncode()
+    directory_safety = subprocess.run([str(dotnet), str(output), "--directory-safety", str(work / "directory-safety")],
+                                      capture_output=True, timeout=10)
+    (work / "directory-safety.log").write_bytes(directory_safety.stdout + directory_safety.stderr)
+    directory_safety.check_returncode()
     releases, assets, packages = [], {}, {}
     payload = hashlib.shake_256(b"unchanged-runtime").digest(131072)
     for index in range(1, 5):
@@ -81,6 +89,12 @@ def run(args):
             (package / "transition/module.py").write_text(f"value = {index}")
         if index < 3:
             (package / "obsolete.py").write_text("old")
+        if index < 4:
+            (package / "reverse/nested").mkdir(parents=True)
+            (package / "reverse/nested/old.py").write_text("old directory payload")
+        else:
+            (package / "reverse").write_text("replacement file")
+        (package / "zz-final.py").write_text(f"last payload {index}")
         file_update.write_state(package, version)
         package_assets = work / "assets" / version
         package_assets.mkdir(parents=True)
@@ -102,7 +116,11 @@ def run(args):
         releases.append(release)
         packages[version] = package
     results = []
-    scenarios = [("adjacent", "v0.5.3", "execute", True, 1),
+    scenarios = [("directory_rollback", "v0.5.3", "directory-rollback", True, 1),
+                 ("release_preview", "v0.5.3", "execute", True, 1),
+                 ("release_preview_full", "v0.4.9", "execute", False, 1),
+                 ("reserved_metadata", "v0.5.3", "execute", False, 1),
+                 ("adjacent", "v0.5.3", "execute", True, 1),
                  ("downloaded_changelog", "v0.5.3", "execute", True, 1),
                  ("chain_changelog", "v0.5.1", "execute", True, 3),
                  ("full_changelog", "v0.4.9", "execute", False, 1),
@@ -145,14 +163,18 @@ def run(args):
         if name == "changelog_sidecar":
             (root / "resource").mkdir()
             (root / "resource/Changelog.md.py").write_text("unknown code next to notes")
+        if name == "directory_rollback":
+            (root / "reverse/empty").mkdir()
         catalog = json.loads(json.dumps([r for r in releases if name != "missing" or r["tag_name"] != "v0.5.2"]))
         case_assets = dict(assets)
-        if name in {"explicit_full", "size_full", "corrupt_delta"}:
+        if name in {"explicit_full", "size_full", "corrupt_delta", "reserved_metadata"}:
             release = catalog[-1]
             metadata_asset = next(a for a in release["assets"] if a["name"].endswith(".json"))
             identity = metadata_asset["url"].rsplit("/", 1)[-1]
             document = json.loads(Path(case_assets[identity]).read_text())
-            if name == "explicit_full":
+            if name == "reserved_metadata":
+                document["file_update"]["target"]["files"]["CHANGES.JSON"] = "0" * 64
+            elif name == "explicit_full":
                 document["file_update"]["delta"] = None
             elif name == "size_full":
                 full = next(a for a in release["assets"] if a["name"].endswith(".zip"))
@@ -172,6 +194,7 @@ def run(args):
         config = {"root": str(root), "work": str(case / "operation"), "from": base_version, "to": "v0.5.4",
                   "catalog": catalog, "assets": case_assets, "mode": mode,
                   "save_changelog": "changelog" in name,
+                  "save_release": name.startswith("release_preview"),
                   "locked": "obsolete.py" if name == "locked_delete" else "code.py"}
         if name == "corrupt_full":
             full = next(a for a in catalog[-1]["assets"] if a["name"].endswith(".zip"))
@@ -188,7 +211,7 @@ def run(args):
         result = subprocess.run([str(dotnet), str(output), str(config_path)], capture_output=True,
                                 env=env, timeout=60)
         (case / "run.log").write_bytes(result.stdout + result.stderr)
-        if name in {"corrupt_full", "budget_exhausted", "rate_limited"}:
+        if name in {"corrupt_full", "budget_exhausted", "rate_limited", "reserved_metadata"}:
             assert result.returncode != 0, "Invalid update must fail"
             expected_root = packages.get(base_version, packages["v0.5.1"])
             for target in expected_root.rglob("*"):
@@ -204,8 +227,11 @@ def run(args):
         result.check_returncode()
         summary = json.loads(result.stdout.strip().splitlines()[-1])
         assert summary["chosen_delta"] == delta and summary["count"] == count, (name, summary)
-        if config["save_changelog"]:
-            assert (root / "resource/Changelog.md").read_text() == "downloaded release notes"
+        if config["save_release"]:
+            assert (root / "resource/Release.md").read_text() == "downloaded preview"
+        if config["save_changelog"] or config["save_release"]:
+            if config["save_changelog"]:
+                assert (root / "resource/Changelog.md").read_text() == "downloaded release notes"
             if delta:
                 full_ids = {a["url"].rsplit("/", 1)[-1] for r in catalog for a in r["assets"] if a["name"].endswith(".zip")}
                 assert not full_ids.intersection(summary["requests"]), "Announcement must not trigger full download"
