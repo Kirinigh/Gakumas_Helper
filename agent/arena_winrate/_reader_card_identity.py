@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Protocol
 from pathlib import Path
 from collections.abc import Callable, Sequence
@@ -21,6 +22,57 @@ from card_selection import EmbeddingCardRecognizer
 from card_selection.model import frame_identifier, frame_identifiers
 from arena_winrate.task_log import arena_task_log
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded
+
+
+def _strong_gallery_risk_reference_identity(
+    references: Sequence[dict[str, Any]],
+    *,
+    eligible_ids: Sequence[int],
+    maximum_error: float,
+    minimum_margin: float,
+) -> int:
+    """Require the strict fixed-reference branch in each actual source frame.
+
+    The wider zero-card error ceiling and a unique closed-set rank alone do
+    not establish this gate. Independent embedding agreement is still needed
+    by the caller; these error units are not embedding probabilities.
+    """
+    if len(references) != 3 or not math.isfinite(maximum_error) or not math.isfinite(minimum_margin):
+        return 0
+    if maximum_error <= 0 or minimum_margin <= 0:
+        return 0
+    allowed = frozenset(eligible_ids)
+    identities = []
+    groups = []
+    for reference in references:
+        if reference.get("status") == "MEASURED":
+            candidates = (reference,)
+        elif reference.get("status") == "MEASURED_CANDIDATES":
+            candidates = tuple(value for value in reference.get("candidates", ()) if isinstance(value, dict))
+        else:
+            return 0
+        candidates = tuple(value for value in candidates if value.get("reference_business_id") in allowed)
+        if len(candidates) != 1:
+            return 0
+        candidate = candidates[0]
+        error, margin = candidate.get("identity_top_error"), candidate.get("identity_group_margin")
+        if (
+            candidate.get("identity_low_confidence") is not False
+            or candidate.get("identity_resolution") == "provisional_shared_reference"
+            or type(candidate.get("reference_business_id")) is not int
+            or not isinstance(candidate.get("reference_visual_group"), str)
+            or not candidate["reference_visual_group"]
+            or type(error) not in (int, float)
+            or type(margin) not in (int, float)
+            or not math.isfinite(error)
+            or not math.isfinite(margin)
+            or not 0 <= error <= maximum_error
+            or margin < minimum_margin
+        ):
+            return 0
+        identities.append(candidate["reference_business_id"])
+        groups.append(candidate["reference_visual_group"])
+    return identities[0] if len(set(identities)) == len(set(groups)) == 1 else 0
 
 
 class CardIdentityReaderPort(Protocol):
@@ -342,9 +394,9 @@ class CardIdentityReader:
 
         Every six-card row starts with the P-idol's intrinsic card at index 0.
         A support-provided card, when present, is fixed at index 1. Ordinary
-        cards can occupy indices 1 through 5. Only during catalog drift these
-        positions need an authoritative detail; a closed-set gallery score
-        cannot exclude a missing ordinary card at any of them.
+        cards can occupy indices 1 through 5. Catalog drift marks these slots
+        for a stricter independent identity check, followed by a detail only
+        when the actual slot evidence does not pass that check.
         """
 
         if not missing_card_ids:
@@ -578,8 +630,8 @@ class CardIdentityReader:
     ) -> tuple[int, ...]:
         """Return base-card top-family IDs stable in the same three frames.
 
-        This is used only when the fixed clean reference remains non-unique
-        after the authoritative stage-plan filter.  The embedding never
+        This is used when fixed references remain non-unique or their slot is
+        exposed to a missing-gallery family. The embedding never
         supplies a business ID by itself: its stable top visual family must
         intersect the independent fixed-reference candidates uniquely.
         """
@@ -677,6 +729,60 @@ class CardIdentityReader:
             self.port._increment("skill_card_zero_identity_topk_title_fallbacks")
         return stable
 
+    def _gallery_risk_zero_card_identity(
+        self,
+        group_index: int,
+        slot_index: int,
+        *,
+        plan: str,
+        candidate_ids: Sequence[int],
+        missing_ids: Sequence[int],
+    ) -> int:
+        """Reuse source evidence; open no detail and acquire no extra frames."""
+        key = (group_index, slot_index + 1)
+        frames = self.port._card_identity_frames.get(group_index, ())
+        references = tuple(frame[slot_index] for frame in frames) if len(frames) == 3 and all(len(frame) == 6 for frame in frames) else ()
+        gallery = self.port._card_references()
+        maximum_error = float(getattr(gallery, "maximum_coarse_error", 0))
+        minimum_margin = max(
+            float(getattr(gallery, "minimum_group_margin", 0)),
+            float(getattr(gallery, "minimum_high_error_group_margin", 0)),
+        )
+        reference_id = _strong_gallery_risk_reference_identity(
+            references, eligible_ids=candidate_ids, maximum_error=maximum_error, minimum_margin=minimum_margin,
+        )
+        embedding_ids: tuple[int, ...] = ()
+        embedding_error = None
+        if reference_id:
+            try:
+                embedding_ids = self.port._stable_zero_card_embedding_family_candidates(group_index, slot_index, plan=plan)
+            except (BadgeReferenceError, ArenaReaderError) as error:
+                embedding_error = str(error)
+        resolved = reference_id if reference_id and reference_id in embedding_ids else 0
+        diagnostic = self.port._zero_card_identity_fusion_diagnostics.setdefault(key, {})
+        diagnostic.update(
+            group_index=group_index,
+            slot=slot_index + 1,
+            plan=plan,
+            missing_catalog_reference_ids=list(missing_ids),
+            fixed_reference_id=reference_id,
+            fixed_reference_maximum_error=maximum_error,
+            fixed_reference_minimum_group_margin=minimum_margin,
+            stable_embedding_candidates=list(embedding_ids),
+            embedding_error=embedding_error,
+            gallery_risk_evidence="strict_reference_and_embedding" if resolved else "requires_one_title_click",
+            mode="gallery_risk_strict_reference_and_embedding" if resolved else "active_catalog_forward_drift_fixed_slots_exact_title",
+        )
+        if resolved:
+            self.port._increment("skill_card_gallery_risk_visual_confirmations")
+        else:
+            # Missing cards must stay reachable even when every old Top-K
+            # source agrees with the wrong closed-set family.
+            self.port._zero_card_detail_candidates[key] = tuple(candidate_ids)
+            diagnostic["detail_candidates"] = list(candidate_ids)
+            self.port._increment("skill_card_gallery_risk_detail_requirements")
+        return resolved
+
     def read_skill_card_id_hints(
         self,
         target: TeamTarget,
@@ -737,26 +843,9 @@ class CardIdentityReader:
             and customization_count == 0
             and self.port._inferred_clicked_cards.get((group_index, index + 1)) is None
         )
-        forced_detail_slot_indices = tuple(slot_index for slot_index in zero_slot_indices if slot_index in drift_slot_indices)
+        risk_slot_indices = tuple(slot_index for slot_index in zero_slot_indices if slot_index in drift_slot_indices)
         reference_slot_indices = tuple(slot_index for slot_index in zero_slot_indices if slot_index not in drift_slot_indices)
-        zero_reference_ids: dict[int, int] = {slot_index: 0 for slot_index in forced_detail_slot_indices}
-        if forced_detail_slot_indices:
-            # A closed-set visual gallery cannot prove that a stable unique
-            # match is not a newly added RIS card projected onto an older ID.
-            # Fixed deck order narrows the affected positions; ordinary
-            # drift still needs every eligible zero slot's exact detail.
-            for slot_index in forced_detail_slot_indices:
-                key = (group_index, slot_index + 1)
-                self.port._zero_card_detail_candidates[key] = drift_title_candidates[slot_index]
-                self.port._zero_card_identity_fusion_diagnostics[key] = {
-                    "group_index": group_index,
-                    "slot": slot_index + 1,
-                    "plan": plan,
-                    "missing_catalog_reference_ids": list(forward_drift_ids),
-                    "detail_candidates": list(drift_title_candidates[slot_index]),
-                    "fallback_slot_indices": list(drift_slot_indices),
-                    "mode": "active_catalog_forward_drift_fixed_slots_exact_title",
-                }
+        zero_reference_ids: dict[int, int] = {}
         if reference_slot_indices:
             try:
                 zero_reference_ids.update(
@@ -792,6 +881,13 @@ class CardIdentityReader:
                         "skill_card_identity_input_mismatch",
                         f"group {group_index} lost its frame after identity refresh",
                     )
+
+        for slot_index in risk_slot_indices:
+            zero_reference_ids[slot_index] = self._gallery_risk_zero_card_identity(
+                group_index, slot_index, plan=plan,
+                candidate_ids=drift_title_candidates[slot_index], missing_ids=forward_drift_ids,
+            )
+            self.port._zero_card_identity_fusion_diagnostics[(group_index, slot_index + 1)]["fallback_slot_indices"] = list(drift_slot_indices)
 
         for index, (box, customization_count) in enumerate(
             zip(row, customization_counts, strict=True),

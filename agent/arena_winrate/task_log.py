@@ -29,7 +29,7 @@ class RunDisplay:
     enabled: bool = False
     background_shown: bool = False
     season_shown: bool = False
-    gallery_fallback_shown: bool = False
+    gallery_fallback_kinds: set[str] = field(default_factory=set)
     starts: set[str] = field(default_factory=set)
     battle_numbers: dict[str, int] = field(default_factory=dict)
     results: dict[str, str] = field(default_factory=dict)
@@ -103,17 +103,18 @@ class ArenaTaskLog:
                 state.enabled = True
                 state.failure = message
 
-    def gallery_fallback(self, context, missing_ids, logger):
+    def gallery_fallback(self, context, missing_ids, logger, *, kind="技能卡"):
         """Explain slower detail recovery once across this task's reader instances."""
         with self._lock:
             state = self.current(context)
             if state is not None:
-                if state.gallery_fallback_shown:
+                if kind in state.gallery_fallback_kinds:
                     return
-                state.gallery_fallback_shown = True
+                state.gallery_fallback_kinds.add(kind)
             identifiers = "、".join(str(value) for value in missing_ids)
             logger.warning(
-                f"竞技场技能卡图库暂缺 ID {identifiers}，已启用详情确认兜底；"
+                f"竞技场{kind}图库暂缺 ID {identifiers}；"
+                "仅对可能涉及缺图、且图像确认不足的槽位补读详情。"
                 "本次读取可能较慢，图库补齐后自动恢复原节拍。"
             )
 

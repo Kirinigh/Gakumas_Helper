@@ -19,7 +19,26 @@ from .reader import TeamTarget
 from .stages import ContestSeasonDefinition
 from .catalog import ArenaEntityCatalog
 from .geometry import p_item_screen_slot_to_engine_slot, p_item_screen_order_to_engine_order
+from .task_log import arena_task_log
 from ._reader_errors import ArenaReaderError
+
+# Leave-family-out rendering exposed confident wrong matches up to 0.946.
+# This extra gate applies only while the current slot can contain missing art;
+# ordinary slots retain the gallery's original calibrated thresholds.
+MISSING_REFERENCE_IDENTITY_THRESHOLDS = (0.95, 0.05)
+
+
+def _missing_reference_confident(decision: PItemReferenceDecision) -> bool:
+    # This only exempts an already accepted, stable and complete observation
+    # from extra catalog-drift detail. It never resolves an ambiguous identity.
+    return (
+        decision.status == "ACCEPTED"
+        and decision.p_item_id is not None
+        and decision.similarity is not None
+        and decision.margin is not None
+        and decision.similarity >= MISSING_REFERENCE_IDENTITY_THRESHOLDS[0]
+        and decision.margin >= MISSING_REFERENCE_IDENTITY_THRESHOLDS[1]
+    )
 
 
 class PItemWorkflowClock(Protocol):
@@ -155,7 +174,7 @@ class PItemReadWorkflow:
         self.reader_factory = reader_factory
 
     def assert_catalog_compatibility(self) -> None:
-        """Bind fixed-gallery drift to a safe global-title confirmation route."""
+        """Record missing references; the current Plan and slot decide recovery."""
 
         if getattr(self.port, "_p_item_catalog_compatibility_checked", False):
             return
@@ -197,6 +216,27 @@ class PItemReadWorkflow:
         eligible_ids = scope_resolver(plan=plan) if scope_resolver is not None else None
         slot_domains = tuple(scope_resolver(plan=plan, slot_index=index) for index in range(4)) if scope_resolver is not None else None
         read_scope = {} if slot_domains is None else {"eligible_p_item_ids_by_slot": slot_domains}
+        if getattr(self.port, "_p_item_catalog_compatibility_checked", False):
+            gallery_ids = frozenset(getattr(self.port, "_p_item_reference_gallery_ids", ()))
+            missing_reference_ids = tuple(sorted(frozenset(self.port.catalog.arena_p_item_reference_required_ids(plan=plan)) - gallery_ids))
+        else:
+            missing_reference_ids = tuple(getattr(self.port, "_p_item_reference_missing_arena_ids", ()))
+        missing_by_slot = tuple(
+            frozenset(missing_reference_ids) if slot_domains is None else frozenset(missing_reference_ids).intersection(domain)
+            for domain in (slot_domains if slot_domains is not None else (None,) * 4)
+        )
+        if any(missing_by_slot):
+            if slot_domains is not None:
+                read_scope["identity_thresholds_by_slot"] = tuple(
+                    MISSING_REFERENCE_IDENTITY_THRESHOLDS if missing else None for missing in missing_by_slot
+                )
+            if not getattr(self.port, "_p_item_gallery_warning_shown", False):
+                from utils import logger as visible_logger
+
+                arena_task_log.gallery_fallback(
+                    getattr(self.port, "context", None), missing_reference_ids, visible_logger, kind="P 道具"
+                )
+                self.port._p_item_gallery_warning_shown = True
         first = self.port._capture()
         height, width = first.shape[:2]
         icon = int(width * 0.09)
@@ -265,6 +305,21 @@ class PItemReadWorkflow:
                     )
             if all(decision.accepted for decision in decisions):
                 break
+            runtime = getattr(getattr(self.port.p_item_reader, "gallery", None), "runtime", None)
+            if runtime is not None and all(
+                decision.accepted or (
+                    missing_by_slot[index]
+                    and decision.reason in {"reference_similarity_below_threshold", "reference_margin_below_threshold"}
+                    and decision.similarity is not None and decision.margin is not None
+                    and decision.similarity >= runtime.identity_minimum_similarity
+                    and decision.margin >= runtime.identity_minimum_margin
+                )
+                for index, decision in enumerate(decisions)
+            ):
+                # Stable images passed the ordinary gate; another capture
+                # cannot supply the absent reference. Their same-frame size
+                # retry has already run, so proceed directly to scoped detail.
+                break
             if generation_attempt == 1:
                 self.port._increment("p_item_generation_resamples")
                 continue
@@ -301,17 +356,14 @@ class PItemReadWorkflow:
                     for index, decision in ambiguous
                 ),
             )
-        if getattr(self.port, "_p_item_catalog_compatibility_checked", False):
-            gallery_ids = frozenset(getattr(self.port, "_p_item_reference_gallery_ids", ()))
-            missing_reference_ids = tuple(sorted(frozenset(self.port.catalog.arena_p_item_reference_required_ids(plan=plan)) - gallery_ids))
-        else:
-            missing_reference_ids = tuple(getattr(self.port, "_p_item_reference_missing_arena_ids", ()))
         unknown_catalog_ids = frozenset(getattr(self.port, "_p_item_reference_unknown_catalog_ids", ()))
         provisional_reference_ids = frozenset(getattr(self.port, "_p_item_reference_provisional_ids", ()))
         visual_tiebreak_blocked_ids = tuple(sorted(frozenset(missing_reference_ids).union(provisional_reference_ids)))
-        force_missing_reference_detail = bool(missing_reference_ids)
         force_catalog_superset_detail = bool(unknown_catalog_ids)
-        force_global_detail = force_missing_reference_detail or force_catalog_superset_detail
+        missing_detail_slots = {
+            index for index, decision in enumerate(decisions, start=1)
+            if missing_by_slot[index - 1] and decision.status != "EMPTY" and not _missing_reference_confident(decision)
+        }
         provisional_plan_ids = frozenset(
             provisional_reference_ids.intersection(self.port.catalog.arena_p_item_reference_required_ids(plan=plan))
             if provisional_reference_ids
@@ -319,7 +371,7 @@ class PItemReadWorkflow:
         )
         detail_by_slot = dict(detail_eligible)
         global_detail_slots: set[int] = set()
-        if force_global_detail:
+        if force_catalog_superset_detail:
             detail_by_slot.update((index, decision) for index, decision in enumerate(decisions, start=1) if decision.status != "EMPTY")
             global_detail_slots.update(detail_by_slot)
         else:
@@ -332,11 +384,16 @@ class PItemReadWorkflow:
                 if provisional_reference_ids.intersection(observed_ids):
                     detail_by_slot[index] = decision
                     global_detail_slots.add(index)
+            # Include missing IDs in detail lookup, but only for reachable slots
+            # whose image evidence did not satisfy the stronger identity gate.
+            for index in missing_detail_slots:
+                detail_by_slot[index] = decisions[index - 1]
+                global_detail_slots.add(index)
         detail_budget = self.port.p_item_reader.maximum_detail_fallbacks_per_member
         budgeted_detail_slots = set(detail_by_slot) - global_detail_slots
-        if force_global_detail:
-            # Catalog drift is the one case that intentionally confirms every
-            # non-empty slot.  It is bounded by the four-slot page itself.port.
+        if force_catalog_superset_detail or missing_detail_slots:
+            # A missing domain may affect up to four slots; this never changes
+            # the member's retry or any individual detail transaction budget.
             detail_budget = 4
             budgeted_detail_slots = set(detail_by_slot)
         if len(budgeted_detail_slots) > detail_budget:
@@ -386,7 +443,7 @@ class PItemReadWorkflow:
                         decision,
                         path=(
                             "catalog_drift_global_detail_confirmation"
-                            if force_missing_reference_detail
+                            if screen_slot in missing_detail_slots
                             else "catalog_superset_global_detail_confirmation"
                             if force_catalog_superset_detail
                             else "provisional_reference_global_detail_confirmation"
@@ -404,7 +461,13 @@ class PItemReadWorkflow:
                     f"P-item screen slot {screen_slot} has no resolved business ID",
                 )
             screen_resolved_ids.append(decision.p_item_id)
-            path = "stable_empty_slot" if decision.status == "EMPTY" else "three_frame_rendered_reference"
+            path = (
+                "stable_empty_slot" if decision.status == "EMPTY"
+                else "catalog_drift_confident_reference" if missing_by_slot[screen_slot - 1]
+                else "three_frame_rendered_reference"
+            )
+            if path == "catalog_drift_confident_reference":
+                self.port._increment("p_item_catalog_drift_confident_references")
             self.port._increment("p_item_empty_slots" if decision.status == "EMPTY" else "p_item_exact_reference_resolutions")
             screen_diagnostics.append(
                 self.port._p_item_decision_evidence(
@@ -442,10 +505,12 @@ class PItemReadWorkflow:
             "screen_slot_to_engine_slot": [1, 4, 3, 2],
             "matching_seconds": round(matching_seconds, 6),
             "missing_arena_reference_ids": list(missing_reference_ids),
+            "missing_reference_ids_by_screen_slot": [sorted(missing) for missing in missing_by_slot],
+            "missing_reference_identity_thresholds": list(MISSING_REFERENCE_IDENTITY_THRESHOLDS),
             "unknown_catalog_gallery_ids": sorted(unknown_catalog_ids),
             "provisional_reference_ids": sorted(provisional_reference_ids),
             "provisional_plan_ids": sorted(provisional_plan_ids),
-            "catalog_drift_global_detail_confirmations": (len(global_detail_slots) if force_missing_reference_detail else 0),
+            "catalog_drift_global_detail_confirmations": len(missing_detail_slots),
             "catalog_superset_global_detail_confirmations": (len(global_detail_slots) if force_catalog_superset_detail else 0),
             "provisional_reference_global_detail_confirmations": (
                 sum(
@@ -457,7 +522,7 @@ class PItemReadWorkflow:
                     for index, decision in enumerate(decisions, start=1)
                     if index in global_detail_slots
                 )
-                if not force_global_detail
+                if not force_catalog_superset_detail
                 else 0
             ),
         }

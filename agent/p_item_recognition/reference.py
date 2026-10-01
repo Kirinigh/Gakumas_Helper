@@ -746,7 +746,15 @@ class PItemRenderedReferenceGallery:
         plan: str,
         eligible_p_item_ids: frozenset[int] | None = None,
         allow_scale_fallback: bool = True,
+        identity_thresholds: tuple[float, float] | None = None,
     ) -> PItemReferenceDecision:
+        minimum_similarity = self.runtime.identity_minimum_similarity
+        minimum_margin = self.runtime.identity_minimum_margin
+        if identity_thresholds is not None:
+            similarity, margin = identity_thresholds
+            if not (minimum_similarity <= similarity <= 1 and minimum_margin <= margin <= 1):
+                raise PItemReferenceError("P-item scoped thresholds may only tighten the normal gate")
+            minimum_similarity, minimum_margin = similarity, margin
         if len(images) != self.runtime.stable_frame_count:
             raise PItemReferenceError(
                 f"P-item identity requires {self.runtime.stable_frame_count} frames"
@@ -909,9 +917,9 @@ class PItemRenderedReferenceGallery:
                 else min(float(value) for value in frame_margins)
             )
             candidates = tuple(hit.p_item_id for hit in first_top_k)
-            if similarity < self.runtime.identity_minimum_similarity:
+            if similarity < minimum_similarity:
                 reason = "reference_similarity_below_threshold"
-            elif margin is None or margin < self.runtime.identity_minimum_margin:
+            elif margin is None or margin < minimum_margin:
                 reason = "reference_margin_below_threshold"
             else:
                 return PItemReferenceDecision(

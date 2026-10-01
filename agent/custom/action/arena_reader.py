@@ -245,6 +245,7 @@ class PItemReader(Protocol):
         eligible_p_item_ids: frozenset[int] | None = None,
         eligible_p_item_ids_by_slot: Sequence[frozenset[int]] | None = None,
         scale_fallback_allowed_by_slot: Sequence[bool] | None = None,
+        identity_thresholds_by_slot: Sequence[tuple[float, float] | None] | None = None,
     ) -> Sequence[PItemReferenceDecision]: ...
 
 
@@ -293,12 +294,15 @@ class Task085PItemReader:
         eligible_p_item_ids: frozenset[int] | None = None,
         eligible_p_item_ids_by_slot: Sequence[frozenset[int]] | None = None,
         scale_fallback_allowed_by_slot: Sequence[bool] | None = None,
+        identity_thresholds_by_slot: Sequence[tuple[float, float] | None] | None = None,
     ) -> Sequence[PItemReferenceDecision]:
         if eligible_p_item_ids_by_slot is not None and len(eligible_p_item_ids_by_slot) != len(boxes):
             raise PItemReferenceError("P-item candidate domains must match the screen slots")
 
         if scale_fallback_allowed_by_slot is not None and len(scale_fallback_allowed_by_slot) != len(boxes):
             raise PItemReferenceError("P-item scale budgets must match the screen slots")
+        if identity_thresholds_by_slot is not None and len(identity_thresholds_by_slot) != len(boxes):
+            raise PItemReferenceError("P-item identity thresholds must match the screen slots")
 
         def classify(entry: tuple[int, tuple[int, int, int, int]]) -> PItemReferenceDecision:
             slot_index, box = entry
@@ -308,6 +312,8 @@ class Task085PItemReader:
                 plan=plan,
                 allow_scale_fallback=(True if scale_fallback_allowed_by_slot is None else scale_fallback_allowed_by_slot[slot_index]),
                 eligible_p_item_ids=(eligible_p_item_ids if eligible_p_item_ids_by_slot is None else eligible_p_item_ids_by_slot[slot_index]),
+                **({} if identity_thresholds_by_slot is None or identity_thresholds_by_slot[slot_index] is None
+                   else {"identity_thresholds": identity_thresholds_by_slot[slot_index]}),
             )
 
         with ThreadPoolExecutor(max_workers=min(2, len(boxes))) as executor:
