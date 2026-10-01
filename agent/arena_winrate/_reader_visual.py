@@ -540,7 +540,9 @@ def _background_parameter_column_left(
     the column as background only when two distinct, exact parameter
     labels each have their own aligned numeric value below them.  One
     label or an unpaired number is intentionally insufficient because the
-    same words and digits may legitimately occur inside card effects.
+    same words and digits may legitimately occur inside card effects. A
+    missing neighboring attribute label may instead be proved by two
+    separately paired percentage rows in the ordered attribute column.
     """
 
     title_x, title_y, title_width, _ = title_box
@@ -627,7 +629,118 @@ def _background_parameter_column_left(
         seen_numbers.add(number_box)
         unique_pairs.append((label, label_box, number_box))
     if len(unique_pairs) < 2:
-        return None
+        # A top-clamped panel can expose the Dance value while its label is
+        # outside the frame. Do not infer a row from the naked value: both
+        # this row and the one surviving attribute label need independent,
+        # horizontally adjacent percentage boxes. Stamina has no percentage.
+        attribute_order = {"ボーカル": 0, "ダンス": 1, "ビジュアル": 2}
+        if len(unique_pairs) != 1 or len(labels) != 1:
+            return None
+        label, label_box, labelled_number = unique_pairs[0]
+        if label not in attribute_order:
+            return None
+        percentages: list[tuple[int, int, int, int]] = []
+        for item in items:
+            text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", _text(item)))
+            box = _box(item)
+            if re.fullmatch(r"[0-9]{1,3}%", text) and box[2] > 0 and box[3] > 0:
+                percentages.append(box)
+        percent_rows: list[
+            tuple[tuple[int, int, int, int], tuple[int, int, int, int]]
+        ] = []
+        for number in numbers:
+            nx, ny, nw, nh = number
+            mates = [
+                percent
+                for percent in percentages
+                if 0 <= percent[0] - (nx + nw) <= frame_width * 0.06
+                and abs(percent[1] + percent[3] / 2.0 - (ny + nh / 2.0))
+                <= min(nh, percent[3]) * 0.35
+            ]
+            if len(mates) > 1:
+                return None
+            if mates:
+                percent_rows.append((number, mates[0]))
+        # Neither an ambiguous third row nor reusing one percentage/number
+        # can stand in for the two independently observed attribute rows.
+        if (
+            len(percent_rows) != 2
+            or len({row[0] for row in percent_rows}) != 2
+            or len({row[1] for row in percent_rows}) != 2
+        ):
+            return None
+        labelled_rows = [row for row in percent_rows if row[0] == labelled_number]
+        if len(labelled_rows) != 1:
+            return None
+        other_number, _ = next(row for row in percent_rows if row[0] != labelled_number)
+        row_step = (
+            other_number[1] + other_number[3] / 2.0
+            - labelled_number[1] - labelled_number[3] / 2.0
+        )
+        adjacent_index = attribute_order[label] + (1 if row_step > 0 else -1)
+        if (
+            adjacent_index not in range(3)
+            or not frame_height * 0.02 <= abs(row_step) <= frame_height * 0.08
+            or min(other_number[1] + other_number[3], labelled_number[1] + labelled_number[3])
+            > max(other_number[1], labelled_number[1])
+            or (row_step < 0 and other_number[1] + other_number[3] > label_box[1])
+            or (
+                row_step > 0
+                and labelled_number[1] + labelled_number[3]
+                > other_number[1] - (labelled_number[1] - label_box[1])
+            )
+        ):
+            return None
+        number_lefts = [row[0][0] for row in percent_rows]
+        percent_lefts = [row[1][0] for row in percent_rows]
+        lane_tolerance = max(4, int(round(frame_width * 0.035)))
+        if (
+            max((*number_lefts, label_box[0])) - min((*number_lefts, label_box[0]))
+            > lane_tolerance
+            or max(percent_lefts) - min(percent_lefts) > lane_tolerance
+        ):
+            return None
+        proof_boxes = (label_box, *(box for row in percent_rows for box in row))
+        pair_top = min(box[1] for box in proof_boxes)
+        pair_bottom = max(box[1] + box[3] for box in proof_boxes)
+        if pair_top >= roi_bottom or pair_bottom <= max(roi_top, title_y):
+            return None
+        boundary = min((*number_lefts, label_box[0])) - max(
+            2, int(round(frame_width * 0.008))
+        )
+        if boundary <= title_right + max(4, int(round(frame_width * 0.02))):
+            return None
+        # This weaker label route must not crop a visible right-side effect
+        # token (including one crossing the proposed boundary). Only exact
+        # stat labels and bare stat values may occupy that exposed strip.
+        for item in items:
+            item_box = _box(item)
+            x, y, width, height = item_box
+            if (
+                width <= 0 or height <= 0
+                or y + height <= max(roi_top, title_y) or y >= roi_bottom
+            ):
+                continue
+            text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", _text(item)))
+            if x + width <= boundary:
+                # A naked value in the apparent stat strip can still finish
+                # an OCR-split effect on the left ("スコア+" / "600", or
+                # "元気の" / "150%"). Its role is then ambiguous. Keep the
+                # wide ROI when the retained body has an unfinished numeric
+                # effect prefix, even if its digits were detected separately.
+                # The bound card title's own upgrade '+' is not effect text.
+                if item_box != title_box and re.search(
+                    r"(?:[+の]|消費|追加|値増加|スコア|コア|元気|体力|集中|"
+                    r"やる気|好印象|好調|全力値)$",
+                    text,
+                ):
+                    return None
+                continue
+            if text not in {*attribute_order, "体力"} and not re.fullmatch(
+                r"[0-9]{1,6}|[0-9]{1,3}%", text
+            ):
+                return None
+        return boundary
     pair_top = min(
         min(pair[1][1], pair[2][1]) for pair in unique_pairs
     )

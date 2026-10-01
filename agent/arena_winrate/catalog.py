@@ -8,7 +8,7 @@ import itertools
 from typing import Any
 from decimal import Decimal
 from pathlib import Path
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import replace, dataclass
 from collections.abc import Mapping, Sequence
 
@@ -3004,6 +3004,54 @@ class ArenaEntityCatalog:
             return "試験・ステージ中1回" in compact
         return False
 
+    @staticmethod
+    def _covered_optional_row_detail_views(
+        card: Mapping[str, Any],
+        *,
+        combined_detail_text: str,
+        full_detail_text: str | None,
+        effect_roi_text: str | None,
+        effect_roi_title_bound: bool,
+        effect_roi_observation_count: int,
+    ) -> tuple[str, ...]:
+        """Bind the exact merged text to full detail and independent ROI views."""
+
+        if (
+            not effect_roi_title_bound
+            or not isinstance(full_detail_text, str)
+            or not isinstance(effect_roi_text, str)
+            or not full_detail_text.strip()
+            or not effect_roi_text.strip()
+            or _OCR_EFFECT_VIEW_BOUNDARY in full_detail_text
+            or type(effect_roi_observation_count) is not int
+            or effect_roi_observation_count < 2
+        ):
+            return ()
+        roi_views = tuple(
+            dict.fromkeys(
+                view.strip()
+                for view in effect_roi_text.split(_OCR_EFFECT_VIEW_BOUNDARY)
+                if view.strip()
+            )
+        )
+        combined_views = tuple(
+            dict.fromkeys(
+                view.strip()
+                for view in combined_detail_text.split(_OCR_EFFECT_VIEW_BOUNDARY)
+                if view.strip()
+            )
+        )
+        coverage_views = tuple(dict.fromkeys((full_detail_text.strip(), *roi_views)))
+        # Two independent passes may have identical text. Their observation
+        # count survives compatibility-merger deduplication, but a stale tuple
+        # cannot authenticate text from another detail frame.
+        if combined_views != coverage_views:
+            return ()
+        title = _normalise_skill_card_title_text(card.get("name"))
+        if not title or title not in _normalise_skill_card_title_text(full_detail_text):
+            return ()
+        return coverage_views
+
     def _covered_target_growth_zero_signature_is_visible(
         self,
         card: Mapping[str, Any],
@@ -3064,45 +3112,15 @@ class ArenaEntityCatalog:
         if len(targets) != 1 or len(increments) != maximum:
             return False
 
-        if (
-            not effect_roi_title_bound
-            or not isinstance(full_detail_text, str)
-            or not isinstance(effect_roi_text, str)
-            or not full_detail_text.strip()
-            or not effect_roi_text.strip()
-            or _OCR_EFFECT_VIEW_BOUNDARY in full_detail_text
-            or type(effect_roi_observation_count) is not int
-            or effect_roi_observation_count < 2
-        ):
-            return False
-        roi_views = tuple(
-            dict.fromkeys(
-                view.strip()
-                for view in effect_roi_text.split(_OCR_EFFECT_VIEW_BOUNDARY)
-                if view.strip()
-            )
+        views = self._covered_optional_row_detail_views(
+            card,
+            combined_detail_text=combined_detail_text,
+            full_detail_text=full_detail_text,
+            effect_roi_text=effect_roi_text,
+            effect_roi_title_bound=effect_roi_title_bound,
+            effect_roi_observation_count=effect_roi_observation_count,
         )
-        combined_views = tuple(
-            dict.fromkeys(
-                view.strip()
-                for view in combined_detail_text.split(_OCR_EFFECT_VIEW_BOUNDARY)
-                if view.strip()
-            )
-        )
-        coverage_views = tuple(
-            dict.fromkeys((full_detail_text.strip(), *roi_views))
-        )
-        # Provenance must describe the exact text being resolved.  This keeps a
-        # stale full/ROI tuple from authenticating a later detail frame.  The
-        # observation count is carried separately because two independent OCR
-        # passes can legitimately produce byte-identical text and be deduped by
-        # the compatibility merger.
-        if combined_views != coverage_views:
-            return False
-        title = _normalise_skill_card_title_text(card.get("name"))
-        if not title or title not in _normalise_skill_card_title_text(
-            full_detail_text
-        ):
+        if not views:
             return False
         anchors = self._detail_coverage_anchors(card, resolved)
         if not anchors:
@@ -3110,7 +3128,7 @@ class ArenaEntityCatalog:
         matcher = self._cached_effective_detail_matcher(card, customization_id)
         if matcher is None:
             return False
-        for view in (full_detail_text, *roi_views):
+        for view in views:
             compact = _normalise_effect_text(view)
             # Target words (手札／保留／すべて) are more fragile than the
             # shared suffix.  Losing only that word must not turn a real
@@ -3132,6 +3150,119 @@ class ArenaEntityCatalog:
                 for anchor in anchors
             ):
                 return False
+        return True
+
+    def _covered_direct_score_zero_signature_is_visible(
+        self,
+        card: Mapping[str, Any],
+        customization_id: int,
+        *,
+        resolved: Mapping[str, int],
+        combined_detail_text: str,
+        full_detail_text: str | None,
+        effect_roi_text: str | None,
+        effect_roi_title_bound: bool,
+        effect_roi_observation_count: int,
+    ) -> bool:
+        """Certify an absent added score row in a completely covered short body.
+
+        Only a pure literal score addition and a scalar base action with an
+        optional card-used scalar trigger are supported. Each independent
+        view must contain the whole ordered body and its one-use footer.
+        Initial growth changes the top-level action, never the trigger's
+        amount. More complex action programs remain unsupported here.
+        """
+
+        contract = _added_action_contract(self._customizations[customization_id])
+        if (
+            contract is None
+            or contract[0] != "score"
+            or contract[1] <= 0
+            or contract[2] != "literal_addition"
+            or any(_normalise_text(card.get(field)) for field in ("conditions", "effects"))
+            or card.get("limit") != 1
+        ):
+            return False
+        actions = re.fullmatch(
+            r"([A-Za-z]+)\+=([1-9][0-9]*)"
+            r"(?:;at:cardUsed\[(active|mental)\]\{([A-Za-z]+)\+=([1-9][0-9]*);?\})?;?",
+            _normalise_text(card.get("actions")),
+        )
+        if actions is None:
+            return False
+        field, raw_value, trigger, trigger_field, trigger_value = actions.groups()
+        if any(
+            scalar is not None
+            and (scalar == "score" or scalar not in _ADDED_NUMERIC_EFFECT_LABELS)
+            for scalar in (field, trigger_field)
+        ):
+            return False
+        value = int(raw_value)
+        for identifier, level in resolved.items():
+            if not level or self._pure_generic_cost_delta(int(identifier)) is not None:
+                continue
+            definition = self._customizations[int(identifier)]
+            delta = _direct_prestage_target_this_increment(definition.get("effects"), field, level)
+            if delta is None or any(
+                definition.get(key) not in (None, "", False)
+                for key in ("actions", "conditions", "cost", "limit", "forceInitialHand")
+            ):
+                return False
+            value += delta
+
+        def scalar_pattern(scalar: str, amount: int) -> str:
+            prefix, suffix = _ADDED_NUMERIC_EFFECT_LABELS[scalar]
+            return (
+                rf"{_numeric_effect_label_pattern(prefix)}{amount}"
+                rf"(?!\d|[.,．，。]\d){re.escape(suffix)}"
+            )
+
+        body_patterns = [scalar_pattern(field, value)]
+        if trigger is not None:
+            # Fixed voiced/unvoiced OCR confusion inside the complete active
+            # trigger phrase; no general fuzzy match or missing-word recovery.
+            trigger_label = "アクティ[ブプ]" if trigger == "active" else "メンタル"
+            body_patterns.append(
+                rf"以降[、,]?(?:A)?{trigger_label}スキルカード使用時[、,]?"
+                + scalar_pattern(trigger_field, int(trigger_value))
+            )
+        body_patterns.append(
+            ("重複不可" if card.get("unique") else "(?:重複不可)?")
+            + r"試験・ステージ中1回(?!\d)"
+        )
+        views = self._covered_optional_row_detail_views(
+            card,
+            combined_detail_text=combined_detail_text,
+            full_detail_text=full_detail_text,
+            effect_roi_text=effect_roi_text,
+            effect_roi_title_bound=effect_roi_title_bound,
+            effect_roi_observation_count=effect_roi_observation_count,
+        )
+        if not views:
+            return False
+        expected_markers = Counter(
+            _ADDED_NUMERIC_EFFECT_LABELS[scalar][0]
+            for scalar in (field, trigger_field)
+            if scalar is not None
+        )
+        for view in views:
+            compact = _normalise_effect_text(view)
+            # A damaged or partial score label is not evidence of absence.
+            if "コア" in compact or "スコ" in compact:
+                return False
+            if Counter(_ADDED_NUMERIC_EFFECT_MARKERS.findall(compact)) != expected_markers:
+                # Correct rows alongside conflicting/duplicate amounts do not
+                # certify a complete, unambiguous view. In particular a bad
+                # value outside a sibling's legal levels can escape its matcher.
+                return False
+            if compact.count("試験・ステージ中") != 1 or compact.count("以降") != int(trigger is not None):
+                return False
+            offset = 0
+            for pattern in body_patterns:
+                match = re.search(pattern, compact[offset:])
+                if match is None:
+                    return False
+                offset += match.end()
         return True
 
     def _view_merge_zero_signature_is_visible(
@@ -4040,6 +4171,15 @@ class ArenaEntityCatalog:
                     effect_roi_observation_count=(
                         effect_roi_observation_count
                     ),
+                ) or self._covered_direct_score_zero_signature_is_visible(
+                    card,
+                    customization_id,
+                    resolved=representative,
+                    combined_detail_text=detail_text,
+                    full_detail_text=full_detail_text,
+                    effect_roi_text=effect_roi_text,
+                    effect_roi_title_bound=effect_roi_title_bound,
+                    effect_roi_observation_count=effect_roi_observation_count,
                 )
             if not visible:
                 raise ArenaCatalogError(
