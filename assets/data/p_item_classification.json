@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "task095-p-item-classification-489-v1",
+  "revision": "task095-p-item-classification-490-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "p_item_plan_and_four_kinds_v1",
   "runtime_filtering_enabled": false,
@@ -8,8 +8,8 @@
     "catalog": {
       "repository": "https://github.com/surisuririsu/gakumas-tools",
       "path": "packages/gakumas-data/json/p_items.json",
-      "revision": "41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c",
-      "p_items_sha256": "E48AB4E7467547079B03815AC39CD8018B6770F2D3614F79443531F7B81379B7"
+      "revision": "61608ec27bd2a56f0e4bd872fe8120229f2621d5",
+      "p_items_sha256": "2DB552D995E28A8F188AF7E99B7990A36A21B90CD8E817D452542D10C466066B"
     },
     "official_master": {
       "file": "ProduceItem.yaml",
@@ -17,7 +17,7 @@
       "bytes": 17061492,
       "sha256": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A"
     },
-    "catalog_evidence_sha256": "A79D20EDA9C57B1527E5200B285BD80B4BF84C7CC72E618B32CDDEE3F466C562",
+    "catalog_evidence_sha256": "9F5988796E573D3E2B2A0500A87ED18FE31CB6E8E7BE04B9CC0D3544D67CC414",
     "visual_dataset_manifest_sha256": "78AA1885B75925D34C9186F15FFB3723D78A4DF1F6D183CE6A4523768D71492B",
     "visual_crosswalk_sha256": "9E7CCC422C9308F20CB157DAF922E048CB49CE03B1C8EA581EA1C60BB9544182"
   },
@@ -17984,6 +17984,43 @@
         }
       },
       "paired_business_id": 488
+    },
+    {
+      "business_id": 490,
+      "name": "限界への挑戦券",
+      "upgraded": false,
+      "plan": "anomaly",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_03-2-134-0",
+          "assetId": "img_general_pitem_2-134",
+          "name": "限界への挑戦券",
+          "planType": "ProducePlanType_Plan3",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Sr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-2-0080",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
     }
   ],
   "indexes": {
@@ -18483,7 +18520,8 @@
         471,
         472,
         488,
-        489
+        489,
+        490
       ]
     },
     "kind": {
@@ -18932,7 +18970,8 @@
         472,
         477,
         484,
-        487
+        487,
+        490
       ],
       "other": [
         1,
@@ -18991,12 +19030,12 @@
       "free": 50,
       "sense": 154,
       "logic": 171,
-      "anomaly": 114
+      "anomaly": 115
     },
     "kind": {
       "p_idol": 309,
       "support_inheritable": 50,
-      "support_non_inheritable": 82,
+      "support_non_inheritable": 83,
       "other": 48
     }
   },
@@ -19070,7 +19109,8 @@
       472,
       477,
       484,
-      487
+      487,
+      490
     ]
   }
 }
