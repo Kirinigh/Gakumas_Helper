@@ -89,7 +89,7 @@ def component_rows(atoms: list[dict], height: float) -> list[dict]:
         output.append({"components": sorted(components, key=lambda c: c["box"][0]), "center": row["center"]})
     return output
 
-def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFrames, panel_box: tuple[int, int, int, int] | None = None) -> dict:
+def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFrames, panel_box: tuple[int, int, int, int] | None = None, *, allow_wrapped_gap: bool = False) -> dict:
     title = atoms[title_index]
     tx, _, _, title_bottom = bounds(title)
     height = float(title["box"][3])
@@ -124,7 +124,7 @@ def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFra
             decorations.append({"index": index, "reason": "complete_symbol_decoration", "text": atom["text"], "box": atom["box"]})
             continue
         eligible.append(atom)
-    selected, uncertainty = [], []
+    selected, uncertainty, wrapped_gaps = [], [], []
     last_bottom = title_bottom
     body_left, body_right = tx, tx
     started = False
@@ -147,8 +147,16 @@ def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFra
         if top - last_bottom > height:
             if not started:
                 return {"status": "unknown", "reason": "body_not_rendered_next_to_title", "body": "", "atoms": [], "rejected": rejected, "decorations": decorations}
-            rejected.extend({"index": a["index"], "reason": "after_body_geometric_gap"} for later in component_rows([a for a in eligible if bounds(a)[1] >= top], height) for component in later["components"] for a in component["atoms"])
-            break
+            # Failure-only candidate layout. A confirmed panel and a long row
+            # reaching its right edge can delimit one omitted wrap row. This
+            # does not itself supply any text or authorize a result.
+            if (allow_wrapped_gap and panel_box is not None and not wrapped_gaps
+                    and top - last_bottom <= 2 * height
+                    and max(bounds(a)[2] for a in selected[-1]) >= panel_box[0] + panel_box[2] - 1.5 * height):
+                wrapped_gaps.append({"after_atom_index": selected[-1][-1]["index"], "gap": top - last_bottom})
+            else:
+                rejected.extend({"index": a["index"], "reason": "after_body_geometric_gap"} for later in component_rows([a for a in eligible if bounds(a)[1] >= top], height) for component in later["components"] for a in component["atoms"])
+                break
         if panel_box is None and len([component for component in candidates if component["strong"]]) > 1:
             uncertainty.append({"reason": "multiple_body_components_same_row", "atom_indices": [a["index"] for c in candidates for a in c["atoms"]]})
         joined_atoms = sorted((a for component in candidates for a in component["atoms"]), key=lambda a: (a["box"][0], a["index"]))
@@ -160,7 +168,7 @@ def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFra
                 body_right = max(body_right, component["core_box"][2])
         started = True
     body = "\n".join("".join(atom["text"] for atom in row) for row in selected)
-    return {"status": "resolved" if started and not uncertainty else "unknown", "reason": "fixed_connected_body" if started and not uncertainty else "layout_uncertain" if uncertainty else "body_not_rendered", "body": body, "atoms": [[atom["index"] for atom in row] for row in selected], "rejected": rejected, "decorations": decorations, "uncertainty": uncertainty, "title_height": height}
+    return {"status": "resolved" if started and not uncertainty else "unknown", "reason": "fixed_connected_body" if started and not uncertainty else "layout_uncertain" if uncertainty else "body_not_rendered", "body": body, "atoms": [[atom["index"] for atom in row] for row in selected], "rejected": rejected, "decorations": decorations, "uncertainty": uncertainty, "title_height": height, "wrapped_gaps": wrapped_gaps}
 
 def atom_text_view(atoms: list[dict], layout: dict) -> tuple[str, list[dict]]:
     """Reuse frozen layout, retaining atom spans and independent numeric edges."""
@@ -440,6 +448,98 @@ class PItemDetailTextIndex:
             return PItemDetailTextResult("unique", supported, "title_or_reference_positive", diagnostics)
         return PItemDetailTextResult("ambiguous", supported if not unresolved_siblings and supported else remaining, "reference_unavailable" if unresolved_siblings else "insufficient_difference_evidence", diagnostics)
 
+    def _recover_wrapped_body(
+        self, atoms: list[dict], title_index: int, sources: PItemSourceTextFrames,
+        panel_box: tuple[int, int, int, int], *, plan: str | None,
+        eligible_ids: frozenset[int] | None,
+    ) -> PItemDetailTextResult | None:
+        """Exact complete-reference proof after bounded nonnumeric OCR loss.
+
+        All family members must be bound. We may remove aligned, indented
+        paragraph bullets and restore one alphabetic character at a proved
+        wrap gap; no observed number, numeric sign or percent is rewritten.
+        Partial-field matches and visual candidates cannot authorize recovery.
+        """
+        title = str(atoms[title_index]["text"])
+        scoped = self.family_ids_for_title(title, plan=plan, eligible_ids=eligible_ids)
+        if len(scoped) < 2 or any(item_id not in self._bodies for item_id in scoped):
+            return None
+        layout = body_layout(atoms, title_index, sources, panel_box, allow_wrapped_gap=True)
+        if (layout["status"] != "resolved" or any(
+                entry["reason"] in ("after_body_geometric_gap", "outside_connected_body_column")
+                for entry in layout.get("rejected", ()))):
+            return None
+        height = layout["title_height"]
+        title_left = atoms[title_index]["box"][0]
+        paragraphs = {normalize(paragraph) for item_id in scoped
+                      for paragraph in self._references[item_id]["paragraphs"]}
+        replacements = {}
+        bullet_lefts = []
+        for row in layout["atoms"]:
+            first = row[0]
+            text = normalize(atoms[first]["text"])
+            left = atoms[first]["box"][0]
+            if not (text.startswith("+") and title_left + .5 * height <= left <= title_left + 1.5 * height):
+                continue
+            row_text = "".join(normalize(atoms[index]["text"]) for index in row)[1:]
+            if not row_text or not row_text[0].isalpha():
+                continue
+            if text == "+" and (len(row) < 2 or bounds(atoms[first])[2] > atoms[row[1]]["box"][0]):
+                continue
+            if not any(paragraph.startswith(row_text) for paragraph in paragraphs):
+                continue
+            replacements[first] = text[1:]
+            bullet_lefts.append(left)
+        # At least two independent, aligned rows establish the bullet column.
+        # A lone plus and atom-internal signs remain ordinary protected text.
+        if replacements and (len(replacements) < 2 or max(bullet_lefts) - min(bullet_lefts) > .5 * height):
+            return None
+        repaired_atoms = [{**atom, "text": replacements.get(index, atom["text"])}
+                          for index, atom in enumerate(atoms)]
+        text, spans = atom_text_view(repaired_atoms, layout)
+        gaps = layout.get("wrapped_gaps", ())
+        if not replacements and not gaps:
+            return None
+        offset = None
+        if gaps:
+            prior = [span for span in spans if span["atom_index"] == gaps[0]["after_atom_index"]]
+            if len(prior) != 1:
+                return None
+            offset = prior[0]["end"]
+        candidates = []
+        for item_id in scoped:
+            expected = self._bodies[item_id]
+            if offset is None:
+                if text == expected:
+                    candidates.append((item_id, ""))
+            elif (len(expected) == len(text) + 1 and offset < len(expected)
+                    and expected[offset].isalpha() and not expected[offset].isnumeric()
+                    and expected[:offset] + expected[offset + 1:] == text):
+                candidates.append((item_id, expected[offset]))
+        if len(candidates) != 1:
+            return None
+        item_id, character = candidates[0]
+        repaired_text = text if offset is None else text[:offset] + character + text[offset:]
+        repaired_spans = spans
+        if offset is not None:
+            repaired_spans = [{**span, "start": span["start"] + (span["start"] >= offset),
+                               "end": span["end"] + (span["end"] > offset)} for span in spans]
+            repaired_spans.append({"start": offset, "end": offset + 1, "atom_index": -1})
+        # Keep the ordinary conflict rules, including an explicit '+' title.
+        result = self._resolve(title, repaired_text, repaired_spans,
+                               plan=plan, eligible_ids=eligible_ids)
+        if result.status != "unique" or result.ids != (item_id,):
+            return None
+        return PItemDetailTextResult("unique", result.ids, "complete_reference_wrapped_body_recovery", {
+            **result.diagnostics,
+            "layout": {"panel_box": panel_box, "status": layout["status"], "reason": "complete_reference_wrapped_body",
+                       "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": ()},
+            "body_recovery": {"bullet_atom_indices": tuple(replacements), "wrapped_gaps": gaps,
+                              "inserted_character": character, "insertion_offset": offset,
+                              "observed_text": text, "complete_reference_id": item_id,
+                              "numeric_edits": 0, "additional_ocr_calls": 0},
+        })
+
     def match(
         self, atoms: Sequence[Mapping[str, Any]], *, title_index: int,
         source_frames: Sequence[Sequence[Mapping[str, Any]]] | PItemSourceTextFrames = (),
@@ -456,8 +556,13 @@ class PItemDetailTextIndex:
             return PItemDetailTextResult("unknown", reason="panel_atom_crosses_boundary")
         text, spans = atom_text_view(atom_rows, layout)
         uncertain = {index for entry in layout.get("uncertainty", ()) for index in entry.get("atom_indices", ())}
-        return self._resolve(str(atom_rows[title_index]["text"]), text, spans, plan=plan, eligible_ids=eligible_ids, uncertain_atoms=uncertain,
-                             layout_diagnostics={"panel_box": panel_box, "status": layout["status"], "reason": layout["reason"], "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": layout.get("uncertainty", ())})
+        result = self._resolve(str(atom_rows[title_index]["text"]), text, spans, plan=plan, eligible_ids=eligible_ids, uncertain_atoms=uncertain,
+                               layout_diagnostics={"panel_box": panel_box, "status": layout["status"], "reason": layout["reason"], "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": layout.get("uncertainty", ())})
+        if result.reason == "insufficient_difference_evidence" and panel_box is not None:
+            recovered = self._recover_wrapped_body(atom_rows, title_index, sources, panel_box, plan=plan, eligible_ids=eligible_ids)
+            if recovered is not None:
+                return recovered
+        return result
 
     def match_text(self, title_text: str, detail_text: str, *, plan: str | None = None, eligible_ids: frozenset[int] | None = None) -> PItemDetailTextResult:
         """Compatibility core for old text-only mocks; production passes atoms."""

@@ -15,6 +15,32 @@ from arena_winrate.recognition_probe import RecognitionProbe
 from arena_winrate._card_detail_state import ClosedCardDetail
 
 
+def _bind_confirmed_p_item_family_name(diagnostic: dict[str, Any]) -> None:
+    """Preserve a proven family name without claiming a resolved item variant."""
+    position = diagnostic["position"]
+    family = diagnostic.get("p_item_family_name")
+    if position.get("kind") != "p_item" or position.get("p_item_name") or not isinstance(family, Mapping):
+        return
+    name = family.get("name")
+    title = family.get("title_text")
+    ids = family.get("candidate_ids")
+    frames = family.get("confirmed_frames")
+    if (
+        not isinstance(name, str) or not name.strip()
+        or not isinstance(title, str) or not title.strip()
+        or type(frames) is not int or frames < 2
+        or not isinstance(ids, (tuple, list)) or len(ids) < 2
+        or any(type(item_id) is not int or item_id < 1 for item_id in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        return
+    # This structured evidence is produced only by the current transaction's
+    # consecutive source-excluded title observations. Raw OCR text and visual
+    # candidate IDs alone must never populate a user-visible confirmed name.
+    position["p_item_name"] = name.strip()
+    position["p_item_variant_unconfirmed"] = True
+
+
 class TelemetryReaderPort(Protocol):
     """Only the state and callbacks needed by this responsibility."""
 
@@ -232,6 +258,7 @@ class TelemetryReader:
             self.port._save_recognition_probe(detail, outcome, error)
         if detail is None or detail.get("fallback_logged"):
             return
+        _bind_confirmed_p_item_family_name(detail)
         before = detail.get("count_baseline", {})
         counts = {
             name: value - before.get(name, 0)
@@ -435,6 +462,7 @@ class TelemetryReader:
         event: str,
     ) -> None:
         """The shared writer never observes or operates the game."""
+        _bind_confirmed_p_item_family_name(diagnostic)
         self.port._last_detail_failure_location = (error, dict(diagnostic["position"]))
         save_started = self.clock.perf_counter()
         try:
@@ -489,6 +517,8 @@ class TelemetryReader:
                 evidence["error_chain"] = diagnostic["error_chain"]
             if diagnostic.get("p_item_text") is not None:
                 evidence["p_item_text"] = diagnostic["p_item_text"]
+            if diagnostic.get("p_item_family_name") is not None:
+                evidence["p_item_family_name"] = diagnostic["p_item_family_name"]
             if diagnostic.get("p_item_restore") is not None:
                 evidence["p_item_restore"] = diagnostic["p_item_restore"]
             (folder / "evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")

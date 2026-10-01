@@ -91,6 +91,9 @@ class PItemDetailSession:
         self.last_source_row_uncertain = False
         self.consecutive_source_transition_reads = 0
         self.last_frame_may_have_overlay = False
+        self.last_family_title = None
+        self.last_family_image = None
+        self.consecutive_family_titles = 0
         open_wait_started = self.clock.perf_counter()
         self._wait_for_detail()
         self.backend._add_timing(
@@ -171,6 +174,7 @@ class PItemDetailSession:
             source_visible = False
             source_transition = False
             if self.terminal_error is not None:
+                self._record_family_title(False)
                 break
             if self.image is not None:
                 self.last_frame_may_have_overlay = True
@@ -200,7 +204,9 @@ class PItemDetailSession:
                 except Exception as error:
                     self.terminal_error = error
                     self.last_error = str(error)
+                    self._record_family_title(False)
                     break
+            self._record_family_title(not source_visible and not source_transition)
             if source_visible:
                 self.last_frame_may_have_overlay = False
                 self.last_unique_match = None
@@ -287,6 +293,33 @@ class PItemDetailSession:
                 self.transaction_states.append("OPEN_FAILED")
                 break
             self.backend._sleep(0.12)
+
+    def _record_family_title(self, new_detail):
+        """Diagnostic family name only; it never supplies an identity vote."""
+        if self.diagnostic is None:
+            return
+        family = self.raw_matches if (
+            new_detail and self.image is not None and self.source_images
+            and not self.last_source_row_uncertain and self.last_title_text
+        ) else ()
+        rows = getattr(self.backend.catalog, "_p_items_by_id", {})
+        catalog_titles = {self.evidence.normalize_title_row(str(rows.get(item_id, {}).get("name", ""))) for item_id in family}
+        names = {name.removesuffix("+") for name in catalog_titles}
+        title = self.evidence.normalize_title_row(self.last_title_text)
+        signature = (family, title) if family and len(names) == 1 and title in catalog_titles and "" not in names else None
+        if signature is None or signature != self.last_family_title:
+            self.consecutive_family_titles = 0
+            if self.diagnostic is not None:
+                self.diagnostic.pop("p_item_family_name", None)
+        if signature is not None and self.image is not self.last_family_image:
+            self.consecutive_family_titles += 1
+        self.last_family_title = signature
+        self.last_family_image = self.image
+        if signature is not None and self.consecutive_family_titles >= 2 and self.diagnostic is not None:
+            self.diagnostic["p_item_family_name"] = {
+                "name": next(iter(names)), "title_text": self.last_title_text,
+                "candidate_ids": family, "confirmed_frames": 2,
+            }
 
     def _observe_detail(self):
         try:

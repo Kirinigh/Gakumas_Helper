@@ -1185,7 +1185,25 @@ def _p_item_border_only_change(
         if len(deltas) == 4:
             for other in deltas:
                 if other.shape == delta.shape:
-                    votes += np.all(np.abs(other - delta) <= 1, axis=2)
+                    agreement = np.all(np.abs(other - delta) <= 1, axis=2)
+                    # The proportional slot boxes do not start at the same
+                    # border pixel: at 720px their offsets differ by up to
+                    # three pixels. A synchronized sweep is still the same
+                    # decoration when its ENTIRE delta field matches after
+                    # one bounded horizontal translation. Never choose a
+                    # separate alignment for each pixel or wrap the edges.
+                    limit = max(1, round(width * 3 / 64))
+                    for offset in range(-limit, limit + 1):
+                        if offset == 0:
+                            continue
+                        left, right = max(0, -offset), min(width, width - offset)
+                        if np.all(np.abs(
+                            other[:, left + offset:right + offset]
+                            - delta[:, left:right]
+                        ) <= 1):
+                            agreement[:, left:right] = True
+                            break
+                    votes += agreement
         corner_error = magnitude.copy()
         corner_error[(votes >= 3) & ~core] = 0
         if float(corner_error[corner].mean()) > threshold:

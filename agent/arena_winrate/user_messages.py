@@ -149,7 +149,10 @@ def _location_text(location: Mapping[str, object], raw: str, *, member_only: boo
         slot = _index(location.get("screen_slot"), 1, 4)
         if slot is not None:
             card += f"左起第{slot}槽"
-        parts.append(f"{card}（{_confirmed_name(location.get('p_item_name'))}）")
+        name = _confirmed_name(location.get("p_item_name"))
+        if name != "名称未确认" and location.get("p_item_variant_unconfirmed") is True:
+            name += "，普通／强化待区分"
+        parts.append(f"{card}（{name}）")
     return "／".join(parts)
 
 
