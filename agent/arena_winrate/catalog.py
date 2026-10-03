@@ -646,7 +646,7 @@ class ArenaEntityCatalog:
         return {"p_item_id": p_item_id, "skill_card_id": skill_card_id, "p_idol_id": owners[0]}
 
     def validate_p_idol_loadout(self, loadout: Mapping[str, Any]) -> dict[str, int]:
-        """Validate only the primary P-item and the first card of the first group."""
+        """Bind the primary item, resolving a proven duplicate upper first card."""
 
         def is_array(value: object, length: int) -> bool:
             return isinstance(value, (list, tuple)) and len(value) == length
@@ -655,7 +655,31 @@ class ArenaEntityCatalog:
             p_items = loadout.get("pItemIds")
             groups = loadout.get("skillCardIdGroups")
             if is_array(p_items, 4) and is_array(groups, 2) and all(is_array(group, 6) for group in groups):
-                return self.validate_p_idol_binding(p_items[0], groups[0][0])
+                duplicates = loadout.get("excludedDuplicateGroups")
+                if duplicates is not None and not (
+                    is_array(duplicates, 2)
+                    and all(
+                        is_array(group, 6) and all(type(flag) is bool for flag in group)
+                        for group in duplicates
+                    )
+                ):
+                    raise PIdolBindingError(
+                        "p_item_intrinsic_owner_unavailable",
+                        "P-idol ownership is unavailable: invalid excludedDuplicateGroups",
+                    )
+                card_id = groups[0][0]
+                if duplicates is not None and duplicates[0][0]:
+                    # Arena has two groups, each with its intrinsic card first.
+                    # A duplicate upper first card refers to the lower first;
+                    # keep the excluded slot's simulation ID at zero.
+                    if type(card_id) is not int or card_id != 0 or duplicates[1][0]:
+                        raise PIdolBindingError(
+                            "p_item_intrinsic_owner_unavailable",
+                            "P-idol ownership is unavailable: the excluded upper first "
+                            "card must be zero and the lower first card must not be excluded",
+                        )
+                    card_id = groups[1][0]
+                return self.validate_p_idol_binding(p_items[0], card_id)
         raise PIdolBindingError(
             "p_item_intrinsic_owner_unavailable",
             "P-idol ownership is unavailable: loadout must contain four pItemIds "

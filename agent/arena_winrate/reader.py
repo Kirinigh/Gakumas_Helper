@@ -1521,13 +1521,15 @@ class ArenaLineupReader:
         p_idol_binding = None
         if scope is MemberObservationScope.COMPLETE:
             catalog = getattr(self.backend, "catalog", None)
-            validate_binding = getattr(catalog, "validate_p_idol_binding", None)
+            validate_binding = getattr(catalog, "validate_p_idol_loadout", None)
             if callable(validate_binding):
                 self._member_diagnostic("set_member_read_phase", "p_idol_binding")
                 try:
-                    # Read order is lower then upper; ownership belongs to the
-                    # upper first card, not the first card visited by the reader.
-                    p_idol_binding = validate_binding(p_item_ids[0], skill_groups[0][0])
+                    p_idol_binding = validate_binding({
+                        "pItemIds": p_item_ids,
+                        "skillCardIdGroups": skill_groups,
+                        "excludedDuplicateGroups": excluded_duplicate_groups,
+                    })
                 except PIdolBindingError as error:
                     confirm_item = getattr(self.backend, "request_p_item_binding_confirmation", None)
                     if error.code == "p_item_intrinsic_owner_mismatch" and callable(confirm_item):
