@@ -325,6 +325,80 @@ def _all_literal_integer_increments(value: object, field: str) -> tuple[int, ...
     )
 
 
+def _card_used_scalar_sections(
+    actions: object, field: str,
+) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
+    """Separate literal initial actions from one terminal card-used trigger.
+
+    Growth on the card changes its initial action, not an action registered
+    for a later card use. Keep the existing behavior for other DSL carriers.
+    """
+
+    program = _normalise_text(actions)
+    match = re.fullmatch(
+        r"((?:[A-Za-z]+\+=[1-9][0-9]*;)+)"
+        r"at:cardUsed(?:\[(?:active|mental)\])?\{(.*)\};?",
+        program,
+    )
+    if match is None:
+        return None
+    depth = 0
+    for character in match[2]:
+        depth += (character == "{") - (character == "}")
+        if depth < 0:
+            return None
+    if depth:
+        return None
+    initial = _all_literal_integer_increments(match[1], field)
+    triggered = _all_literal_integer_increments(match[2], field)
+    return (initial, triggered) if initial and triggered else None
+
+
+def _card_used_detail_section(
+    compact: str, *, triggered: bool = False, require_boundary: bool = False,
+) -> str:
+    """Keep each OCR view's initial and later-use rows in separate scopes.
+
+    Reuse the rendered card-used anchors, including wrapped OCR text. Without
+    a boundary a value shared by both actions cannot prove either scope.
+    Distinct values retain the existing partial-token behavior. Independent
+    views cannot borrow each other's boundary.
+    """
+
+    sections: list[str] = []
+    for view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY):
+        marker = re.search(
+            r"以降|(?:アクティ[ブプ]|メンタル)?スキルカード使用時",
+            view,
+        )
+        sections.append(
+            ("" if require_boundary else view) if marker is None
+            else view[marker.start():] if triggered
+            else view[:marker.start()]
+        )
+    return _OCR_EFFECT_VIEW_BOUNDARY.join(sections)
+
+
+def _initial_scalar_detail_text(
+    compact: str, prefix: str, suffix: str,
+    sections: tuple[tuple[int, ...], tuple[int, ...]],
+    *, require_boundary: bool,
+) -> str:
+    """Exclude later-use values without hiding a contradictory trigger row."""
+
+    for view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY):
+        triggered = _card_used_detail_section(view, triggered=True, require_boundary=True)
+        for token in re.finditer(
+            rf"{_numeric_effect_label_pattern(prefix)}(-?[0-9]+)"
+            rf"(?!\d|[.,．，。]\d){re.escape(suffix)}", triggered,
+        ):
+            if int(token[1]) not in sections[1]:
+                raise ArenaCatalogError(
+                    f"card-used trigger contains a conflicting {prefix} value: {token[1]}"
+                )
+    return _card_used_detail_section(compact, require_boundary=require_boundary)
+
+
 def _growth_increment(value: object, field: str, level: int) -> int | None:
     selected = _selected_level_patch(value, level)
     match = re.search(rf"g\.{re.escape(field)}\+=(-?[0-9]+)", selected)
@@ -2537,10 +2611,15 @@ class ArenaEntityCatalog:
                 )
                 if delta is not None:
                     selected_delta += delta
+            sections = _card_used_scalar_sections(actions, field)
             anchors.extend(
                 f"{prefix}{value + selected_delta}{suffix}"
-                for value in base_values
+                for value in (
+                    sections[0] if sections is not None else base_values
+                )
             )
+            if sections is not None:
+                anchors.extend(f"{prefix}{value}{suffix}" for value in sections[1])
         score_by_genki = re.search(
             r"score\+=genki\*([0-9]+(?:\.[0-9]+)?)",
             actions,
@@ -2570,6 +2649,36 @@ class ArenaEntityCatalog:
             anchors.append("すべてのスキルカードの")
         return tuple(dict.fromkeys(anchors))
 
+    def _card_used_scalar_coverage_texts(
+        self,
+        card: Mapping[str, Any],
+        resolved: Mapping[str, int],
+        anchor: str,
+        compact: str,
+    ) -> tuple[str, ...] | None:
+        """Bind a repeated scalar coverage anchor to its actual action scope."""
+
+        for field, (prefix, suffix) in _ADDED_NUMERIC_EFFECT_LABELS.items():
+            sections = _card_used_scalar_sections(card.get("actions"), field)
+            if sections is None:
+                continue
+            delta = self._selected_direct_growth_increment(resolved, field)
+            expected = (
+                tuple(f"{prefix}{value + delta}{suffix}" for value in sections[0]),
+                tuple(f"{prefix}{value}{suffix}" for value in sections[1]),
+            )
+            texts = tuple(
+                _card_used_detail_section(
+                    compact, triggered=bool(index),
+                    require_boundary=bool(set(sections[0]) & set(sections[1])),
+                )
+                for index, anchors in enumerate(expected)
+                if anchor in anchors
+            )
+            if texts:
+                return texts
+        return None
+
     def _detail_coverage_anchor_present(
         self,
         card: Mapping[str, Any],
@@ -2579,6 +2688,12 @@ class ArenaEntityCatalog:
     ) -> bool:
         """Accept an exact row or the UI's counted rendering of repeated rows."""
 
+        scoped_texts = self._card_used_scalar_coverage_texts(card, resolved, anchor, compact)
+        if scoped_texts is not None:
+            return all(
+                re.search(rf"{re.escape(anchor)}(?!\d|[.,．，。]\d)", text) is not None
+                for text in scoped_texts
+            )
         if anchor in compact:
             return True
         if anchor == "スキルカード使用数":
@@ -2620,16 +2735,18 @@ class ArenaEntityCatalog:
         )
         if scalar is None:
             return False
-        if re.search(rf"{re.escape(anchor)}(?![0-9])", full_compact) is None:
-            return False
         prefix, value, suffix = scalar.groups()
-        return (
-            re.search(
+        full_views = self._card_used_scalar_coverage_texts(card, resolved, anchor, full_compact)
+        roi_views = self._card_used_scalar_coverage_texts(card, resolved, anchor, roi_compact)
+        return all(
+            re.search(rf"{re.escape(anchor)}(?![0-9])", full_view) is not None
+            and re.search(
                 rf"{re.escape(prefix)}[0-9]\+{re.escape(value)}"
-                rf"{re.escape(suffix or '')}(?![0-9])",
-                roi_compact,
+                rf"{re.escape(suffix or '')}(?![0-9])", roi_view,
+            ) is not None
+            for full_view, roi_view in zip(
+                full_views or (full_compact,), roi_views or (roi_compact,), strict=True,
             )
-            is not None
         )
 
     @staticmethod
@@ -2989,8 +3106,14 @@ class ArenaEntityCatalog:
             ):
                 continue
             base_value = _first_integer_increment(card.get("actions"), field)
+            sections = _card_used_scalar_sections(card.get("actions"), field)
             return base_value is not None and _contains_exact_integer_token(
-                compact,
+                _initial_scalar_detail_text(
+                    compact, prefix, suffix, sections,
+                    require_boundary=base_value in sections[1],
+                )
+                if sections is not None
+                else compact,
                 prefix,
                 base_value,
                 suffix,
@@ -5154,6 +5277,11 @@ class ArenaEntityCatalog:
             base_value = _first_integer_increment(card.get("actions"), field)
             if base_value is None:
                 return None
+            card_used_sections = _card_used_scalar_sections(card.get("actions"), field)
+            require_boundary = card_used_sections is not None and any(
+                base_value + delta in card_used_sections[1]
+                for delta in (0, *(value for value in deltas.values() if value is not None))
+            )
 
             def match_scalar_growth(
                 compact: str,
@@ -5163,12 +5291,18 @@ class ArenaEntityCatalog:
                 deltas: Mapping[int, int | None] = deltas,
                 prefix: str = prefix,
                 suffix: str = suffix,
+                card_used_sections: tuple[tuple[int, ...], tuple[int, ...]] | None = card_used_sections,
+                require_boundary: bool = require_boundary,
             ) -> bool:
                 delta = 0 if count == 0 else deltas.get(count)
                 if delta is None:
                     return False
                 return _contains_exact_integer_token(
-                    compact,
+                    _initial_scalar_detail_text(
+                        compact, prefix, suffix, card_used_sections,
+                        require_boundary=require_boundary,
+                    )
+                    if card_used_sections is not None else compact,
                     prefix,
                     base_value + delta,
                     suffix,
