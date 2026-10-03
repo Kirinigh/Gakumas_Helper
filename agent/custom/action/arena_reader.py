@@ -645,6 +645,7 @@ class MaaArenaReaderBackend:
         ) = None
         self._challenge_selection_committed = False
         self._p_item_catalog_compatibility_checked = False
+        self._p_item_binding_confirmation_key: tuple[Any, ...] | None = None
         self._p_item_reference_gallery_ids: tuple[int, ...] = ()
         self._p_item_reference_missing_arena_ids: tuple[int, ...] = ()
         self._p_item_reference_unknown_catalog_ids: tuple[int, ...] = ()
@@ -1294,6 +1295,9 @@ class MaaArenaReaderBackend:
         return self._component_p_item_page_observation().capture_stable_generation(
             boxes, initial_image=initial_image, timeout_seconds=timeout_seconds, interval_seconds=interval_seconds
         )
+
+    def request_p_item_binding_confirmation(self, target: TeamTarget, stage_number: int, slot: int) -> None:
+        self._component_p_item_read_workflow().request_binding_confirmation(target, stage_number, slot)
 
     def read_p_item_ids(self, target: TeamTarget, stage_number: int, slot: int) -> Sequence[int]:
         return self._component_p_item_read_workflow().read_ids(target, stage_number, slot)

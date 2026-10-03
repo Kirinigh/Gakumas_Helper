@@ -196,12 +196,22 @@ class PItemReadWorkflow:
         self.port._p_item_reference_gallery_ids = tuple(sorted(gallery_ids))
         self.port._p_item_catalog_compatibility_checked = True
 
+    def request_binding_confirmation(self, target: TeamTarget, stage_number: int, slot: int) -> None:
+        # Only the next fresh read of this member may consume this request.
+        # The key contains location, never an expected item ID or owner.
+        self.port._p_item_binding_confirmation_key = (
+            getattr(target, "team_id", None), getattr(target, "opponent_position", None), stage_number, slot,
+        )
+
     def read_ids(
         self,
         target: TeamTarget,
         stage_number: int,
         slot: int,
     ) -> Sequence[int]:
+        key = (getattr(target, "team_id", None), getattr(target, "opponent_position", None), stage_number, slot)
+        confirm_binding = getattr(self.port, "_p_item_binding_confirmation_key", None) == key
+        self.port._p_item_binding_confirmation_key = None
         self.port._p_item_source_ocr_cache = {}
         if self.port.p_item_reader is None:
             self.port.p_item_reader = self.port._load_static_resource(
@@ -389,6 +399,12 @@ class PItemReadWorkflow:
             for index in missing_detail_slots:
                 detail_by_slot[index] = decisions[index - 1]
                 global_detail_slots.add(index)
+        if confirm_binding:
+            # Ownership contradicted an otherwise accepted image match. Use the
+            # existing restored-page detail transaction over the full slot
+            # domain, not just the previous visual shortlist or inferred owner.
+            detail_by_slot[1] = decisions[0]
+            global_detail_slots.add(1)
         detail_budget = self.port.p_item_reader.maximum_detail_fallbacks_per_member
         budgeted_detail_slots = set(detail_by_slot) - global_detail_slots
         if force_catalog_superset_detail or missing_detail_slots:
@@ -396,6 +412,8 @@ class PItemReadWorkflow:
             # the member's retry or any individual detail transaction budget.
             detail_budget = 4
             budgeted_detail_slots = set(detail_by_slot)
+        if confirm_binding:
+            budgeted_detail_slots.add(1)
         if len(budgeted_detail_slots) > detail_budget:
             raise ArenaReaderError(
                 "p_item_detail_budget_exceeded",
@@ -416,7 +434,8 @@ class PItemReadWorkflow:
                 if slot_domains is not None:
                     detail_candidates = tuple(item_id for item_id in detail_candidates if item_id in slot_domains[screen_slot - 1])
                 decision_observed_ids = (decision.p_item_id,) if decision.accepted and decision.p_item_id is not None else decision.candidates
-                visual_tiebreak_ids = decision_observed_ids if decision.accepted else ()
+                binding_detail = confirm_binding and screen_slot == 1
+                visual_tiebreak_ids = decision_observed_ids if decision.accepted and not binding_detail else ()
                 self.port._begin_detail_diagnostics(
                     target=target,
                     stage_number=stage_number,
@@ -430,7 +449,7 @@ class PItemReadWorkflow:
                     candidate_ids=detail_candidates,
                     global_title_scope=use_global_detail,
                     visual_tiebreak_ids=visual_tiebreak_ids,
-                    unrepresented_ids=visual_tiebreak_blocked_ids,
+                    unrepresented_ids=detail_candidates if binding_detail else visual_tiebreak_blocked_ids,
                     source_images=images,
                     source_boxes=boxes,
                     plan=plan,
@@ -442,7 +461,9 @@ class PItemReadWorkflow:
                         engine_slot,
                         decision,
                         path=(
-                            "catalog_drift_global_detail_confirmation"
+                            "binding_conflict_detail_confirmation"
+                            if binding_detail
+                            else "catalog_drift_global_detail_confirmation"
                             if screen_slot in missing_detail_slots
                             else "catalog_superset_global_detail_confirmation"
                             if force_catalog_superset_detail
@@ -504,6 +525,7 @@ class PItemReadWorkflow:
             "full_fallbacks": sum(int(decision.full_fallback_used) for decision in decisions),
             "screen_slot_to_engine_slot": [1, 4, 3, 2],
             "matching_seconds": round(matching_seconds, 6),
+            "binding_conflict_detail_confirmations": int(confirm_binding),
             "missing_arena_reference_ids": list(missing_reference_ids),
             "missing_reference_ids_by_screen_slot": [sorted(missing) for missing in missing_by_slot],
             "missing_reference_identity_thresholds": list(MISSING_REFERENCE_IDENTITY_THRESHOLDS),

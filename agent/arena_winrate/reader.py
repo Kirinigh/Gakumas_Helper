@@ -1529,6 +1529,9 @@ class ArenaLineupReader:
                     # upper first card, not the first card visited by the reader.
                     p_idol_binding = validate_binding(p_item_ids[0], skill_groups[0][0])
                 except PIdolBindingError as error:
+                    confirm_item = getattr(self.backend, "request_p_item_binding_confirmation", None)
+                    if error.code == "p_item_intrinsic_owner_mismatch" and callable(confirm_item):
+                        confirm_item(target, stage_number, member_slot)
                     raise ArenaReaderError(
                         error.code,
                         f"{target.team_id}/stage-{stage_number}/member-{member_slot}: {error}",
