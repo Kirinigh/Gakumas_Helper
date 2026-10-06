@@ -193,6 +193,8 @@ def resolve_excluded_duplicate_card_flags(
 def canonical_skill_card_rows(
     frame_shape: Sequence[int],
     detector_boxes: Sequence[tuple[int, int, int, int]],
+    *,
+    image: object | None = None,
 ) -> tuple[tuple[tuple[int, int, int, int], ...], ...]:
     """Recover fixed six-column detail rows from noisy play-card detections.
 
@@ -307,8 +309,67 @@ def canonical_skill_card_rows(
         # card-face anchor and then contributes exactly one vote.  Duplicate
         # multiplicity therefore cannot move the row or its cluster support.
         row_y = int(round(column_weighted_y(cluster)))
-        rows.append(tuple((column_x, row_y, card_width, card_height) for column_x in expected_lefts))
+        row = tuple((column_x, row_y, card_width, card_height) for column_x in expected_lefts)
+        if image is not None:
+            row = align_skill_card_row_border(image, row)
+        if not row:
+            return ()
+        rows.append(row)
     return tuple(sorted(rows, key=lambda row: row[0][1]))
+
+
+def align_skill_card_row_border(
+    image: object,
+    row: Sequence[tuple[int, int, int, int]],
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Anchor a noisy detector row to a shared visible top outline, not an ID.
+
+    Four distinct columns must show the same light-background to neutral-dark
+    outline transition. Only a small vertical neighbourhood is inspected; no
+    gallery comparison, card-body search or new frame is involved. No border
+    evidence retains the detector geometry. Contradictory separated borders
+    reject the row rather than selecting whichever produces a preferred ID.
+    """
+    import numpy as np
+
+    original = tuple(row)
+    if len(original) != 6:
+        return original
+    array = np.asarray(image)
+    if array.ndim != 3 or array.shape[2] < 3:
+        return original
+    _, anchor, width, height = original[0]
+    if width < 8 or height < 8 or any(box[1:] != (anchor, width, height) for box in original):
+        return original
+    radius = max(2, round(height * 0.08))
+    first, last = anchor - radius, anchor + radius
+    if first < 1 or last >= array.shape[0]:
+        return original
+    # The centre-left top edge avoids rounded corners and the upper-right
+    # customization number; identities and artwork are never consulted.
+    samples = []
+    for x, _, _, _ in original:
+        left, right = x + round(width * 0.25), x + round(width * 0.65)
+        if left < 0 or right > array.shape[1] or left >= right:
+            return original
+        samples.append(array[first - 1:last + 1, left:right, :3].astype(np.float32))
+    strips = np.stack(samples)
+    rgb = strips.mean(axis=2)
+    brightness = rgb.mean(axis=2)
+    # The game's blue-grey outline has a channel spread of about 27, not zero.
+    neutral = ((np.mean(np.ptp(strips[:, 1:], axis=3), axis=2) <= 40)
+               & (strips[:, 1:].std(axis=2).max(axis=2) <= 12))
+    votes = ((brightness[:, :-1] >= 180) & (brightness[:, 1:] <= 170)
+             & ((brightness[:, :-1] - brightness[:, 1:]) >= 40) & neutral)
+    offsets = np.flatnonzero(votes.sum(axis=0) >= 4)
+    if not len(offsets):
+        return original
+    if np.any(np.diff(offsets) > 1):
+        return ()
+    # Adjacent antialiasing rows form a single edge; select its steepest step.
+    contrast = np.median(brightness[:, :-1] - brightness[:, 1:], axis=0)
+    y = first + int(offsets[np.argmax(contrast[offsets])])
+    return tuple((x, y, w, h) for x, _, w, h in original)
 
 
 def expected_scrolled_secondary_skill_card_row(

@@ -150,6 +150,7 @@ class CardLayoutReader:
         rows = canonical_skill_card_rows(
             image.shape,
             self.port._raw_card_candidate_boxes(image),
+            image=image,
         )
         assert first_error is not None
         if rows and rows[0][0][1] <= int(image.shape[0] * 0.205):
@@ -719,7 +720,7 @@ class CardLayoutReader:
         return flags
 
     def _detect_card_rows(self, image: Any) -> tuple[tuple[tuple[int, int, int, int], ...], ...]:
-        return canonical_skill_card_rows(image.shape, self.port._raw_card_candidate_boxes(image))
+        return canonical_skill_card_rows(image.shape, self.port._raw_card_candidate_boxes(image), image=image)
 
     def _validated_card_group_rows(self, image: Any, groups: Sequence[int], **kwargs):
         """Share detector output only during this synchronous frame observation."""
@@ -752,7 +753,7 @@ class CardLayoutReader:
         )
 
         raw_boxes = self.port._raw_card_candidate_boxes(image)
-        rows = canonical_skill_card_rows(image.shape, raw_boxes)
+        rows = canonical_skill_card_rows(image.shape, raw_boxes, image=image)
         selected = rows[0] if rows and group_index == 0 else ()
         if rows and group_index == 1:
             selected = canonical_scrolled_secondary_skill_card_row(
