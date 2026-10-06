@@ -37,7 +37,7 @@ class CustomizationBadgeDecision:
 
 
 def duplicate_marker_visual_features(card_image: Any) -> dict[str, float]:
-    """Return cheap chroma features for shortlisting grey ``重複`` cards."""
+    """Shortlist grey cards or neutral labels, without interpreting their text."""
 
     import cv2
     import numpy as np
@@ -55,28 +55,53 @@ def duplicate_marker_visual_features(card_image: Any) -> dict[str, float]:
     hsv = cv2.cvtColor(inner, cv2.COLOR_BGR2HSV)
     saturation = hsv[:, :, 1]
     channel_range = inner.max(axis=2) - inner.min(axis=2)
+    # A duplicate overlay dims the art without necessarily desaturating it.
+    # In particular, blue cards can fail both whole-card chroma gates. Look
+    # separately for a light-on-dark neutral label; only OCR can exclude a card.
+    # Slide vertically as labels can occur below card-face counters as well.
+    value = card_image[:, :, :3].max(axis=2)
+    neutral = (value - card_image[:, :, :3].min(axis=2)) <= 25
+    label_score = 0.0
+    for left_fraction in (0.08, 0.25, 0.42):
+        for top_fraction in np.linspace(0.04, 0.62, 7):
+            label_region = np.s_[
+                int(height * top_fraction) : int(height * (top_fraction + 0.28)),
+                int(width * left_fraction) : int(width * (left_fraction + 0.54)),
+            ]
+            label_neutral = neutral[label_region]
+            if not label_neutral.size:
+                continue
+            label_value = value[label_region]
+            score = min(
+                float((label_neutral & (label_value < 170)).mean()) / 0.30,
+                float((label_neutral & (label_value >= 195)).mean()) / 0.06,
+                float(label_neutral.mean()) / 0.75,
+            )
+            label_score = max(label_score, score)
     return {
         "mean_saturation": round(float(saturation.mean()), 6),
         "median_saturation": round(float(np.median(saturation)), 6),
         "p90_saturation": round(float(np.percentile(saturation, 90)), 6),
         "mean_channel_range": round(float(channel_range.mean()), 6),
         "low_chroma_fraction": round(float((channel_range <= 12).mean()), 6),
+        "neutral_label_score": round(label_score, 6),
     }
 
 
 def is_duplicate_marker_visual_candidate(
     repeated_features: Sequence[Mapping[str, float]],
 ) -> bool:
-    """Shortlist stable grey cards; OCR remains the authoritative marker gate."""
+    """Shortlist stable grey cards or labels; OCR is still authoritative."""
 
     if len(repeated_features) != 3:
         raise ValueError("exactly three duplicate-marker visual observations are required")
     try:
         mean_ranges = tuple(float(item["mean_channel_range"]) for item in repeated_features)
         p90_saturations = tuple(float(item["p90_saturation"]) for item in repeated_features)
+        label_scores = tuple(float(item.get("neutral_label_score", 0.0)) for item in repeated_features)
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("duplicate-marker visual observations are incomplete") from error
-    return max(mean_ranges) <= 45.0 or max(p90_saturations) <= 145.0
+    return max(mean_ranges) <= 45.0 or max(p90_saturations) <= 145.0 or min(label_scores) >= 1.0
 
 
 @lru_cache(maxsize=1)

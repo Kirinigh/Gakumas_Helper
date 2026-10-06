@@ -685,7 +685,13 @@ class CardLayoutReader:
                 phase="corrective_targeted",
             )
             diagnostics.extend(corrective_targeted_diagnostics)
-            stable = stable_excluded_duplicate_card_flags(corrective_targeted)
+            corrective_stable = stable_excluded_duplicate_card_flags(corrective_targeted)
+            # Untargeted slots carry placeholder False observations. Preserve
+            # their already-confirmed values when correcting another slot.
+            stable = tuple(
+                corrective_stable[index] if index in unresolved else flag
+                for index, flag in enumerate(stable)
+            )
             self.port._card_count_frames[group_index] = corrective_frames_tuple
         unknown_slots = tuple(index for index, flag in enumerate(stable, start=1) if flag is None)
         self.port._card_duplicate_marker_diagnostics[group_index] = tuple(diagnostics)
