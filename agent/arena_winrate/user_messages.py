@@ -29,6 +29,7 @@ _ERROR_LABELS = (
     ("member_preview_recovery", "未能返回队伍预览并重新打开成员"),
     ("support_bonus", "支援加成页面未能打开或读取完整"),
     ("p_item_intrinsic_owner_mismatch", "第1件 P 道具与上排第1张固有卡的 P 偶像归属不一致，重读后仍未确认"),
+    ("p_item_intrinsic_detail_unconfirmed", "固有卡详情未能独立确认，无法核对第1件 P 道具的归属"),
     ("p_item_intrinsic_owner_unavailable", "当前资源无法确认第1件 P 道具与上排第1张固有卡的 P 偶像归属"),
     ("skill_card_reference_gallery_update_required", "技能卡图库尚未覆盖当前目录"),
     ("skill_card_title_ambiguous", "技能卡标题仍有多个可能，重读后未能区分"),

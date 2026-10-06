@@ -1302,6 +1302,17 @@ class MaaArenaReaderBackend:
     def read_p_item_ids(self, target: TeamTarget, stage_number: int, slot: int) -> Sequence[int]:
         return self._component_p_item_read_workflow().read_ids(target, stage_number, slot)
 
+    def read_p_item_ids_for_binding(self, target: TeamTarget, stage_number: int, slot: int) -> Sequence[int]:
+        return self._component_p_item_read_workflow().read_ids(target, stage_number, slot, confirm_primary=True)
+
+    def confirm_intrinsic_card_detail(
+        self, target: TeamTarget, stage_number: int, member_slot: int,
+        group_index: int, customization_count: int,
+    ) -> ClickedSkillCard:
+        return self._component_card_identity_reader().confirm_intrinsic_card_detail(
+            target, stage_number, member_slot, group_index, customization_count,
+        )
+
     def prepare_skill_card_group(self, target: TeamTarget, stage_number: int, member_slot: int, group_index: int) -> None:
         return self._component_card_layout_reader().prepare_skill_card_group(target, stage_number, member_slot, group_index)
 

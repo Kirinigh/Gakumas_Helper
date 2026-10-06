@@ -75,6 +75,8 @@ class MemberReadRecoveryState:
 
     ui_reopen_used: bool = False
     recognition_reopens: dict[tuple[str, int, int], int] = field(default_factory=dict)
+    binding_card_confirmations: set[tuple[str, int, int]] = field(default_factory=set)
+    binding_item_confirmations: set[tuple[str, int, int]] = field(default_factory=set)
     attempt_closing: bool = False
 
 

@@ -208,6 +208,8 @@ class PItemReadWorkflow:
         target: TeamTarget,
         stage_number: int,
         slot: int,
+        *,
+        confirm_primary: bool = False,
     ) -> Sequence[int]:
         key = (getattr(target, "team_id", None), getattr(target, "opponent_position", None), stage_number, slot)
         confirm_binding = getattr(self.port, "_p_item_binding_confirmation_key", None) == key
@@ -380,7 +382,13 @@ class PItemReadWorkflow:
             else ()
         )
         detail_by_slot = dict(detail_eligible)
+        if confirm_primary and decisions[0].status != "EMPTY":
+            detail_by_slot[1] = decisions[0]
         global_detail_slots: set[int] = set()
+        if confirm_primary and 1 in detail_by_slot:
+            # Binding is evidence of conflicting identities, not a candidate
+            # label. Search the complete plan/slot domain, never the owner.
+            global_detail_slots.add(1)
         if force_catalog_superset_detail:
             detail_by_slot.update((index, decision) for index, decision in enumerate(decisions, start=1) if decision.status != "EMPTY")
             global_detail_slots.update(detail_by_slot)
@@ -434,7 +442,7 @@ class PItemReadWorkflow:
                 if slot_domains is not None:
                     detail_candidates = tuple(item_id for item_id in detail_candidates if item_id in slot_domains[screen_slot - 1])
                 decision_observed_ids = (decision.p_item_id,) if decision.accepted and decision.p_item_id is not None else decision.candidates
-                binding_detail = confirm_binding and screen_slot == 1
+                binding_detail = (confirm_binding or confirm_primary) and screen_slot == 1
                 visual_tiebreak_ids = decision_observed_ids if decision.accepted and not binding_detail else ()
                 self.port._begin_detail_diagnostics(
                     target=target,

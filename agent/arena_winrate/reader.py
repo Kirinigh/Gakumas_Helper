@@ -1207,13 +1207,23 @@ class ArenaLineupReader:
         )
         params: tuple[int, ...] | None = None
         p_item_ids: tuple[int, ...] | None = None
+        binding_position = (target.team_id, stage_number, member_slot)
         if scope is MemberObservationScope.COMPLETE:
             self._member_diagnostic("set_member_read_phase", "member_params")
             params = tuple(self.backend.read_params(target, stage_number, member_slot))
             self._member_diagnostic("set_member_read_phase", "p_item_identity", kind="p_item")
-            p_item_ids = tuple(
-                self.backend.read_p_item_ids(target, stage_number, member_slot)
-            )
+            read_items = self.backend.read_p_item_ids
+            confirm_items = getattr(self.backend, "read_p_item_ids_for_binding", None)
+            if (
+                binding_position in self._member_recovery.binding_card_confirmations
+                and binding_position not in self._member_recovery.binding_item_confirmations
+                and callable(confirm_items)
+            ):
+                # Reuse the existing bounded member reopen to reach the item
+                # row safely; do not click its old coordinates after scrolling.
+                self._member_recovery.binding_item_confirmations.add(binding_position)
+                read_items = confirm_items
+            p_item_ids = tuple(read_items(target, stage_number, member_slot))
             if len(params) != 4:
                 self._member_diagnostic("set_member_read_phase", "member_params")
                 raise ArenaReaderError(
@@ -1525,11 +1535,54 @@ class ArenaLineupReader:
             if callable(validate_binding):
                 self._member_diagnostic("set_member_read_phase", "p_idol_binding")
                 try:
-                    p_idol_binding = validate_binding({
+                    loadout = {
                         "pItemIds": p_item_ids,
                         "skillCardIdGroups": skill_groups,
                         "excludedDuplicateGroups": excluded_duplicate_groups,
-                    })
+                    }
+                    try:
+                        p_idol_binding = validate_binding(loadout)
+                    except PIdolBindingError as conflict:
+                        confirm_card = getattr(self.backend, "confirm_intrinsic_card_detail", None)
+                        if (
+                            conflict.code != "p_item_intrinsic_owner_mismatch"
+                            or binding_position in self._member_recovery.binding_card_confirmations
+                            or not callable(confirm_card)
+                        ):
+                            raise
+                        self._member_recovery.binding_card_confirmations.add(binding_position)
+                        # Only the already validated duplicate relationship can
+                        # move this check to the lower first slot.
+                        group = 1 if excluded_duplicate_groups[0][0] else 0
+                        previous_id = skill_groups[group][0]
+                        self._member_diagnostic(
+                            "set_member_read_phase", "p_idol_binding_detail",
+                            kind="skill_card", group_index=group, card_slot=1,
+                        )
+                        confirmed = confirm_card(
+                            target, stage_number, member_slot, group,
+                            sum(customization_groups[group][0].values()),
+                        )
+                        if (
+                            not isinstance(confirmed, ClickedSkillCard)
+                            or type(confirmed.card_id) is not int or confirmed.card_id < 1
+                            or _positive_customization_mapping(confirmed.customizations) is None
+                            or confirmed.conservative_cost_assumption is not None
+                            or confirmed.resolution_source.startswith("generic_cost_conservative_fallback")
+                        ):
+                            raise ArenaReaderError(
+                                "p_item_intrinsic_detail_unconfirmed",
+                                "binding recovery requires a complete independent card detail",
+                                retry_whole_read=False,
+                            )
+                        skill_groups[group][0] = confirmed.card_id
+                        customization_groups[group][0] = dict(confirmed.customizations)
+                        logging.getLogger(__name__).info(
+                            "P-idol binding detail at %s/stage-%s/member-%s/group-%s/slot-1: %s -> %s",
+                            target.team_id, stage_number, member_slot, group, previous_id, confirmed.card_id,
+                        )
+                        self._member_diagnostic("set_member_read_phase", "p_idol_binding")
+                        p_idol_binding = validate_binding(loadout)
                 except PIdolBindingError as error:
                     confirm_item = getattr(self.backend, "request_p_item_binding_confirmation", None)
                     if error.code == "p_item_intrinsic_owner_mismatch" and callable(confirm_item):

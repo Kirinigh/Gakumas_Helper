@@ -535,6 +535,30 @@ class CardIdentityReader:
             }
             self.logger.info(json.dumps(record, ensure_ascii=False, sort_keys=True))
 
+    def confirm_intrinsic_card_detail(
+        self, target: TeamTarget, stage_number: int, member_slot: int,
+        group_index: int, customization_count: int,
+    ) -> ClickedSkillCard:
+        """One owner-conflict check using independent, slot-scoped detail."""
+        key = (group_index, 1)
+        # A detail already proven in this member attempt is sufficient. This
+        # cache is cleared by member-open; image predictions never populate it.
+        confirmed = self.port._inferred_clicked_cards.get(key)
+        if confirmed is not None:
+            return confirmed
+        plan = self.port.season.stages[stage_number - 1].plan
+        candidates = self.port._skill_card_catalog_candidates_for_plan(plan, slot_index=0)
+        row = self.port._card_rows.get(group_index, ())
+        image = self.port._card_images.get(group_index)
+        if len(row) != 6 or image is None:
+            raise ArenaReaderError("skill_card_slot_missing", "intrinsic detail has no confirmed source row")
+        self.port._increment("p_idol_binding_card_detail_confirmations")
+        return self.port._infer_badge_card_from_detail(
+            target, stage_number, member_slot, group_index, 1, image, row[0],
+            customization_count, "p_idol_binding_detail_transaction",
+            allow_zero_without_badge_count=True, candidate_ids_override=candidates,
+        )
+
     def _resolve_zero_card_reference_ids(
         self,
         group_index: int,
