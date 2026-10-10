@@ -347,6 +347,8 @@ def member_recognition_error_code(error: Exception) -> str | None:
         "skill_card_customization_count_unknown",
         "skill_card_customization_frame_incomplete",
         "skill_card_customization_frame_shifted",
+        # Stable-frame capture wraps missing anchors in this observation error.
+        "skill_card_layout_incomplete",
         "skill_card_layout_unstable",
         "skill_card_secondary_row_missing",
         "skill_card_slot_missing",
