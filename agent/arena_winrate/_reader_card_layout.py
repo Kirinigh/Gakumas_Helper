@@ -208,16 +208,27 @@ class CardLayoutReader:
             return None
         if len(business_ids) != len(visual_groups):
             return None
+        raw_enabled = getattr(gallery, "reference_enabled", None)
+        if raw_enabled is None:
+            enabled = (True,) * len(business_ids)
+        else:
+            import numpy as np
+
+            flags = np.asarray(raw_enabled)
+            if flags.dtype != np.bool_ or flags.shape != (len(business_ids),):
+                return None
+            enabled = tuple(map(bool, flags))
         return tuple(
             sorted(
                 {
                     visual_group
-                    for candidate_id, visual_group in zip(
+                    for candidate_id, visual_group, reference_enabled in zip(
                         business_ids,
                         visual_groups,
+                        enabled,
                         strict=True,
                     )
-                    if candidate_id == business_id and visual_group.strip()
+                    if reference_enabled and candidate_id == business_id and visual_group.strip()
                 }
             )
         )

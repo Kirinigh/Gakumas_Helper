@@ -1,0 +1,288 @@
+{
+  "build": {
+    "mode": "GALLERY_ONLY",
+    "numpy_version": "2.5.1",
+    "opencv_version": "5.0.0",
+    "pillow_version": "12.3.0",
+    "preprocess_contract": "bgr-image-roi-to-bgr-96-area-top48-to-16x8-area-reuse-same-group-green-mask-v1",
+    "python_version": "3.12.7",
+    "tool_contract": "task095-card-badge-live-reference-append-v1",
+    "unaffected_base_rows": "BITWISE_COPIED",
+    "zlib_runtime_version": "1.3.1"
+  },
+  "component": "task410_arena_card_reference",
+  "evaluation": {
+    "path": "hard_negative_evaluation.json",
+    "sha256": "783943B85C9A62BCAF3B3FD70CBA97E68143F0D5A484DC6240A5046AC323E399",
+    "status": "PASS",
+    "tool_contract": "task095-card-badge-hard-negative-evaluation-v1"
+  },
+  "gallery": {
+    "business_card_id_count": 886,
+    "normalization_size": [
+      96,
+      96
+    ],
+    "path": "badge_reference_gallery.npz",
+    "sha256": "6B9AEE9B80A94597DDD7E05B8BDA76CD4DB89D6274C5FC9155EFFC320B04F671",
+    "visual_group_count": 455
+  },
+  "production_handoff": {
+    "reason": "private-live target, inherited rows, geometry stress, and authoritative hard negatives passed offline; independent live holdout remains PENDING",
+    "status": "READY_WITH_REAL_SAMPLES_PENDING"
+  },
+  "runtime": {
+    "maximum_coarse_error": 60.0,
+    "maximum_zero_coarse_error": 65.0,
+    "minimum_group_margin": 0.75,
+    "minimum_high_error_group_margin": 3.0,
+    "provisional_shared_pairs": [
+      [
+        879,
+        880
+      ]
+    ],
+    "reference_rule_version": "task095-provisional-shared-identity-v1"
+  },
+  "schema_version": 1,
+  "source": {
+    "added_reference_file_count": 1,
+    "arena_component": "arena_custom_card_embedding",
+    "arena_component_manifest_sha256": "152E629C791CC48B0718F5BEA7F0C7679126AB9BFA46FD6D7C43B96DBF2408B9",
+    "arena_gallery_sha256": "624A35C8AE22628B57D5FF104C87C59A39AA035B7686E5BD7B8DA392CB763C97",
+    "base_manifest_sha256": "D9338B289AE938665B799CCA55C485400A7D8AA049CCF70A66C177842B504BF1",
+    "base_reference_file_count": 3418,
+    "catalog_license": "BSD-3-Clause",
+    "catalog_repository": "https://github.com/surisuririsu/gakumas-tools",
+    "catalog_revision": "9a305390a172cf927f168e63cafa8149b24b9448",
+    "extension_dataset_id": "task095-skill-card-extension-pc-705100-0067-9a3053-joint-ui",
+    "extension_dataset_manifest_sha256": "2FA9FC4ABF623F80BFCCC3FC5DDFE388ECE58BE749A0DF11C9565DCFF7F6EF23",
+    "fixed_icon_provenance_sha256": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577",
+    "fixed_icons": {
+      "references": {
+        "881": {
+          "business_id": 881,
+          "capture_provenance": "USER_AUTHORIZED_LOCAL_MAA",
+          "crop_box": [
+            0,
+            0,
+            132,
+            128
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-09-30",
+          "kind": "skill_card",
+          "name": "悪戯ハートジャック",
+          "original_dimensions": [
+            132,
+            128
+          ],
+          "original_file": "local-maa-881-source-crop.png",
+          "original_sha256": "C633DF893C29E6C7AEE2B2BE8D610B2A0FE7CDC400FB39BA147A79D821764B92",
+          "original_size": 30489,
+          "original_url": null,
+          "page_url": null,
+          "png_sha256": "CCE7B1BC903A59C07301545DBF59C9D9571DA963D4AA825B82D3DBF604DC5AFF",
+          "publisher": "LOCAL_MAA_NULL_INPUT",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "AB94F901533F841700D9B1F81F15574E555AB12B4AC32ECDE1B2A8C781F2161E",
+          "size": 30497,
+          "upgraded": false
+        },
+        "882": {
+          "business_id": 882,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            0,
+            0,
+            135,
+            135
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-09-30",
+          "kind": "skill_card",
+          "name": "悪戯ハートジャック",
+          "original_dimensions": [
+            135,
+            135
+          ],
+          "original_file": "skill-882.webp",
+          "original_sha256": "D2E7D9396E9165786DD80B56E32B3CE92CB4C8568A19F617803F7340A8B8DDFA",
+          "original_size": 6178,
+          "original_url": "https://img.game8.jp/13040550/de4d408dd4b80f2f724c4163d59c3573.webp/original",
+          "page_url": "https://game8.jp/gakuen-idolmaster/818932",
+          "png_sha256": "EF9AFD445BCB81716F096743AC0A6277864768BE2F8033313525F2AF95ED4D45",
+          "publisher": "Game8",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "F2B534E0C78DA5DA50E8AB42ADC0AA3ACCE1A24CB24EC77BA5FCDF68B38C4375",
+          "size": 37343,
+          "upgraded": true
+        },
+        "883": {
+          "business_id": 883,
+          "capture_provenance": "USER_AUTHORIZED_LOCAL_MAA",
+          "crop_box": [
+            0,
+            0,
+            129,
+            128
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-09-30",
+          "kind": "skill_card",
+          "name": "無自覚チャーム",
+          "original_dimensions": [
+            129,
+            128
+          ],
+          "original_file": "local-maa-883-source-crop.png",
+          "original_sha256": "143C7D1A7FE9B9C6C5E7313F921EC4CB1558F28AA5D373E5C3CACA857BE0FBA2",
+          "original_size": 28732,
+          "original_url": null,
+          "page_url": null,
+          "png_sha256": "18713C20E143E34689E8DE0EA26D99E5C65A6371F3913888B44126C1A7D32515",
+          "publisher": "LOCAL_MAA_NULL_INPUT",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "D1BE7A0AFFE97BFD1AB48F8C173EC28C2D5E197E1E78EEC1CBD21911CFBB997C",
+          "size": 30072,
+          "upgraded": false
+        },
+        "884": {
+          "business_id": 884,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            0,
+            0,
+            135,
+            136
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-09-30",
+          "kind": "skill_card",
+          "name": "無自覚チャーム",
+          "original_dimensions": [
+            135,
+            136
+          ],
+          "original_file": "skill-884.webp",
+          "original_sha256": "601969AFA3FED902480EA7D0D592FA54EF062FB49ED2817004C3F7BD4CC4BF08",
+          "original_size": 5686,
+          "original_url": "https://img.game8.jp/13040548/ad813864a8bca238abefbfdc7f40e549.webp/original",
+          "page_url": "https://game8.jp/gakuen-idolmaster/818933",
+          "png_sha256": "603A42BCB740DDCB3A8DA6470D9D3C8466EF3B5B8844022329A6B54A08ACB1F3",
+          "publisher": "Game8",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "00B8AB95033DEBB8CBFC4A83FA52AD39A71ED6C6A614823E1BDD108802A17458",
+          "size": 35763,
+          "upgraded": true
+        },
+        "885": {
+          "business_id": 885,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            148,
+            1074,
+            366,
+            1291
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-09-30",
+          "kind": "skill_card",
+          "name": "なりきりデビル",
+          "original_dimensions": [
+            1206,
+            2622
+          ],
+          "original_file": "skill-885-original.jpg",
+          "original_sha256": "A1E86D0D811F2DF6575935248AEAC5B68E3A900613485B2515EDACD493FA8199",
+          "original_size": 383639,
+          "original_url": "https://pbs.twimg.com/media/HTbrDl7bwAALCuB.jpg?name=orig",
+          "page_url": "https://x.com/kirin_mets_Xeno/status/2105128331121471932",
+          "png_sha256": "213D81E549C122B01F83C5F2CACC824A29BF4F698DD5F9FF00EBF3395F02864B",
+          "publisher": "kirin_mets_Xeno",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "D921F25BB8CD44C110B508B9E326C62826408B80114891278A49407D8217B6FC",
+          "size": 34629,
+          "upgraded": false
+        },
+        "886": {
+          "business_id": 886,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            0,
+            0,
+            217,
+            217
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-09-30",
+          "kind": "skill_card",
+          "name": "なりきりデビル",
+          "original_dimensions": [
+            217,
+            217
+          ],
+          "original_file": "skill-886.webp",
+          "original_sha256": "41F245A88C66CCD8DAF6E02368BFA57656DB6F9440375487AC03FB096AE7A175",
+          "original_size": 6748,
+          "original_url": "https://img.game8.jp/13041678/0c9aab9304e8014b97639c023fa39637.webp/original",
+          "page_url": "https://game8.jp/gakuen-idolmaster/820535",
+          "png_sha256": "91B0D62EF6BCE35573668236954D893F2713086649DAE56DB69965900E5CF019",
+          "publisher": "Game8",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "40E7CEF6EA934012CBDF3ABFBB938AA2A727D459FC74FB541D67E434C6263C57",
+          "size": 30943,
+          "upgraded": true
+        }
+      },
+      "schema_version": 1,
+      "source_type": "mixed_verified_ui_crops"
+    },
+    "live_reference_updates": [
+      {
+        "added_reference_count": 1,
+        "authorization_status": "AUTHORIZED_FOR_LOCAL_DERIVATION",
+        "business_card_id_count": 1,
+        "business_card_ids": [
+          529
+        ],
+        "dataset_id": "task095-live-card-domain-v1",
+        "dataset_revision": "r1",
+        "green_mask_source": "SAME_VISUAL_GROUP_HISTORICAL_REFERENCE",
+        "hard_negative_business_ids": [
+          559
+        ],
+        "identity_authority": "INDEPENDENT_DETAIL_TITLE_AND_FULL_EFFECT",
+        "raw_source_publication": "EXCLUDED",
+        "source_kind": "AUTHORIZED_LOCAL_LIVE_CARD_CROP",
+        "visual_group_count": 1,
+        "visual_group_ids": [
+          "p_card-03-sup-3_126"
+        ]
+      }
+    ],
+    "reference_file_count": 3419,
+    "reference_set_digest_contract": "sha256(base_reference_set_sha256 || public_dataset_id || NUL || public_dataset_revision || NUL || ordered(public_reference_name || NUL || business_id || NUL || visual_group_id || NUL || top_coarse_bytes || reused_green_mask_bytes))",
+    "reference_set_sha256": "E5ACC11B2C4E2B214B8E533AD1D38EB2E6A12A95150E7943BD598D46115D158F",
+    "replaced_reference_file_count": 0,
+    "retained_reference_file_count": 3418
+  }
+}

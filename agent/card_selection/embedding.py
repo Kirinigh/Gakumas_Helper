@@ -29,6 +29,41 @@ CARD_ART_EXCLUSION_BOXES = (
     (0.64, 0.58, 1.00, 1.00),
 )
 UPGRADE_MARKER_BOX = (0.75, 0.36, 0.98, 0.64)
+TEMPORARY_REFERENCE_RULE_VERSION = "temporary-placeholder-reference-v1"
+
+
+def _temporary_reference_enabled(manifest: Any, payload: Any) -> Any | None:
+    """Require explicit exclusion and declared IDs for temporary gallery rows."""
+
+    import numpy as np
+
+    schema = manifest.get("schema_version")
+    runtime = manifest.get("runtime", {})
+    if not isinstance(runtime, Mapping):
+        raise ModelIntegrityError("embedding runtime metadata is invalid")
+    keys = ("temporary_reference_rule_version", "temporary_placeholder_business_ids")
+    if schema == 1:
+        if "reference_enabled" in payload or any(key in runtime for key in keys):
+            raise ModelIntegrityError("temporary references require manifest schema 2")
+        return None
+    if schema != 2 or runtime.get(keys[0]) != TEMPORARY_REFERENCE_RULE_VERSION:
+        raise ModelIntegrityError("unsupported temporary reference manifest contract")
+    if "reference_enabled" not in payload:
+        raise ModelIntegrityError("temporary reference enabled mask is missing")
+    enabled = np.asarray(payload["reference_enabled"])
+    ids = tuple(map(str, payload["card_ids"]))
+    if enabled.dtype != np.bool_ or enabled.shape != (len(ids),) or not enabled.any():
+        raise ModelIntegrityError("temporary reference enabled mask is invalid")
+    declared = runtime.get(keys[1])
+    if (
+        not isinstance(declared, list)
+        or any(type(value) is not int or value < 1 for value in declared)
+        or declared != sorted(set(declared))
+        or {str(value) for value in declared} != {value for value, flag in zip(ids, enabled, strict=True) if not flag}
+        or {value for value, flag in zip(ids, enabled, strict=True) if flag}.intersection(map(str, declared))
+    ):
+        raise ModelIntegrityError("temporary placeholder IDs disagree with disabled references")
+    return enabled
 
 
 def _declared_business_card_ids(source: Any) -> frozenset[str]:
@@ -265,6 +300,7 @@ class EmbeddingGallery:
         visual_group_ids: Any | None = None,
         upgrade_counts: Any | None = None,
         upgrade_markers: Any | None = None,
+        reference_enabled: Any | None = None,
     ) -> None:
         try:
             import numpy as np
@@ -318,6 +354,24 @@ class EmbeddingGallery:
         self.visual_group_ids = groups
         self.upgrade_counts = upgrades
         self.upgrade_markers = markers
+        enabled = np.ones(len(ids), dtype=np.bool_) if reference_enabled is None else np.asarray(reference_enabled)
+        if enabled.dtype != np.bool_ or enabled.shape != (len(ids),) or not enabled.any():
+            raise ModelIntegrityError("gallery reference enabled mask is invalid")
+        active_ids = {value for value, flag in zip(ids, enabled, strict=True) if flag}
+        if active_ids.intersection(
+            value for value, flag in zip(ids, enabled, strict=True) if not flag
+        ):
+            raise ModelIntegrityError("one business ID cannot mix enabled and temporary references")
+        self.reference_enabled = enabled.copy()
+        self._active_indices = np.flatnonzero(enabled)
+        self._active_embeddings = self.embeddings if enabled.all() else np.ascontiguousarray(self.embeddings[enabled])
+        members: dict[str, set[tuple[str, int]]] = {}
+        for index in self._active_indices:
+            members.setdefault(groups[index], set()).add((ids[index], upgrades[index]))
+        self._active_group_members = {
+            group: tuple(sorted(values, key=lambda item: int(item[0])))
+            for group, values in members.items()
+        }
         self.model_sha256 = model_sha256.upper()
         self.gallery_sha256 = gallery_sha256.upper()
         self._eligible_scopes: dict[frozenset[int], tuple[Any, Any, dict[str, tuple[tuple[str, int], ...]]]] = {}
@@ -337,7 +391,7 @@ class EmbeddingGallery:
         if cached is not None:
             return cached
         indices = np.asarray([
-            index for index, card_id in enumerate(self.card_ids) if int(card_id) in key
+            index for index in self._active_indices if int(self.card_ids[index]) in key
         ], dtype=np.int32)
         if not len(indices):
             raise ValueError("eligible card IDs contain no embedding references")
@@ -367,7 +421,7 @@ class EmbeddingGallery:
         gallery_file = Path(gallery_path)
         manifest_file = Path(manifest_path)
         manifest = json.loads(manifest_file.read_text(encoding="utf-8-sig"))
-        if manifest.get("schema_version") != 1:
+        if type(manifest.get("schema_version")) is not int or manifest["schema_version"] not in {1, 2}:
             raise ModelIntegrityError("unsupported embedding manifest schema")
         gallery_info = manifest.get("gallery", {})
         model_info = manifest.get("model", {})
@@ -398,6 +452,7 @@ class EmbeddingGallery:
                 visual_group_ids=visual_group_ids,
                 upgrade_counts=upgrade_counts,
                 upgrade_markers=upgrade_markers,
+                reference_enabled=_temporary_reference_enabled(manifest, payload),
             )
 
     def infer_upgrade_state(
@@ -438,11 +493,9 @@ class EmbeddingGallery:
         for upgrade in {0, 1}:
             indices = [
                 index
-                for index, (group, value, card_id) in enumerate(zip(
-                    self.visual_group_ids, self.upgrade_counts, self.card_ids, strict=True,
-                ))
-                if group == hit.visual_group_id and value == upgrade
-                and card_id in (hit.candidate_card_ids or (hit.card_id,))
+                for index in self._active_indices
+                if self.visual_group_ids[index] == hit.visual_group_id and self.upgrade_counts[index] == upgrade
+                and self.card_ids[index] in (hit.candidate_card_ids or (hit.card_id,))
             ]
             if indices:
                 scores[upgrade] = min(
@@ -475,7 +528,9 @@ class EmbeddingGallery:
         if norm <= 1e-8:
             raise ValueError("query embedding must be non-zero")
         if eligible_card_ids is None:
-            row_indices, vectors, scope_members = None, self.embeddings, None
+            row_indices, vectors, scope_members = (
+                self._active_indices, self._active_embeddings, self._active_group_members,
+            )
         else:
             row_indices, vectors, scope_members = self._eligible_scope(eligible_card_ids)
         scores = vectors @ (query / norm)
@@ -504,23 +559,11 @@ class EmbeddingGallery:
 
         best_by_group: dict[str, EmbeddingHit] = {}
         for index in order:
-            source_index = int(index if row_indices is None else row_indices[index])
+            source_index = int(row_indices[index])
             card_id = self.card_ids[source_index]
             group_id = self.visual_group_ids[source_index]
             if group_id not in best_by_group:
-                members = scope_members[group_id] if scope_members is not None else sorted(
-                    {
-                        (member_id, upgrade)
-                        for member_group, member_id, upgrade in zip(
-                            self.visual_group_ids,
-                            self.card_ids,
-                            self.upgrade_counts,
-                            strict=True,
-                        )
-                        if member_group == group_id
-                    },
-                    key=lambda item: int(item[0]),
-                )
+                members = scope_members[group_id]
                 best_by_group[group_id] = EmbeddingHit(
                     card_id=card_id,
                     class_name=self.class_names[source_index],
@@ -653,7 +696,7 @@ class EmbeddingCardRecognizer:
         root = Path(model_root)
         manifest_path = root / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-        if manifest.get("schema_version") != 1:
+        if type(manifest.get("schema_version")) is not int or manifest["schema_version"] not in {1, 2}:
             raise ModelIntegrityError("unsupported production embedding manifest schema")
         model = manifest.get("model", {})
         gallery_info = manifest.get("gallery", {})
@@ -753,9 +796,17 @@ class EmbeddingCardRecognizer:
         if eligible_card_ids is not None and len(hits) < 2:
             raise ValueError("at least two eligible visual groups are required to measure embedding margin")
         similarity = hits[0].similarity
-        margin = similarity - hits[1].similarity
         top_k_card_ids = tuple(hit.candidate_card_ids or (hit.card_id,) for hit in hits)
         top_k_scores = tuple(hit.similarity for hit in hits)
+        if len(hits) < 2:
+            return self._prediction(
+                candidate, frame_id=frame_id, card_id=UNKNOWN,
+                predicted_card_id=UNKNOWN, class_name=hits[0].class_name,
+                similarity=similarity, margin=0.0, accepted=False,
+                reason="insufficient_active_visual_families",
+                top_k_card_ids=top_k_card_ids, top_k_scores=top_k_scores,
+            )
+        margin = similarity - hits[1].similarity
         upgraded = False
         if resolve_upgrade_state:
             if upgrade_image is None:

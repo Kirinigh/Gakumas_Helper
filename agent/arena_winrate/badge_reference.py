@@ -11,7 +11,7 @@ import json
 import hashlib
 from typing import Any
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 
 def _sha256_file(path: Path) -> str:
@@ -28,6 +28,41 @@ class BadgeReferenceError(RuntimeError):
 
 REFERENCE_RULE_VERSION = "task410-r10-card-identity-only-v1"
 SHARED_REFERENCE_RULE_VERSION = "task095-provisional-shared-identity-v1"
+TEMPORARY_REFERENCE_RULE_VERSION = "temporary-placeholder-reference-v1"
+
+
+def _temporary_reference_enabled(manifest: Any, payload: Any) -> Any | None:
+    """Validate inactive placeholder rows without changing complete ID metadata."""
+
+    import numpy as np
+
+    schema = manifest.get("schema_version")
+    runtime = manifest.get("runtime", {})
+    if not isinstance(runtime, Mapping):
+        raise BadgeReferenceError("card reference runtime metadata is invalid")
+    keys = ("temporary_reference_rule_version", "temporary_placeholder_business_ids")
+    if schema == 1:
+        if "reference_enabled" in payload or any(key in runtime for key in keys):
+            raise BadgeReferenceError("temporary references require manifest schema 2")
+        return None
+    if schema != 2 or runtime.get(keys[0]) != TEMPORARY_REFERENCE_RULE_VERSION:
+        raise BadgeReferenceError("unsupported temporary reference manifest contract")
+    if "reference_enabled" not in payload:
+        raise BadgeReferenceError("temporary reference enabled mask is missing")
+    enabled = np.asarray(payload["reference_enabled"])
+    ids = tuple(map(int, payload["business_ids"]))
+    if enabled.dtype != np.bool_ or enabled.shape != (len(ids),) or not enabled.any():
+        raise BadgeReferenceError("temporary reference enabled mask is invalid")
+    declared = runtime.get(keys[1])
+    if (
+        not isinstance(declared, list)
+        or any(type(value) is not int or value < 1 for value in declared)
+        or declared != sorted(set(declared))
+        or set(declared) != {value for value, flag in zip(ids, enabled, strict=True) if not flag}
+        or {value for value, flag in zip(ids, enabled, strict=True) if flag}.intersection(declared)
+    ):
+        raise BadgeReferenceError("temporary placeholder IDs disagree with disabled references")
+    return enabled
 
 
 class BadgeReferenceGallery:
@@ -45,6 +80,7 @@ class BadgeReferenceGallery:
         maximum_zero_coarse_error: float | None = None,
         minimum_high_error_group_margin: float = 3.0,
         provisional_shared_pairs: Sequence[tuple[int, int]] = (),
+        reference_enabled: Any | None = None,
     ) -> None:
         import numpy as np
 
@@ -78,9 +114,19 @@ class BadgeReferenceGallery:
         self.minimum_high_error_group_margin = float(
             minimum_high_error_group_margin
         )
+        enabled = np.ones(count, dtype=np.bool_) if reference_enabled is None else np.asarray(reference_enabled)
+        if enabled.dtype != np.bool_ or enabled.shape != (count,) or not enabled.any():
+            raise BadgeReferenceError("card reference enabled mask is invalid")
+        active_ids = set(map(int, self.business_ids[enabled]))
+        if active_ids.intersection(map(int, self.business_ids[~enabled])):
+            raise BadgeReferenceError("one business ID cannot mix enabled and temporary references")
+        self.reference_enabled = enabled.copy()
+        self._active_indices = np.flatnonzero(enabled)
+        self._active_top_coarse = self.top_coarse if enabled.all() else np.ascontiguousarray(self.top_coarse[enabled])
         groups: dict[str, list[int]] = {}
-        for index, group in enumerate(self.visual_group_ids):
-            groups.setdefault(group, []).append(index)
+        for active_index, index in enumerate(self._active_indices):
+            group = self.visual_group_ids[index]
+            groups.setdefault(group, []).append(active_index)
         self._group_indices = {
             group: np.asarray(indices, dtype=np.int32)
             for group, indices in groups.items()
@@ -92,6 +138,8 @@ class BadgeReferenceGallery:
             if len(source_rows) != 1 or len(target_rows) != 1 or source_id == target_id:
                 raise BadgeReferenceError("provisional shared reference IDs are invalid")
             source_index, target_index = int(source_rows[0]), int(target_rows[0])
+            if not enabled[source_index] or not enabled[target_index]:
+                raise BadgeReferenceError("provisional shared references must be enabled")
             group = self.visual_group_ids[source_index]
             if group != self.visual_group_ids[target_index] or not np.array_equal(
                 self.top_coarse[source_index], self.top_coarse[target_index]
@@ -110,7 +158,7 @@ class BadgeReferenceGallery:
         if cached is not None:
             return cached
         indices = np.asarray([
-            index for index, card_id in enumerate(self.business_ids) if int(card_id) in key
+            index for index in self._active_indices if int(self.business_ids[index]) in key
         ], dtype=np.int32)
         if not len(indices):
             raise BadgeReferenceError("eligible card IDs contain no clean-card references")
@@ -132,7 +180,7 @@ class BadgeReferenceGallery:
         model_root = Path(root)
         manifest_path = model_root / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-        if manifest.get("schema_version") != 1:
+        if type(manifest.get("schema_version")) is not int or manifest["schema_version"] not in {1, 2}:
             raise BadgeReferenceError("unsupported card reference manifest schema")
         gallery_info = manifest.get("gallery", {})
         gallery_path = model_root / str(gallery_info.get("path", ""))
@@ -161,6 +209,7 @@ class BadgeReferenceGallery:
                 provisional_shared_pairs=tuple(
                     tuple(pair) for pair in runtime.get("provisional_shared_pairs", ())
                 ),
+                reference_enabled=_temporary_reference_enabled(manifest, payload),
             )
 
     def _identity_result_from_errors(
@@ -172,7 +221,7 @@ class BadgeReferenceGallery:
         import numpy as np
 
         if eligible_card_ids is None:
-            reference_indices, selected_group_indices = None, self._group_indices
+            reference_indices, selected_group_indices = self._active_indices, self._group_indices
         else:
             reference_indices, _, selected_group_indices = self._eligible_scope(eligible_card_ids)
         ranked_groups = sorted(
@@ -215,10 +264,8 @@ class BadgeReferenceGallery:
         for candidate_error, candidate_group in candidate_groups:
             group_indices = selected_group_indices[candidate_group]
             reference_index = int(
-                group_indices[int(np.argmin(errors[group_indices]))]
+                reference_indices[group_indices[int(np.argmin(errors[group_indices]))]]
             )
-            if reference_indices is not None:
-                reference_index = int(reference_indices[reference_index])
             result = {
                 "status": "MEASURED",
                 "reference_name": self.reference_names[reference_index],
@@ -297,16 +344,14 @@ class BadgeReferenceGallery:
             interpolation=cv2.INTER_AREA,
         ).astype(np.int16)
         if eligible_card_ids is None:
-            reference_indices, references = None, self.top_coarse.astype(np.int16)
+            reference_indices, references = self._active_indices, self._active_top_coarse.astype(np.int16)
         else:
             reference_indices, references, _ = self._eligible_scope(eligible_card_ids)
         errors = np.mean(
             np.abs(references - identity_query),
             axis=(1, 2, 3),
         )
-        reference_index = int(np.argmin(errors))
-        if reference_indices is not None:
-            reference_index = int(reference_indices[reference_index])
+        reference_index = int(reference_indices[np.argmin(errors)])
         content_query = cv2.resize(
             live,
             (16, 16),
@@ -345,7 +390,7 @@ class BadgeReferenceGallery:
             (16, 8),
             interpolation=cv2.INTER_AREA,
         ).astype(np.int16)
-        references = (self.top_coarse.astype(np.int16) if eligible_card_ids is None
+        references = (self._active_top_coarse.astype(np.int16) if eligible_card_ids is None
                       else self._eligible_scope(eligible_card_ids)[1])
         errors = np.mean(
             np.abs(references - query),
