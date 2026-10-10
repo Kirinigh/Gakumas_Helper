@@ -540,6 +540,77 @@ class PItemDetailTextIndex:
                               "numeric_edits": 0, "additional_ocr_calls": 0},
         })
 
+    def _recover_delay_bullet(
+        self, atoms: list[dict], title_index: int, layout: dict,
+        result: PItemDetailTextResult, *, plan: str | None,
+        eligible_ids: frozenset[int] | None,
+    ) -> PItemDetailTextResult | None:
+        """Remove one indented bullet misread before an invariant turn delay.
+
+        The delay cannot distinguish the variants: every bound family member
+        must require the same unsigned count. An independent, unchanged field
+        must already support one variant, whose only conflict is this extra +.
+        Actual gains, negative counts, changed digits and text-only inputs keep
+        their existing conflict rules.
+        """
+        diagnostic = result.diagnostics
+        if (layout["status"] != "resolved" or diagnostic["layout"]["panel_box"] is None
+                or diagnostic["unbound_reference_ids"] or any(
+                    entry["reason"] in ("after_body_geometric_gap", "outside_connected_body_column")
+                    for entry in layout.get("rejected", ()))):
+            return None
+        scoped = diagnostic["plan_scoped_ids"]
+        supported = [item_id for item_id in scoped
+                     if "reference_difference" in diagnostic["positive_support"][item_id]]
+        if len(scoped) < 2 or len(supported) != 1:
+            return None
+        item_id = supported[0]
+        conflicts = diagnostic["conflicts"][item_id]
+        if len(conflicts) != 1 or conflicts[0]["reason"] != "explicit_reference_field_conflict":
+            return None
+        conflict = conflicts[0]
+        literals, expected, observed = conflict["literal_fragments"], conflict["expected"], conflict["observed"]
+        if (not expected or literals[0] or not literals[1].startswith("ターン後、")
+                or re.fullmatch(r"[1-9][0-9]*", expected[0]) is None
+                or set(observed) != {("+" + expected[0], *expected[1:])}):
+            return None
+        entry = self._tables[diagnostic["title_family_ids"]][literals]
+        if entry["duplicate_ids"] or any(
+                not entry["expected"].get(candidate)
+                or entry["expected"][candidate][0] != expected[0] for candidate in scoped):
+            return None
+        hits = [hit for field in diagnostic["observed_fields"]
+                if field["literal_fragments"] == literals for hit in field["observations"]]
+        if len(hits) != 1:
+            return None
+        prefix = "+" + expected[0] + "ターン後、"
+        title_left = atoms[title_index]["box"][0]
+        height = layout["title_height"]
+        _, original_spans = atom_text_view(atoms, layout)
+        candidates = [row[0] for row in layout["atoms"]
+                      if normalize(atoms[row[0]]["text"]).startswith(prefix)
+                      and title_left + .5 * height <= atoms[row[0]]["box"][0] <= title_left + 1.5 * height
+                      and any(span["atom_index"] == row[0] and span["start"] == hits[0]["span"][0]
+                              for span in original_spans)]
+        if len(candidates) != 1:
+            return None
+        atom_index = candidates[0]
+        repaired_atoms = list(atoms)
+        repaired_atoms[atom_index] = {**atoms[atom_index], "text": normalize(atoms[atom_index]["text"])[1:]}
+        text, spans = atom_text_view(repaired_atoms, layout)
+        repaired = self._resolve(str(atoms[title_index]["text"]), text, spans,
+                                 plan=plan, eligible_ids=eligible_ids,
+                                 layout_diagnostics=diagnostic["layout"])
+        if repaired.status != "unique" or repaired.ids != (item_id,):
+            return None
+        return PItemDetailTextResult("unique", repaired.ids, "reference_delay_bullet_recovery", {
+            **repaired.diagnostics,
+            "delay_bullet_recovery": {"atom_index": atom_index, "observed_prefix": prefix,
+                                      "reference_prefix": prefix[1:], "removed_decoration": "+",
+                                      "independent_support": "reference_difference",
+                                      "numeric_value_edits": 0, "additional_ocr_calls": 0},
+        })
+
     def match(
         self, atoms: Sequence[Mapping[str, Any]], *, title_index: int,
         source_frames: Sequence[Sequence[Mapping[str, Any]]] | PItemSourceTextFrames = (),
@@ -558,6 +629,11 @@ class PItemDetailTextIndex:
         uncertain = {index for entry in layout.get("uncertainty", ()) for index in entry.get("atom_indices", ())}
         result = self._resolve(str(atom_rows[title_index]["text"]), text, spans, plan=plan, eligible_ids=eligible_ids, uncertain_atoms=uncertain,
                                layout_diagnostics={"panel_box": panel_box, "status": layout["status"], "reason": layout["reason"], "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": layout.get("uncertainty", ())})
+        if result.reason == "explicit_or_protected_field_conflict" and panel_box is not None:
+            recovered = self._recover_delay_bullet(atom_rows, title_index, layout, result,
+                                                    plan=plan, eligible_ids=eligible_ids)
+            if recovered is not None:
+                return recovered
         if result.reason == "insufficient_difference_evidence" and panel_box is not None:
             recovered = self._recover_wrapped_body(atom_rows, title_index, sources, panel_box, plan=plan, eligible_ids=eligible_ids)
             if recovered is not None:
