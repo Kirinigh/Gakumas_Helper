@@ -1405,8 +1405,19 @@
             }
         },
         "next": [
-            "ProduceLoop"
+            "ProduceLoop",
+            "ProduceComplete"
         ]
+    },
+    "ProduceComplete": {
+        "recognition": {
+            "type": "DirectHit",
+            "param": {}
+        },
+        "action": {
+            "type": "DoNothing",
+            "param": {}
+        }
     },
     "ProduceCardsFlag": {
         "recognition": {
