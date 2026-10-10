@@ -323,6 +323,8 @@ def _select_p_item_production_source_evidence(
 def _validate_component_production_handoff(
     component: str,
     manifest: Mapping[str, Any],
+    *,
+    allow_inactive_placeholders: bool = False,
 ) -> None:
     if "production_handoff" not in manifest:
         raise ReleaseBuildError(
@@ -334,6 +336,16 @@ def _validate_component_production_handoff(
             f"component production handoff is invalid: {component}"
         )
     status = handoff.get("status")
+    if (
+        allow_inactive_placeholders
+        and component in {"card_vision", "arena_card_vision", "arena_badge_reference"}
+        and type(manifest.get("schema_version")) is int
+        and manifest["schema_version"] == 2
+        and status == static_handoff.TEMPORARY_PLACEHOLDER_STATUS
+    ):
+        # Only the inventory entry may defer this gate. Full strict validation
+        # below binds enabled rows to their still-qualified schema-1 base.
+        return
     known_statuses = (
         RELEASE_READY_PRODUCTION_HANDOFF_STATUSES
         | NON_RELEASE_READY_PRODUCTION_HANDOFF_STATUSES
@@ -1369,6 +1381,7 @@ def _load_skill_card_gallery_contract(
     path: Path,
     *,
     label: str,
+    allow_inactive_placeholders: bool = False,
 ) -> tuple[
     tuple[str, ...],
     tuple[tuple[str, str, str], ...],
@@ -1386,7 +1399,8 @@ def _load_skill_card_gallery_contract(
                 "upgrade_counts",
                 "upgrade_markers",
             }
-            if set(arrays.files) != required:
+            expected = required | ({"reference_enabled"} if allow_inactive_placeholders else set())
+            if set(arrays.files) != expected:
                 raise ReleaseBuildError(
                     f"{label} gallery array inventory is incompatible"
                 )
@@ -1442,6 +1456,8 @@ def _load_skill_card_gallery_contract(
 
 def _load_badge_gallery_contract(
     path: Path,
+    *,
+    allow_inactive_placeholders: bool = False,
 ) -> tuple[
     frozenset[int],
     frozenset[str],
@@ -1459,7 +1475,8 @@ def _load_badge_gallery_contract(
                 "top_coarse",
                 "green_masks",
             }
-            if set(arrays.files) != required:
+            expected = required | ({"reference_enabled"} if allow_inactive_placeholders else set())
+            if set(arrays.files) != expected:
                 raise ReleaseBuildError(
                     "arena badge gallery array inventory is incompatible"
                 )
@@ -2200,7 +2217,7 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
     for name, relative in COMPONENT_MANIFESTS.items():
         path = _resolve_inside(candidate, relative)
         manifest = _load_object(path)
-        _validate_component_production_handoff(name, manifest)
+        _validate_component_production_handoff(name, manifest, allow_inactive_placeholders=True)
         if name == "arena_engine_catalog":
             _validate_ris_engine_production_handoff(manifest)
         raw[name] = manifest
@@ -2250,6 +2267,33 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         engine_root,
         SKILL_CARD_CATALOG_RELATIVE_PATH,
     ).parent
+    placeholder_bases: dict[str, tuple[Path, dict[str, Any]]] = {}
+    placeholder_components = {"card_vision", "arena_card_vision", "arena_badge_reference"}
+    temporary = {
+        name for name in placeholder_components
+        if raw[name].get("production_handoff", {}).get("status") == static_handoff.TEMPORARY_PLACEHOLDER_STATUS
+    }
+    if temporary:
+        if temporary != placeholder_components:
+            raise ReleaseBuildError("temporary placeholder components must be packaged together")
+        classification_path = _resolve_inside(candidate, "data/skill_card_classification.json")
+        preserved_classification_path = _resolve_inside(
+            candidate,
+            str(Path(COMPONENT_MANIFESTS["card_vision"]).parent / "preserved_base/skill_card_classification.json"),
+        )
+        for component in sorted(temporary):
+            component_root = _resolve_inside(candidate, COMPONENT_MANIFESTS[component]).parent
+            try:
+                base_root, base = static_handoff.validate_temporary_placeholder_component(
+                    component_root, raw[component],
+                    classification_path=classification_path,
+                    preserved_classification_path=preserved_classification_path,
+                    catalog_path=cost_catalog_dir / "skill_cards.json",
+                )
+                _validate_component_production_handoff(component, base)
+                placeholder_bases[component] = (base_root, base)
+            except StaticReferenceHandoffError as error:
+                raise ReleaseBuildError(f"{component} temporary placeholder validation failed: {error}") from error
     for component in ("arena_cost_reference", "p_item_reference"):
         manifest_root = _resolve_inside(
             candidate,
@@ -2293,30 +2337,41 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         _load_skill_card_gallery_contract(
         _resolve_inside(card_root, str(card["gallery"]["path"])),
         label="card vision",
+        allow_inactive_placeholders=bool(placeholder_bases),
         )
     )
     arena_class_names, arena_rows, arena_ids, arena_groups, arena_group_by_id = (
         _load_skill_card_gallery_contract(
         _resolve_inside(arena_card_root, str(arena_card["gallery"]["path"])),
         label="arena card vision",
+        allow_inactive_placeholders=bool(placeholder_bases),
         )
     )
     badge_arena_manifest_path = arena_card_root / "manifest.json"
     badge_arena_manifest = arena_card
     badge_arena_rows = arena_rows
-    arena_build = arena_card.get("build", {})
+    if placeholder_bases:
+        preserved_arena_root, badge_arena_manifest = placeholder_bases["arena_card_vision"]
+        badge_arena_manifest_path = preserved_arena_root / "manifest.json"
+        _, badge_arena_rows, _, _, _ = _load_skill_card_gallery_contract(
+            _resolve_inside(preserved_arena_root, badge_arena_manifest["gallery"]["path"]),
+            label="preserved active arena card vision",
+        )
+    arena_build = badge_arena_manifest.get("build", {})
     if arena_build.get("tool_contract") == "task095-arena-full-ui-union-v1":
-        badge_arena_manifest_path = arena_card_root / "preserved_base/manifest.json"
+        union_root = badge_arena_manifest_path.parent
+        union_manifest = badge_arena_manifest
+        badge_arena_manifest_path = union_root / "preserved_base/manifest.json"
         if sha256_file(badge_arena_manifest_path).casefold() != str(arena_build.get("base_manifest_sha256")).casefold():
             raise ReleaseBuildError("full UI preserved base manifest mismatch")
         badge_arena_manifest = json.loads(badge_arena_manifest_path.read_text(encoding="utf-8"))
         base_gallery = _resolve_inside(badge_arena_manifest_path.parent, badge_arena_manifest["gallery"]["path"])
         if sha256_file(base_gallery).casefold() != str(arena_build.get("base_gallery_sha256")).casefold():
             raise ReleaseBuildError("full UI preserved base gallery mismatch")
-        if badge_arena_manifest["model"] != arena_card["model"]:
+        if badge_arena_manifest["model"] != union_manifest["model"]:
             raise ReleaseBuildError("full UI reference extension changed the encoder")
         with np.load(base_gallery, allow_pickle=False) as old, np.load(
-            _resolve_inside(arena_card_root, arena_card["gallery"]["path"]), allow_pickle=False
+            _resolve_inside(union_root, union_manifest["gallery"]["path"]), allow_pickle=False
         ) as new:
             count = len(old["class_names"])
             if (
@@ -2353,26 +2408,34 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         badge_live_reference_rows,
     ) = _load_badge_gallery_contract(
         _resolve_inside(badge_root, str(badge["gallery"]["path"])),
+        allow_inactive_placeholders=bool(placeholder_bases),
+    )
+    evaluation_badge_root, evaluation_badge = placeholder_bases.get("arena_badge_reference", (badge_root, badge))
+    (
+        evaluation_badge_ids, evaluation_badge_groups, evaluation_badge_group_by_id,
+        evaluation_badge_rows, evaluation_rows_by_id, evaluation_live_rows,
+    ) = _load_badge_gallery_contract(
+        _resolve_inside(evaluation_badge_root, str(evaluation_badge["gallery"]["path"])),
     )
     _validate_badge_live_evaluation(
-        badge_root,
-        badge,
+        evaluation_badge_root,
+        evaluation_badge,
         arena_card_manifest=badge_arena_manifest,
         arena_reference_rows_by_business_id=arena_reference_rows_by_id,
-        actual_reference_row_count=badge_reference_row_count,
-        actual_live_reference_row_count=len(badge_live_reference_rows),
-        actual_business_id_count=len(badge_ids),
-        actual_visual_group_count=len(badge_groups),
-        actual_group_by_business_id=badge_group_by_id,
-        actual_reference_rows_by_business_id=badge_reference_rows_by_id,
-        actual_live_reference_rows=badge_live_reference_rows,
+        actual_reference_row_count=evaluation_badge_rows,
+        actual_live_reference_row_count=len(evaluation_live_rows),
+        actual_business_id_count=len(evaluation_badge_ids),
+        actual_visual_group_count=len(evaluation_badge_groups),
+        actual_group_by_business_id=evaluation_badge_group_by_id,
+        actual_reference_rows_by_business_id=evaluation_rows_by_id,
+        actual_live_reference_rows=evaluation_live_rows,
     )
     arena_card_manifest_path = badge_arena_manifest_path
     arena_card_gallery_path = _resolve_inside(
         arena_card_manifest_path.parent,
         str(badge_arena_manifest["gallery"]["path"]),
     )
-    badge_source = badge.get("source")
+    badge_source = evaluation_badge.get("source")
     if (
         not isinstance(badge_source, Mapping)
         or not isinstance(
@@ -2410,7 +2473,10 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         raise ReleaseBuildError("skill-card recognition business-ID sets disagree")
     if card_groups != arena_groups or card_groups != badge_groups:
         raise ReleaseBuildError("skill-card recognition visual-group sets disagree")
-    if card_rows != badge_arena_rows:
+    comparable_arena_rows = badge_arena_rows
+    if placeholder_bases:
+        comparable_arena_rows = (*badge_arena_rows, *tuple(row for row in arena_rows if int(row[1]) in static_handoff.TEMPORARY_PLACEHOLDER_IDS))
+    if card_rows != comparable_arena_rows:
         raise ReleaseBuildError(
             "skill-card base and arena gallery identity rows disagree"
         )

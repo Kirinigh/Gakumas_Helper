@@ -17,3 +17,7 @@ tools/deployment/mfa/*.patch -text whitespace=-blank-at-eol
 THIRD_PARTY_NOTICES/MFAAvalonia-LICENSE -text
 assets/data/skill_card_classification.json -text whitespace=cr-at-eol
 assets/data/p_item_classification.json -text whitespace=cr-at-eol
+# Frozen release bases keep the exact bytes used by their nested manifests.
+assets/resource/base/model/classify/card_embedding/preserved_base/** -text whitespace=cr-at-eol
+assets/resource/base/model/embedding/arena_card/preserved_base/** -text whitespace=cr-at-eol
+assets/resource/base/model/embedding/arena_badge_reference/preserved_base/** -text whitespace=cr-at-eol

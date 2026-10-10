@@ -73,3 +73,65 @@ SHA-256 `5252BF4596C18038F77FEBDE20E1E42416CD150F88D11189DA566DD03A35638D`.
 Classification covers 886 skills and 494 items; item 495 is precollected locally
 only. Source rights, release exclusions, runtime thresholds, the existing 880
 provisional identity treatment and pending live/latency acceptance remain unchanged.
+
+### Gallery batch 13 and inactive catalog placeholders (2026-10-10)
+
+The frozen catalog is `gakumas-tools/gakumas-tools@6f138bd7eb4300935a473b3529bd82a1eb6661c6`
+(successful production deployment 6961164205). P-item classification covers
+499 IDs. Arena references append 496/497 to reach 442 references; all previous
+440 PNG payloads, IDs and offsets remain unchanged. Item 495 and new items
+498/499 are non-inheritable produce support items and have no arena reference.
+The two new UI sources are the Game8 normal-state image and the actual
+upgraded-state game image published at
+`https://skypenguin.net/2026/10/09/post-170050/`. Capture provenance remains
+UNKNOWN. The independently replayable evidence is
+`tools/p-item-embedding/evidence/p_item_production_source_published_ui_20261009.json`,
+SHA-256 `1A306AF34A0A3BD5B618419E2C4781063B1C38DC46B52A3B27AD566D88F9A3F2`.
+The P gallery SHA-256 is
+`9B37C597E8B5CCD4D4A9347461B58678B1595C3FBC38694C40FD946484AA8981`.
+Source self-queries and offline replay do not establish independent live
+recognition or complete-flow latency acceptance. Original screenshots and
+builder crops remain excluded; third-party publication does not confer a new
+image license, and game graphic rights remain with their original owners.
+
+Skill classification and all three gallery inventories cover 908 IDs, while
+only the previous 886 IDs have enabled image references. IDs 887–908 each add
+one explicitly disabled neutral placeholder per component. Base reference
+rows total 4,208, arena rows 8,384 and coarse card-face rows 3,441; their enabled
+prefixes remain 4,186, 8,362 and 3,419 respectively. Both encoders and every
+old numeric row are unchanged. The previous 4,176 arena full-UI references are
+unchanged. This is catalog coverage, not recognition of 22 new cards.
+
+The included `temporary-card.png` is locally generated neutral artwork marked
+TEMPORARY / NO GAME ART, with no game image or user screenshot. Its SHA-256 is
+`5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C`.
+Schema 2 consumers require `reference_enabled=false` for all placeholder rows
+and exclude them from identity search, visual families, upgrade templates,
+coarse matching and return-page reference protection. Assets and consumers
+must be delivered together; old consumers reject these schema 2 assets.
+887/888 retain the decoded official identity from the frozen master mirror;
+889–908 retain UNKNOWN_PENDING official identity fields and preview catalog
+labels, without invented asset/internal IDs or certified ordinary-state
+effects. No actual card artwork or new image training is claimed for this
+extension. Replacing it requires verified real sources and fresh validation.
+
+Release validation binds each enabled prefix to a preserved schema 1 base,
+retains the existing source and badge qualification gates, verifies the
+classification and catalog bindings, and rejects any enabled placeholder.
+The handoff stays
+`USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING`; no READY or
+independent live PASS is manufactured. Existing rights, runtime thresholds,
+necessary detail fallback and outstanding live/latency acceptance remain.
+
+### Upstream card detector update (2026-10-10)
+
+`resource/base/model/detect/cards.onnx` is the exact 10,605,695-byte model from
+`SuperWaterGod/MaaGakumasu@3f3d37995ab612a9c725fc86cba4cacef09ed335`
+(upstream v1.5.2; model introduced by commit `7fed4d0`). SHA-256 is
+`5E9903521E9940296A088C9108EAE369CE622DD7DD27D05620D614DED6E1221C`.
+The upstream repository and model metadata declare AGPL-3.0; the model
+metadata identifies Ultralytics 8.4.66 and classes cards/recommend/useless.
+Keep the upstream copyright and root AGPL license with this redistributed
+model. This provenance entry does not certify packaged model loading or
+synthetic inference; those remain release verification requirements. Real
+game accuracy and complete produce-flow acceptance remain unverified.
