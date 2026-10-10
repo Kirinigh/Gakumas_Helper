@@ -17,6 +17,13 @@ from ._p_item_eligibility import ArenaPItemEligibility
 from ._skill_card_eligibility import ArenaSkillCardEligibility
 from ._skill_card_title_recovery import SkillCardTitleRecoveryIndex
 
+# This detects an explicit repetition claim, not its validity for a card.
+# Keep both zero-evidence paths from mistaking an unsupported claim for absence.
+_VISIBLE_SCORE_REPETITION_SUFFIX = (
+    r"(?:\(?(?:好調|集中)効果を[0-9]+(?:\.[0-9]+)?倍適用\)?)?"
+    r"\(?[0-9]+回"
+)
+
 
 class ArenaCatalogError(ValueError):
     """Raised when clicked detail text cannot resolve one exact engine ID."""
@@ -2845,7 +2852,10 @@ class ArenaEntityCatalog:
         return bool(
             annotation
             and re.search(
-                rf"(?:スコア)?\+{expected_value}{re.escape(annotation)}"
+                # OCR may omit either annotation bracket. The complete words
+                # and multiplier still come from this adjacent catalog action;
+                # no arbitrary text or other effect row may bridge to N 回.
+                rf"(?:スコア)?\+{expected_value}\(?{re.escape(annotation[1:-1])}\)?"
                 rf"[（(]?{repetitions}回(?!まで)",
                 compact,
             )
@@ -3515,15 +3525,10 @@ class ArenaEntityCatalog:
                         and effective_scores.count(effective_scores[0]) == 1
                     ):
                         visible_zero_scores.add(effective_scores[0])
-            annotation = self._literal_score_good_condition_annotation(
-                card,
-                base_scores[0],
-            ) if "好調効果を" in compact else ""
-            annotation_gap = rf"(?:{re.escape(annotation)})?" if annotation else ""
             return any(
                 re.search(
                     rf"スコア\+{score}"
-                    rf"(?![0-9]|[.,．，。][0-9]|{annotation_gap}[（(]?[0-9]+回)",
+                    rf"(?![0-9]|[.,．，。][0-9]|{_VISIBLE_SCORE_REPETITION_SUFFIX})",
                     compact,
                 )
                 is not None
@@ -5256,7 +5261,29 @@ class ArenaEntityCatalog:
                         for group, anchors in direct_score_times_groups
                         for anchor in anchors
                     )
-                    return repeated is (count > 0)
+                    if repeated or count > 0:
+                        return repeated is (count > 0)
+                    # A visible but unsupported repetition is not evidence
+                    # for zero. Otherwise a missed annotation can teach a
+                    # two-customization glyph as count one to the task pool.
+                    unchanged_repeated = any(
+                        self._detail_counted_score_anchor_present(
+                            card,
+                            {key: value for key, value in group.items() if key != str(customization_id)},
+                            anchor,
+                            compact,
+                        )
+                        for group, anchors in direct_score_times_groups
+                        for anchor in anchors
+                    )
+                    return unchanged_repeated or not any(
+                        re.search(
+                            rf"{re.escape(anchor)}{_VISIBLE_SCORE_REPETITION_SUFFIX}",
+                            compact,
+                        )
+                        for _, anchors in direct_score_times_groups
+                        for anchor in anchors
+                    )
                 score = int(base_growth_score.group(1))
                 base_visible = _contains_exact_integer_token(
                     compact,
