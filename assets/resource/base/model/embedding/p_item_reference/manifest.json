@@ -5,7 +5,7 @@
   },
   "evaluation": {
     "path": "production_handoff_evaluation.json",
-    "sha256": "720447C7F303B8176E083275BD1FF3F092A503DA15CBAC7F39E20103E5E12D52",
+    "sha256": "CDDB8334C1056489D7C76E9874EB042CA3E031B39B162AC1250CD6688E279E3B",
     "status": "PASS",
     "tool_contract": "task095-static-reference-production-promotion-v1"
   },
@@ -15,13 +15,13 @@
   },
   "recognizer": "p_item_rendered_reference_v1",
   "reference_gallery": {
-    "business_id_count": 440,
+    "business_id_count": 442,
     "color_order": "BGR",
     "image_shape": "original_png_dimensions",
     "image_shape_count": 19,
     "path": "p_item_rendered_reference_gallery.npz",
     "provisional_business_ids": [],
-    "sha256": "1C8DDF0ABF66A2065E3C9050125B547BE9CE447450B7D7A2548A7CBD611B6211"
+    "sha256": "9B37C597E8B5CCD4D4A9347461B58678B1595C3FBC38694C40FD946484AA8981"
   },
   "runtime": {
     "ambiguous_action": "bounded_detail_or_fail_closed",
@@ -54,7 +54,7 @@
   },
   "schema_version": 1,
   "source": {
-    "business_id_count": 440,
+    "business_id_count": 442,
     "business_ids": [
       7,
       8,
@@ -495,22 +495,22 @@
       491,
       492,
       493,
-      494
+      494,
+      496,
+      497
     ],
-    "evidence_id": "mixed-ui-20261001",
+    "evidence_id": "published-ui-20261009",
     "extension_provenance": {
       "base_gallery": {
         "added_business_ids": [
-          491,
-          492,
-          493,
-          494
+          496,
+          497
         ],
-        "base_business_id_count": 436,
-        "inherited_business_id_count": 436,
+        "base_business_id_count": 440,
+        "inherited_business_id_count": 440,
         "replaced_business_ids": [],
-        "sha256": "A0606F5FFD336DE04DA78C8D9DCD78F5952EC329692F45D1649E3D25002B8DED",
-        "target_business_id_count": 440
+        "sha256": "1C8DDF0ABF66A2065E3C9050125B547BE9CE447450B7D7A2548A7CBD611B6211",
+        "target_business_id_count": 442
       },
       "catalog": {
         "arena_stage_business_ids": [
@@ -876,198 +876,134 @@
           491,
           492,
           493,
-          494
+          494,
+          496,
+          497
         ],
         "excluded_current_rows": [
           {
-            "business_id": 490,
+            "business_id": 495,
             "mode": "produce",
-            "name": "限界への挑戦券",
+            "name": "王子様隠しかぼちゃ",
+            "reason": "non-stage row is outside the arena-stage contract",
+            "source_type": "support"
+          },
+          {
+            "business_id": 498,
+            "mode": "produce",
+            "name": "花海ファームランタン",
+            "reason": "non-stage row is outside the arena-stage contract",
+            "source_type": "support"
+          },
+          {
+            "business_id": 499,
+            "mode": "produce",
+            "name": "お手製ぴったり衣装",
             "reason": "non-stage row is outside the arena-stage contract",
             "source_type": "support"
           }
         ],
         "included_business_ids": [
-          491,
-          492,
-          493,
-          494
+          496,
+          497
         ],
-        "p_items_git_blob_sha1": "25c09121b0188bb0433561c2a456527089df98ce",
-        "p_items_sha256": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B",
+        "p_items_git_blob_sha1": "f9cdd483642501c1eca695f931e8ec43eeaec261",
+        "p_items_sha256": "F50C6777172CEC91CA673A66EA14884057ED04EF3102AEA4B48464EC4C2621C5",
         "path": "packages/gakumas-data/json/p_items.json",
         "repository": "https://github.com/surisuririsu/gakumas-tools",
-        "revision": "9a305390a172cf927f168e63cafa8149b24b9448",
+        "revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
         "stage_scope_contract": "EntityBank selectable entities use modes=['stage']; coverage/generate-suite filters p.mode === 'stage'"
       },
       "published_ui_crops": {
         "catalog_production_deployment": {
-          "deployment_id": 6763530892,
-          "revision": "9a305390a172cf927f168e63cafa8149b24b9448",
+          "deployment_id": 6961164205,
+          "revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
           "status": "success"
         },
         "references": {
-          "491": {
-            "business_id": 491,
-            "capture_provenance": "USER_AUTHORIZED_LOCAL_MAA",
-            "crop_box": [
-              0,
-              0,
-              64,
-              64
-            ],
-            "dimensions": [
-              130,
-              130
-            ],
-            "frozen_at": "2026-09-30",
-            "kind": "p_item",
-            "name": "小悪魔の色気",
-            "original_dimensions": [
-              64,
-              64
-            ],
-            "original_file": "local-maa-491-source-crop.png",
-            "original_sha256": "984EE395562E36886054E5FE22A6B92C82AB87E0EA7345338882CDCBCCBED44D",
-            "original_size": 5974,
-            "original_url": null,
-            "page_url": null,
-            "png_sha256": "93628AC121B24A4BBC19A7A6C2FD646AEA2722978975088EFF54382439829238",
-            "publisher": "LOCAL_MAA_NULL_INPUT",
-            "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "2743D40FDDDDF765593C5F82459458C6F4DEED369B112A7758C4416C25440107",
-            "size": 18160,
-            "upgraded": false
-          },
-          "492": {
-            "business_id": 492,
+          "496": {
+            "business_id": 496,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
               0,
               0,
-              135,
-              135
+              240,
+              239
             ],
             "dimensions": [
               130,
               130
             ],
-            "frozen_at": "2026-09-30",
+            "frozen_at": "2026-10-10",
             "kind": "p_item",
-            "name": "小悪魔の色気",
+            "name": "規格外の魅力",
             "original_dimensions": [
-              135,
-              135
+              240,
+              239
             ],
-            "original_file": "pitem-492.webp",
-            "original_sha256": "95DA87D5A5C5A4ADEEA07822C8F1C02EC704914188020A318321DE63202735D6",
-            "original_size": 3344,
-            "original_url": "https://img.game8.jp/13040549/1469304591795c929712e5d4ef1cc3a4.webp/original",
-            "page_url": "https://game8.jp/gakuen-idolmaster/818932",
-            "png_sha256": "CEE93AFFBA31E21916EDB66DD86F745FBF27ACD78496614F61C889CAB67ABC63",
+            "original_file": "game8-charm.webp",
+            "original_sha256": "5BE4C6A0F416B6DAAC06DD1D719B1511ACB46941559050C7A6BA07F01362D677",
+            "original_size": 4922,
+            "original_url": "https://img.game8.jp/13080433/0162feec1a47b34ca94fc3126e3e7590.webp/original",
+            "page_url": "https://game8.jp/gakuen-idolmaster/826177",
+            "png_sha256": "AA20E8C330EAE6DDDCD38368E3014A1FB21720AA81690150BB52D7199A1AFB2D",
             "publisher": "Game8",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "DEDA592C0429A5F5674CC684352AEBE3C1AD507C689B63E76F710464742DAA91",
-            "size": 26061,
-            "upgraded": true
-          },
-          "493": {
-            "business_id": 493,
-            "capture_provenance": "USER_AUTHORIZED_LOCAL_MAA",
-            "crop_box": [
-              0,
-              0,
-              64,
-              64
-            ],
-            "dimensions": [
-              130,
-              130
-            ],
-            "frozen_at": "2026-09-30",
-            "kind": "p_item",
-            "name": "天性の才能",
-            "original_dimensions": [
-              64,
-              64
-            ],
-            "original_file": "local-maa-493-source-crop.png",
-            "original_sha256": "0D17F625766A73CA2A47EBEB98C3E2803C026A3F4A02D900A4BB2EEDABBC6FA0",
-            "original_size": 6048,
-            "original_url": null,
-            "page_url": null,
-            "png_sha256": "67720905285ACD925E6468A102A2864D79C84496179BA4538C67580459D91862",
-            "publisher": "LOCAL_MAA_NULL_INPUT",
-            "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "8D1F16822A69DF87C47608783F68C6E97894D6535B6A0331260AFF6A19A6C5FB",
-            "size": 18700,
+            "rgb_pixel_sha256": "00C3CECB6F486FA79F9E67C61DA16F2BF98A319ECE368AE5683E0F2FCDAA62EF",
+            "size": 21214,
             "upgraded": false
           },
-          "494": {
-            "business_id": 494,
+          "497": {
+            "business_id": 497,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
-              0,
-              0,
-              135,
-              134
+              11,
+              432,
+              240,
+              661
             ],
             "dimensions": [
               130,
               130
             ],
-            "frozen_at": "2026-09-30",
+            "frozen_at": "2026-10-10",
             "kind": "p_item",
-            "name": "天性の才能",
+            "name": "規格外の魅力",
             "original_dimensions": [
-              135,
-              134
+              859,
+              823
             ],
-            "original_file": "pitem-494.webp",
-            "original_sha256": "C3D66FFF293CA7C4FD6BC25486E599840A8928E4B1E0DFC7DCF2ACE7DE2DBEBD",
-            "original_size": 3642,
-            "original_url": "https://img.game8.jp/13040551/8488910069c593482a0e78aa7c182cdb.webp/original",
-            "page_url": "https://game8.jp/gakuen-idolmaster/818933",
-            "png_sha256": "C4839CE636DFBD37DE42A1ECF46363A0BA0C733ED0A1CE27D95D80248EE994F7",
-            "publisher": "Game8",
+            "original_file": "sweettrap-public.png",
+            "original_sha256": "0B1245D786AA364166AB193F2AD17351CD00345518D012AB9DCC5C46B7D0BF39",
+            "original_size": 285126,
+            "original_url": "https://skypenguin.net/wp/wp-content/uploads/2026/10/%E3%82%B9%E3%82%A4%E3%83%BC%E3%83%88%E3%83%88%E3%83%A9%E3%83%83%E3%83%97%E2%99%A1.png",
+            "page_url": "https://skypenguin.net/2026/10/09/post-170050/",
+            "png_sha256": "80C955B13E12D88C9A3405E5FB7270FEC92D72B8FD50F0DA43B432F6DF9EF0E0",
+            "publisher": "Skypenguin",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "7CB240995E3043CBE40157B433C0BB06B7B7ABF3663FCDDEC8B6DBF297354AAF",
-            "size": 26807,
+            "rgb_pixel_sha256": "D5DFA41A4155738F1B2784A5017D8F98D27202E0CA879AE46BFD03D1AAF57019",
+            "size": 17093,
             "upgraded": true
           }
         },
-        "source_type": "mixed_verified_ui_crops"
+        "source_type": "third_party_published_ui_crops"
       },
       "schema_version": 4,
       "validation": {
         "full_gallery_64px": {
-          "491": {
-            "margin": 0.2065354585647583,
-            "top1_business_id": 491,
-            "top1_similarity": 0.9999996423721313,
-            "top2_business_id": 492,
-            "top2_similarity": 0.793464183807373
+          "496": {
+            "margin": 0.13307344913482666,
+            "top1_business_id": 496,
+            "top1_similarity": 0.9999995827674866,
+            "top2_business_id": 497,
+            "top2_similarity": 0.8669261336326599
           },
-          "492": {
-            "margin": 0.351895809173584,
-            "top1_business_id": 492,
-            "top1_similarity": 1.0,
-            "top2_business_id": 358,
-            "top2_similarity": 0.648104190826416
-          },
-          "493": {
-            "margin": 0.23840302228927612,
-            "top1_business_id": 493,
-            "top1_similarity": 0.9999998211860657,
-            "top2_business_id": 491,
-            "top2_similarity": 0.7615967988967896
-          },
-          "494": {
-            "margin": 0.3716999292373657,
-            "top1_business_id": 494,
-            "top1_similarity": 0.9999998211860657,
-            "top2_business_id": 442,
-            "top2_similarity": 0.6282998919487
+          "497": {
+            "margin": 0.048227667808532715,
+            "top1_business_id": 497,
+            "top1_similarity": 0.9999995231628418,
+            "top2_business_id": 496,
+            "top2_similarity": 0.9517718553543091
           },
           "coarse_fine_guard": "fails_safe_to_full_gallery"
         },
@@ -1075,12 +1011,10 @@
           "runtime_detail_authority": false,
           "status": "PENDING"
         },
-        "metadata_removed_business_id_count": 440,
+        "metadata_removed_business_id_count": 442,
         "source_added_business_ids": [
-          491,
-          492,
-          493,
-          494
+          496,
+          497
         ],
         "source_replacement_changed_business_ids": []
       }
@@ -1095,15 +1029,15 @@
       "logic": 407,
       "sense": 406
     },
-    "revision": "base-gallery-sha256@A0606F5FFD336DE04DA78C8D9DCD78F5952EC329692F45D1649E3D25002B8DED+gakumas-tools@9a305390a172cf927f168e63cafa8149b24b9448+published-ui-crops-v1",
-    "sanitized_icons_sha256": "F9800C3B58DF2D816CF7A35C78E0D3E79CE7EA9F82C2C75E1B22EEBBB6849799",
-    "scope": "436 immutable inherited references; append 491-494 from public and authorized local complete UI; independent real JJC pending",
-    "source_icons_sha256": "33529E952F6B9E8D55177C7751C31DA7A9A2858563FBA7E31AAAB1E533069189"
+    "revision": "base-gallery-sha256@1C8DDF0ABF66A2065E3C9050125B547BE9CE447450B7D7A2548A7CBD611B6211+gakumas-tools@6f138bd7eb4300935a473b3529bd82a1eb6661c6+published-ui-crops-v1",
+    "sanitized_icons_sha256": "A9C3D28F357696AF9D4284130DE23233A93C973437C06F5302B858F7EC34BD6F",
+    "scope": "440 immutable inherited references; append 496/497 from public complete UI; independent real JJC pending",
+    "source_icons_sha256": "F76AFDAA76A9D70372D7E6E73A5FAE8463EBD0FBDA13A6D5E33FCCAF5622E776"
   },
   "validation": {
-    "coarse_fine_720_calibration": "FOUR_FULL_GALLERY_RANKINGS_PASS_REAL_JJC_PENDING",
+    "coarse_fine_720_calibration": "TWO_FULL_GALLERY_RANKINGS_PASS_REAL_JJC_PENDING",
     "embedding_acceptance_calibration": "REJECTED_FOR_CURRENT_JJC_DOMAIN",
-    "jjc_reference_identity": "FOUR_MIXED_UI_IDENTITIES_BOUND_REAL_JJC_PENDING",
-    "upgraded_marker_calibration": "MIXED_UI_NORMAL_PLUS_COMPLETE_REFERENCES_REAL_JJC_PENDING"
+    "jjc_reference_identity": "TWO_PUBLISHED_UI_IDENTITIES_BOUND_REAL_JJC_PENDING",
+    "upgraded_marker_calibration": "PUBLISHED_UI_NORMAL_PLUS_COMPLETE_REFERENCES_REAL_JJC_PENDING"
   }
 }

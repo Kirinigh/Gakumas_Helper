@@ -1,22 +1,31 @@
 {
   "schema_version": 1,
-  "revision": "task095-p-item-classification-494-joint-v1",
+  "revision": "task095-batch13-p-item-classification-499-accepted-history-official-append-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "p_item_plan_and_four_kinds_v1",
   "runtime_filtering_enabled": false,
   "sources": {
     "catalog": {
-      "repository": "https://github.com/surisuririsu/gakumas-tools",
+      "repository": "https://github.com/gakumas-tools/gakumas-tools",
       "path": "packages/gakumas-data/json/p_items.json",
-      "revision": "9a305390a172cf927f168e63cafa8149b24b9448",
-      "p_items_sha256": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B"
+      "revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
+      "p_items_sha256": "F50C6777172CEC91CA673A66EA14884057ED04EF3102AEA4B48464EC4C2621C5"
     },
     "official_master": {
       "file": "ProduceItem.yaml",
-      "source_kind": "JOINT_SOURCE_NOT_OFFICIAL_MASTER",
-      "sha256": "65EA1749C8B50039A770E3180FB3065D6BBEBCD5BF91CA6B25CD721ED2E9EA00"
+      "source_kind": "ACCEPTED_HISTORY_WITH_OFFICIAL_APPEND",
+      "sha256": "1CD4E2B5DAC0562CD9BA5F4B6E3925338A12D98E697B9211FEDB2A341E618140",
+      "accepted_source_sha256": "65EA1749C8B50039A770E3180FB3065D6BBEBCD5BF91CA6B25CD721ED2E9EA00",
+      "official_append_sha256": "8A0045A8118D02BE95155FBB5DE2A8C8B9CE03B67D29EBF7020C3815D91FF608",
+      "official_append_business_ids": [
+        495,
+        496,
+        497,
+        498,
+        499
+      ]
     },
-    "catalog_evidence_sha256": "B3645E7890EB1AD617722BA549327662F676732D8DDD479C43AD136D77279B96",
+    "catalog_evidence_sha256": "6D169CED09E8520F523AA279CC3099A3D65550DD9823111F2AB4541F3978A771",
     "visual_dataset_manifest_sha256": "78AA1885B75925D34C9186F15FFB3723D78A4DF1F6D183CE6A4523768D71492B",
     "visual_crosswalk_sha256": "9E7CCC422C9308F20CB157DAF922E048CB49CE03B1C8EA581EA1C60BB9544182"
   },
@@ -18152,6 +18161,191 @@
         }
       },
       "paired_business_id": 493
+    },
+    {
+      "business_id": 495,
+      "name": "王子様隠しかぼちゃ",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-2-135-0",
+          "assetId": "img_general_pitem_2-135",
+          "name": "王子様隠しかぼちゃ",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Sr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-2-0081",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
+    },
+    {
+      "business_id": 496,
+      "name": "規格外の魅力",
+      "upgraded": false,
+      "plan": "logic",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "logic",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 159,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_02-3-348-0",
+          "assetId": "img_general_pitem_3-348",
+          "name": "規格外の魅力",
+          "planType": "ProducePlanType_Plan2",
+          "isExamEffect": true,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "i_card-hski-3-022",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 497
+    },
+    {
+      "business_id": 497,
+      "name": "規格外の魅力+",
+      "upgraded": true,
+      "plan": "logic",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "logic",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 159,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_02-3-348-1",
+          "assetId": "img_general_pitem_3-348",
+          "name": "規格外の魅力+",
+          "planType": "ProducePlanType_Plan2",
+          "isExamEffect": true,
+          "isUpgraded": true,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "i_card-hski-3-022",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 496
+    },
+    {
+      "business_id": 498,
+      "name": "花海ファームランタン",
+      "upgraded": false,
+      "plan": "logic",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "logic",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_02-3-354-0",
+          "assetId": "img_general_pitem_3-354",
+          "name": "花海ファームランタン",
+          "planType": "ProducePlanType_Plan2",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-3-0112",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
+    },
+    {
+      "business_id": 499,
+      "name": "お手製ぴったり衣装",
+      "upgraded": false,
+      "plan": "logic",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "logic",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_02-2-136-0",
+          "assetId": "img_general_pitem_2-136",
+          "name": "お手製ぴったり衣装",
+          "planType": "ProducePlanType_Plan2",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Sr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-2-0082",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
     }
   ],
   "indexes": {
@@ -18364,7 +18558,8 @@
         482,
         483,
         493,
-        494
+        494,
+        495
       ],
       "logic": [
         5,
@@ -18537,7 +18732,11 @@
         481,
         484,
         485,
-        486
+        486,
+        496,
+        497,
+        498,
+        499
       ],
       "anomaly": [
         166,
@@ -18973,7 +19172,9 @@
         491,
         492,
         493,
-        494
+        494,
+        496,
+        497
       ],
       "support_inheritable": [
         71,
@@ -19110,7 +19311,10 @@
         477,
         484,
         487,
-        490
+        490,
+        495,
+        498,
+        499
       ],
       "other": [
         1,
@@ -19167,14 +19371,14 @@
   "counts": {
     "plan": {
       "free": 50,
-      "sense": 156,
-      "logic": 171,
+      "sense": 157,
+      "logic": 175,
       "anomaly": 117
     },
     "kind": {
-      "p_idol": 313,
+      "p_idol": 315,
       "support_inheritable": 50,
-      "support_non_inheritable": 83,
+      "support_non_inheritable": 86,
       "other": 48
     }
   },
@@ -19196,9 +19400,9 @@
   "gallery_coverage": {
     "component": "p_item_reference",
     "join_key": "business_id",
-    "business_id_count": 440,
-    "manifest_sha256": "9F0065BA66D1EB3B87A9C1EE06C48EF1158061AB7BC49987EB9B1A4AD0EF8B87",
-    "gallery_sha256": "1C8DDF0ABF66A2065E3C9050125B547BE9CE447450B7D7A2548A7CBD611B6211",
+    "business_id_count": 442,
+    "manifest_sha256": "DA938C97D0D9A921D831136B2C4F483D1A4D8A3D02996521DDF2E120659B3339",
+    "gallery_sha256": "9B37C597E8B5CCD4D4A9347461B58678B1595C3FBC38694C40FD946484AA8981",
     "without_reference_business_ids": [
       1,
       2,
@@ -19253,7 +19457,10 @@
       477,
       484,
       487,
-      490
+      490,
+      495,
+      498,
+      499
     ]
   }
 }
