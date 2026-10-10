@@ -504,16 +504,78 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
         if self._entry_deadline is not None and time.monotonic() >= self._entry_deadline:
             raise ArenaReaderError("arena_entry_recovery_exhausted", "entry recovery reached its time limit")
 
+    def _title_start_observation(self, image, items):
+        """The blinking TAP label alone is not evidence of a title page."""
+
+        matches = lambda pattern: self._matching_ocr_items(items, pattern)
+        version = matches(r"(?i)^Ver[.\s]*\d+\.\d+\.\d+$")
+        producer = matches(r"^プロデューサー\s*ID[:：]")
+        transfer = matches(r"^データ連携$")
+        menu = matches(r"^メニュー$")
+        height = image.shape[0]
+        title = (
+            len(version) == len(producer) == len(transfer) == len(menu) == 1
+            and version[0].box[1] < height * 0.15
+            and producer[0].box[1] < height * 0.15
+            and transfer[0].box[1] < height * 0.25
+            and menu[0].box[1] > height * 0.85
+        )
+        tap = matches(r"(?i)^[+＋\s]*TAP\s*TO\s*START[+＋\s]*$")
+        tap_box = (
+            tuple(tap[0].box)
+            if title and len(tap) == 1 and height * 0.60 < tap[0].box[1] < height * 0.90
+            else None
+        )
+        return title, tap_box
+
+    def _advance_title_startup(self, image, actions) -> bool:
+        """Reuse recognized startup actions, without its unbounded ClickCenter."""
+
+        handlers = (
+            ("StartUpDownload", "StartUpDownload", 1),
+            ("StartUpLoginBonus", "StartUpLoginBonus", 3),
+            ("StartUpGetFriendPoints", "StartUpCloseButton", 1),
+            ("StartUpCloseRoundButton", "StartUpCloseRoundButton", 3),
+        )
+        for recognition, action, limit in handlers:
+            matches = self._recognize(recognition, image)
+            if len(matches) != 1:
+                continue
+            if action != recognition:
+                matches = self._recognize(action, image)
+                if len(matches) != 1:
+                    continue
+            if actions.get(action, 0) >= limit:
+                raise ArenaReaderError(
+                    "arena_entry_startup_recovery_exhausted",
+                    f"startup action {action} exhausted its bounded retry budget",
+                )
+            self._check_cancelled()
+            actions[action] = actions.get(action, 0) + 1
+            result = self.context.run_action(action, box=tuple(matches[0].box))
+            self._check_cancelled()
+            if result is None or not result.success:
+                raise ArenaReaderError("arena_entry_startup_action_failed", f"startup action {action} did not finish")
+            self._runtime_counts["startup_actions"] = sum(actions.values())
+            self._sleep(0.25)
+            return True
+        return False
+
     def recover_entry(self) -> None:
         started = time.monotonic()
         deadline = started + 8.0
         self._entry_deadline = deadline
         returns = 0
         home_entry_sent = False
+        title_seen = False
+        title_start_sent = False
+        startup_actions = {}
         succeeded = False
         last_page = "unknown"
         try:
-            for _ in range(6):
+            for frame_index in range(64):
+                if frame_index >= 6 and not title_seen:
+                    break
                 self._check_cancelled()
                 if time.monotonic() >= deadline:
                     break
@@ -543,6 +605,20 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                     return
                 if self._retry_transient_communication_items(items):
                     last_page = "communication"
+                    self._sleep(0.25)
+                    continue
+                title, tap_box = self._title_start_observation(image, items)
+                if title:
+                    last_page = "title"
+                    if not title_seen:
+                        title_seen = True
+                        deadline = started + 60.0
+                        self._entry_deadline = deadline
+                        user_logger.info("检测到游戏标题画面，正在继续启动并进入竞技场")
+                    if tap_box is not None and not title_start_sent:
+                        self._check_cancelled()
+                        title_start_sent = True
+                        self._click(tap_box)
                     self._sleep(0.25)
                     continue
                 # TAP also appears on home missions. Home entry needs the
@@ -590,6 +666,9 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                     returns += 1
                     self._back(image=image)
                 else:
+                    if title_start_sent and self._advance_title_startup(image, startup_actions):
+                        last_page = "startup_popup"
+                        continue
                     # Loading or an unproven page gets another bounded frame,
                     # never a Back merely because a back-shaped control exists.
                     self._sleep(0.25)
@@ -601,6 +680,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
             logger.info(json.dumps({
                 "event": "arena_reader_recovery", "action": "entry_return",
                 "succeeded": succeeded, "last_page": last_page, "back_actions": returns,
+                "title_start_sent": title_start_sent, "startup_actions": dict(startup_actions),
                 "wall_seconds": round(time.monotonic() - started, 6),
                 "extra_counts": dict(self._runtime_counts),
             }, ensure_ascii=False, sort_keys=True))
