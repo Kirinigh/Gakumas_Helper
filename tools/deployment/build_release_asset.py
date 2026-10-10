@@ -2677,6 +2677,11 @@ def build_release_assets(
         _, _, release_arena_ids, _, _ = _load_skill_card_gallery_contract(
             _resolve_inside(arena_card_root, str(arena_card["gallery"]["path"])),
             label="arena card vision",
+            # The complete inventory above has already qualified every inactive row.
+            allow_inactive_placeholders=(
+                arena_card.get("production_handoff", {}).get("status")
+                == static_handoff.TEMPORARY_PLACEHOLDER_STATUS
+            ),
         )
         release_manifest = {
             "schema_version": SCHEMA_VERSION,
