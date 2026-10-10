@@ -294,6 +294,10 @@ def canonical_skill_card_rows(
         (len(columns) for columns, _ in cluster_columns),
         default=0,
     )
+    if maximum_support < 4 and image is not None:
+        recovered = _outlined_scrolled_primary_row(image, detector_boxes)
+        if recovered:
+            return (recovered,)
     # A one-card/tall-overlay detection can form an earlier false row beside a
     # complete real row.  Sparse recovery remains available when it is the
     # only evidence, but it must never outrank a row backed by at least four
@@ -316,6 +320,99 @@ def canonical_skill_card_rows(
             return ()
         rows.append(row)
     return tuple(sorted(rows, key=lambda row: row[0][1]))
+
+
+def _outlined_scrolled_primary_row(
+    image: object,
+    detector_boxes: Sequence[tuple[int, int, int, int]],
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Recover a missed primary row from a complete, uniquely outlined grid.
+
+    This failure-only route requires all twelve separate neutral card outlines
+    at the calibrated staggered grid, both shared top edges, and one actual
+    detector box on that same grid. It proves layout only; the caller still
+    requires its existing three-frame content and card-identity checks.
+    """
+    import cv2
+    import numpy as np
+
+    array = np.asarray(image)
+    if array.ndim != 3 or array.shape[2] < 3 or not detector_boxes:
+        return ()
+    height, width = array.shape[:2]
+    card_width, card_height = round(width * 0.114), round(height * 0.066)
+    if card_width < 8 or card_height < 8:
+        return ()
+    pitch = round(width * 0.1264)
+    upper_lefts = tuple(round(width * 0.039) + pitch * index for index in range(6))
+    lower_lefts = tuple(round(width * 0.214) + pitch * index for index in range(6))
+    top, bottom = round(height * 0.15), round(height * (0.23 + 0.075 + 0.066))
+    pixels = array[top:bottom, :, :3]
+    brightness = pixels.mean(axis=2)
+    neutral = (np.ptp(pixels, axis=2) <= 40) & (brightness >= 35) & (brightness <= 175)
+    contours, _ = cv2.findContours(neutral.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    tolerance = max(2, round(card_width * 0.08))
+    outlines = []
+    for contour in contours:
+        x, y, box_width, box_height = cv2.boundingRect(contour)
+        if (abs(box_width - card_width) > tolerance
+                or abs(box_height - card_height) > tolerance
+                or not 0.95 <= box_height / box_width <= 1.05):
+            continue
+        # Badges may obscure part of the outline, so use its spatial extent,
+        # not filled area. A single line or L-shaped fragment cannot qualify.
+        if cv2.contourArea(cv2.convexHull(contour)) < box_width * box_height * 0.85:
+            continue
+        outlines.append((x, y + top, box_width, box_height))
+    if len(outlines) < 12:
+        return ()
+    x_tolerance, y_tolerance = max(2, round(width * 0.012)), max(2, round(height * 0.003))
+
+    def outlined_row(lefts, row_y):
+        selected = []
+        for left in lefts:
+            matches = tuple(box for box in outlines if abs(box[0] - left) <= x_tolerance and abs(box[1] - row_y) <= y_tolerance)
+            if len(matches) != 1:
+                return ()
+            selected.append(matches[0])
+        return tuple(selected)
+
+    def shared_top_edge(row):
+        for x, y, box_width, _ in row:
+            left, right = x + round(box_width * 0.25), x + round(box_width * 0.65)
+            above = array[y - 1, left:right, :3].astype(np.float32)
+            edge = array[y, left:right, :3].astype(np.float32)
+            if (above.mean() < 180 or edge.mean() > 170
+                    or above.mean() - edge.mean() < 40
+                    or np.mean(np.ptp(edge, axis=1)) > 40
+                    or edge.std(axis=0).max() > 12):
+                return False
+        return True
+
+    candidates = []
+    for row_y in sorted({box[1] for box in outlines if top <= box[1] <= round(height * 0.23)}):
+        upper = outlined_row(upper_lefts, row_y)
+        if not upper or not shared_top_edge(upper):
+            continue
+        primary_y = round(median(box[1] for box in upper))
+        lower = outlined_row(lower_lefts, primary_y + round(height * 0.075))
+        if not lower or not shared_top_edge(lower):
+            continue
+        grid = upper + lower
+        supported = False
+        for raw_box in detector_boxes:
+            x, y, box_width, box_height = (int(value) for value in raw_box)
+            if not width * 0.10 <= box_width <= width * 0.14 or not 0.9 <= box_height / box_width <= 1.25:
+                continue
+            for ox, oy, ow, oh in grid:
+                overlap = max(0, min(x + box_width, ox + ow) - max(x, ox)) * max(0, min(y + box_height, oy + oh) - max(y, oy))
+                if overlap / (box_width * box_height + ow * oh - overlap) >= 0.70:
+                    supported = True
+                    break
+        if supported:
+            candidates.append(tuple((left, primary_y, card_width, card_height) for left in upper_lefts))
+    unique = tuple(dict.fromkeys(candidates))
+    return unique[0] if len(unique) == 1 else ()
 
 
 def align_skill_card_row_border(
