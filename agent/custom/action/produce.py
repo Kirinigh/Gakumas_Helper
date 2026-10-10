@@ -1,6 +1,8 @@
 import json
 import time
 import random
+import threading
+from copy import deepcopy
 from typing import Any, Dict, List, Optional
 from collections import Counter, deque
 
@@ -538,7 +540,7 @@ class ProduceCardsAuto(CustomAction):
 
     # 超时截图收集：帧缓冲上限（最快0.3s/轮，60帧≈18s，覆盖整个超时窗口）
     MAX_BUFFER_FRAMES = 60
-    # 单次运行最多保存的卡死片段数，防止系统性故障时大量占盘
+    # 当前动作实例最多提交的卡死片段数，防止系统性故障时大量占盘
     TIMEOUT_SAVE_LIMIT = 5
 
     def __init__(self):
@@ -546,6 +548,8 @@ class ProduceCardsAuto(CustomAction):
         self._frames = deque(maxlen=self.MAX_BUFFER_FRAMES)
         self._timeout_saved = False
         self._timeout_save_count = 0
+        self._save_thread = None
+        self._capture_failed = threading.Event()
         self._save_enabled = False
         self.start_time = time.time()
 
@@ -654,11 +658,15 @@ class ProduceCardsAuto(CustomAction):
                 # 有推荐牌时，打出推荐牌
                 if suggestions > 0:
                     if suggestions_box[1] < self.CARD_Y_MIN or suggestions_box[1] > self.CARD_Y_MAX:
+                        self._record_timeout(context)
+                        time.sleep(self.CLICK_DELAY)
                         continue
                     self._play_a_card(context, suggestions_box)
                 # 只有一张可用牌时，直接打出该牌
                 elif cards == 1:
                     if best_box[1] < self.CARD_Y_MIN or best_box[1] > self.CARD_Y_MAX:
+                        self._record_timeout(context)
+                        time.sleep(self.CLICK_DELAY)
                         continue
                     time.sleep(1)  # 防止点击过早导致只命中一次
                     self._play_a_card(context, best_box)
@@ -671,12 +679,10 @@ class ProduceCardsAuto(CustomAction):
 
                 end_time = time.time()
                 if end_time - self.start_time > self.TIME_OUT:
-                    # 截图放在Y轴越界判断之前：越界时会每 CLICK_DELAY 秒重复进入本分支，同样需要捕获
-                    if self._save_enabled and not self._timeout_saved:
-                        self._timeout_saved = True
-                        self._save_timeout_frames(context, end_time - self.start_time, suggestions, useless, cards, best_box)
+                    self._record_timeout(context)
 
                     if best_box[1] < self.CARD_Y_MIN or best_box[1] > self.CARD_Y_MAX:
+                        time.sleep(self.CLICK_DELAY)
                         continue
 
                     logger.warning("检测超时")
@@ -684,7 +690,7 @@ class ProduceCardsAuto(CustomAction):
 
             else:
                 reco_detail = context.run_recognition("ProduceRecognitionNoCards", image)
-                if reco_detail.hit:
+                if reco_detail and reco_detail.hit:
                     self._mark_frame("no_cards")
                     logger.info("无手牌")
                     context.run_task("ProduceRecognitionSkipRound")
@@ -692,6 +698,7 @@ class ProduceCardsAuto(CustomAction):
                     self._reset_window()
                 else:
                     self._mark_frame("miss")
+                    self._record_timeout(context)
 
             time.sleep(self.CLICK_DELAY)
 
@@ -706,9 +713,20 @@ class ProduceCardsAuto(CustomAction):
 
     def _mark_frame(self, status: str, info=None) -> None:
         """回填本轮帧的识别结果（未开启超时截图时帧缓冲为空，直接忽略）"""
-        if self._frames:
+        if self._frames and not self._timeout_saved:
             self._frames[-1]["status"] = status
             self._frames[-1]["info"] = info
+
+    def _record_timeout(self, context: Context) -> None:
+        if not self._save_enabled or self._timeout_saved or not self._frames:
+            return
+        elapsed = time.time() - self.start_time
+        if elapsed <= self.TIME_OUT:
+            return
+        self._timeout_saved = True
+        info = self._frames[-1]["info"] or (None, None, None, None)
+        self._save_timeout_frames(context, elapsed, *info)
+        self._frames.clear()
 
     @staticmethod
     def _capture_allowed() -> bool:
@@ -716,10 +734,10 @@ class ProduceCardsAuto(CustomAction):
         return config.enabled and config.mode in {"failure", "roi", "screenshot"}
 
     def _record_frame(self, image) -> None:
-        if not self._save_enabled or not self._capture_allowed():
+        if not self._save_enabled or self._capture_failed.is_set() or not self._capture_allowed():
             self._frames.clear()
             return
-        if self._timeout_save_count < self.TIMEOUT_SAVE_LIMIT:
+        if not self._timeout_saved and self._timeout_save_count < self.TIMEOUT_SAVE_LIMIT:
             self._frames.append({"ts": time.time(), "image": image.copy(), "status": None, "info": None})
 
     @staticmethod
@@ -754,19 +772,44 @@ class ProduceCardsAuto(CustomAction):
             params[name] = data.get("recognition") if isinstance(data, dict) else None
         return params
 
-    def _save_timeout_frames(self, context: Context, elapsed: float, suggestions: int, useless: int, cards: int, best_box: list) -> None:
-        """Save authorized timeout evidence through the existing quota-managed store."""
-        if not self._save_enabled or not self._capture_allowed():
+    def _save_timeout_frames(self, context: Context, elapsed: float, suggestions, useless, cards, best_box) -> None:
+        """Freeze framework metadata on the action thread; submit at most one writer."""
+        if not self._save_enabled or self._capture_failed.is_set() or not self._capture_allowed():
             self._frames.clear()
             return
         if not self._frames or self._timeout_save_count >= self.TIMEOUT_SAVE_LIMIT:
             return
-        # Bound attempts as well as successes; a failing disk must not cause retries.
+        if self._save_thread is not None and self._save_thread.is_alive():
+            self._frames.clear()
+            return
         self._timeout_save_count += 1
         try:
+            # Capture this store, not a future replacement: reconfiguration revokes it.
             store = get_runtime_store()
+            frames = [dict(frame, info=deepcopy(frame["info"])) for frame in self._frames]
+            metadata = {
+                "source": "produce_cards_timeout", "elapsed_seconds": round(elapsed, 3),
+                "suggestions": int(suggestions) if suggestions is not None else None,
+                "useless": int(useless) if useless is not None else None,
+                "cards": int(cards) if cards is not None else None,
+                "best_box": [int(v) for v in best_box] if best_box is not None else None,
+                "framework_version": self._framework_version(),
+                "recognition_params": deepcopy(self._recognition_params(context)),
+            }
+            worker = threading.Thread(target=self._write_timeout_frames, args=(store, frames, metadata), daemon=False)
+            self._save_thread = worker
+            worker.start()
+        except Exception as error:
+            self._capture_failed.set()
+            self._save_enabled = False
+            logger.warning(f"提交超时现场失败，停止采集: {error}")
+        finally:
+            self._frames.clear()
+
+    def _write_timeout_frames(self, store, frames: list, metadata: dict) -> None:
+        """Only the frozen snapshot and quota-managed store are used in this thread."""
+        try:
             session = store.start_session("produce-cards-timeout-v1")
-            frames = list(self._frames)
             groups = []
             for index, frame in enumerate(frames):
                 record = {
@@ -783,27 +826,20 @@ class ProduceCardsAuto(CustomAction):
                 else:
                     groups.append((frame["image"], [record]))
             for image, records in groups:
-                if not self._capture_allowed():
-                    break
+                if store.revoked:
+                    return
                 data = encode_bgr_png(image)
                 if data is None:
                     raise ValueError("invalid timeout frame")
                 store.write_image(
                     "failure", session, data, capture_kind="failure_scene", suffix=".png",
-                    metadata={
-                        "source": "produce_cards_timeout", "elapsed_seconds": round(elapsed, 3),
-                        "suggestions": int(suggestions), "useless": int(useless), "cards": int(cards),
-                        "best_box": [int(v) for v in best_box], "records": records,
-                        "framework_version": self._framework_version(),
-                        "recognition_params": self._recognition_params(context),
-                    },
+                    metadata={**metadata, "records": records},
                 )
             logger.info("出牌超时现场已交由本地采集存储管理")
         except Exception as error:
+            self._capture_failed.set()
             self._save_enabled = False
-            logger.warning(f"保存超时现场失败，本次调用停止采集: {error}")
-        finally:
-            self._frames.clear()
+            logger.warning(f"保存超时现场失败，停止采集: {error}")
 
     @staticmethod
     def _get_card_info(results: list):
