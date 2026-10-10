@@ -638,6 +638,28 @@ class PItemDetailTextIndex:
             recovered = self._recover_wrapped_body(atom_rows, title_index, sources, panel_box, plan=plan, eligible_ids=eligible_ids)
             if recovered is not None:
                 return recovered
+        if result.status != "unique" and panel_box is not None:
+            # A repeated decoration failure needs complete-body evidence, not
+            # broader acceptance of individual numeric conflicts.
+            from ._p_item_detail_decorations import recover_decorated_body
+
+            scoped = self.family_ids_for_title(str(atom_rows[title_index]["text"]), plan=plan, eligible_ids=eligible_ids)
+            if len(scoped) >= 2 and all(item_id in self._bodies for item_id in scoped):
+                proof = recover_decorated_body(
+                    atom_rows, title_index, layout,
+                    {item_id: self._references[item_id]["paragraphs"] for item_id in scoped},
+                    tuple(literals[0] for literals in self._complete_fields),
+                )
+                if proof is not None:
+                    recovered = self._resolve(str(atom_rows[title_index]["text"]), proof["text"], proof["spans"],
+                                              plan=plan, eligible_ids=eligible_ids,
+                                              layout_diagnostics=result.diagnostics.get("layout"))
+                    if recovered.status == "unique" and recovered.ids == (proof["item_id"],):
+                        return PItemDetailTextResult("unique", recovered.ids, "complete_reference_decoration_recovery", {
+                            **recovered.diagnostics,
+                            "decoration_recovery": {"edits": proof["edits"], "complete_reference_id": proof["item_id"],
+                                                    "numeric_value_edits": 0, "additional_ocr_calls": 0},
+                        })
         return result
 
     def match_text(self, title_text: str, detail_text: str, *, plan: str | None = None, eligible_ids: frozenset[int] | None = None) -> PItemDetailTextResult:
