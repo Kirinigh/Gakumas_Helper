@@ -5,9 +5,9 @@
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
   "sources": {
-    "catalog_revision": "9a305390a172cf927f168e63cafa8149b24b9448",
-    "catalog_sha256": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
-    "decoded_master_sha256": "3B2BECDF8591719C3ADF20BF5C861B697A1ACEB68856A6359CC9142C7592B4F7",
+    "catalog_revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
+    "catalog_sha256": "96EBAF7B54E3AD5F93D458FD1CE0CB0B832113F86229CDDDA999548817EEA8AA",
+    "decoded_master_sha256": "FA18BCADC4D8E12BE21B71B29CBB75ADFA35B1009E0DEC045C0C9072C2D32AAE",
     "datasets": [
       {
         "dataset_id": "task075-authoritative-705100:0036",
@@ -36,6 +36,10 @@
       {
         "dataset_id": "task095-skill-card-extension-pc-705100-0067-9a3053-joint-ui",
         "manifest_sha256": "2FA9FC4ABF623F80BFCCC3FC5DDFE388ECE58BE749A0DF11C9565DCFF7F6EF23"
+      },
+      {
+        "dataset_id": "task095-skill-card-extension-pc-705100-0069-released888-ui",
+        "manifest_sha256": "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7"
       }
     ],
     "temporary_placeholder_catalog": {
@@ -20523,8 +20527,8 @@
       "internal_id": "p_card-02-ido-3_248",
       "asset_id": "img_general_skillcard_ido-3_248",
       "plan": "logic",
-      "rarity": "SSR",
       "kind": "p_idol",
+      "rarity": "SSR",
       "source": {
         "catalog_source_type": "pIdol",
         "catalog_p_idol_id": 159,
@@ -20536,22 +20540,7 @@
         "originSupportCardId": "",
         "originPrimaStellaIdolCardId": "",
         "originCharacterId": "",
-        "kind_basis": "catalog_source_for_temporary_placeholder",
-        "temporary_placeholder": {
-          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-          "reference_enabled": false,
-          "rule_version": "temporary-placeholder-reference-v1",
-          "provisional_family_id": "provisional:887",
-          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
-          "catalog": {
-            "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
-            "sha256": "011C45E47138204D56FA7F315E366718D2B47E1878044C73014DC406F378AEAD"
-          },
-          "official_identity_status": "FROZEN_DECODED_MASTER",
-          "decoded_master_sha256": "FA18BCADC4D8E12BE21B71B29CBB75ADFA35B1009E0DEC045C0C9072C2D32AAE",
-          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
-        }
+        "kind_basis": "official_idol_origin"
       }
     },
     {
@@ -20561,8 +20550,8 @@
       "internal_id": "p_card-02-ido-3_248",
       "asset_id": "img_general_skillcard_ido-3_248",
       "plan": "logic",
-      "rarity": "SSR",
       "kind": "p_idol",
+      "rarity": "SSR",
       "source": {
         "catalog_source_type": "pIdol",
         "catalog_p_idol_id": 159,
@@ -20574,22 +20563,7 @@
         "originSupportCardId": "",
         "originPrimaStellaIdolCardId": "",
         "originCharacterId": "",
-        "kind_basis": "catalog_source_for_temporary_placeholder",
-        "temporary_placeholder": {
-          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-          "reference_enabled": false,
-          "rule_version": "temporary-placeholder-reference-v1",
-          "provisional_family_id": "provisional:887",
-          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
-          "catalog": {
-            "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
-            "sha256": "011C45E47138204D56FA7F315E366718D2B47E1878044C73014DC406F378AEAD"
-          },
-          "official_identity_status": "FROZEN_DECODED_MASTER",
-          "decoded_master_sha256": "FA18BCADC4D8E12BE21B71B29CBB75ADFA35B1009E0DEC045C0C9072C2D32AAE",
-          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
-        }
+        "kind_basis": "official_idol_origin"
       }
     },
     {
@@ -24135,32 +24109,32 @@
   "gallery_coverage": [
     {
       "component": "skill-base",
-      "manifest_sha256": "3AF76DF04B9249AE429D80858B902FF501F4D31B9B6938DF16888643B809803E",
-      "gallery_sha256": "CB64FA0BDFCE0F0B6BF3C61FA26F923EB65174B6C315306A227A58A51B4618EC",
+      "manifest_sha256": "F4A73AE02401C07FAE6D1853EEAC4B8AF94EF899AC2683B7B3A2F317E59450E7",
+      "gallery_sha256": "2B6A7CDD2A86602BC367D84BD8A6C5D77C4382E3919C51290504439C00DCB0FD",
       "row_count": 4208,
       "business_id_count": 908,
-      "enabled_business_id_count": 886,
-      "temporary_placeholder_business_id_count": 22,
+      "enabled_business_id_count": 888,
+      "temporary_placeholder_business_id_count": 20,
       "join_key": "business_id"
     },
     {
       "component": "skill-arena",
-      "manifest_sha256": "FA205EE7DA6715A9EFC91ED0169D401E5720B0ABB67951C44275630EF1D80929",
-      "gallery_sha256": "AE9D3813EA36FDFCD8F0BDF4F025BDCBF3009A2D8E189F697F5577C75785F83F",
+      "manifest_sha256": "23FF92719346D879236987C71830F2174FCD72EFA7653FA8E8986C704449B26F",
+      "gallery_sha256": "32700737D6B543FDB12D8088CCA5CA773EEDE341DE8185477810B093B2E42887",
       "row_count": 8384,
       "business_id_count": 908,
-      "enabled_business_id_count": 886,
-      "temporary_placeholder_business_id_count": 22,
+      "enabled_business_id_count": 888,
+      "temporary_placeholder_business_id_count": 20,
       "join_key": "business_id"
     },
     {
       "component": "badge-reference",
-      "manifest_sha256": "A374671D523CF8075ED5B6CC9E5735BC813DBB7E019D2342CE2B3DC87AC373C0",
-      "gallery_sha256": "FDFADE7DC11EF241421046416972DA5BE942283105BEBCD60DFA0C7908394CE4",
+      "manifest_sha256": "08E2C0CDDC69A551D0B81A9E4AD997197CFB58F7D0FD5ED32DD2BADFC199A5BE",
+      "gallery_sha256": "C1FA40D44CCD1987A4F9160B84E16C1FCD2ACD68B4A61B24FE8AAD5831FC966E",
       "row_count": 3441,
       "business_id_count": 908,
-      "enabled_business_id_count": 886,
-      "temporary_placeholder_business_id_count": 22,
+      "enabled_business_id_count": 888,
+      "temporary_placeholder_business_id_count": 20,
       "join_key": "business_id"
     }
   ]

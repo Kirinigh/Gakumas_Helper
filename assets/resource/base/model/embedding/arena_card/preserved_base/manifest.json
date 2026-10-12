@@ -1,10 +1,21 @@
 {
   "build": {
+    "base_dataset_manifest_sha256": "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7",
+    "base_dataset_lineage_manifest_sha256s": [
+      "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
+      "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
+      "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
+      "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
+      "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C",
+      "48160BE76DADEB23C2B326D29C862F704BC8F8DBB3E2EDC18DF2B7FA436D98B0",
+      "2FA9FC4ABF623F80BFCCC3FC5DDFE388ECE58BE749A0DF11C9565DCFF7F6EF23",
+      "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7"
+    ],
     "tool_contract": "task095-arena-full-ui-union-v1",
     "mode": "GALLERY_ONLY",
-    "base_manifest_sha256": "152E629C791CC48B0718F5BEA7F0C7679126AB9BFA46FD6D7C43B96DBF2408B9",
-    "base_gallery_sha256": "624A35C8AE22628B57D5FF104C87C59A39AA035B7686E5BD7B8DA392CB763C97",
-    "preserved_rows": 4186,
+    "base_manifest_sha256": "3D5C480B968B339CF381CCAEE7347F686C52D390618F4C5E988A4B72C5205F8A",
+    "base_gallery_sha256": "1D9A2FAA9EFE1760652C0D1FAEAE7282882E2ABE2C133793BF75ADDB89EFB5D2",
+    "preserved_rows": 4188,
     "appended_rows": 4176,
     "frozen_gallery_sha256": "674B3B995926EC36D3743E41E544ADF0DF52A9A3EC99CBDC1126DE3BB0B65FF9",
     "reference_manifest_sha256s": [
@@ -15,26 +26,18 @@
       "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C"
     ],
     "policy": "frozen full UI reference membership; base model unchanged; no per-ID exceptions",
-    "upgrade_marker_policy": "duplicate original markers; arena candidate callers disable upgrade resolution",
-    "base_dataset_manifest_sha256": "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C",
-    "base_dataset_lineage_manifest_sha256s": [
-      "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
-      "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
-      "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
-      "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
-      "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C"
-    ]
+    "upgrade_marker_policy": "duplicate original markers; arena candidate callers disable upgrade resolution"
   },
   "component": "arena_custom_card_embedding",
   "gallery": {
-    "bytes": 10618042,
-    "class_table_bytes": 151483,
+    "bytes": 10626054,
+    "class_table_bytes": 151503,
     "class_table_path": "arena_card_embedding_classes.json",
-    "class_table_sha256": "12E13ED8B0B61F58D241BCEC32C1BE11F301A181A4CE04F5E7A968BFB7B48015",
+    "class_table_sha256": "13973A81E8DC801126AC9A8DF1E87846B5A4C2D0FC3E16B62F9462088CC00CE0",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "arena_card_embedding_gallery.npz",
-    "sha256": "9CD7BB5929CC792C250E091629F6B393945C1F3F25B5740388C6E287D0BE7111"
+    "sha256": "19BC0B08FD820D938E32E5B7220E3A5009151B9BC4346C842BE704867780CA6E"
   },
   "model": {
     "bytes": 441780,
@@ -57,8 +60,8 @@
   },
   "schema_version": 1,
   "source": {
-    "business_card_id_count": 886,
-    "business_card_id_set_sha256": "87729FE9367D93431D978417D46B8DAEA76CD727DDD6FAD6CAC4DDA18713520C",
+    "business_card_id_count": 888,
+    "business_card_id_set_sha256": "D44FD83BAA905B7243420377FAD59DEA15D059B9095090421413AB1F549961AC",
     "business_card_ids": [
       1,
       2,
@@ -945,25 +948,23 @@
       883,
       884,
       885,
-      886
+      886,
+      887,
+      888
     ],
-    "dataset_id": "task095-skill-card-extension-pc-705100-0067-9a3053-joint-ui",
+    "dataset_id": "task095-card880-independent-upgrade-ui-20261011",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "2FA9FC4ABF623F80BFCCC3FC5DDFE388ECE58BE749A0DF11C9565DCFF7F6EF23",
-    "dataset_revision": "pc-705100-0067-9a3053-joint-ui",
-    "extension_business_card_id_count": 6,
+    "dataset_manifest_sha256": "2198A72B04313FB09DA9A4249AF7667763C59D875E165016DA1CB7FB594C3744",
+    "dataset_revision": "20261011-gkimg-1c090722-880-ui-replacement",
+    "extension_business_card_id_count": 2,
     "extension_business_card_ids": [
-      881,
-      882,
-      883,
-      884,
-      885,
-      886
+      879,
+      880
     ],
-    "image_class_count": 8362,
+    "image_class_count": 8364,
     "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES",
     "training_target": "encoder unchanged; gallery reference augmentation only",
-    "visual_identity_count": 455
+    "visual_identity_count": 456
   },
   "validation": {
     "state": "USER_AUTHORIZED_ENABLE_VALIDATION_PENDING",

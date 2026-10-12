@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "revision": "task095-batch12-886-joint-v1",
+  "revision": "task095-batch13-888-real-card-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
   "sources": {
-    "catalog_revision": "9a305390a172cf927f168e63cafa8149b24b9448",
-    "catalog_sha256": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
-    "decoded_master_sha256": "3B2BECDF8591719C3ADF20BF5C861B697A1ACEB68856A6359CC9142C7592B4F7",
+    "catalog_revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
+    "catalog_sha256": "96EBAF7B54E3AD5F93D458FD1CE0CB0B832113F86229CDDDA999548817EEA8AA",
+    "decoded_master_sha256": "FA18BCADC4D8E12BE21B71B29CBB75ADFA35B1009E0DEC045C0C9072C2D32AAE",
     "datasets": [
       {
         "dataset_id": "task075-authoritative-705100:0036",
@@ -36,6 +36,10 @@
       {
         "dataset_id": "task095-skill-card-extension-pc-705100-0067-9a3053-joint-ui",
         "manifest_sha256": "2FA9FC4ABF623F80BFCCC3FC5DDFE388ECE58BE749A0DF11C9565DCFF7F6EF23"
+      },
+      {
+        "dataset_id": "task095-skill-card-extension-pc-705100-0069-released888-ui",
+        "manifest_sha256": "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7"
       }
     ]
   },
@@ -20510,6 +20514,52 @@
           }
         }
       }
+    },
+    {
+      "business_id": 887,
+      "name": "スイートトラップ♡",
+      "upgraded": false,
+      "internal_id": "p_card-02-ido-3_248",
+      "asset_id": "img_general_skillcard_ido-3_248",
+      "plan": "logic",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 159,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-hski-3-022",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
+      }
+    },
+    {
+      "business_id": 888,
+      "name": "スイートトラップ♡+",
+      "upgraded": true,
+      "internal_id": "p_card-02-ido-3_248",
+      "asset_id": "img_general_skillcard_ido-3_248",
+      "plan": "logic",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 159,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-hski-3-022",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
+      }
     }
   ],
   "indexes": {
@@ -21165,7 +21215,9 @@
         872,
         873,
         874,
-        876
+        876,
+        887,
+        888
       ],
       "anomaly": [
         368,
@@ -21742,7 +21794,9 @@
         881,
         882,
         883,
-        884
+        884,
+        887,
+        888
       ],
       "support": [
         236,
@@ -22765,7 +22819,9 @@
         883,
         884,
         885,
-        886
+        886,
+        887,
+        888
       ],
       "SR": [
         70,
@@ -23208,18 +23264,18 @@
     "plan": {
       "free": 65,
       "sense": 281,
-      "logic": 301,
+      "logic": 303,
       "anomaly": 239
     },
     "kind": {
-      "p_idol": 332,
+      "p_idol": 334,
       "support": 118,
       "basic": 68,
       "other": 368
     },
     "rarity": {
       "L": 27,
-      "SSR": 430,
+      "SSR": 432,
       "SR": 204,
       "R": 144,
       "N": 81
@@ -23227,27 +23283,27 @@
   },
   "gallery_coverage": [
     {
-      "component": "skill-base-ready-a",
-      "manifest_sha256": "4C0A6212ACA32C18CF6676749DD390E472B78E528560201FB84FECD54888BD4A",
-      "gallery_sha256": "AB8A5F6DBFA557F170983D55559702F5A926F9DCD1BF1545BF3AA500AD0F06F1",
-      "row_count": 4186,
-      "business_id_count": 886,
+      "component": "128-dimensional card-art embedding retrieval",
+      "manifest_sha256": "C0667DA5433AE500A90E62157BB34C84839A4BC5D6D625825846D907808269FC",
+      "gallery_sha256": "6D1CD3FA6542B197B159537EC4F53B88DFFF1376D9461C0CB76446ADC18BED95",
+      "row_count": 4188,
+      "business_id_count": 888,
       "join_key": "business_id"
     },
     {
-      "component": "arena-full-ui-ready-a",
-      "manifest_sha256": "082726A72F4035CEFE294E7B0026DB02B40EF098C50A4DC632ACB76E6EC9A1FF",
-      "gallery_sha256": "9CD7BB5929CC792C250E091629F6B393945C1F3F25B5740388C6E287D0BE7111",
-      "row_count": 8362,
-      "business_id_count": 886,
+      "component": "arena_custom_card_embedding",
+      "manifest_sha256": "D47DC89AA28D0D9121E9B021436D9564B644767BC7A382D1698C31CBF7CFB506",
+      "gallery_sha256": "19BC0B08FD820D938E32E5B7220E3A5009151B9BC4346C842BE704867780CA6E",
+      "row_count": 8364,
+      "business_id_count": 888,
       "join_key": "business_id"
     },
     {
-      "component": "badge-ready-a",
-      "manifest_sha256": "BD7C97B2A7C2145E3D0C53EEB62802ACD5E56A12B445AB22C411C5433DF060AA",
-      "gallery_sha256": "6B9AEE9B80A94597DDD7E05B8BDA76CD4DB89D6274C5FC9155EFFC320B04F671",
-      "row_count": 3419,
-      "business_id_count": 886,
+      "component": "task410_arena_card_reference",
+      "manifest_sha256": "EF408E5F70E941DE649B09481D8481436B48055EAB0D7E8ABF94DF10AD72EA39",
+      "gallery_sha256": "3DBD80BCCAD34BA9DCFAFC8605C4B4F6D510A582BADBCA6BC470B942346B9453",
+      "row_count": 3421,
+      "business_id_count": 888,
       "join_key": "business_id"
     }
   ]
