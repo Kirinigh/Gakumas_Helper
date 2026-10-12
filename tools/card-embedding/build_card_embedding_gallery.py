@@ -20,7 +20,7 @@ from copy import deepcopy
 from typing import Any
 from pathlib import Path
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import replace, dataclass
 
 import PIL
 import numpy as np
@@ -804,16 +804,26 @@ def _extension_upgrade_markers(
     plan: DatasetPlan,
     extension: DatasetPlan,
     base: BaseGallery,
+    base_plan: DatasetPlan,
 ) -> np.ndarray:
-    extension_values = _upgrade_markers(extension)
-    extension_by_class = {
-        sample.class_name: extension_values[index]
-        for index, sample in enumerate(extension.samples)
-    }
+    base_sources = {sample.class_name: sample for sample in base_plan.samples}
     base_by_class = {
         class_name: base.upgrade_markers[index]
         for index, class_name in enumerate(base.class_names)
     }
+    changed = tuple(
+        sample
+        for sample in extension.samples
+        if sample.class_name not in base_sources
+        or sample.marker_sha256 != base_sources[sample.class_name].marker_sha256
+    )
+    extension_by_class: dict[str, np.ndarray] = {}
+    if changed:
+        values = _upgrade_markers(replace(extension, samples=changed))
+        extension_by_class = {
+            sample.class_name: values[index]
+            for index, sample in enumerate(changed)
+        }
     markers: list[np.ndarray] = []
     for sample in plan.samples:
         marker = extension_by_class.get(sample.class_name)
@@ -852,6 +862,7 @@ def _manifest_payload(
     model_bytes: int,
     reused_rows: int,
     regenerated_rows: int,
+    reused_extension_embedding_classes: tuple[str, ...],
     encoder_runtime: str,
 ) -> dict[str, Any]:
     source = {
@@ -924,6 +935,7 @@ def _manifest_payload(
             "encoder_runtime": encoder_runtime,
             "reused_embedding_row_count": reused_rows,
             "regenerated_embedding_row_count": regenerated_rows,
+            "reused_extension_embedding_class_names": list(reused_extension_embedding_classes),
             "cache_key_fields": [
                 "model_sha256",
                 "preprocess_contract",
@@ -1010,6 +1022,7 @@ def build_gallery(
         base_pixels, base_pixel_hashes = _canonical_inputs(base_plan)
         del base_pixels
     base_index = {class_name: index for index, class_name in enumerate(base.class_names)}
+    base_sources = {sample.class_name: sample for sample in base_plan.samples}
     input_class_names = {sample.class_name for sample in input_plan.samples}
     same_preprocess_contract = (
         PREPROCESS_CONTRACTS[base_plan.source_domain]
@@ -1036,9 +1049,20 @@ def build_gallery(
 
     vectors: list[np.ndarray] = []
     reused_rows = regenerated_rows = cache_hits = encoder_invocations = 0
+    reused_extension_embedding_classes: list[str] = []
     for sample in plan.samples:
         base_row = base_index.get(sample.class_name)
         unchanged = input_mode == INPUT_MODE_EXTENSION and sample.class_name not in input_class_names
+        if input_mode == INPUT_MODE_EXTENSION and sample.class_name in input_class_names:
+            previous = base_sources.get(sample.class_name)
+            unchanged = (
+                same_preprocess_contract
+                and base_row is not None
+                and previous is not None
+                and previous.embedding_sha256 == sample.embedding_sha256
+            )
+            if unchanged:
+                reused_extension_embedding_classes.append(sample.class_name)
         if input_mode == INPUT_MODE_FULL:
             unchanged = (
                 same_preprocess_contract
@@ -1087,7 +1111,7 @@ def build_gallery(
     card_ids = tuple(str(sample.business_id) for sample in plan.samples)
     upgrade_counts = tuple(sample.upgrade_count for sample in plan.samples)
     upgrade_markers = (
-        _extension_upgrade_markers(plan, input_plan, base)
+        _extension_upgrade_markers(plan, input_plan, base, base_plan)
         if input_mode == INPUT_MODE_EXTENSION
         else _upgrade_markers(plan)
     )
@@ -1134,6 +1158,7 @@ def build_gallery(
             model_bytes=model_path.stat().st_size,
             reused_rows=reused_rows,
             regenerated_rows=regenerated_rows,
+            reused_extension_embedding_classes=tuple(reused_extension_embedding_classes),
             encoder_runtime=encoder_runtime,
         )
         manifest_path = temporary / "manifest.json"

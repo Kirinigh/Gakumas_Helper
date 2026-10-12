@@ -16,6 +16,7 @@ import uuid
 import shutil
 import hashlib
 import argparse
+import importlib.util
 from copy import deepcopy
 from typing import Any
 from pathlib import Path
@@ -355,14 +356,76 @@ def _validate_inheritance(
     if row_count != expected_rows:
         raise GalleryPromotionError("inheritance row count disagrees with candidate gallery")
     build = candidate.manifest.get("build", {})
-    if build.get("reused_embedding_row_count") != row_count:
+    reused_classes = _extension_reuse_class_names(candidate)
+    reuse_count = len(reused_classes)
+    reuse_report = evaluation.get("extension_embedding_reuse")
+    if reuse_count:
+        if (
+            not isinstance(reuse_report, dict)
+            or reuse_report.get("status") != "BITWISE_EQUAL_VERIFIED_SOURCES"
+            or reuse_report.get("class_names") != list(reused_classes)
+        ):
+            raise GalleryPromotionError("extension embedding reuse evidence is missing or inconsistent")
+        if _nonnegative_count(
+            reuse_report.get("row_count"), label="extension embedding reuse row count"
+        ) != reuse_count:
+            raise GalleryPromotionError("extension embedding reuse row count disagrees with declared classes")
+        if _nonnegative_count(
+            reuse_report.get("regenerated_extension_row_count"),
+            label="regenerated extension embedding row count",
+        ) != extension_query_count - reuse_count:
+            raise GalleryPromotionError("extension embedding reuse regenerated row count is inconsistent")
+    elif "extension_embedding_reuse" in evaluation:
+        raise GalleryPromotionError("extension embedding reuse evidence has no declared classes")
+    if build.get("reused_embedding_row_count") != row_count + reuse_count:
         raise GalleryPromotionError("inheritance row count disagrees with candidate build metadata")
-    if build.get("regenerated_embedding_row_count") != extension_query_count:
+    if build.get("regenerated_embedding_row_count") != extension_query_count - reuse_count:
         raise GalleryPromotionError("extension query count disagrees with regenerated row count")
     array_count = _positive_count(inheritance.get("array_count"), label="inheritance array count")
     if array_count != candidate.gallery_array_count:
         raise GalleryPromotionError("inheritance array count disagrees with candidate gallery")
     return row_count, array_count
+
+
+def _extension_reuse_class_names(candidate: CandidateArtifacts) -> tuple[str, ...]:
+    classes = candidate.manifest.get("build", {}).get(
+        "reused_extension_embedding_class_names", []
+    )
+    if (
+        not isinstance(classes, list)
+        or not all(isinstance(value, str) and value for value in classes)
+        or len(classes) != len(set(classes))
+    ):
+        raise GalleryPromotionError("reused extension embedding classes must be unique non-empty strings")
+    declared = set(classes)
+    extension_ids = set(candidate.manifest["source"]["extension_business_card_ids"])
+    eligible_classes = tuple(
+        name
+        for name, business_id in zip(candidate.class_names, candidate.card_ids, strict=True)
+        if business_id in extension_ids and name in declared
+    )
+    if tuple(classes) != eligible_classes:
+        raise GalleryPromotionError("reused embedding classes are outside the extension or out of order")
+    return eligible_classes
+
+
+def _verify_extension_embedding_reuse(**kwargs: Any) -> dict[str, Any]:
+    """Recompute source and array evidence with the offline evaluator's pure verifier."""
+
+    module_name = "task095_promotion_reuse_evaluator"
+    evaluator = sys.modules.get(module_name)
+    if evaluator is None:
+        path = Path(__file__).with_name("evaluate_card_embedding_gallery_update.py")
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            raise GalleryPromotionError("extension embedding reuse verifier is unavailable")
+        evaluator = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = evaluator
+        spec.loader.exec_module(evaluator)
+    try:
+        return evaluator._verify_extension_embedding_reuse(**kwargs)
+    except evaluator.GalleryUpdateEvaluationError as error:
+        raise GalleryPromotionError(f"extension embedding reuse verification failed: {error}") from error
 
 
 def _validate_raw_art(evaluation: dict[str, Any], *, visual_group_count: int) -> tuple[int, int, int]:
@@ -517,12 +580,41 @@ def _validate_evaluation(
     candidate: CandidateArtifacts,
     *,
     real_sample_report_path: Path | None,
+    accepted_component_root: Path | None = None,
+    accepted_dataset_manifest_paths: tuple[Path, ...] | None = None,
+    extension_manifest_path: Path | None = None,
 ) -> tuple[dict[str, Any], str]:
     if evaluation.get("schema_version") != 1:
         raise GalleryPromotionError("unsupported offline evaluation schema")
     binding = _validate_candidate_binding(evaluation, candidate)
     business_ids, query_count, visual_group_count = _validate_extension(evaluation, candidate)
     inherited_rows, array_count = _validate_inheritance(evaluation, candidate, query_count)
+    verified_reuse = None
+    if _extension_reuse_class_names(candidate):
+        if (
+            accepted_component_root is None
+            or not accepted_dataset_manifest_paths
+            or extension_manifest_path is None
+        ):
+            raise GalleryPromotionError("extension embedding reuse requires actual accepted component and source manifests")
+        accepted_root = accepted_component_root.resolve()
+        accepted_manifest = _load_object(
+            accepted_root / "manifest.json", label="accepted component manifest"
+        )
+        verified_reuse = _verify_extension_embedding_reuse(
+            candidate_root=candidate.manifest_path.parent,
+            candidate_manifest=candidate.manifest,
+            accepted_root=accepted_root,
+            accepted_manifest=accepted_manifest,
+            accepted_dataset_manifest_paths=tuple(
+                path.resolve() for path in accepted_dataset_manifest_paths
+            ),
+            extension_manifest_path=extension_manifest_path.resolve(),
+            inherited_row_count=inherited_rows,
+            extension_query_count=query_count,
+        )
+        if verified_reuse != evaluation["extension_embedding_reuse"]:
+            raise GalleryPromotionError("extension embedding reuse report disagrees with verified sources and arrays")
     raw_query_count, raw_top1, raw_top5 = _validate_raw_art(evaluation, visual_group_count=visual_group_count)
     separation = evaluation.get("new_visual_group_separation")
     if not isinstance(separation, dict):
@@ -563,6 +655,8 @@ def _validate_evaluation(
         "real_dmm_samples": real_samples,
         "fixed_rendered_diagnostic": diagnostic,
     }
+    if verified_reuse is not None:
+        summary["extension_embedding_reuse"] = deepcopy(verified_reuse)
     return summary, real_status
 
 
@@ -579,6 +673,9 @@ def promote_gallery(
     evaluation_path: Path,
     output_dir: Path,
     real_sample_report_path: Path | None = None,
+    accepted_component_root: Path | None = None,
+    accepted_dataset_manifest_paths: tuple[Path, ...] | None = None,
+    extension_manifest_path: Path | None = None,
 ) -> PromotionResult:
     """Promote one exact PENDING candidate after all authoritative gates pass."""
 
@@ -591,6 +688,9 @@ def promote_gallery(
         evaluation,
         candidate,
         real_sample_report_path=real_sample_report_path,
+        accepted_component_root=accepted_component_root,
+        accepted_dataset_manifest_paths=accepted_dataset_manifest_paths,
+        extension_manifest_path=extension_manifest_path,
     )
     status = READY_STATUS if real_status == "PASS" else READY_PENDING_REAL_STATUS
     reason = (
@@ -642,6 +742,9 @@ def main() -> int:
     parser.add_argument("--component-root", type=Path, required=True)
     parser.add_argument("--evaluation", type=Path, required=True)
     parser.add_argument("--real-sample-report", type=Path)
+    parser.add_argument("--accepted-component-root", type=Path)
+    parser.add_argument("--accepted-dataset-manifest", type=Path, action="append")
+    parser.add_argument("--extension-manifest", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -650,6 +753,9 @@ def main() -> int:
             evaluation_path=args.evaluation,
             output_dir=args.output_dir,
             real_sample_report_path=args.real_sample_report,
+            accepted_component_root=args.accepted_component_root,
+            accepted_dataset_manifest_paths=tuple(args.accepted_dataset_manifest or ()),
+            extension_manifest_path=args.extension_manifest,
         )
     except GalleryPromotionError as error:
         parser.error(str(error))

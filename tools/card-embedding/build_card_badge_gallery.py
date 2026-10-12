@@ -38,6 +38,8 @@ class BadgeGalleryBuildError(RuntimeError):
 RELEASE_READY_HANDOFF_STATUSES = frozenset(
     {"READY", "READY_WITH_REAL_SAMPLES_PENDING"}
 )
+IDENTITY_REFERENCE_RULE_VERSION = "task410-r10-card-identity-only-v1"
+SHARED_REFERENCE_RULE_VERSION = "task095-provisional-shared-identity-v1"
 
 
 @dataclass(frozen=True)
@@ -385,6 +387,53 @@ def _extension_references(
         )
     references.sort(key=lambda item: _class_key(item.class_name))
     return manifest, tuple(references)
+
+
+def _updated_shared_runtime(
+    runtime: Mapping[str, Any],
+    fixed_icon_source: object,
+    references: tuple[BadgeReference, ...],
+    business_ids: np.ndarray,
+    top_coarse: np.ndarray,
+) -> dict[str, Any]:
+    """Retire a shared identity only after validated replacement pixels separate."""
+    records = (
+        fixed_icon_source.get("references", {})
+        if isinstance(fixed_icon_source, Mapping)
+        else {}
+    )
+    declared_pairs = {
+        (record["provisional_shared_from"], record["business_id"])
+        for record in records.values()
+        if "provisional_shared_from" in record
+    }
+    independent_ids = {
+        reference.business_id
+        for reference in references
+        if "provisional_shared_from" not in records.get(str(reference.business_id), {})
+    }
+    pairs = set(declared_pairs)
+    for raw_pair in runtime.get("provisional_shared_pairs", []):
+        pair = tuple(raw_pair)
+        if pair not in declared_pairs and independent_ids.intersection(pair):
+            source_rows = top_coarse[business_ids == pair[0]]
+            target_rows = top_coarse[business_ids == pair[1]]
+            if len(source_rows) and len(target_rows) and not any(
+                np.array_equal(source, target)
+                for source in source_rows
+                for target in target_rows
+            ):
+                continue
+        pairs.add(pair)
+    updated = dict(runtime)
+    if pairs:
+        updated["reference_rule_version"] = SHARED_REFERENCE_RULE_VERSION
+        updated["provisional_shared_pairs"] = [list(pair) for pair in sorted(pairs)]
+    else:
+        updated.pop("provisional_shared_pairs", None)
+        if updated.get("reference_rule_version") == SHARED_REFERENCE_RULE_VERSION:
+            updated["reference_rule_version"] = IDENTITY_REFERENCE_RULE_VERSION
+    return updated
 
 
 def _public_dataset_label(value: object, *, label: str) -> str:
@@ -1439,11 +1488,40 @@ def build_badge_gallery(
             raise BadgeGalleryBuildError(
                 f"base badge and arena gallery disagree for business ID {business_id}"
             )
-    names = tuple(map(str, retained["reference_names"])) + tuple(
-        reference.reference_name for reference in references
-    )
-    if len(names) != len(set(names)):
+    base_names = tuple(map(str, base["reference_names"]))
+    new_names = tuple(reference.reference_name for reference in references)
+    if len(base_names) != len(set(base_names)) or len(new_names) != len(set(new_names)):
         raise BadgeGalleryBuildError("base and extension reference names overlap")
+    base_id_by_name = dict(zip(base_names, map(int, base["business_ids"]), strict=True))
+    if any(
+        reference.reference_name in base_id_by_name
+        and base_id_by_name[reference.reference_name] != reference.business_id
+        for reference in references
+    ):
+        raise BadgeGalleryBuildError("base and extension reference names overlap")
+
+    base_count = len(base_names)
+    new_index_by_name = {
+        name: base_count + index for index, name in enumerate(new_names)
+    }
+    ordered_indices: list[int] = []
+    retained_output_indices: list[int] = []
+    used_new_indices: set[int] = set()
+    for index, (name, raw_id) in enumerate(zip(base_names, base["business_ids"], strict=True)):
+        if int(raw_id) not in extension_ids:
+            retained_output_indices.append(len(ordered_indices))
+            ordered_indices.append(index)
+            continue
+        replacement_index = new_index_by_name.get(name)
+        if replacement_index is not None:
+            ordered_indices.append(replacement_index)
+            used_new_indices.add(replacement_index)
+        # Missing references of an explicitly replaced ID are retired, not inherited.
+    ordered_indices.extend(
+        index for index in range(base_count, base_count + len(references))
+        if index not in used_new_indices
+    )
+    row_order = np.asarray(ordered_indices, dtype=np.intp)
 
     new_business_values = [item.business_id for item in references]
     new_business_ids = np.asarray(
@@ -1452,7 +1530,7 @@ def build_badge_gallery(
     )
     if list(map(int, new_business_ids)) != new_business_values:
         raise BadgeGalleryBuildError("extension business IDs exceed the base gallery dtype")
-    business_ids = np.concatenate((retained["business_ids"], new_business_ids))
+    business_ids = np.concatenate((base["business_ids"], new_business_ids))[row_order]
     new_group_values = [item.visual_group_id for item in references]
     new_visual_groups = np.asarray(
         new_group_values,
@@ -1463,28 +1541,28 @@ def build_badge_gallery(
             "extension visual-group IDs exceed the base gallery dtype"
         )
     visual_groups = np.concatenate(
-        (retained["visual_group_ids"], new_visual_groups)
-    )
-    reference_names = np.asarray(names, dtype=base["reference_names"].dtype)
-    if list(map(str, reference_names)) != list(names):
+        (base["visual_group_ids"], new_visual_groups)
+    )[row_order]
+    new_reference_names = np.asarray(new_names, dtype=base["reference_names"].dtype)
+    if list(map(str, new_reference_names)) != list(new_names):
         raise BadgeGalleryBuildError(
             "extension reference names exceed the base gallery dtype"
         )
+    reference_names = np.concatenate((base["reference_names"], new_reference_names))[row_order]
     top_coarse = np.concatenate(
         (
-            retained["top_coarse"],
+            base["top_coarse"],
             np.stack([item.top_coarse for item in references]).astype(np.uint8),
         )
-    )
+    )[row_order]
     green_masks = np.concatenate(
         (
-            retained["green_masks"],
+            base["green_masks"],
             np.stack([item.green_mask for item in references]).astype(np.uint8),
         )
-    )
+    )[row_order]
     if frozenset(map(str, visual_groups)) != arena_groups:
         raise BadgeGalleryBuildError("badge and arena gallery visual-group sets disagree")
-    retained_count = len(retained["business_ids"])
     for name, values in (
         ("business_ids", business_ids),
         ("visual_group_ids", visual_groups),
@@ -1493,11 +1571,11 @@ def build_badge_gallery(
         ("green_masks", green_masks),
     ):
         inherited = retained[name]
-        prefix = values[:retained_count]
+        inherited_output = values[retained_output_indices]
         if (
-            prefix.dtype != inherited.dtype
-            or prefix.shape != inherited.shape
-            or prefix.tobytes() != inherited.tobytes()
+            inherited_output.dtype != inherited.dtype
+            or inherited_output.shape != inherited.shape
+            or inherited_output.tobytes() != inherited.tobytes()
         ):
             raise BadgeGalleryBuildError(
                 f"retained base badge rows changed while building {name}"
@@ -1556,17 +1634,6 @@ def build_badge_gallery(
                 source.pop(key, None)
             source["fixed_icons"] = dict(fixed_icon_source)
             source["fixed_icon_provenance_sha256"] = extension_sources["fixed_icon_provenance_sha256"]
-            shared_pairs = [
-                [record["provisional_shared_from"], record["business_id"]]
-                for record in fixed_icon_source["references"].values()
-                if "provisional_shared_from" in record
-            ]
-            if shared_pairs:
-                runtime = dict(runtime)
-                runtime["reference_rule_version"] = "task095-provisional-shared-identity-v1"
-                runtime["provisional_shared_pairs"] = sorted(
-                    runtime.get("provisional_shared_pairs", []) + shared_pairs
-                )
         else:
             repository, revision, license_name = _source_provenance(
                 fixed_icon_source,
@@ -1575,6 +1642,9 @@ def build_badge_gallery(
             source.pop("fixed_icons", None)
             source.pop("fixed_icon_provenance_sha256", None)
             source.update({"repository": repository, "revision": revision, "license": license_name})
+        runtime = _updated_shared_runtime(
+            runtime, fixed_icon_source, references, business_ids, top_coarse
+        )
         source.update(
             {
                 "catalog_repository": catalog_repository,

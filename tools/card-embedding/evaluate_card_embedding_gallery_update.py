@@ -699,6 +699,205 @@ def _verify_bitwise_inheritance(
     }
 
 
+def _verify_extension_embedding_reuse(
+    candidate_root: Path,
+    candidate_manifest: dict[str, Any],
+    accepted_root: Path,
+    accepted_manifest: dict[str, Any],
+    *,
+    accepted_dataset_manifest_paths: tuple[Path, ...],
+    extension_manifest_path: Path,
+    inherited_row_count: int,
+    extension_query_count: int,
+) -> dict[str, Any]:
+    """Recompute source-bound vector reuse separately from six-array inheritance."""
+    tool_root = Path(__file__).resolve().parent
+    if str(tool_root) not in sys.path:
+        sys.path.insert(0, str(tool_root))
+    from build_card_embedding_gallery import (
+        PREPROCESS_CONTRACTS,
+        SOURCE_DOMAIN_OFFICIAL_RAW_ART,
+        GalleryBuildError,
+        _upgrade_markers,
+        merge_extension_plan,
+    )
+    from build_card_embedding_gallery import (
+        load_dataset_plan as load_source_plan,
+    )
+
+    build = candidate_manifest.get("build", {})
+    declared = build.get("reused_extension_embedding_class_names")
+    if (
+        not isinstance(declared, list)
+        or not declared
+        or any(not isinstance(value, str) or not value for value in declared)
+        or len(set(declared)) != len(declared)
+        or sorted(declared, key=_natural_class_key) != declared
+    ):
+        raise GalleryUpdateEvaluationError("extension embedding reuse declaration is invalid")
+    if not accepted_dataset_manifest_paths:
+        raise GalleryUpdateEvaluationError("extension embedding reuse requires accepted source lineage")
+    paths = tuple(path.resolve() for path in accepted_dataset_manifest_paths)
+    lineage_hashes = [sha256_file(path) for path in paths]
+    accepted_source = accepted_manifest.get("source", {})
+    accepted_build = accepted_manifest.get("build", {})
+    accepted_hash = accepted_source.get("dataset_manifest_sha256")
+    accepted_lineage = (
+        list(accepted_build.get("base_dataset_lineage_manifest_sha256s", []))
+        + [accepted_hash]
+        if accepted_build.get("input_mode") == "EXTENSION"
+        else [accepted_hash]
+    )
+    if (
+        build.get("base_dataset_lineage_manifest_sha256s") != lineage_hashes
+        or accepted_lineage != lineage_hashes
+        or accepted_hash != lineage_hashes[-1]
+        or candidate_manifest.get("source", {}).get("dataset_manifest_sha256")
+        != sha256_file(extension_manifest_path)
+    ):
+        raise GalleryUpdateEvaluationError("extension embedding reuse source lineage differs")
+    domain = SOURCE_DOMAIN_OFFICIAL_RAW_ART
+    contract = PREPROCESS_CONTRACTS[domain]
+    if (
+        accepted_source.get("source_domain") != domain
+        or candidate_manifest.get("source", {}).get("source_domain") != domain
+        or build.get("preprocess_contract") != contract
+        or accepted_build.get("preprocess_contract") != contract
+    ):
+        raise GalleryUpdateEvaluationError("extension embedding reuse preprocessing differs")
+    for root, manifest in ((accepted_root, accepted_manifest), (candidate_root, candidate_manifest)):
+        gallery = manifest.get("gallery", {})
+        if sha256_file(root / str(gallery.get("path", ""))) != gallery.get("sha256"):
+            raise GalleryUpdateEvaluationError("extension embedding reuse gallery binding differs")
+    if build.get("base_gallery_sha256") != accepted_manifest.get("gallery", {}).get("sha256"):
+        raise GalleryUpdateEvaluationError("extension embedding reuse parent gallery differs")
+    try:
+        parent = load_source_plan(paths[0], source_domain=domain)
+        parent_manifest_by_class = {sample.class_name: parent.manifest_sha256 for sample in parent.samples}
+        for path in paths[1:]:
+            layer = load_source_plan(
+                path,
+                source_domain=domain,
+                require_explicit_id_set=True,
+                inherited_business_ids=frozenset(parent.business_ids),
+            )
+            replaced_ids = frozenset(layer.business_ids)
+            for sample in parent.samples:
+                if sample.business_id in replaced_ids:
+                    parent_manifest_by_class.pop(sample.class_name, None)
+            parent_manifest_by_class.update(
+                {sample.class_name: layer.manifest_sha256 for sample in layer.samples}
+            )
+            parent = merge_extension_plan(parent, layer)
+        extension = load_source_plan(
+            extension_manifest_path,
+            source_domain=domain,
+            require_explicit_id_set=True,
+            inherited_business_ids=frozenset(parent.business_ids),
+        )
+        markers = _upgrade_markers(extension)
+    except (GalleryBuildError, OSError, ValueError) as error:
+        raise GalleryUpdateEvaluationError("extension embedding reuse source validation failed") from error
+    candidate = _load_gallery_arrays(candidate_root, candidate_manifest)
+    accepted = _load_gallery_arrays(accepted_root, accepted_manifest)
+    actual_inheritance = _verify_bitwise_inheritance(
+        candidate_root, candidate_manifest, accepted_root, accepted_manifest,
+        extension_business_ids=extension.business_ids,
+    )
+    if actual_inheritance["row_count"] != inherited_row_count:
+        raise GalleryUpdateEvaluationError("extension embedding reuse inherited-row evidence differs")
+    candidate_names = tuple(map(str, candidate["class_names"]))
+    accepted_names = tuple(map(str, accepted["class_names"]))
+    if accepted_names != tuple(sample.class_name for sample in parent.samples):
+        raise GalleryUpdateEvaluationError("extension embedding reuse parent class coverage differs")
+    candidate_index = {value: index for index, value in enumerate(candidate_names)}
+    accepted_index = {value: index for index, value in enumerate(accepted_names)}
+    if len(candidate_index) != len(candidate_names) or len(accepted_index) != len(accepted_names):
+        raise GalleryUpdateEvaluationError("extension embedding reuse classes are duplicated")
+    parent_by_class = {sample.class_name: sample for sample in parent.samples}
+    extension_by_class = {sample.class_name: sample for sample in extension.samples}
+    extension_indexes = {
+        sample.class_name: index for index, sample in enumerate(extension.samples)
+    }
+    actual_extension_classes = {
+        name for name, business_id in zip(candidate_names, candidate["card_ids"], strict=True)
+        if int(business_id) in extension.business_ids
+    }
+    if (
+        actual_extension_classes != set(extension_by_class)
+        or extension_query_count != len(extension.samples)
+        or tuple(candidate_manifest.get("source", {}).get("extension_business_card_ids", ()))
+        != extension.business_ids
+    ):
+        raise GalleryUpdateEvaluationError("extension embedding reuse input coverage differs")
+    rows: list[dict[str, Any]] = []
+    changed_ui: list[str] = []
+    unchanged_ui: list[str] = []
+    for name in declared:
+        previous = parent_by_class.get(name)
+        current = extension_by_class.get(name)
+        if previous is None or current is None or name not in accepted_index or name not in candidate_index:
+            raise GalleryUpdateEvaluationError("extension embedding reuse class is not an existing extension class")
+        if (
+            previous.embedding_sha256 != current.embedding_sha256
+            or previous.business_id != current.business_id
+            or previous.internal_id != current.internal_id
+            or previous.upgrade_count != current.upgrade_count
+        ):
+            raise GalleryUpdateEvaluationError("extension embedding reuse raw art or identity differs")
+        old_index, new_index = accepted_index[name], candidate_index[name]
+        for key in ("embeddings", "card_ids", "visual_group_ids", "upgrade_counts"):
+            old = accepted[key][old_index:old_index + 1]
+            new = candidate[key][new_index:new_index + 1]
+            if old.dtype != new.dtype or old.shape != new.shape or old.tobytes() != new.tobytes():
+                raise GalleryUpdateEvaluationError(f"extension embedding reuse is not bitwise equal: {key}")
+        ui_changed = previous.marker_sha256 != current.marker_sha256
+        expected_marker = markers[extension_indexes[name]] if ui_changed else accepted["upgrade_markers"][old_index]
+        actual_marker = candidate["upgrade_markers"][new_index]
+        if (
+            expected_marker.dtype != actual_marker.dtype
+            or expected_marker.shape != actual_marker.shape
+            or expected_marker.tobytes() != actual_marker.tobytes()
+        ):
+            raise GalleryUpdateEvaluationError("extension embedding reuse marker source differs")
+        (changed_ui if ui_changed else unchanged_ui).append(name)
+        rows.append({
+            "class_name": name,
+            "business_id": current.business_id,
+            "accepted_row_index": old_index,
+            "candidate_row_index": new_index,
+            "accepted_dataset_manifest_sha256": parent_manifest_by_class[name],
+            "extension_dataset_manifest_sha256": extension.manifest_sha256,
+            "accepted_raw_art_sha256": previous.embedding_sha256,
+            "extension_raw_art_sha256": current.embedding_sha256,
+            "accepted_icon_sha256": previous.marker_sha256,
+            "extension_icon_sha256": current.marker_sha256,
+            "preprocess_contract": contract,
+            "embedding_status": "BITWISE_EQUAL",
+            "marker_status": "VERIFIED_REPLACEMENT" if ui_changed else "BITWISE_EQUAL",
+        })
+    reused_count = len(rows)
+    regenerated_count = extension_query_count - reused_count
+    if (
+        type(build.get("reused_embedding_row_count")) is not int
+        or type(build.get("regenerated_embedding_row_count")) is not int
+        or build["reused_embedding_row_count"] != inherited_row_count + reused_count
+        or build["regenerated_embedding_row_count"] != regenerated_count
+        or inherited_row_count + extension_query_count != len(candidate_names)
+        or regenerated_count < 0
+    ):
+        raise GalleryUpdateEvaluationError("extension embedding reuse row counts differ")
+    return {
+        "status": "BITWISE_EQUAL_VERIFIED_SOURCES",
+        "class_names": list(declared),
+        "row_count": reused_count,
+        "regenerated_extension_row_count": regenerated_count,
+        "ui_reference_replacement_class_names": changed_ui,
+        "unchanged_ui_reference_class_names": unchanged_ui,
+        "rows": rows,
+    }
+
+
 def _new_group_separation(
     recognizer: EmbeddingCardRecognizer,
     extension_groups: set[str],
@@ -840,7 +1039,19 @@ def evaluate_gallery_update(
     expected_inherited_rows = candidate_manifest.get("build", {}).get(
         "reused_embedding_row_count"
     )
-    if expected_inherited_rows != inheritance["row_count"]:
+    reuse_declaration = candidate_manifest.get("build", {}).get("reused_extension_embedding_class_names", [])
+    if not isinstance(reuse_declaration, list):
+        raise GalleryUpdateEvaluationError("extension embedding reuse declaration is invalid")
+    reuse = None
+    if reuse_declaration:
+        reuse = _verify_extension_embedding_reuse(
+            candidate_root, candidate_manifest, accepted_component_root, accepted_manifest,
+            accepted_dataset_manifest_paths=accepted_manifest_paths,
+            extension_manifest_path=extension_manifest_path,
+            inherited_row_count=inheritance["row_count"],
+            extension_query_count=len(extension.icon_samples),
+        )
+    elif expected_inherited_rows != inheritance["row_count"]:
         raise GalleryUpdateEvaluationError("candidate inherited-row count differs")
     accepted_dataset = merge_accepted_dataset_plans(
         accepted_dataset_plans,
@@ -881,6 +1092,7 @@ def evaluate_gallery_update(
             "visual_group_count": len(extension_groups),
         },
         "inheritance": inheritance,
+        **({"extension_embedding_reuse": reuse} if reuse is not None else {}),
         "raw_art": {**raw_summary, "queries": list(raw_details)},
         "fixed_rendered_diagnostic": {
             "acceptance_role": "DIAGNOSTIC_ONLY",
