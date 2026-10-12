@@ -17,6 +17,7 @@ from arena_winrate import (
 )
 from card_selection.model import isolate_card_candidates
 from arena_winrate._reader_visual import _text
+from arena_winrate._card_detector_input import prepare_card_detector_input
 
 
 class CardLayoutReaderPort(Protocol):
@@ -932,17 +933,8 @@ class CardLayoutReader:
         self,
         image: Any,
     ) -> tuple[tuple[int, int, int, int], ...]:
-        import cv2
-
-        # cards.onnx was validated with a stretched 640-square input. Maa 5.13
-        # now letterboxes non-square inputs, so preserve that model contract
-        # here without changing the shared detector or taking another frame.
         height, width = image.shape[:2]
-        detector_image = cv2.resize(
-            image,
-            (640, 640),
-            interpolation=cv2.INTER_AREA,
-        )
+        detector_image, context_bottom = prepare_card_detector_input(image)
         detail = self.port._run_recognition(
             "ProduceRecognitionCards",
             detector_image,
@@ -960,6 +952,7 @@ class CardLayoutReader:
                 int(candidate.box[3] * scale_y),
             )
             for candidate in isolate_card_candidates(results)
+            if context_bottom is None or candidate.box[1] + candidate.box[3] <= context_bottom
         )
 
 
