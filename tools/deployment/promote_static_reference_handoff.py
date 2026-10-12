@@ -75,6 +75,17 @@ TEMPORARY_PLACEHOLDER_STATUS = "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMP
 TEMPORARY_PLACEHOLDER_RULE = "temporary-placeholder-reference-v1"
 TEMPORARY_PLACEHOLDER_IDS = tuple(range(887, 909))
 TEMPORARY_PLACEHOLDER_IMAGE_SHA256 = "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C"
+# These three source-bound schema-1 deliveries were independently checked
+# against the released 886-ID arrays. Only 880's UI-derived features changed;
+# the encoders and old row order remained intact, and 887/888 were appended.
+# Pin the actual promoted evidence, rather than accepting arbitrary READY
+# metadata when a formerly inactive ID becomes an active recognition source.
+APPROVED_REAL_CARD_BASE_MANIFESTS = {
+    "128-dimensional card-art embedding retrieval": "C0667DA5433AE500A90E62157BB34C84839A4BC5D6D625825846D907808269FC",
+    "arena_custom_card_embedding": "D47DC89AA28D0D9121E9B021436D9564B644767BC7A382D1698C31CBF7CFB506",
+    "task410_arena_card_reference": "EF408E5F70E941DE649B09481D8481436B48055EAB0D7E8ABF94DF10AD72EA39",
+}
+APPROVED_REAL_CARD_CLASSIFICATION_ROWS_SHA256 = "5BDE68DF1AFE2F3589C8849ACEAD948EFC1899F554F25A58E3F87AF23B641D35"
 P_ITEM_PRODUCTION_SOURCE_EVIDENCE_TOOL_CONTRACT = (
     "task095-p-item-production-source-evidence-v1"
 )
@@ -2399,29 +2410,50 @@ def validate_temporary_placeholder_component(
         require(set(old) == keys and set(new) == keys | {"reference_enabled"}, "array inventory is incompatible")
         id_key = "card_ids" if embedding else "business_ids"
         count = len(old[id_key])
-        require(build == {
+        active_business_count = 888 if set(map(int, old[id_key])) == set(range(1, 889)) else 886
+        real_card_update = active_business_count == 888
+        placeholder_ids = tuple(range(active_business_count + 1, 909))
+        placeholder_count = len(placeholder_ids)
+        if real_card_update:
+            require(
+                sha256_file(base_path).upper() == APPROVED_REAL_CARD_BASE_MANIFESTS.get(manifest.get("component")),
+                "active real-card base is not the approved source-bound delivery",
+            )
+        expected_build = {
             "tool_contract": "task095-temporary-placeholder-append-v1",
             "mode": "GALLERY_ONLY_NO_TRAINING",
             "base_manifest_sha256": sha256_file(base_path).upper(),
             "base_gallery_sha256": str(base["gallery"]["sha256"]).upper(),
             "base_classification_sha256": sha256_file(preserved_classification_path).upper(),
             "preserved_rows": count,
-            "appended_rows": len(TEMPORARY_PLACEHOLDER_IDS),
+            "appended_rows": placeholder_count,
             "enabled_rows": count,
-        }, "build/base binding is invalid")
-        require(set(map(int, old[id_key])) == set(range(1, 887)), "base catalog coverage is invalid")
+        }
+        if real_card_update:
+            inherited_path = inside(root, "inherited-manifest.json")
+            require(sha256_file(inherited_path).upper() == sha256_file(base_path).upper(), "inherited real-card evidence changed")
+            expected_build["inherited_validation"] = {
+                "manifest_path": "inherited-manifest.json",
+                "manifest_sha256": sha256_file(base_path).upper(),
+                "gallery_sha256": str(base["gallery"]["sha256"]).upper(),
+                "row_count": count,
+                "scope": "enabled_original_rows_only",
+                "array_relation": "EXACT_PREFIX",
+            }
+        require(build == expected_build, "build/base binding is invalid")
+        require(set(map(int, old[id_key])) == set(range(1, active_business_count + 1)), "base catalog coverage is invalid")
         for key in keys:
-            require(new[key].dtype == old[key].dtype and new[key].shape == (count + 22, *old[key].shape[1:]), f"{key} array shape or dtype changed")
+            require(new[key].dtype == old[key].dtype and new[key].shape == (count + placeholder_count, *old[key].shape[1:]), f"{key} array shape or dtype changed")
             require(new[key][:count].tobytes() == old[key].tobytes(), f"enabled {key} rows changed")
         flags = new["reference_enabled"]
-        require(flags.dtype == np.bool_ and flags.shape == (count + 22,), "enabled mask must be a boolean row mask")
+        require(flags.dtype == np.bool_ and flags.shape == (count + placeholder_count,), "enabled mask must be a boolean row mask")
         require(flags[:count].all() and not flags[count:].any(), "only appended rows may be disabled")
-        require(tuple(map(int, new[id_key][count:])) == TEMPORARY_PLACEHOLDER_IDS, "disabled IDs differ from the authorized range")
-        groups = [f"provisional:{value - (value - 887) % 2}" for value in TEMPORARY_PLACEHOLDER_IDS]
+        require(tuple(map(int, new[id_key][count:])) == placeholder_ids, "disabled IDs differ from the authorized range")
+        groups = [f"provisional:{value - (value - placeholder_ids[0]) % 2}" for value in placeholder_ids]
         require(new["visual_group_ids"][count:].tolist() == groups, "disabled family mapping is invalid")
         require(not set(groups).intersection(map(str, old["visual_group_ids"])), "disabled and enabled families overlap")
         runtime = dict(base.get("runtime", {}))
-        runtime.update(temporary_reference_rule_version=TEMPORARY_PLACEHOLDER_RULE, temporary_placeholder_business_ids=list(TEMPORARY_PLACEHOLDER_IDS))
+        runtime.update(temporary_reference_rule_version=TEMPORARY_PLACEHOLDER_RULE, temporary_placeholder_business_ids=list(placeholder_ids))
         require(manifest.get("runtime") == runtime, "runtime thresholds or declaration changed")
         require(manifest.get("model") == base.get("model"), "encoder declaration changed")
         for key in set(base) - {"schema_version", "build", "gallery", "source", "runtime", "production_handoff", "promotion", "evaluation", "validation"}:
@@ -2447,7 +2479,7 @@ def validate_temporary_placeholder_component(
         with Image.open(image_path) as image:
             require(image.mode == "RGB" and image.size == (130, 130) and not image.info, "neutral artwork format is invalid")
             pixels = np.asarray(image).copy()
-        references = [{"business_id": row["id"], "name": row["name"], "upgraded": row["upgraded"], "visual_group_id": group, "reference_enabled": False} for row, group in zip(catalog[886:], groups, strict=True)]
+        references = [{"business_id": row["id"], "name": row["name"], "upgraded": row["upgraded"], "visual_group_id": group, "reference_enabled": False} for row, group in zip(catalog[active_business_count:], groups, strict=True)]
         require(declaration == {
             "status": TEMPORARY_PLACEHOLDER_STATUS,
             "source_kind": "USER_AUTHORIZED_NEUTRAL_PLACEHOLDER_ART",
@@ -2455,7 +2487,7 @@ def validate_temporary_placeholder_component(
             "catalog": catalog_source,
             "image_path": "temporary-card.png",
             "image_sha256": TEMPORARY_PLACEHOLDER_IMAGE_SHA256,
-            "business_ids": list(TEMPORARY_PLACEHOLDER_IDS),
+            "business_ids": list(placeholder_ids),
             "references": references,
             "replacement_required": "replace placeholders with verified actual card art and matching source identities; rebuild and validate after release",
         }, "source references are inconsistent")
@@ -2471,9 +2503,9 @@ def validate_temporary_placeholder_component(
             temporary_placeholders=declaration,
         )
         if embedding:
-            expected_source.update(image_class_count=count + 22, visual_identity_count=len(set(map(str, new["visual_group_ids"]))))
+            expected_source.update(image_class_count=count + placeholder_count, visual_identity_count=len(set(map(str, new["visual_group_ids"]))))
         else:
-            expected_source["reference_file_count"] = count + 22
+            expected_source["reference_file_count"] = count + placeholder_count
         require(dict(source) == expected_source, "historical source provenance changed")
         expected_gallery = dict(base["gallery"])
         gallery_path = inside(root, manifest["gallery"]["path"])
@@ -2487,24 +2519,28 @@ def validate_temporary_placeholder_component(
                 require(json.loads(class_path.read_text(encoding="utf-8-sig")) == (old if root_path == base_root else new)["class_names"].tolist(), "class table order changed")
             class_path = inside(root, manifest["gallery"]["class_table_path"])
             expected_gallery.update(class_table_sha256=sha256_file(class_path).upper(), class_table_bytes=class_path.stat().st_size)
-            require(new["class_names"][count:].tolist() == [f"{value}_temp" for value in TEMPORARY_PLACEHOLDER_IDS], "disabled reference names are invalid")
-            require(new["upgrade_counts"][count:].tolist() == [int(row["upgraded"]) for row in catalog[886:]], "disabled upgrade mapping changed")
+            require(new["class_names"][count:].tolist() == [f"{value}_temp" for value in placeholder_ids], "disabled reference names are invalid")
+            require(new["upgrade_counts"][count:].tolist() == [int(row["upgraded"]) for row in catalog[active_business_count:]], "disabled upgrade mapping changed")
             vectors = new["embeddings"][count:]
-            require(np.isfinite(vectors).all() and np.array_equal(vectors, np.repeat(vectors[:1], 22, axis=0)) and abs(float(np.linalg.norm(vectors[0])) - 1) < 1e-3, "disabled neutral vectors are invalid")
+            require(np.isfinite(vectors).all() and np.array_equal(vectors, np.repeat(vectors[:1], placeholder_count, axis=0)) and abs(float(np.linalg.norm(vectors[0])) - 1) < 1e-3, "disabled neutral vectors are invalid")
             from agent.card_selection.embedding import extract_upgrade_marker
-            expected_markers = np.repeat(extract_upgrade_marker(pixels)[None, :], 22, axis=0)
+            expected_markers = np.repeat(extract_upgrade_marker(pixels)[None, :], placeholder_count, axis=0)
             require(np.array_equal(new["upgrade_markers"][count:], expected_markers), "disabled neutral markers changed")
         else:
             expected_gallery.update(business_card_id_count=908, visual_group_count=len(set(map(str, new["visual_group_ids"]))))
-            require(new["reference_names"][count:].tolist() == [f"T{value:04d}" for value in TEMPORARY_PLACEHOLDER_IDS], "disabled reference names are invalid")
+            require(new["reference_names"][count:].tolist() == [f"T{value:04d}" for value in placeholder_ids], "disabled reference names are invalid")
             normalized = cv2.resize(pixels[:, :, ::-1], (96, 96), interpolation=cv2.INTER_AREA)
             coarse = cv2.resize(normalized[:48], (16, 8), interpolation=cv2.INTER_AREA)
-            require(np.array_equal(new["top_coarse"][count:], np.repeat(coarse[None, :], 22, axis=0)) and not new["green_masks"][count:].any(), "disabled neutral card pixels changed")
+            require(np.array_equal(new["top_coarse"][count:], np.repeat(coarse[None, :], placeholder_count, axis=0)) and not new["green_masks"][count:].any(), "disabled neutral card pixels changed")
         require(manifest["gallery"] == expected_gallery, "gallery metadata is inconsistent")
         classification = _load_object(classification_path, label="temporary placeholder classification")
         previous = _load_object(preserved_classification_path, label="preserved skill classification")
         require(classification.get("status") == TEMPORARY_PLACEHOLDER_STATUS and classification.get("runtime_filtering_enabled") is False, "classification status changed")
-        require(len(previous["cards"]) == 886 and classification["cards"][:886] == previous["cards"], "previous classification records changed")
+        require(len(previous["cards"]) == active_business_count and classification["cards"][:active_business_count] == previous["cards"], "previous classification records changed")
+        if real_card_update:
+            rows = json.dumps(previous["cards"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            require(hashlib.sha256(rows).hexdigest().upper() == APPROVED_REAL_CARD_CLASSIFICATION_ROWS_SHA256, "real-card classification differs from the approved source identities")
+            require(all("temporary_placeholder" not in row["source"] for row in previous["cards"]), "active classification still declares an inactive placeholder")
         require([row["business_id"] for row in classification["cards"]] == all_ids, "classification coverage differs")
         require(classification.get("sources", {}).get("temporary_placeholder_catalog") == catalog_source, "classification catalog binding differs")
         require(classification["sources"] == {**previous["sources"], "temporary_placeholder_catalog": catalog_source}, "historical classification sources changed")
@@ -2524,13 +2560,13 @@ def validate_temporary_placeholder_component(
             "component": component_name,
             "manifest_sha256": sha256_file(root / "manifest.json").upper(),
             "gallery_sha256": str(manifest["gallery"]["sha256"]).upper(),
-            "row_count": count + 22,
+            "row_count": count + placeholder_count,
             "business_id_count": 908,
-            "enabled_business_id_count": 886,
-            "temporary_placeholder_business_id_count": 22,
+            "enabled_business_id_count": active_business_count,
+            "temporary_placeholder_business_id_count": placeholder_count,
             "join_key": "business_id",
         }, "classification component hashes or counts differ")
-        for row, record, reference in zip(catalog[886:], classification["cards"][886:], references, strict=True):
+        for row, record, reference in zip(catalog[active_business_count:], classification["cards"][active_business_count:], references, strict=True):
             detail = record["source"]["temporary_placeholder"]
             require(record["name"] == row["name"] and record["upgraded"] is row["upgraded"] and record["plan"] == row["plan"] and record["rarity"] == row["rarity"], "classification identity differs from catalog")
             expected_kind = "other" if row["rarity"] == "L" else "p_idol" if row["sourceType"] == "pIdol" else "support" if row["sourceType"] == "support" else "basic" if "基本" in row["name"] else "other"

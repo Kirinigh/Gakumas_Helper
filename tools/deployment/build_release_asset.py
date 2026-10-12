@@ -2475,7 +2475,10 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         raise ReleaseBuildError("skill-card recognition visual-group sets disagree")
     comparable_arena_rows = badge_arena_rows
     if placeholder_bases:
-        comparable_arena_rows = (*badge_arena_rows, *tuple(row for row in arena_rows if int(row[1]) in static_handoff.TEMPORARY_PLACEHOLDER_IDS))
+        # The complete inventory has qualified this exact inactive ID range.
+        # 887/888 can now be real base rows and must not be appended twice.
+        inactive_ids = set(arena_card["runtime"]["temporary_placeholder_business_ids"])
+        comparable_arena_rows = (*badge_arena_rows, *tuple(row for row in arena_rows if int(row[1]) in inactive_ids))
     if card_rows != comparable_arena_rows:
         raise ReleaseBuildError(
             "skill-card base and arena gallery identity rows disagree"
