@@ -2,15 +2,15 @@
   "build": {
     "tool_contract": "task095-temporary-placeholder-append-v1",
     "mode": "GALLERY_ONLY_NO_TRAINING",
-    "base_manifest_sha256": "C0667DA5433AE500A90E62157BB34C84839A4BC5D6D625825846D907808269FC",
-    "base_gallery_sha256": "6D1CD3FA6542B197B159537EC4F53B88DFFF1376D9461C0CB76446ADC18BED95",
+    "base_manifest_sha256": "578B42E306C91F7C15BFD5680920FFE463A3B1F591951838B79E84615FDD1A9F",
+    "base_gallery_sha256": "768BA43ADDD1D5C47FAF9BB771A130047B781AA4E34FE66E5EF2041933D005AE",
     "preserved_rows": 4188,
     "appended_rows": 20,
     "enabled_rows": 4188,
     "inherited_validation": {
       "manifest_path": "inherited-manifest.json",
-      "manifest_sha256": "C0667DA5433AE500A90E62157BB34C84839A4BC5D6D625825846D907808269FC",
-      "gallery_sha256": "6D1CD3FA6542B197B159537EC4F53B88DFFF1376D9461C0CB76446ADC18BED95",
+      "manifest_sha256": "578B42E306C91F7C15BFD5680920FFE463A3B1F591951838B79E84615FDD1A9F",
+      "gallery_sha256": "768BA43ADDD1D5C47FAF9BB771A130047B781AA4E34FE66E5EF2041933D005AE",
       "row_count": 4188,
       "scope": "enabled_original_rows_only",
       "array_relation": "EXACT_PREFIX"
@@ -19,14 +19,14 @@
   },
   "component": "128-dimensional card-art embedding retrieval",
   "gallery": {
-    "bytes": 4912507,
+    "bytes": 4912636,
     "class_table_bytes": 59410,
     "class_table_path": "card_embedding_classes.json",
     "class_table_sha256": "29F209FDC8ADF12D4DECD525DABC13B2818F7B834D8169FE80D6B67180E23D24",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "card_embedding_gallery.npz",
-    "sha256": "2B6A7CDD2A86602BC367D84BD8A6C5D77C4382E3919C51290504439C00DCB0FD",
+    "sha256": "BB429FE12D294FFE2EFA56E87DA4774E308D844E512F04DD407A2FA62C52F67A",
     "top_k": 5
   },
   "model": {
@@ -985,14 +985,14 @@
       907,
       908
     ],
-    "dataset_id": "task095-card880-independent-upgrade-ui-20261011",
+    "dataset_id": "task095-sweettrap-public-ui-replacement-20261013",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "2198A72B04313FB09DA9A4249AF7667763C59D875E165016DA1CB7FB594C3744",
-    "dataset_revision": "20261011-gkimg-1c090722-880-ui-replacement",
+    "dataset_manifest_sha256": "1793FFEEF31D8BE75DCC78276F3BBBFCF4FC4F4C72ED073F23F2DC07EE82BB2C",
+    "dataset_revision": "20261013-gkimg-a41b8fae-ui-replacement",
     "extension_business_card_id_count": 2,
     "extension_business_card_ids": [
-      879,
-      880
+      887,
+      888
     ],
     "image_class_count": 4208,
     "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_EXCLUDED_TEMPORARY_PLACEHOLDERS",

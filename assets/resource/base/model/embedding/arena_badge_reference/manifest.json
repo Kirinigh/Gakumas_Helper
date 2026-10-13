@@ -2,15 +2,15 @@
   "build": {
     "tool_contract": "task095-temporary-placeholder-append-v1",
     "mode": "GALLERY_ONLY_NO_TRAINING",
-    "base_manifest_sha256": "EF408E5F70E941DE649B09481D8481436B48055EAB0D7E8ABF94DF10AD72EA39",
-    "base_gallery_sha256": "3DBD80BCCAD34BA9DCFAFC8605C4B4F6D510A582BADBCA6BC470B942346B9453",
+    "base_manifest_sha256": "243953208A093263D7DD8BB9279D2CFDA84EEBC2EF3141BE18B1B0125FC72629",
+    "base_gallery_sha256": "DDA140D248D468BA1F48A124B8A3A42AFA992AA19B21455385EDE5A5381F19D3",
     "preserved_rows": 3421,
     "appended_rows": 20,
     "enabled_rows": 3421,
     "inherited_validation": {
       "manifest_path": "inherited-manifest.json",
-      "manifest_sha256": "EF408E5F70E941DE649B09481D8481436B48055EAB0D7E8ABF94DF10AD72EA39",
-      "gallery_sha256": "3DBD80BCCAD34BA9DCFAFC8605C4B4F6D510A582BADBCA6BC470B942346B9453",
+      "manifest_sha256": "243953208A093263D7DD8BB9279D2CFDA84EEBC2EF3141BE18B1B0125FC72629",
+      "gallery_sha256": "DDA140D248D468BA1F48A124B8A3A42AFA992AA19B21455385EDE5A5381F19D3",
       "row_count": 3421,
       "scope": "enabled_original_rows_only",
       "array_relation": "EXACT_PREFIX"
@@ -25,9 +25,9 @@
       96
     ],
     "path": "badge_reference_gallery.npz",
-    "sha256": "C1FA40D44CCD1987A4F9160B84E16C1FCD2ACD68B4A61B24FE8AAD5831FC966E",
+    "sha256": "7CFFAC55B0D211DDC012E9287777F938075DF7833EDCDB2F83A8ABE78AC4C139",
     "visual_group_count": 466,
-    "bytes": 1444340
+    "bytes": 1444197
   },
   "production_handoff": {
     "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
@@ -67,52 +67,52 @@
   "source": {
     "added_reference_file_count": 1,
     "arena_component": "arena_custom_card_embedding",
-    "arena_component_manifest_sha256": "3D5C480B968B339CF381CCAEE7347F686C52D390618F4C5E988A4B72C5205F8A",
-    "arena_gallery_sha256": "1D9A2FAA9EFE1760652C0D1FAEAE7282882E2ABE2C133793BF75ADDB89EFB5D2",
-    "base_manifest_sha256": "0B50AB8C8C76D979A0314A092A741641D07783EBE0F1F8267DC29A26DA35E8E0",
+    "arena_component_manifest_sha256": "E4BC42E16DE2C21EFEC6B155D303F78E17445E1AAA6911283B639A9E854F1D2C",
+    "arena_gallery_sha256": "599E4A5EBC7F049CAA194CC47B7AEDC631BCC856DB6D533D0CEB6C5F1BA9739A",
+    "base_manifest_sha256": "8CDC1C8D521F3D3CA7AE6D5F6DD8BD308819A430DCEEC1802BACC374CD2D579D",
     "base_reference_file_count": 3420,
     "catalog_license": "BSD-3-Clause",
     "catalog_repository": "https://github.com/surisuririsu/gakumas-tools",
-    "catalog_revision": "41153f09d3ca9e88dbbefd9c533f51b48dcaaa3c",
-    "extension_dataset_id": "task095-card880-independent-upgrade-ui-20261011",
-    "extension_dataset_manifest_sha256": "2198A72B04313FB09DA9A4249AF7667763C59D875E165016DA1CB7FB594C3744",
-    "fixed_icon_provenance_sha256": "975FD8179F80A0E0AB0956C60CD1A5FA410DF302593B4F6D7C4C8F40F13DD23A",
+    "catalog_revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
+    "extension_dataset_id": "task095-sweettrap-public-ui-replacement-20261013",
+    "extension_dataset_manifest_sha256": "1793FFEEF31D8BE75DCC78276F3BBBFCF4FC4F4C72ED073F23F2DC07EE82BB2C",
+    "fixed_icon_provenance_sha256": "551DDC0EC923F7A6E49424B63E9A199376FAF753EF6DE3309111C9661CBB8641",
     "fixed_icons": {
       "references": {
-        "879": {
-          "business_id": 879,
+        "887": {
+          "business_id": 887,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
             0,
-            235,
-            231
+            96,
+            96
           ],
           "dimensions": [
             130,
             130
           ],
-          "frozen_at": "2026-09-20",
+          "frozen_at": "2026-10-13",
           "kind": "skill_card",
-          "name": "うたたねレポート",
+          "name": "スイートトラップ♡",
           "original_dimensions": [
-            235,
-            231
+            96,
+            96
           ],
-          "original_file": "game8-879.webp",
-          "original_sha256": "7485B7B1ACCB6EEF0009FCEEEC13512537D3DBA3395C4079CB37861F25145D55",
-          "original_size": 8640,
-          "original_url": "https://img.game8.jp/13019218/97292d94b478b91d0a3af9338e124516.webp/original",
-          "page_url": "https://game8.jp/gakuen-idolmaster/816964",
-          "png_sha256": "91D1C54544C6D0D00BCCFCC82FDEFB9F8E951BD891B045295256797CC8D3544D",
-          "publisher": "Game8",
+          "original_file": "gkimg-skill_card-887.webp",
+          "original_sha256": "55BC304ABADBD3119C5C53A576F8ECAA49873D6ABEA5048FF803D70EEDD80DA8",
+          "original_size": 3470,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gk-img/a41b8faece10dbebc6b06fd752d0bcfd11d03412/docs/skill_cards/icons/887.webp",
+          "page_url": "https://github.com/gakumas-tools/gk-img/blob/a41b8faece10dbebc6b06fd752d0bcfd11d03412/docs/skill_cards/icons/887.webp",
+          "png_sha256": "002B7808BDB1451C6F2B3BA147A21ACDD4BA3854996FF5C72A9B161B5457342E",
+          "publisher": "gk-img (third-party public UI)",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "AB16D6179111DFA7CCA09153DC273249D5320684AF615DA43C569B1E14BB5514",
-          "size": 30584,
+          "rgb_pixel_sha256": "829502CB5602BE1A3B85DD1EFCDF7348CF10E467C7F821CF9038E892F1B6D976",
+          "size": 33133,
           "upgraded": false
         },
-        "880": {
-          "business_id": 880,
+        "888": {
+          "business_id": 888,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
@@ -124,23 +124,23 @@
             130,
             130
           ],
-          "frozen_at": "2026-10-11",
+          "frozen_at": "2026-10-13",
           "kind": "skill_card",
-          "name": "うたたねレポート",
+          "name": "スイートトラップ♡",
           "original_dimensions": [
             96,
             96
           ],
-          "original_file": "gkimg-icons-880.webp",
-          "original_sha256": "FFCE0A9D9321AF898D45553AD65D6475428C07D5E36F3A3B8FD9699787D41C75",
-          "original_size": 3162,
-          "original_url": "https://raw.githubusercontent.com/surisuririsu/gk-img/1c0907223dcd9da1754aa435a50b893f4fc0f11f/docs/skill_cards/icons/880.webp",
-          "page_url": "https://github.com/surisuririsu/gk-img/blob/1c0907223dcd9da1754aa435a50b893f4fc0f11f/docs/skill_cards/icons/880.webp",
-          "png_sha256": "DDA7712325EBF47BA16CF688BCF63951420966FCCA148336F20DB002DF3789D6",
-          "publisher": "gk-img (third-party generated UI)",
+          "original_file": "gkimg-skill_card-888.webp",
+          "original_sha256": "23B917DAA5BBBD2B728B56E2B1266F419E8420B797AF6D61A03D5A8A144146BB",
+          "original_size": 3520,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gk-img/a41b8faece10dbebc6b06fd752d0bcfd11d03412/docs/skill_cards/icons/888.webp",
+          "page_url": "https://github.com/gakumas-tools/gk-img/blob/a41b8faece10dbebc6b06fd752d0bcfd11d03412/docs/skill_cards/icons/888.webp",
+          "png_sha256": "89B9123816364D8D2766C5AC608F80726EDFDD5BBD99FC88B46551F589CFB703",
+          "publisher": "gk-img (third-party public UI)",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "0F3FE2B685B4FDFA3F13FD0E1E28504C30B2254C6B2BAA39FF3582328B96E706",
-          "size": 31098,
+          "rgb_pixel_sha256": "CCAAC8C62BD2B78D595004276C05B44EA08BC709664FB03621013D9EEEB82600",
+          "size": 33283,
           "upgraded": true
         }
       },
@@ -172,7 +172,7 @@
     ],
     "reference_file_count": 3441,
     "reference_set_digest_contract": "sha256(base_reference_set_sha256 || public_dataset_id || NUL || public_dataset_revision || NUL || ordered(public_reference_name || NUL || business_id || NUL || visual_group_id || NUL || top_coarse_bytes || reused_green_mask_bytes))",
-    "reference_set_sha256": "871351874544C3401427729DA00FA47071DCC018D9EE54D714DA9F12C3709BA3",
+    "reference_set_sha256": "9645EC54B5E016F652505A24424F682BEB28F38AFFDB9D73B12A2928CE8BCD2C",
     "replaced_reference_file_count": 0,
     "retained_reference_file_count": 3420,
     "inherited_source_domain": null,

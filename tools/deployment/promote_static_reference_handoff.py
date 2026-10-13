@@ -85,6 +85,14 @@ APPROVED_REAL_CARD_BASE_MANIFESTS = {
     "arena_custom_card_embedding": "D47DC89AA28D0D9121E9B021436D9564B644767BC7A382D1698C31CBF7CFB506",
     "task410_arena_card_reference": "EF408E5F70E941DE649B09481D8481436B48055EAB0D7E8ABF94DF10AD72EA39",
 }
+# A later same-ID public UI refresh reused every embedding and changed only
+# 887/888 markers and badge pixels. Keep the original receipts valid and bind
+# this refresh to its independently checked promoted sources as well.
+APPROVED_REAL_CARD_UI_REFRESH_MANIFESTS = {
+    "128-dimensional card-art embedding retrieval": "578B42E306C91F7C15BFD5680920FFE463A3B1F591951838B79E84615FDD1A9F",
+    "arena_custom_card_embedding": "44309A69FB7323123F4D4B66BF970886C63EBB4C4220148314727FB7EE926E18",
+    "task410_arena_card_reference": "243953208A093263D7DD8BB9279D2CFDA84EEBC2EF3141BE18B1B0125FC72629",
+}
 APPROVED_REAL_CARD_CLASSIFICATION_ROWS_SHA256 = "5BDE68DF1AFE2F3589C8849ACEAD948EFC1899F554F25A58E3F87AF23B641D35"
 P_ITEM_PRODUCTION_SOURCE_EVIDENCE_TOOL_CONTRACT = (
     "task095-p-item-production-source-evidence-v1"
@@ -108,6 +116,7 @@ P_ITEM_PRODUCTION_SOURCE_EVIDENCE_SHA256_ALLOWLIST = frozenset(
         "A79D20EDA9C57B1527E5200B285BD80B4BF84C7CC72E618B32CDDEE3F466C562",
         "5252BF4596C18038F77FEBDE20E1E42416CD150F88D11189DA566DD03A35638D",
         "1A306AF34A0A3BD5B618419E2C4781063B1C38DC46B52A3B27AD566D88F9A3F2",
+        "36D368D6460FB8D75A0209998BF967C3E1B7C4BC49304BE0FB298FF9CC36DDDE",
     }
 )
 P_ITEM_PRODUCTION_REVISION = "d476e78b1d3b9fb8eac61924e3869b647ca82ab2"
@@ -2416,7 +2425,10 @@ def validate_temporary_placeholder_component(
         placeholder_count = len(placeholder_ids)
         if real_card_update:
             require(
-                sha256_file(base_path).upper() == APPROVED_REAL_CARD_BASE_MANIFESTS.get(manifest.get("component")),
+                sha256_file(base_path).upper() in (
+                    APPROVED_REAL_CARD_BASE_MANIFESTS.get(manifest.get("component")),
+                    APPROVED_REAL_CARD_UI_REFRESH_MANIFESTS.get(manifest.get("component")),
+                ),
                 "active real-card base is not the approved source-bound delivery",
             )
         expected_build = {
