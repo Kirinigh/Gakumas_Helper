@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from collections.abc import Mapping
 
 from .service import ArenaEvaluation, ArenaOwnScoreEvaluation, ArenaProviderAttemptFailure
+from ._member_retry_errors import p_item_text_reference_unavailable
 
 _SKILL_CARD_LAYOUT_ERRORS = {
     "skill_card_layout_incomplete": "技能卡布局定位失败",
@@ -24,6 +25,7 @@ _ERROR_LABELS = (
     ("访问被拒绝", "访问被拒绝，请检查安装目录的写入权限"),
     ("communication_retry_exhausted", "通信异常，自动重试后仍未恢复"),
     ("communication", "当前出现通信异常"),
+    ("member_reopen_recovery_failed", "未能返回队伍预览并重新打开成员"),
     ("p_item_detail_recovery_failed", "P 道具详情关闭后未能确认已返回成员页面"),
     ("skill_card_close", "技能卡详情未能正常关闭或返回成员页面"),
     ("member_preview_recovery", "未能返回队伍预览并重新打开成员"),
@@ -178,9 +180,8 @@ def describe_arena_error(
         ((token, label) for token, label in _ERROR_LABELS if token in lowered),
         ("", "竞技场处理未完成"),
     )
-    if error_token == "p_item_detail_" and re.search(
-        r"text_resolution=['\"](?:ambiguous|unknown): reference_unavailable", lowered,
-    ):
+    raw_code, _, raw_detail = raw.partition(": ")
+    if error_token == "p_item_detail_" and p_item_text_reference_unavailable(raw_code, raw_detail):
         label = "P 道具正文对照资源缺失或与当前 RIS 目录不一致，请更新客户端"
     gallery_gap = error_token == "skill_card_reference_gallery_update_required"
     gallery_detail_failed = "gallery_fallback_status=failed" in lowered

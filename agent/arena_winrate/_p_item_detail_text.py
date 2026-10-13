@@ -228,9 +228,10 @@ def _default_reference_path() -> Path:
 
 
 def _binding_matches(active: Mapping[str, Any], reference: Mapping[str, Any]) -> bool:
-    fields = ("mode", "sourceType", "pIdolId", "upgraded", "plan", "rarity")
+    fields = ("id", "name", "mode", "sourceType", "pIdolId", "upgraded", "plan", "rarity")
     return bool(
-        all(active.get(key) == reference.get(key) for key in fields)
+        isinstance(active, Mapping) and isinstance(reference, Mapping)
+        and all(active.get(key) == reference.get(key) for key in fields)
         and isinstance(active.get("effects"), str)
         and re.sub(r"\s+", "", active["effects"])
         == re.sub(r"\s+", "", str(reference.get("effects", "")))

@@ -455,6 +455,8 @@ class ArenaEntityCatalog:
         skill_cards: Sequence[Mapping[str, Any]],
         customizations: Sequence[Mapping[str, Any]],
         p_items: Sequence[Mapping[str, Any]] = (),
+        *,
+        p_item_text_reference: Mapping[str, Any] | None = None,
     ) -> None:
         self._cards = tuple(dict(row) for row in skill_cards)
         self._arena_skill_card_eligibility: ArenaSkillCardEligibility | None = None
@@ -463,6 +465,7 @@ class ArenaEntityCatalog:
         ] = {}
         self._effective_detail_matchers: dict[tuple[int, int], Any] = {}
         self._p_items = tuple(dict(row) for row in p_items)
+        self._p_item_text_reference = p_item_text_reference
         self._arena_p_item_eligibility: ArenaPItemEligibility | None = None
         self._p_item_detail_text_index: PItemDetailTextIndex | None = None
         self._p_item_detail_text_index_loaded = False
@@ -520,7 +523,14 @@ class ArenaEntityCatalog:
             raise ArenaCatalogError(f"bundled entity catalog is unavailable or invalid: {root}") from error
         if not all(isinstance(rows, list) for rows in (cards, customizations, p_items)):
             raise ArenaCatalogError("bundled entity catalogs must be JSON arrays")
-        return cls(cards, customizations, p_items)
+        from .p_item_text_component import load_reference, bundle_reference_path
+
+        try:
+            reference_path = bundle_reference_path(Path(bundle_dir))
+            reference = load_reference(reference_path) if reference_path is not None else None
+        except (OSError, ValueError) as error:
+            raise ArenaCatalogError("bundled P-item text reference is invalid") from error
+        return cls(cards, customizations, p_items, p_item_text_reference=reference)
 
     def _added_numeric_effect_domains(
         self,
@@ -734,6 +744,8 @@ class ArenaEntityCatalog:
                 self._p_item_detail_text_index = PItemDetailTextIndex(
                     self._p_items,
                     candidate_ids_by_plan=self._get_arena_p_item_eligibility().candidate_sets,
+                    **({"reference_data": self._p_item_text_reference}
+                       if self._p_item_text_reference is not None else {}),
                 )
             except (OSError, ValueError) as error:
                 # A missing asset must not cause repeated filesystem work for

@@ -15,6 +15,7 @@ from collections.abc import Mapping
 
 from .cancellation import ArenaReadSuperseded
 from ._reader_errors import ArenaReaderError
+from ._member_retry_errors import p_item_text_reference_unavailable
 
 if TYPE_CHECKING:
     from .reader import TeamTarget, MemberObservation, MemberObservationScope
@@ -313,6 +314,10 @@ class MemberReadSession:
 def member_recognition_error_code(error: Exception) -> str | None:
     """Only known observation failures can reopen a role, never setup faults."""
     if not isinstance(error, ArenaReaderError):
+        return None
+    if p_item_text_reference_unavailable(error.code, error.detail):
+        # Its detail transaction already restored the source. Another member
+        # read cannot fill the same static text resource or renew this budget.
         return None
     current: BaseException | None = error
     seen: set[int] = set()

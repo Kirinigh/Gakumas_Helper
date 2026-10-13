@@ -23,7 +23,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Protocol
 from pathlib import Path, PurePosixPath
-from dataclasses import dataclass
+from dataclasses import replace, dataclass
 from collections.abc import Mapping, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -45,6 +45,16 @@ from .season_ui import ArenaSeasonUiSynchronizer
 from .badge_reference import BadgeReferenceError, BadgeReferenceGallery
 from .component_builder import build_runtime_component
 from .github_rate_limit import GitHubRateLimit, GitHubRateLimitError
+from .p_item_text_component import (
+    GitHubPItemTextSource,
+    bind_reference,
+    load_reference,
+    choose_reference,
+    read_p_item_rows,
+    coverage_warnings,
+    bundle_reference_path,
+    packaged_reference_path,
+)
 
 REPOSITORY = "surisuririsu/gakumas-tools"
 API_BASE = f"https://api.github.com/repos/{REPOSITORY}"
@@ -308,6 +318,7 @@ class _BundleInfo:
     latest_season: int
     host_revision: str | None = None
     reference_warnings: tuple[str, ...] = ()
+    text_revision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -343,6 +354,7 @@ class GitHubProductionSource:
         self._tree_reference: tuple[str, str] | None = None
         self._source_manifest: tuple[str, dict[str, int]] | None = None
         self._stage_source: tuple[str, bytes] | None = None
+        self._p_item_source: tuple[str, bytes] | None = None
 
     @staticmethod
     def _request_bytes(url: str, *, timeout: float, maximum: int) -> bytes:
@@ -499,6 +511,14 @@ class GitHubProductionSource:
         self._stage_source = (commit, data)
         return rows
 
+    def fetch_p_item_rows(self, commit: str) -> object:
+        _validate_commit(commit)
+        if self._p_item_source is None or self._p_item_source[0] != commit:
+            url = f"{RAW_BASE}/{commit}/packages/gakumas-data/json/p_items.json"
+            data = self._request_bytes(url, timeout=self.download_timeout_seconds, maximum=MAX_API_RESPONSE_BYTES)
+            self._p_item_source = (commit, data)
+        return json.loads(self._p_item_source[1].decode("utf-8"))
+
     def _source_file_sizes(self, commit: str) -> dict[str, int]:
         if self._source_manifest is not None and self._source_manifest[0] == commit:
             return self._source_manifest[1]
@@ -588,6 +608,9 @@ class GitHubProductionSource:
             and self._stage_source[0] == commit
         ):
             data = self._stage_source[1]
+        elif (path == "packages/gakumas-data/json/p_items.json"
+              and self._p_item_source is not None and self._p_item_source[0] == commit):
+            data = self._p_item_source[1]
         else:
             data = self._request_bytes(
                 f"{RAW_BASE}/{commit}/{encoded_path}",
@@ -612,6 +635,8 @@ class ArenaComponentManager:
         host_revision: str | None = None,
         builder: Callable[..., None] = build_runtime_component,
         validator: Callable[[Path, str], _BundleInfo] | None = None,
+        text_source: Any | None = None,
+        text_reference_path: Path | None = None,
     ) -> None:
         self.cache_root = cache_root.resolve()
         self.source = source or GitHubProductionSource()
@@ -619,8 +644,100 @@ class ArenaComponentManager:
         self.builder = builder
         self._uses_default_validator = validator is None
         self.validator = validator or _validate_component_bundle
+        self._manages_text = validator is None or text_source is not None or text_reference_path is not None
+        self.text_source = text_source or GitHubPItemTextSource(
+            GitHubProductionSource, cache_path=self.cache_root / "p-item-text-source.json",
+            on_cache_error=lambda error: _log_component_failure("p_item_text_cache", error),
+        )
+        self.text_reference_path = text_reference_path or packaged_reference_path(PROJECT_ROOT)
+        self._text_inputs: tuple[dict | None, dict | None, tuple[str, ...]] | None = None
         self._lock = threading.Lock()
         self._checks: dict[Path, _CheckOutcome] = {}
+
+    def _prepare_text_inputs(self) -> tuple[dict | None, dict | None, tuple[str, ...]]:
+        if self._text_inputs is None:
+            warnings = []
+            packaged = published = None
+            for stage in ("packaged", "published"):
+                try:
+                    if stage == "packaged":
+                        packaged = load_reference(self.text_reference_path)
+                    else:
+                        published = self.text_source.fetch_latest_reference()
+                except Exception as error:
+                    _log_component_failure(f"p_item_text_{stage}", error)
+                    warnings.append(
+                        "P道具正文更新检查未完成，保留已有正文；不影响已支持的道具。"
+                        if stage == "published" else "本地P道具正文资源无效，将尝试已有配套正文。"
+                    )
+            self._text_inputs = (packaged, published, tuple(warnings))
+        return self._text_inputs
+
+    def _select_text(self, rows: Sequence[Mapping], active: _BundleInfo) -> tuple[dict | None, tuple[str, ...]]:
+        packaged, published, warnings = self._prepare_text_inputs()
+        active_path = bundle_reference_path(active.path)
+        active_reference = load_reference(active_path) if active_path is not None else None
+        selected = active_reference
+        for candidate, is_published in ((packaged, False), (published, True)):
+            try:
+                selected = choose_reference(
+                    rows, active=selected,
+                    packaged=None if is_published else candidate,
+                    published=candidate if is_published else None,
+                )
+            except ValueError as error:
+                _log_component_failure("p_item_text_revision", error)
+                warnings += ("P道具正文更新的版本标记冲突，保留已验证正文。",)
+        return selected, warnings
+
+    def _refresh_text(self, active: _BundleInfo) -> tuple[_BundleInfo, tuple[str, ...], bool]:
+        if not self._manages_text:
+            return active, (), False
+        reference, warnings = self._select_text(read_p_item_rows(active.path), active)
+        if reference is None or reference["revision"] == active.text_revision:
+            return active, warnings, False
+        version_key = _component_version_key(active.commit, self.host_revision, reference["revision"])
+        destination = self.cache_root / "versions" / version_key
+        self.cache_root.mkdir(parents=True, exist_ok=True)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.exists():
+            with tempfile.TemporaryDirectory(prefix=".text-candidate-", dir=self.cache_root) as temporary:
+                output = Path(temporary) / "bundle"
+
+                def copy_file(source, target):
+                    if Path(source).name in {"manifest.json", "p_item_detail_text.json"}:
+                        return shutil.copy2(source, target)
+                    try:
+                        os.link(source, target)
+                    except OSError:
+                        shutil.copy2(source, target)
+                    return target
+
+                shutil.copytree(active.path, output, copy_function=copy_file)
+                bind_reference(output, reference, host_revision=self.host_revision)
+                self._validate_text_pair(output, active.commit)
+                try:
+                    _promote_component_directory(output, destination)
+                except FileExistsError:
+                    pass
+        installed = self._validate_text_pair(destination, active.commit)
+        if (installed.commit != active.commit or installed.host_revision != self.host_revision
+                or installed.latest_season != active.latest_season
+                or installed.text_revision != reference["revision"]
+                or load_reference(destination / "p_item_detail_text.json") != reference):
+            raise ArenaComponentError("cached P-item text pair revision mismatch")
+        installed = replace(installed, reference_warnings=tuple(dict.fromkeys(
+            installed.reference_warnings + coverage_warnings(destination, self.text_reference_path)
+        )))
+        self._activate(installed)
+        return installed, warnings, True
+
+    def _validate_text_pair(self, bundle: Path, commit: str) -> _BundleInfo:
+        # A body-only refresh reuses an already selected engine; do not renew
+        # the old engine's reverse-gallery update gate.
+        if self._uses_default_validator:
+            return _validate_component_bundle(bundle, commit, enforce_p_item_reverse_compatibility=False)
+        return self.validator(bundle, commit)
 
     def reset_failed_checks(self) -> None:
         """Explicit maintenance reset; ordinary arena tasks never call this."""
@@ -756,12 +873,24 @@ class ArenaComponentManager:
             )
 
         if remote_commit == active.commit:
+            text_updated = False
+            if self._manages_text:
+                try:
+                    active, text_warnings, text_updated = self._refresh_text(active)
+                    warnings.extend(text_warnings)
+                    warnings.extend(coverage_warnings(active.path, self.text_reference_path))
+                except Exception as error:
+                    _log_component_failure("p_item_text_refresh", error)
+                    warnings.append("P道具正文更新未成功，继续使用已有配套正文。")
+                for message in dict.fromkeys(warnings):
+                    if message.startswith(("P道具正文", "本地P道具正文")):
+                        _log_component_update_notice(message)
             return _CheckOutcome(
                 bundle=active,
                 remote_commit=remote_commit,
                 remote_latest_season=active.latest_season,
-                status="current",
-                update_activated=False,
+                status="text_updated" if text_updated else "current",
+                update_activated=text_updated,
                 warnings=tuple(warnings),
             )
 
@@ -791,7 +920,20 @@ class ArenaComponentManager:
             )
 
         try:
-            installed = self._install(remote_commit, baseline_bundle, expected_latest_season=remote_latest)
+            text_reference = None
+            text_warnings: tuple[str, ...] = ()
+            if self._manages_text:
+                rows = self.source.fetch_p_item_rows(remote_commit)
+                text_reference, text_warnings = self._select_text(rows, active)
+            installed = self._install(
+                remote_commit, baseline_bundle, expected_latest_season=remote_latest,
+                text_reference=text_reference,
+            )
+            if self._manages_text:
+                text_warnings += tuple(message for message in installed.reference_warnings
+                                       if message.startswith("P道具正文"))
+                for message in dict.fromkeys(text_warnings):
+                    _log_component_update_notice(message)
         except Exception as error:
             p_item_coverage_update_failed = isinstance(
                 error,
@@ -817,7 +959,7 @@ class ArenaComponentManager:
             remote_latest_season=remote_latest,
             status="updated",
             update_activated=True,
-            warnings=installed.reference_warnings,
+            warnings=tuple(dict.fromkeys(installed.reference_warnings + text_warnings)),
         )
 
     def _load_active(self) -> _BundleInfo | None:
@@ -828,6 +970,7 @@ class ArenaComponentManager:
             return None
         commit = state.get("commit") if isinstance(state, Mapping) else None
         version_key = state.get("version_key") if isinstance(state, Mapping) else None
+        text_revision = state.get("text_revision") if isinstance(state, Mapping) else None
         if (
             not isinstance(state, Mapping)
             or state.get("schema_version") != STATE_SCHEMA_VERSION
@@ -835,29 +978,41 @@ class ArenaComponentManager:
             or not isinstance(commit, str)
             or COMMIT_PATTERN.fullmatch(commit) is None
             or not isinstance(version_key, str)
-            or version_key != _component_version_key(commit, self.host_revision)
+            or (text_revision is not None and not isinstance(text_revision, str))
         ):
+            return None
+        try:
+            if version_key != _component_version_key(commit, self.host_revision, text_revision):
+                return None
+        except (ArenaComponentError, ValueError):
             return None
         candidate = self.cache_root / "versions" / version_key
         try:
             info = _inspect_bundle(candidate)
         except ArenaComponentError:
             return None
-        if info.commit != commit or info.host_revision != self.host_revision:
+        if (info.commit != commit or info.host_revision != self.host_revision
+                or info.text_revision != text_revision):
             return None
         return info
 
     def _install(
         self, commit: str, baseline_bundle: Path, *, expected_latest_season: int | None = None,
+        text_reference: Mapping | None = None,
     ) -> _BundleInfo:
         versions = self.cache_root / "versions"
-        version_key = _component_version_key(commit, self.host_revision)
+        text_revision = text_reference["revision"] if text_reference is not None else None
+        version_key = _component_version_key(commit, self.host_revision, text_revision)
         destination = versions / version_key
         stage = "cached_validation"
 
         def validate_identity(info: _BundleInfo) -> None:
             if info.host_revision != self.host_revision:
                 raise ArenaComponentError("component host revision is incompatible")
+            if info.text_revision != text_revision:
+                raise ArenaComponentError("component P-item text revision is incompatible")
+            if text_reference is not None and load_reference(info.path / "p_item_detail_text.json") != text_reference:
+                raise ArenaComponentError("component reused a P-item text revision with different content")
             if expected_latest_season is not None and info.latest_season != expected_latest_season:
                 raise ArenaComponentError("component stage catalog differs from the immutable production catalog")
 
@@ -888,9 +1043,13 @@ class ArenaComponentManager:
                         source_root, output, baseline_bundle,
                         upstream_commit=commit, host_revision=self.host_revision,
                     )
+                    if text_reference is not None:
+                        bind_reference(output, text_reference, host_revision=self.host_revision)
                     stage = "validate_candidate"
                     candidate = self.validator(output, commit)
                     validate_identity(candidate)
+                    if self._manages_text:
+                        coverage_warnings(output, self.text_reference_path)
                     stage = "promote"
                     try:
                         _promote_component_directory(output, destination)
@@ -916,6 +1075,10 @@ class ArenaComponentManager:
                             primary_stage=stage, temporary=temporary.name,
                         )
             stage = "activate"
+            if self._manages_text:
+                installed = replace(installed, reference_warnings=tuple(dict.fromkeys(
+                    installed.reference_warnings + coverage_warnings(destination, self.text_reference_path)
+                )))
             self._activate(installed)
             return installed
         except Exception as error:
@@ -930,8 +1093,10 @@ class ArenaComponentManager:
             "schema_version": STATE_SCHEMA_VERSION,
             "commit": bundle.commit,
             "host_revision": self.host_revision,
-            "version_key": _component_version_key(bundle.commit, self.host_revision),
+            "version_key": _component_version_key(bundle.commit, self.host_revision, bundle.text_revision),
         }
+        if bundle.text_revision is not None:
+            state["text_revision"] = bundle.text_revision
         temporary = self.cache_root / f"active.{uuid.uuid4().hex}.tmp"
         primary_error: BaseException | None = None
         try:
@@ -969,12 +1134,17 @@ def _safe_source_relative_path(value: str) -> PurePosixPath:
     return path
 
 
-def _component_version_key(commit: str, host_revision: str) -> str:
+def _component_version_key(commit: str, host_revision: str, text_revision: str | None = None) -> str:
     """Namespace immutable bundles by both RIS and GKH runtime identity."""
 
     _validate_commit(commit)
     host_key = hashlib.sha256(host_revision.encode("utf-8")).hexdigest()[:16]
-    return f"{commit}-{host_key}"
+    key = f"{commit}-{host_key}"
+    if text_revision is not None:
+        from .p_item_text_reference import reference_revision_number
+
+        key += f"-text-v{reference_revision_number(text_revision)}"
+    return key
 
 
 def _read_manifest(bundle: Path) -> Mapping[str, Any]:
@@ -1022,14 +1192,24 @@ def _inspect_bundle(bundle: Path) -> _BundleInfo:
     )
     if host_revision is not None and not isinstance(host_revision, str):
         raise ArenaComponentError("arena component host revision is invalid")
-    return _BundleInfo(bundle.resolve(), commit, catalog, latest, host_revision)
+    try:
+        reference_path = bundle_reference_path(bundle)
+        text_revision = load_reference(reference_path)["revision"] if reference_path is not None else None
+    except (OSError, ValueError) as error:
+        raise ArenaComponentError("arena component P-item text reference is invalid") from error
+    return _BundleInfo(bundle.resolve(), commit, catalog, latest, host_revision, text_revision=text_revision)
 
 
-def _validate_component_bundle(bundle: Path, expected_commit: str) -> _BundleInfo:
+def _validate_component_bundle(
+    bundle: Path, expected_commit: str, *, enforce_p_item_reverse_compatibility: bool = True,
+) -> _BundleInfo:
     info = _inspect_bundle(bundle)
     if info.commit != expected_commit:
         raise ArenaComponentError("arena component commit does not match the requested production deployment")
-    reference_warnings = _validate_component_reference_coverage(bundle)
+    reference_warnings = _validate_component_reference_coverage(
+        bundle, enforce_p_item_reverse_compatibility=enforce_p_item_reverse_compatibility,
+    )
+    reference_warnings += coverage_warnings(bundle, packaged_reference_path(PROJECT_ROOT))
 
     stage_ids = [
         stage.stage_id
@@ -1097,6 +1277,7 @@ def _validate_component_bundle(bundle: Path, expected_commit: str) -> _BundleInf
         info.latest_season,
         info.host_revision,
         reference_warnings,
+        info.text_revision,
     )
 
 

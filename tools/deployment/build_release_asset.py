@@ -2563,6 +2563,10 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         gallery_path=p_item_gallery_path,
         catalog_path=_resolve_inside(engine_root, P_ITEM_CATALOG_RELATIVE_PATH),
     )
+    try:
+        derived_package.validate_candidate_p_item_text(candidate)
+    except derived_package.PItemTextCoverageError as error:
+        raise ReleaseBuildError(str(error)) from error
     return inventory, raw
 
 
