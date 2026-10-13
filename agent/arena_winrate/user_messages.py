@@ -178,6 +178,10 @@ def describe_arena_error(
         ((token, label) for token, label in _ERROR_LABELS if token in lowered),
         ("", "竞技场处理未完成"),
     )
+    if error_token == "p_item_detail_" and re.search(
+        r"text_resolution=['\"](?:ambiguous|unknown): reference_unavailable", lowered,
+    ):
+        label = "P 道具正文对照资源缺失或与当前 RIS 目录不一致，请更新客户端"
     gallery_gap = error_token == "skill_card_reference_gallery_update_required"
     gallery_detail_failed = "gallery_fallback_status=failed" in lowered
     identifiers = ()

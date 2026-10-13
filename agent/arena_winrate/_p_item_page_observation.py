@@ -1,6 +1,6 @@
 """P-item observations and return guards using the current reader-owned evidence.
 
-The original capture/OCR order, frame windows and deadlines remain here.
+Capture/OCR order, page-evidence ownership and deadlines remain here.
 Pixel/geometry decisions continue through the existing pure source-evidence
 functions; this component neither owns an input budget nor copies frame state.
 """
@@ -195,9 +195,10 @@ class PItemPageObservation:
                 "P-item detail recovery requires the accepted source-row boxes",
             )
         threshold = self.port.p_item_reader.content_generation_max_mean_abs_error
-        # Four fresh observations, within a fixed ceiling, allow a transition
-        # followed by TWO matching frames even when one OCR takes > 2 seconds.
-        # Success still exits immediately on the original second matching frame.
+        # Keep the original two-frame fast path. After four transition/jitter
+        # observations, allow one more complete two-frame proof window within
+        # the existing deadline; never combine nonconsecutive matches.
+        maximum_observations = 6
         deadline = self.clock.monotonic() + timeout_seconds
         consecutive = 0
         last_errors: tuple[float, ...] = ()
@@ -206,7 +207,7 @@ class PItemPageObservation:
         if diagnostic is not None:
             diagnostic["p_item_restore"] = restore_observations
             diagnostic["probe_phase"] = "return"
-        for _ in range(4):
+        for observation_index in range(maximum_observations):
             if self.clock.monotonic() >= deadline:
                 break
             image = self.port._capture()
@@ -224,13 +225,19 @@ class PItemPageObservation:
                     "consecutive_before": consecutive,
                 }
             )
+            # An in-flight capture/OCR cannot be preempted here, but its late
+            # result must not authorize the next slot after the time budget.
+            remaining = deadline - self.clock.monotonic()
+            if remaining <= 0:
+                break
             if matches_source:
                 consecutive += 1
                 if consecutive >= 2:
                     return
             else:
                 consecutive = 0
-            self.port._sleep(0.12)
+            if observation_index + 1 < maximum_observations:
+                self.port._sleep(min(0.12, remaining))
         raise ArenaReaderError(
             "p_item_source_restore_unproven",
             "member anchors and two stable source-row generations did not return: "
