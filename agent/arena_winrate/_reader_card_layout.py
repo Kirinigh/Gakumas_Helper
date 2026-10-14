@@ -936,7 +936,7 @@ class CardLayoutReader:
         height, width = image.shape[:2]
         detector_image, context_bottom = prepare_card_detector_input(image)
         detail = self.port._run_recognition(
-            "ProduceRecognitionCards",
+            "ArenaRecognitionCards",
             detector_image,
         )
         results = (detail.all_results or []) if detail and detail.hit else []

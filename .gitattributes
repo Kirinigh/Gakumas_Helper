@@ -21,3 +21,4 @@ assets/data/p_item_classification.json -text whitespace=cr-at-eol
 assets/resource/base/model/classify/card_embedding/preserved_base/** -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/arena_card/preserved_base/** -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/arena_badge_reference/preserved_base/** -text whitespace=cr-at-eol
+assets/resource/base/model/detect/arena_cards_*.onnx -text

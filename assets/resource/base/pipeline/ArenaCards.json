@@ -1,0 +1,29 @@
+{
+  "ArenaRecognitionCards": {
+    "recognition": {
+      "type": "NeuralNetworkDetect",
+      "param": {
+        "expected": [
+          0,
+          1,
+          2
+        ],
+        "model": "arena_cards_v1.onnx",
+        "labels": [
+          "cards",
+          "suggestions",
+          "useless"
+        ],
+        "threshold": [
+          0.3,
+          0.3,
+          0.3
+        ]
+      }
+    },
+    "action": {
+      "type": "DoNothing",
+      "param": {}
+    }
+  }
+}

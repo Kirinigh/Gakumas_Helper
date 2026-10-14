@@ -32,6 +32,29 @@ except ModuleNotFoundError:
     from tools.deployment import file_update
 
 try:
+    from tools.deployment.arena_detector_contract import (
+        MODEL_PATH as ARENA_DETECTOR_MODEL_PATH,
+    )
+    from tools.deployment.arena_detector_contract import (
+        PIPELINE_PATH as ARENA_DETECTOR_PIPELINE_PATH,
+    )
+    from tools.deployment.arena_detector_contract import (
+        ArenaDetectorContractError,
+        validate_candidate_arena_detector,
+    )
+except ModuleNotFoundError:  # Direct script execution from tools/deployment.
+    from arena_detector_contract import (
+        MODEL_PATH as ARENA_DETECTOR_MODEL_PATH,
+    )
+    from arena_detector_contract import (
+        PIPELINE_PATH as ARENA_DETECTOR_PIPELINE_PATH,
+    )
+    from arena_detector_contract import (
+        ArenaDetectorContractError,
+        validate_candidate_arena_detector,
+    )
+
+try:
     from tools.deployment.p_item_text_coverage import (
         PItemTextCoverageError,
         validate_candidate_p_item_text,
@@ -178,6 +201,8 @@ REQUIRED_FILES = (
     "agent/arena_winrate/own_cache.py",
     "agent/arena_winrate/p_item_text_reference.py",
     "data/p_item_detail_text.json",
+    ARENA_DETECTOR_PIPELINE_PATH,
+    ARENA_DETECTOR_MODEL_PATH,
     "resource/base/model/embedding/arena_card/arena_card_embedding_model.onnx",
     "resource/base/model/embedding/p_item_reference/p_item_rendered_reference_gallery.npz",
     "assets/arena-winrate/manifest.json",
@@ -846,8 +871,9 @@ def _validate_candidate(root: Path, *, version: str, update_repository: str) -> 
         raise BuildError(f"candidate is missing arena UI tasks: {', '.join(missing_tasks)}")
     _validate_arena_period_selector(root, interface)
     try:
+        validate_candidate_arena_detector(root)
         validate_candidate_p_item_text(root)
-    except PItemTextCoverageError as error:
+    except (ArenaDetectorContractError, PItemTextCoverageError) as error:
         raise BuildError(str(error)) from error
 
     return {relative: sha256_file(root / relative) for relative in REQUIRED_FILES}

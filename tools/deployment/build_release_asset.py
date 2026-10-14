@@ -2169,6 +2169,16 @@ def _validate_candidate(
     critical_files = build.get("critical_files")
     if not isinstance(critical_files, dict) or not critical_files:
         raise ReleaseBuildError("candidate build manifest has no critical file inventory")
+    try:
+        derived_package.validate_candidate_arena_detector(candidate)
+    except derived_package.ArenaDetectorContractError as error:
+        raise ReleaseBuildError(str(error)) from error
+    for relative in (
+        derived_package.ARENA_DETECTOR_PIPELINE_PATH,
+        derived_package.ARENA_DETECTOR_MODEL_PATH,
+    ):
+        if relative not in critical_files:
+            raise ReleaseBuildError(f"candidate arena detector is absent from critical file inventory: {relative}")
     _validate_mfa_core_build_binding(candidate, build, critical_files)
     _validate_framework_build_binding(candidate, build, critical_files)
     for relative, expected_hash in critical_files.items():
