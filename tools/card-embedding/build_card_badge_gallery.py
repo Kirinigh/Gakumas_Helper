@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import json
+import time
 import uuid
 import zlib
 import shutil
@@ -33,6 +34,25 @@ from build_card_embedding_gallery import (
 
 class BadgeGalleryBuildError(RuntimeError):
     """The incremental clean-reference gallery cannot be built safely."""
+
+
+def publish_new_directory(source: Path, destination: Path) -> None:
+    """Keep publication atomic while tolerating a short Windows sharing lock."""
+    if destination.exists():
+        raise FileExistsError(destination)
+    for attempt in range(3):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError as error:
+            if (
+                getattr(error, "winerror", None) not in (5, 32, 33)
+                or attempt == 2
+                or not source.is_dir()
+                or destination.exists()
+            ):
+                raise
+            time.sleep(0.1 * (attempt + 1))
 
 
 RELEASE_READY_HANDOFF_STATUSES = frozenset(
@@ -1399,7 +1419,7 @@ def _build_live_badge_gallery(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        os.replace(temporary, output_dir)
+        publish_new_directory(temporary, output_dir)
     except Exception:
         if temporary.exists():
             shutil.rmtree(temporary)
@@ -1543,7 +1563,10 @@ def build_badge_gallery(
     visual_groups = np.concatenate(
         (base["visual_group_ids"], new_visual_groups)
     )[row_order]
-    new_reference_names = np.asarray(new_names, dtype=base["reference_names"].dtype)
+    reference_name_dtype = np.promote_types(
+        base["reference_names"].dtype, np.asarray(new_names).dtype
+    )
+    new_reference_names = np.asarray(new_names, dtype=reference_name_dtype)
     if list(map(str, new_reference_names)) != list(new_names):
         raise BadgeGalleryBuildError(
             "extension reference names exceed the base gallery dtype"
@@ -1572,6 +1595,14 @@ def build_badge_gallery(
     ):
         inherited = retained[name]
         inherited_output = values[retained_output_indices]
+        if name == "reference_names":
+            if list(map(str, inherited_output)) != list(map(str, inherited)):
+                raise BadgeGalleryBuildError(
+                    "retained base badge reference names changed while building"
+                )
+            # Unicode storage may grow for new filenames. The old names must
+            # still round-trip to their original dtype and exact bytes.
+            inherited_output = inherited_output.astype(inherited.dtype)
         if (
             inherited_output.dtype != inherited.dtype
             or inherited_output.shape != inherited.shape
@@ -1672,7 +1703,13 @@ def build_badge_gallery(
                 "mode": "GALLERY_ONLY",
                 "tool_contract": "task095-card-badge-extension-v1",
                 "preprocess_contract": "rgb-png-to-bgr-96-area-top48-to-16x8-area-green-mask-v1",
-                "unaffected_base_rows": "BITWISE_COPIED",
+                "unaffected_base_rows": (
+                    "BITWISE_COPIED"
+                    if reference_names.dtype == base["reference_names"].dtype
+                    else "NUMERIC_AND_IDENTITY_BYTES_COPIED_REFERENCE_NAMES_VALUE_AND_OLD_DTYPE_BYTES_PRESERVED"
+                ),
+                "reference_names_dtype_before": str(base["reference_names"].dtype),
+                "reference_names_dtype_after": str(reference_names.dtype),
                 "python_version": sys.version.split()[0],
                 "numpy_version": np.__version__,
                 "opencv_version": cv2.__version__,
@@ -1707,7 +1744,7 @@ def build_badge_gallery(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        os.replace(temporary, output_dir)
+        publish_new_directory(temporary, output_dir)
     except Exception:
         if temporary.exists():
             shutil.rmtree(temporary)

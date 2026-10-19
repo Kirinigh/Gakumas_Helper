@@ -1,32 +1,45 @@
 {
   "build": {
-    "tool_contract": "task095-temporary-placeholder-append-v1",
-    "mode": "GALLERY_ONLY_NO_TRAINING",
-    "base_manifest_sha256": "44309A69FB7323123F4D4B66BF970886C63EBB4C4220148314727FB7EE926E18",
-    "base_gallery_sha256": "DDC856DBE4B099009B2A6838F2AE99FFF84393C3B7EEA1473D185E195B509777",
-    "preserved_rows": 8364,
-    "appended_rows": 20,
-    "enabled_rows": 8364,
-    "inherited_validation": {
-      "manifest_path": "inherited-manifest.json",
-      "manifest_sha256": "44309A69FB7323123F4D4B66BF970886C63EBB4C4220148314727FB7EE926E18",
-      "gallery_sha256": "DDC856DBE4B099009B2A6838F2AE99FFF84393C3B7EEA1473D185E195B509777",
-      "row_count": 8364,
-      "scope": "enabled_original_rows_only",
-      "array_relation": "EXACT_PREFIX"
-    },
-    "base_classification_sha256": "02BC18FA6D27E88024391EAA8D8ACFB6A73D7DC133AAF6205CBA4353DC1160F9"
+    "base_dataset_manifest_sha256": "1793FFEEF31D8BE75DCC78276F3BBBFCF4FC4F4C72ED073F23F2DC07EE82BB2C",
+    "base_dataset_lineage_manifest_sha256s": [
+      "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
+      "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
+      "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
+      "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
+      "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C",
+      "48160BE76DADEB23C2B326D29C862F704BC8F8DBB3E2EDC18DF2B7FA436D98B0",
+      "2FA9FC4ABF623F80BFCCC3FC5DDFE388ECE58BE749A0DF11C9565DCFF7F6EF23",
+      "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7",
+      "2198A72B04313FB09DA9A4249AF7667763C59D875E165016DA1CB7FB594C3744",
+      "1793FFEEF31D8BE75DCC78276F3BBBFCF4FC4F4C72ED073F23F2DC07EE82BB2C"
+    ],
+    "tool_contract": "task095-arena-full-ui-union-v1",
+    "mode": "GALLERY_ONLY",
+    "base_manifest_sha256": "F4AC8D61E41769577FD4CB3E29C80CFC2744FAC96C71978F6BD8530B2FC37AC1",
+    "base_gallery_sha256": "B11D959A590AD16BB7529082F547E56EDEE4B9947F96B1C176ECD8D30DA8C082",
+    "preserved_rows": 4354,
+    "appended_rows": 4176,
+    "frozen_gallery_sha256": "674B3B995926EC36D3743E41E544ADF0DF52A9A3EC99CBDC1126DE3BB0B65FF9",
+    "reference_manifest_sha256s": [
+      "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
+      "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
+      "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
+      "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
+      "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C"
+    ],
+    "policy": "frozen full UI reference membership; base model unchanged; no per-ID exceptions",
+    "upgrade_marker_policy": "duplicate original markers; arena candidate callers disable upgrade resolution"
   },
   "component": "arena_custom_card_embedding",
   "gallery": {
-    "bytes": 10629125,
-    "class_table_bytes": 151803,
+    "bytes": 10699232,
+    "class_table_bytes": 153953,
     "class_table_path": "arena_card_embedding_classes.json",
-    "class_table_sha256": "E98A509E40A3E0E285E3B815B6C7C1419F82D7A3F77DD7671D3E1EA771527189",
+    "class_table_sha256": "0A4B0C9930E2A832AA7C54CD1C4C86284F8D7C3B2AAF7723F85DBF5C517D6232",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "arena_card_embedding_gallery.npz",
-    "sha256": "0C68995327B8C5D09385EFECBCCF1A59AFA4BEFF6C15E917F91985661E1AA75A"
+    "sha256": "E7973AF10F9F00697FC368649974C6CD8BAB74C3C71F59361F34768CCC8FC0DC"
   },
   "model": {
     "bytes": 441780,
@@ -36,8 +49,8 @@
     "sha256": "2D19B2BB64980094BC41725C6B586755D47AFA41D005877649BF26656A0F8404"
   },
   "production_handoff": {
-    "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-    "reason": "user authorized inactive catalog placeholders; no new recognition or real-sample acceptance claimed"
+    "status": "READY_WITH_REAL_SAMPLES_PENDING",
+    "reason": "2026-09-21 user explicitly authorized enablement before outstanding follow-up validation; not an acceptance pass"
   },
   "runtime": {
     "acceptance_threshold": null,
@@ -45,32 +58,9 @@
     "note": "Only the customized-card visual family is trained here. Exact normal/+ ID and customizationId require clicked-detail confirmation; null thresholds forbid runtime acceptance before arena calibration.",
     "state": "ARENA_CALIBRATION_REQUIRED",
     "upgrade_maximum_distance": 0.015,
-    "upgrade_minimum_margin": 0.015,
-    "temporary_reference_rule_version": "temporary-placeholder-reference-v1",
-    "temporary_placeholder_business_ids": [
-      889,
-      890,
-      891,
-      892,
-      893,
-      894,
-      895,
-      896,
-      897,
-      898,
-      899,
-      900,
-      901,
-      902,
-      903,
-      904,
-      905,
-      906,
-      907,
-      908
-    ]
+    "upgrade_minimum_margin": 0.015
   },
-  "schema_version": 2,
+  "schema_version": 1,
   "source": {
     "business_card_id_count": 908,
     "business_card_id_set_sha256": "C010D2AAD56D6E50674A9E19D9AD7BDEFE180C2F970A71898D9F8488AA809BFA",
@@ -984,208 +974,46 @@
       907,
       908
     ],
-    "dataset_id": "task095-sweettrap-public-ui-replacement-20261013",
+    "dataset_id": "task095-skill-card-extension-pc-705100-0071-released908-ui-20261015",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "1793FFEEF31D8BE75DCC78276F3BBBFCF4FC4F4C72ED073F23F2DC07EE82BB2C",
-    "dataset_revision": "20261013-gkimg-a41b8fae-ui-replacement",
-    "extension_business_card_id_count": 2,
+    "dataset_manifest_sha256": "1232E508A38B98BEE6287CF4120C096E6CC67F71A1D9547018FC171A86758601",
+    "dataset_revision": "pc-705100-0071-released908-ui-20261015",
+    "extension_business_card_id_count": 20,
     "extension_business_card_ids": [
-      887,
-      888
+      889,
+      890,
+      891,
+      892,
+      893,
+      894,
+      895,
+      896,
+      897,
+      898,
+      899,
+      900,
+      901,
+      902,
+      903,
+      904,
+      905,
+      906,
+      907,
+      908
     ],
-    "image_class_count": 8384,
-    "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES_WITH_EXCLUDED_TEMPORARY_PLACEHOLDERS",
+    "image_class_count": 8530,
+    "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES",
     "training_target": "encoder unchanged; gallery reference augmentation only",
-    "visual_identity_count": 466,
-    "inherited_source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES",
-    "business_card_id_min": 1,
-    "business_card_id_max": 908,
-    "temporary_placeholders": {
-      "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-      "source_kind": "USER_AUTHORIZED_NEUTRAL_PLACEHOLDER_ART",
-      "historical_provenance_scope": "inherited enabled rows only",
-      "catalog": {
-        "repository": "https://github.com/gakumas-tools/gakumas-tools",
-        "revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
-        "sha256": "011C45E47138204D56FA7F315E366718D2B47E1878044C73014DC406F378AEAD"
-      },
-      "image_path": "temporary-card.png",
-      "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
-      "business_ids": [
-        889,
-        890,
-        891,
-        892,
-        893,
-        894,
-        895,
-        896,
-        897,
-        898,
-        899,
-        900,
-        901,
-        902,
-        903,
-        904,
-        905,
-        906,
-        907,
-        908
-      ],
-      "references": [
-        {
-          "business_id": 889,
-          "name": "競争原理",
-          "upgraded": false,
-          "visual_group_id": "provisional:889",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 890,
-          "name": "競争原理+",
-          "upgraded": true,
-          "visual_group_id": "provisional:889",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 891,
-          "name": "安定感",
-          "upgraded": false,
-          "visual_group_id": "provisional:891",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 892,
-          "name": "安定感+",
-          "upgraded": true,
-          "visual_group_id": "provisional:891",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 893,
-          "name": "再始動",
-          "upgraded": false,
-          "visual_group_id": "provisional:893",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 894,
-          "name": "再始動+",
-          "upgraded": true,
-          "visual_group_id": "provisional:893",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 895,
-          "name": "衝動",
-          "upgraded": false,
-          "visual_group_id": "provisional:895",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 896,
-          "name": "衝動+",
-          "upgraded": true,
-          "visual_group_id": "provisional:895",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 897,
-          "name": "メイクアップ",
-          "upgraded": false,
-          "visual_group_id": "provisional:897",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 898,
-          "name": "メイクアップ+",
-          "upgraded": true,
-          "visual_group_id": "provisional:897",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 899,
-          "name": "ロマンチック",
-          "upgraded": false,
-          "visual_group_id": "provisional:899",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 900,
-          "name": "ロマンチック+",
-          "upgraded": true,
-          "visual_group_id": "provisional:899",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 901,
-          "name": "天使の微笑み",
-          "upgraded": false,
-          "visual_group_id": "provisional:901",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 902,
-          "name": "天使の微笑み+",
-          "upgraded": true,
-          "visual_group_id": "provisional:901",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 903,
-          "name": "ごきげんスキップ",
-          "upgraded": false,
-          "visual_group_id": "provisional:903",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 904,
-          "name": "ごきげんスキップ+",
-          "upgraded": true,
-          "visual_group_id": "provisional:903",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 905,
-          "name": "ラッシュ",
-          "upgraded": false,
-          "visual_group_id": "provisional:905",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 906,
-          "name": "ラッシュ+",
-          "upgraded": true,
-          "visual_group_id": "provisional:905",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 907,
-          "name": "ブースト",
-          "upgraded": false,
-          "visual_group_id": "provisional:907",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 908,
-          "name": "ブースト+",
-          "upgraded": true,
-          "visual_group_id": "provisional:907",
-          "reference_enabled": false
-        }
-      ],
-      "replacement_required": "replace placeholders with verified actual card art and matching source identities; rebuild and validate after release"
-    }
+    "visual_identity_count": 466
   },
   "validation": {
-    "state": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-    "preserved_active_reference_rows": "ARRAY_PREFIX_IDENTICAL",
-    "placeholder_recognition_acceptance": "NOT_APPLICABLE_DISABLED",
+    "state": "USER_AUTHORIZED_ENABLE_VALIDATION_PENDING",
     "pending": [
-      "verified_card_art_and_identities",
-      "independent_live_recognition",
-      "full_read_latency"
-    ]
+      "real_unknown_truncated_wrong_slot_rejection",
+      "own_nine_full_read_p50_p95_102_percent",
+      "opponent_full_flow",
+      "current_297_and_553_failure_pairs"
+    ],
+    "frozen_diagnostic_report_sha256": "4B1591DDA6F1FDC516F9724828A8A0901753CC62E9937DCC027521F93EBF7B10"
   }
 }

@@ -689,7 +689,7 @@ def _promote_candidate(
             + "\n",
             encoding="utf-8",
         )
-        os.replace(temporary, output_dir)
+        badge_builder.publish_new_directory(temporary, output_dir)
     except Exception:
         if temporary.exists():
             shutil.rmtree(temporary)
