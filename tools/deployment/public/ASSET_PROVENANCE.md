@@ -136,3 +136,12 @@ Keep the upstream copyright and root AGPL license with this redistributed
 model. This provenance entry does not certify packaged model loading or
 synthetic inference; those remain release verification requirements. Real
 game accuracy and complete produce-flow acceptance remain unverified.
+
+
+### 二十项正式参考及同编号界面更新（2026-10-15／16）
+
+本批纳入技能卡 889～908 的正式身份和真实来源参考，撤销这二十项禁用占位；三个正式组件恢复 schema 1，并保持 `READY_WITH_REAL_SAMPLES_PENDING`。基础图库 4354 行、竞技场图库 8530 行、卡面粗参考 3587 行，均覆盖并启用 908 个业务 ID；P 道具仍为 442 项参考／499 项分类。原 1～888 的分类对象、已启用数组、既有 4176 行完整界面尾集和两套编码器保持；卡面参考名称存储从 U10 扩到 U12，旧名称值及回转旧类型后的字节保持，不放宽身份或候选保护。
+
+10 月 16 日的二十张普通／强化完整界面参考固定来自 `gakumas-tools/gakumas-tools@4d1b68d64bb825e564ad45442df25c3fe51f273b` 的 `packages/gakumas-images/images/skillCards/icons/889.png` 至 `908.png`；逐项 URL、原始大小、SHA-256、裁框和重采样方式保留在卡面 manifest。它们是第三方公开的原生 130×130 界面图，`capture_provenance=UNKNOWN`，不称为官方成品截图或独立实机证据。官方身份／原画与完整界面分别绑定；透明原画只用于其声明的向量参考，不作为完整界面替代。本次未重训或更换任何 ONNX 权重，后续同编号界面替换复用全部既有嵌入向量。
+
+公开内容仅为现有允许范围内的数值图库、小型参考张量、类表、manifest 和公开安全汇总评估；不分发原始卡图、游戏资源包、私有训练集、玩家截图或逐样本私有回执。第三方目录代码的 BSD-3-Clause 不为游戏图形提供额外再许可，原游戏图形权利仍由原权利人保留。离线来源、继承、A/B 和固定回放门已通过；真实 DMM 独立样本、未知／截断／错误槽位拒识和完整读取节拍仍为 PENDING，不能将来源自查询视为完整竞技场实机验收。
