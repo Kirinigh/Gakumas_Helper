@@ -56,7 +56,7 @@ class FrameEvidenceState:
         tuple[int, tuple[int, ...], tuple[int, int, int, int] | None],
         _TrustedSkillCardTitleRowsEvidence,
     ]
-    skill_card_recovered_title_frames: dict[tuple[int, int], tuple[Any, str]]
+    skill_card_recovered_title_frames: dict[tuple[int, int], tuple[Any, str] | tuple[Any, str, tuple]]
     upgrade_title_roi_evidence: dict[tuple, tuple[Any, str | None, int | None]]
     isolated_title_evidence: dict[tuple, tuple[Any, ...]]
 

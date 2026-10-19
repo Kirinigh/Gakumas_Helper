@@ -16,10 +16,44 @@ class _FrameStep(Enum):
 
 
 from .catalog import ArenaCatalogError
+from ._detail_identity import build_detail_identity_proof, matches_detail_identity_transaction
 from ._reader_evidence import _TitleBoundEffectRoiText, _DetailIdentityObservation, _effect_roi_observation_count
 
 
 class SkillDetailSession:
+    def _recovered_full_detail_title_proof(self, full_detail_text):
+        """Reuse an established title row without publishing a final result."""
+        image = self.backend._card_detail_images.get(self.key)
+        if image is None or image is not getattr(self, "detail_image", None):
+            return None
+        card_id = self.resolved.card_id
+        recovered = getattr(self.backend, "_skill_card_recovered_title_frames", {}).get((id(image), card_id))
+        if recovered is None or len(recovered) != 3 or recovered[0] is not image:
+            return None
+        normalize = self.backend.catalog.normalize_skill_card_title_text
+        lines = tuple(normalize(line) for line in full_detail_text.splitlines())
+        if lines.count(normalize(recovered[1])) != 1:
+            return None
+        source_box = self.backend._skill_card_source_box(self.key)
+        if source_box is None or recovered[2] != self.backend._isolated_skill_card_title_key(image, self.key[0], source_box):
+            return None
+        current = self.backend._detail_identity_transaction(self.key)
+        if (self.transaction_token is None or current.transaction_token != self.transaction_token
+                or current.detail_image is not image):
+            return None
+        observation = self.backend._detail_identity_observation(self.key, self.candidate_ids, self.resolved)
+        if observation is None or normalize(observation.title) != normalize(recovered[1]):
+            return None
+        proof = build_detail_identity_proof(self.resolved, (observation,), self.backend._same_proven_skill_card_title)
+        if proof is None:
+            return None
+        current = self.backend._detail_identity_transaction(self.key)
+        if (proof.detail_images[-1] is not self.detail_image
+                or current.transaction_token != self.transaction_token
+                or not matches_detail_identity_transaction(proof, current)):
+            return None
+        return proof
+
     def _consume_effect_roi_full_text(self) -> None:
         """Use only the replacement certified inside this same-frame ROI call."""
         if isinstance(self.roi_text, _TitleBoundEffectRoiText):
@@ -834,6 +868,8 @@ class SkillDetailSession:
                     # making the fallible face-badge digit a prerequisite.
                     certification_count = self.resolved_count
                 if certifier is not None and certification_count is not None:
+                    title_proof = self._recovered_full_detail_title_proof(full_detail_text)
+                    title_proof_kwargs = {} if title_proof is None else {"full_detail_title_proof": title_proof}
                     try:
                         certified_mode = certifier(
                             self.resolved.card_id,
@@ -843,6 +879,7 @@ class SkillDetailSession:
                             resolved=self.resolved.customizations,
                             generic_cost_frame_values=(self.generic_cost_frame_values),
                             effect_roi_title_bound=(effect_roi_title_bound),
+                            **title_proof_kwargs,
                         )
                     except ArenaCatalogError as error:
                         certification_error = str(error)

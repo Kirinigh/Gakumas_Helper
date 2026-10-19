@@ -98,7 +98,7 @@ class DetailTitleIdentityPort(Protocol):
 
     _runtime_timing_seconds: dict[str, float]
 
-    _skill_card_recovered_title_frames: dict[tuple[int, int], tuple[Any, str]]
+    _skill_card_recovered_title_frames: dict[tuple[int, int], tuple[Any, str] | tuple[Any, str, tuple]]
 
     def _skill_card_scope_kwargs(self, slot_index: int, *, plan: str | None = None) -> dict[str, Any]: ...
 
@@ -672,7 +672,10 @@ class DetailTitleIdentity:
                 f"source_box={source_card_box} title_box={box} observed={raw_text!r} "
                 f"resolved={self.port.catalog.skill_card_title(card_id)!r} card_id={card_id}",
             )
-        evidence[key] = (image, raw_text)
+        evidence[key] = (
+            image, raw_text,
+            self.port._isolated_skill_card_title_key(image, group_index, source_card_box),
+        )
         while len(evidence) > 32:
             evidence.pop(next(iter(evidence)))
         return line
@@ -747,7 +750,7 @@ class DetailTitleIdentity:
         recovered = getattr(self.port, "_skill_card_recovered_title_frames", None)
         if recovered is None:
             recovered = self.port._skill_card_recovered_title_frames = {}
-        recovered[(id(image), card_id)] = (image, title)
+        recovered[(id(image), card_id)] = (image, title, key)
         while len(recovered) > 32:
             recovered.pop(next(iter(recovered)))
         self.port._increment("skill_card_isolated_title_roi_recoveries")

@@ -12,6 +12,7 @@ from collections import Counter, defaultdict
 from dataclasses import replace, dataclass
 from collections.abc import Mapping, Sequence
 
+from ._reader_evidence import _DetailIdentityProof
 from ._p_item_detail_text import PItemDetailTextIndex, PItemDetailTextResult
 from ._p_item_eligibility import ArenaPItemEligibility
 from ._skill_card_eligibility import ArenaSkillCardEligibility
@@ -2330,6 +2331,7 @@ class ArenaEntityCatalog:
         resolved: Mapping[str, int],
         generic_cost_frame_values: Sequence[int] | None = None,
         effect_roi_title_bound: bool = False,
+        full_detail_title_proof: _DetailIdentityProof | None = None,
     ) -> str:
         """Certify selected UI-defined omissions from two covered OCR views.
 
@@ -2338,7 +2340,10 @@ class ArenaEntityCatalog:
         evidence: both the full detail OCR and the independently enlarged
         effect ROI must contain the card title and every derivable invariant
         action anchor when structural omission evidence is required. The full
-        detail pass binds the exact card title. When the caller used a fixed
+        detail pass binds the exact card title. A transaction-verified title
+        proof may preserve a previously established unique one-character
+        recovery of that whole row; it cannot supply body or cost evidence.
+        When the caller used a fixed
         ROI, that ROI must repeat the title before absence inside the effect
         panel can be evidence. A ROI geometrically constructed from the unique
         exact title anchor may instead carry ``effect_roi_title_bound=True``;
@@ -2420,7 +2425,20 @@ class ArenaEntityCatalog:
             ("full detail", full_compact),
             ("effect ROI", roi_compact),
         )
-        if not title or title not in full_title_compact:
+        recovered_title_visible = False
+        if title and title not in full_title_compact and isinstance(full_detail_title_proof, _DetailIdentityProof):
+            proof = full_detail_title_proof
+            observed = _normalise_skill_card_title_text(proof.title)
+            lines = tuple(_normalise_skill_card_title_text(line) for line in full_detail_text.splitlines())
+            if (proof.card_id == card_id and lines.count(observed) == 1
+                    and not any(line in self._cards_by_display_title for line in lines)
+                    and len(proof.detail_images) == len(proof.capture_started_at) == 1
+                    and proof.contact_released_at < proof.capture_started_at[0]):
+                try:
+                    recovered_title_visible = self.recover_skill_card_title_one_character(proof.title) == card_id
+                except ArenaCatalogError:
+                    pass
+        if not title or (title not in full_title_compact and not recovered_title_visible):
             raise ArenaCatalogError(
                 f"card {card_id} full detail OCR lacks the exact title anchor"
             )
