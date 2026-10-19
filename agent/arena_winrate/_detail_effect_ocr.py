@@ -18,7 +18,7 @@ from ._reader_visual import _box, _text
 from ._reader_evidence import _TitleBoundEffectRoiText
 from ._detail_text_layout import ErrorNumericLayoutRecovery, ErrorWrappedSignedRecovery
 from ._detail_capture_evidence import _EvidenceClock, _FullFrameOcrEvidence
-from ._skill_card_effect_recovery import EffectBodyRecovery
+from ._skill_card_effect_recovery import EffectBodyRecovery, recover_wrapped_effect_decoration
 
 
 class _EvidenceLogger(Protocol):
@@ -481,9 +481,50 @@ class DetailEffectOcr:
                     "skill_card_detail_effect_roi_empty",
                     "title-bound native and enlarged OCR views were both empty",
                 )
+            recovered_full_text = None
+            try:
+                merged = self.port._merge_skill_card_effect_detail_views(card_id, texts)
+            except ArenaReaderError as error:
+                if error.code != "skill_card_detail_effect_view_conflict":
+                    raise
+                # Keep the observed enlarged view. Geometry may remove only
+                # a proven icon-lane fragment, never override its operands.
+                roi = (left, top, roi_width, roi_height)
+                recovered_native = recover_wrapped_effect_decoration(
+                    tuple((_text(item), _box(item)) for item in native_roi_items),
+                    title_box, roi, self.port._spatial_ocr_rows(native_roi_items),
+                )
+                if not recovered_native.changed:
+                    raise
+                boundary = self.port._background_parameter_column_left(
+                    width, height, title_box, native_items,
+                )
+                recovered_full = recover_wrapped_effect_decoration(
+                    tuple((_text(item), _box(item)) for item in native_items),
+                    title_box, self.port._title_anchored_effect_roi(width, height, title_box),
+                    self.port._spatial_ocr_rows(native_items),
+                    background_parameter_left=boundary,
+                )
+                if not recovered_full.changed:
+                    raise
+                merged = self.port._merge_skill_card_effect_detail_views(
+                    card_id, tuple(value for value in (recovered_native.text, enlarged_text) if value.strip()),
+                )
+                # Certify the outer view too before returning the replacement.
+                # A real disagreement in either view still terminates here.
+                self.port._merge_skill_card_effect_detail_views(
+                    card_id, (recovered_full.text, merged),
+                )
+                recovered_full_text = recovered_full.text
+                self.port._increment("skill_card_detail_wrapped_decoration_repairs")
+                self.logger.debug(
+                    f"skill-card wrapped decoration recovery: card={card_id} "
+                    f"native={recovered_native.excluded_indices} full={recovered_full.excluded_indices}",
+                )
             return _TitleBoundEffectRoiText(
-                self.port._merge_skill_card_effect_detail_views(card_id, texts),
+                merged,
                 len(observations),
+                recovered_full_text=recovered_full_text,
             )
         finally:
             self.port._increment("skill_card_detail_title_anchored_effect_roi_reads")

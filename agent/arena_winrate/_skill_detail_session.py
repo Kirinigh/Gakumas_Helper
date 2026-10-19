@@ -20,6 +20,13 @@ from ._reader_evidence import _TitleBoundEffectRoiText, _DetailIdentityObservati
 
 
 class SkillDetailSession:
+    def _consume_effect_roi_full_text(self) -> None:
+        """Use only the replacement certified inside this same-frame ROI call."""
+        if isinstance(self.roi_text, _TitleBoundEffectRoiText):
+            replacement = self.roi_text.recovered_full_text
+            if replacement is not None:
+                self.text = replacement
+
     def __init__(
         self,
         backend,
@@ -602,6 +609,7 @@ class SkillDetailSession:
                 self.detail_image,
                 card_id,
             )
+            self._consume_effect_roi_full_text()
             self.same_frame_effect_roi_context = (
                 self.text,
                 self.roi_text,
@@ -755,6 +763,8 @@ class SkillDetailSession:
                     self.detail_image,
                     self.resolved.card_id,
                 )
+                self._consume_effect_roi_full_text()
+                full_detail_text = self.text
                 self.combined_text = self.backend._merge_skill_card_effect_detail_views(
                     self.resolved.card_id,
                     (self.text, self.roi_text),
@@ -954,6 +964,7 @@ class SkillDetailSession:
                 self.detail_image,
                 self.resolved.card_id,
             )
+            self._consume_effect_roi_full_text()
             self.same_frame_effect_roi_context = (
                 self.text,
                 self.roi_text,

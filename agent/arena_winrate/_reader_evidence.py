@@ -72,10 +72,14 @@ class _TitleBoundEffectRoiText(str):
     """Merged ROI text carrying how many non-empty OCR passes produced it."""
 
     observation_count: int
+    recovered_full_text: str | None
 
-    def __new__(cls, value: str, observation_count: int) -> "_TitleBoundEffectRoiText":
+    def __new__(
+        cls, value: str, observation_count: int, *, recovered_full_text: str | None = None,
+    ) -> "_TitleBoundEffectRoiText":
         instance = str.__new__(cls, value)
         instance.observation_count = observation_count
+        instance.recovered_full_text = recovered_full_text
         return instance
 
 

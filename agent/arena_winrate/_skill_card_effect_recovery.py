@@ -35,10 +35,102 @@ class EffectBodyRecovery:
     text: str
     reordered_indices: tuple[int, ...] = ()
     replacements: tuple[tuple[int, str, str], ...] = ()
+    excluded_indices: tuple[int, ...] = ()
 
     @property
     def changed(self) -> bool:
-        return bool(self.reordered_indices or self.replacements)
+        return bool(self.reordered_indices or self.replacements or self.excluded_indices)
+
+
+def recover_wrapped_effect_decoration(
+    atoms: tuple[Atom, ...], title_box: Box, search_roi: Box,
+    rows: Sequence[tuple[str, Box, tuple[Atom, ...]]],
+    *, background_parameter_left: int | None = None,
+) -> EffectBodyRecovery:
+    """Remove one proven icon-lane glyph from an otherwise complete wrap.
+
+    Nothing supplies or edits an operand. Two nearby complete effect rows
+    must establish the indented text column, and the continuation must return
+    to the title's left margin. Unknown text and all numeric/sign/negation
+    fragments remain evidence. The caller alone proves a background column.
+    """
+    unchanged = EffectBodyRecovery("\n".join(text for text, _ in atoms))
+    if len(set(atoms)) != len(atoms) or title_box not in [box for _, box in atoms]:
+        return unchanged
+    # Rows must come from these exact atoms, not a previous capture or crop.
+    row_atoms = [atom for _, _, row in rows for atom in row]
+    if len(row_atoms) != len(atoms) or set(row_atoms) != set(atoms):
+        return unchanged
+    physical_row = {atom: index for index, (_, _, row) in enumerate(rows) for atom in row}
+    normalized = [_normalise_text(text) for text, _ in atoms]
+    pairs: list[tuple[int, int, int, tuple[int, ...]]] = []
+    for head, (label, box) in enumerate(atoms):
+        if normalized[head] not in _VALUE_LABELS or not _inside_roi(box, search_roi):
+            continue
+        x, y, width, height = box
+        if height <= 0 or y < title_box[1] + title_box[3]:
+            continue
+        supports = []
+        for index, (text, other) in enumerate(atoms):
+            match = _VALUE.fullmatch(normalized[index])
+            if (match is not None and match['label'] in _VALUE_LABELS
+                    and _inside_roi(other, search_roi)
+                    and title_box[1] + title_box[3] <= other[1] < y
+                    and y - other[1] <= 4 * height
+                    and 0.7 * height <= other[3] <= 1.5 * height
+                    and abs(other[0] - x) <= 0.65 * height):
+                supports.append(index)
+        if len({physical_row[atoms[index]] for index in supports}) < 2:
+            continue
+        values = []
+        for index, (_, other) in enumerate(atoms):
+            # Buff percentages require their entire duration in this one atom.
+            # Other shared effects may have a complete simple signed value.
+            grammar = (r"\+[0-9]+%\([0-9]+ターン\)" if normalized[head].endswith('強化')
+                       else r"\+[0-9]+(?:%\([0-9]+ターン\))?")
+            if (re.fullmatch(grammar, normalized[index]) is not None
+                    and _inside_roi(other, search_roi)
+                    and 0.7 * height <= other[3] <= 1.5 * height
+                    and 0.8 * height <= other[1] - y <= 1.8 * height
+                    and abs(other[0] - title_box[0]) <= 0.8 * height):
+                values.append(index)
+        if len(values) != 1 or values[0] <= head:
+            continue
+        value = values[0]
+        value_box = atoms[value][1]
+        # Inspect the entire wrapped band, including another possible header
+        # or value beyond the left margin. None may silently disappear.
+        band = [index for index, (_, other) in enumerate(atoms)
+                if _inside_roi(other, search_roi)
+                and y <= other[1] + other[3] / 2 <= value_box[1] + value_box[3]]
+        background = tuple(index for index in band
+                           if background_parameter_left is not None
+                           and atoms[index][1][0] >= background_parameter_left
+                           and (re.fullmatch(r"[0-9]+%?", normalized[index]) is not None
+                                or normalized[index] in {'体力', 'ダンス', 'ビジュアル', 'ボーカル'}))
+        fragments = [index for index in band if index not in (head, value, *background)]
+        if len(fragments) != 1:
+            continue
+        icon = fragments[0]
+        text, (a, b, w, h) = atoms[icon]
+        if (len(text.strip()) != 1 or not text.strip().isalpha()
+                or any(char.isnumeric() for char in text)
+                or text.strip() in '不無非未禁除'
+                or not 0.35 * height <= w <= 0.85 * height
+                or not 0.35 * height <= h <= 0.85 * height
+                or not 0.6 <= w / h <= 1.6
+                or abs((b + h / 2) - (y + height / 2)) > 0.35 * height
+                or a < title_box[0] or a + w > x - 0.5 * height):
+            continue
+        pairs.append((head, value, icon, background))
+    if len(pairs) != 1:
+        return unchanged
+    _, _, icon, background = pairs[0]
+    excluded = tuple(sorted((icon, *background)))
+    return EffectBodyRecovery(
+        "\n".join(text for index, (text, _) in enumerate(atoms) if index not in excluded),
+        excluded_indices=excluded,
+    )
 
 
 def _unique_word(observed: str, words: Sequence[str]) -> str | None:
