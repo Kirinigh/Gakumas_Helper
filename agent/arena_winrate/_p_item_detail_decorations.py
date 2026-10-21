@@ -6,6 +6,78 @@ import re
 from ._p_item_detail_text import BOUNDARY, bounds, normalize, atom_text_view, token_span_valid
 
 DELAY = re.compile(r"[1-9][0-9]*ターン後、")
+NUMBER_IN_EFFECT = re.compile(r"[0-9]")
+
+
+def recover_pixel_decoration(atoms, title_index, layout, image, paragraphs, *, coordinate_size=None):
+    """Exclude an isolated numeric OCR atom only when its pixels prove a star.
+
+    Geometry first binds complete paragraphs in a confirmed panel. The image
+    check compares the candidate with repeated four-point decorations in that
+    same frame. The caller must still resolve every retained body character to
+    exactly one complete reference; no absent effect or value is supplied.
+    """
+    from ._decoration_pixel_evidence import has_repeated_four_point_decoration
+
+    def pixel_box(box):
+        # P-item observers publish 720x1280 floats; pixel proof consumes the
+        # current native frame. Standalone native-box callers omit the basis.
+        if coordinate_size is None:
+            return tuple(round(value) for value in box)
+        width, height = coordinate_size
+        if width <= 0 or height <= 0:
+            return (0, 0, 0, 0)
+        return tuple(round(value * scale) for value, scale in zip(
+            box, (image.shape[1] / width, image.shape[0] / height) * 2, strict=True,
+        ))
+
+    if (layout["status"] != "resolved" or not paragraphs or any(
+        entry["reason"] in ("after_body_geometric_gap", "outside_connected_body_column")
+        for entry in layout.get("rejected", ())
+    )):
+        return None
+    rows = layout["atoms"]
+    if sum(map(len, rows)) > 96:
+        return None
+    known = {normalize(text) for texts in paragraphs.values() for text in texts}
+    height = layout["title_height"]
+    left = atoms[title_index]["box"][0]
+    reference_rows = [tuple(atoms[row[0]]["box"]) for row in rows if len(row) == 1
+                      and normalize(atoms[row[0]]["text"]) in known
+                      and NUMBER_IN_EFFECT.search(normalize(atoms[row[0]]["text"]))
+                      and sum(char.isalpha() for char in atoms[row[0]]["text"]) >= 2
+                      and atoms[row[0]]["box"][2] > 2 * height]
+    if len(reference_rows) < 2:
+        return None
+    excluded = []
+    for row in rows:
+        if len(row) != 2:
+            continue
+        i, following_index = row
+        text = normalize(atoms[i]["text"])
+        if len(text) != 1 or text not in "0123456789":
+            continue
+        if normalize(atoms[following_index]["text"]) not in known:
+            continue
+        x, y, w, h = atoms[i]["box"]
+        fx, fy, fw, fh = atoms[following_index]["box"]
+        if (not .35 * height <= w <= .85 * height
+                or not .35 * height <= h <= .85 * height
+                or not left <= x < x + w <= fx - .25 * height
+                or fw <= 2 * height
+                or abs(y + h / 2 - fy - fh / 2) > .45 * min(h, fh)):
+            continue
+        if has_repeated_four_point_decoration(image, pixel_box(atoms[i]["box"]), [pixel_box(box) for box in reference_rows]):
+            excluded.append(i)
+    if not excluded or len(excluded) > 8:
+        return None
+    repaired = list(atoms)
+    for i in excluded:
+        repaired[i] = {**atoms[i], "text": ""}
+    text, spans = atom_text_view(repaired, layout)
+    return {"text": text, "spans": spans,
+            "edits": [{"atom_index": i, "kind": "pixel_proven_four_point_decoration",
+                       "observed": atoms[i]["text"]} for i in excluded]}
 
 
 def _effect_icon_indices(atoms, rows, text_by_atom, height, effect_heads, *, bullet_left=None):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Any
 from dataclasses import dataclass
 from collections.abc import Sequence
 
@@ -16,6 +17,7 @@ from ._detail_text_layout import (
     _inside_roi,
     _text_connected,
 )
+from ._decoration_pixel_evidence import has_repeated_four_point_decoration
 from ._skill_card_title_recovery import _one_edit
 
 # These are shared game terms, independent of the current card's allowed effects.
@@ -45,14 +47,16 @@ class EffectBodyRecovery:
 def recover_wrapped_effect_decoration(
     atoms: tuple[Atom, ...], title_box: Box, search_roi: Box,
     rows: Sequence[tuple[str, Box, tuple[Atom, ...]]],
-    *, background_parameter_left: int | None = None,
+    *, background_parameter_left: int | None = None, image: Any = None,
 ) -> EffectBodyRecovery:
     """Remove one proven icon-lane glyph from an otherwise complete wrap.
 
     Nothing supplies or edits an operand. Two nearby complete effect rows
     must establish the indented text column, and the continuation must return
     to the title's left margin. Unknown text and all numeric/sign/negation
-    fragments remain evidence. The caller alone proves a background column.
+    fragments remain evidence. A single ASCII digit additionally requires
+    same-frame pixels proving a repeated four-point decoration. The caller
+    alone proves a background column and supplies its current source image.
     """
     unchanged = EffectBodyRecovery("\n".join(text for text, _ in atoms))
     if len(set(atoms)) != len(atoms) or title_box not in [box for _, box in atoms]:
@@ -113,8 +117,10 @@ def recover_wrapped_effect_decoration(
             continue
         icon = fragments[0]
         text, (a, b, w, h) = atoms[icon]
-        if (len(text.strip()) != 1 or not text.strip().isalpha()
-                or any(char.isnumeric() for char in text)
+        glyph = text.strip()
+        numeric = re.fullmatch(r"[0-9]", glyph) is not None
+        if (len(glyph) != 1 or not (glyph.isalpha() or numeric)
+                or (not numeric and any(char.isnumeric() for char in text))
                 or text.strip() in '不無非未禁除'
                 or not 0.35 * height <= w <= 0.85 * height
                 or not 0.35 * height <= h <= 0.85 * height
@@ -122,6 +128,10 @@ def recover_wrapped_effect_decoration(
                 or abs((b + h / 2) - (y + height / 2)) > 0.35 * height
                 or a < title_box[0] or a + w > x - 0.5 * height):
             continue
+        if numeric:
+            support_rows = {physical_row[atoms[index]]: atoms[index][1] for index in supports}
+            if not has_repeated_four_point_decoration(image, atoms[icon][1], tuple(support_rows.values())):
+                continue
         pairs.append((head, value, icon, background))
     if len(pairs) != 1:
         return unchanged

@@ -18,13 +18,6 @@ from ._p_item_eligibility import ArenaPItemEligibility
 from ._skill_card_eligibility import ArenaSkillCardEligibility
 from ._skill_card_title_recovery import SkillCardTitleRecoveryIndex
 
-# This detects an explicit repetition claim, not its validity for a card.
-# Keep both zero-evidence paths from mistaking an unsupported claim for absence.
-_VISIBLE_SCORE_REPETITION_SUFFIX = (
-    r"(?:\(?(?:好調|集中)効果を[0-9]+(?:\.[0-9]+)?倍適用\)?)?"
-    r"\(?[0-9]+回"
-)
-
 
 class ArenaCatalogError(ValueError):
     """Raised when clicked detail text cannot resolve one exact engine ID."""
@@ -825,6 +818,8 @@ class ArenaEntityCatalog:
         detail_text: str | None = None,
         allow_one_substitution: bool = False,
         panel_box: tuple[int, int, int, int] | None = None,
+        detail_image: Any = None,
+        detail_coordinate_size: tuple[int, int] | None = None,
     ) -> PItemDetailTextResult:
         """Resolve attributed detail text without image candidate preselection.
 
@@ -875,6 +870,8 @@ class ArenaEntityCatalog:
                 title_index=title_index,
                 source_frames=source_frames,
                 plan=plan, **scope, **({"panel_box": panel_box} if panel_box is not None else {}),
+                **({"detail_image": detail_image} if detail_image is not None else {}),
+                **({"detail_coordinate_size": detail_coordinate_size} if detail_coordinate_size is not None else {}),
             )
         return replace(
             result,
@@ -2909,6 +2906,55 @@ class ArenaEntityCatalog:
             is not None
         )
 
+    def _detail_uncounted_score_anchor_present(
+        self,
+        card: Mapping[str, Any],
+        score: int,
+        compact: str,
+    ) -> bool:
+        """Require an intact score row before treating repetition as absent.
+
+        A number followed by a broken annotation or a detached ``(N回)``
+        fragment is incomplete evidence, even when the positive matcher
+        cannot bind that fragment to its score. Atomic view boundaries remain
+        closed; a complete row in another observation cannot repair this one.
+        """
+
+        base_scores = _all_literal_integer_increments(card.get("actions"), "score")
+        annotation = (
+            self._literal_score_good_condition_annotation(card, base_scores[0])
+            if base_scores else ""
+        )
+        anchor = re.compile(rf"スコア\+{score}(?![0-9]|[.,．，。][0-9])")
+        # A count immediately attached to another numeric effect has its own
+        # carrier. Unattached parenthetical counts cannot prove this score's
+        # absence, and must not be reassigned by proximity or majority vote.
+        count_owner = re.compile(
+            r"(?:スコア|元気|集中|やる気|好印象|全力値)\+[0-9]+"
+            r"(?:\(?(?:好調|集中)効果を[0-9]+(?:\.[0-9]+)?倍適用\)?)?$"
+        )
+        for atomic_view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY):
+            if any(
+                count_owner.search(atomic_view[:claim.start()]) is None
+                for claim in re.finditer(r"\([0-9]+回", atomic_view)
+            ):
+                continue
+            for match in anchor.finditer(atomic_view):
+                tail = atomic_view[match.end():]
+                if annotation and tail.startswith(annotation):
+                    tail = tail[len(annotation):]
+                elif annotation and tail.startswith(annotation[1:-1]):
+                    tail = tail[len(annotation) - 2:]
+                    if tail.startswith(")"):
+                        tail = tail[1:]
+                # Both incomplete and unsupported annotations remain unknown.
+                # Plain complete scores and exact complete catalog annotations
+                # still provide independent zero evidence.
+                if re.match(r"[()0-9]|(?:好調|集中)効果|倍適用|回", tail):
+                    continue
+                return True
+        return False
+
     def _positive_signature_is_visible(
         self,
         card: Mapping[str, Any],
@@ -3556,12 +3602,7 @@ class ArenaEntityCatalog:
                     ):
                         visible_zero_scores.add(effective_scores[0])
             return any(
-                re.search(
-                    rf"スコア\+{score}"
-                    rf"(?![0-9]|[.,．，。][0-9]|{_VISIBLE_SCORE_REPETITION_SUFFIX})",
-                    compact,
-                )
-                is not None
+                self._detail_uncounted_score_anchor_present(card, score, compact)
                 for score in visible_zero_scores
             )
 
@@ -5306,10 +5347,18 @@ class ArenaEntityCatalog:
                         for group, anchors in direct_score_times_groups
                         for anchor in anchors
                     )
-                    return unchanged_repeated or not any(
-                        re.search(
-                            rf"{re.escape(anchor)}{_VISIBLE_SCORE_REPETITION_SUFFIX}",
-                            compact,
+                    score_anchor_seen = any(
+                        re.search(re.escape(anchor) + r"(?![0-9])", compact)
+                        for _, anchors in direct_score_times_groups
+                        for anchor in anchors
+                    )
+                    # Missing rows remain compatible with level zero for the
+                    # existing badge-constrained combination solver. They do
+                    # not become visible zero evidence in the cross-view gate.
+                    # A present but broken suffix has no such compatibility.
+                    return not score_anchor_seen or unchanged_repeated or any(
+                        self._detail_uncounted_score_anchor_present(
+                            card, int(anchor.removeprefix("スコア+")), compact,
                         )
                         for _, anchors in direct_score_times_groups
                         for anchor in anchors

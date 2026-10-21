@@ -618,6 +618,8 @@ class PItemDetailTextIndex:
         plan: str | None = None,
         eligible_ids: frozenset[int] | None = None,
         panel_box: tuple[int, int, int, int] | None = None,
+        detail_image: Any = None,
+        detail_coordinate_size: tuple[int, int] | None = None,
     ) -> PItemDetailTextResult:
         if not isinstance(title_index, int) or isinstance(title_index, bool) or not 0 <= title_index < len(atoms):
             return PItemDetailTextResult("unknown", reason="invalid_title_index")
@@ -639,6 +641,30 @@ class PItemDetailTextIndex:
             recovered = self._recover_wrapped_body(atom_rows, title_index, sources, panel_box, plan=plan, eligible_ids=eligible_ids)
             if recovered is not None:
                 return recovered
+            if detail_image is not None and layout["status"] == "resolved":
+                from ._p_item_detail_decorations import recover_pixel_decoration
+
+                scoped = self.family_ids_for_title(str(atom_rows[title_index]["text"]), plan=plan, eligible_ids=eligible_ids)
+                if len(scoped) >= 2 and all(item_id in self._bodies for item_id in scoped):
+                    proof = recover_pixel_decoration(
+                        atom_rows, title_index, layout, detail_image,
+                        {item_id: self._references[item_id]["paragraphs"] for item_id in scoped},
+                        coordinate_size=detail_coordinate_size,
+                    )
+                    if proof is not None:
+                        recovered = self._resolve(
+                            str(atom_rows[title_index]["text"]), proof["text"], proof["spans"],
+                            plan=plan, eligible_ids=eligible_ids,
+                            layout_diagnostics=result.diagnostics.get("layout"),
+                        )
+                        if (recovered.status == "unique" and "complete_reference_positive" in
+                                recovered.diagnostics["positive_support"][recovered.ids[0]]):
+                            return PItemDetailTextResult("unique", recovered.ids, "pixel_proven_decoration_recovery", {
+                                **recovered.diagnostics,
+                                "decoration_recovery": {"edits": proof["edits"], "complete_reference_id": recovered.ids[0],
+                                                        "numeric_value_edits": 0, "additional_ocr_calls": 0,
+                                                        "same_frame_pixel_proof": True},
+                            })
         contextual_candidate = bool(
             result.status == "unique" and not normalize(str(atom_rows[title_index]["text"])).endswith("+")
             and "reference_difference" in result.diagnostics.get("positive_support", {}).get(result.ids[0], ())

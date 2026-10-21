@@ -489,8 +489,15 @@ class PItemDetailSession:
                 if text_result.status != "unique" and current_atoms and self.source_images:
                     from arena_winrate._detail_title_region import isolated_p_item_body_region
 
-                    panel_box = isolated_p_item_body_region(self.image, self.source_images, tuple(row_box))
-                    if panel_box is not None:
+                    height, width = self.image.shape[:2]
+                    native_title_box = tuple(round(value * scale) for value, scale in zip(
+                        row_box, (width / 720.0, height / 1280.0) * 2, strict=True,
+                    ))
+                    native_panel_box = isolated_p_item_body_region(self.image, self.source_images, native_title_box)
+                    if native_panel_box is not None:
+                        panel_box = tuple(value / scale for value, scale in zip(
+                            native_panel_box, (width / 720.0, height / 1280.0) * 2, strict=True,
+                        ))
                         text_result = text_resolver(
                             text_atoms,
                             title_index=title_index,
@@ -503,6 +510,8 @@ class PItemDetailSession:
                             detail_text=self.last_text,
                             allow_one_substitution=not bool(self.evidence.match_title_rows_exact(self.last_title_text)),
                             panel_box=panel_box,
+                            detail_image=self.image,
+                            detail_coordinate_size=(720, 1280),
                         )
                         self.backend._increment("p_item_detail_panel_reuses")
                 self.backend._add_timing("p_item_detail_text", self.clock.perf_counter() - text_started)

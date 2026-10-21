@@ -482,8 +482,17 @@ class DetailEffectOcr:
                     "title-bound native and enlarged OCR views were both empty",
                 )
             recovered_full_text = None
+            roi_merged = False
             try:
                 merged = self.port._merge_skill_card_effect_detail_views(card_id, texts)
+                roi_merged = True
+                # A short digit can sort before the header in the cropped
+                # spatial view, while the full observation still contains an
+                # intruding icon/background fragment. Certify that outer view
+                # here too, so only a real existing conflict starts recovery.
+                self.port._merge_skill_card_effect_detail_views(
+                    card_id, (self.port._spatial_ocr_text(native_items), merged),
+                )
             except ArenaReaderError as error:
                 if error.code != "skill_card_detail_effect_view_conflict":
                     raise
@@ -493,8 +502,14 @@ class DetailEffectOcr:
                 recovered_native = recover_wrapped_effect_decoration(
                     tuple((_text(item), _box(item)) for item in native_roi_items),
                     title_box, roi, self.port._spatial_ocr_rows(native_roi_items),
+                    image=image,
                 )
                 if not recovered_native.changed:
+                    if roi_merged:
+                        # This extra raw-view check must not supersede a
+                        # caller's separately certified whole-term repair.
+                        # The session still checks its actual full text.
+                        return _TitleBoundEffectRoiText(merged, len(observations))
                     raise
                 boundary = self.port._background_parameter_column_left(
                     width, height, title_box, native_items,
@@ -504,8 +519,11 @@ class DetailEffectOcr:
                     title_box, self.port._title_anchored_effect_roi(width, height, title_box),
                     self.port._spatial_ocr_rows(native_items),
                     background_parameter_left=boundary,
+                    image=image,
                 )
                 if not recovered_full.changed:
+                    if roi_merged:
+                        return _TitleBoundEffectRoiText(merged, len(observations))
                     raise
                 merged = self.port._merge_skill_card_effect_detail_views(
                     card_id, tuple(value for value in (recovered_native.text, enlarged_text) if value.strip()),
