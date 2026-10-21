@@ -14,7 +14,7 @@ from arena_winrate import (
     team_stage_total_anchors,
     arena_page_allows_team_entry,
 )
-from arena_winrate._reader_visual import _box, _text
+from arena_winrate._reader_visual import _box, _text, _support_bonus_dialog_headings, _support_bonus_overlay_visible
 from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle, RecoveryPageObservation
 
 
@@ -359,13 +359,14 @@ class ArenaNavigationReader:
             items = self.port._ocr(image, r".+")
             support = self.port._matching_ocr_items(items, r"^\s*サポートボーナス\s*$")
             closes = self.port._matching_ocr_items(items, r"^閉じる$")
+            support_overlay = _support_bonus_overlay_visible(image, items)
             if pending_support is not None:
                 initial_observation = RecoveryPageObservation(image, tuple(items))
-            elif len(support) == 1 and len(closes) == 1:
+            elif support_overlay and len(support) == 1 and len(closes) == 1:
                 self.port._page_recovery_state.support_bonus_toggle = SupportBonusToggle("closing")
                 height, width = image.shape[:2]
                 self.port._click((int(width * 0.955), int(height * 0.022), 1, 1), settle_seconds=0)
-            elif support:
+            elif _support_bonus_dialog_headings(image, items):
                 initial_observation = RecoveryPageObservation(image, tuple(items))
             elif (
                 len(self.port._matching_ocr_items(items, r"^体力$")) == 1
@@ -442,7 +443,7 @@ class ArenaNavigationReader:
             stage_total_count,
             exhausted_notice_count,
         )
-        if self.port._matching_ocr_items(items, r"^\s*サポートボーナス\s*$"):
+        if _support_bonus_dialog_headings(image, items):
             # A popup can leave background page anchors/template matches
             # visible. It cannot prove that the underlying page is usable.
             return ArenaPageState.AMBIGUOUS, counts

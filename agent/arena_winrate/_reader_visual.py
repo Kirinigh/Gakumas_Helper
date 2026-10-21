@@ -43,6 +43,40 @@ def _has_support_bonus_heading(text: str) -> bool:
     return sum(row.strip() == "サポートボーナス" for row in text.splitlines()) == 1
 
 
+def _support_bonus_dialog_headings(image: Any, items: Sequence[Any]) -> tuple[Any, ...]:
+    """Upper dialog headings block navigation even without close evidence."""
+    headings = [item for item in items if _text(item).strip() == "サポートボーナス"]
+    if not headings:
+        return ()
+    height, width = image.shape[:2]
+    return tuple(
+        item for item in headings
+        if (box := _box(item))[2] > 0 and box[3] > 0
+        and 0 <= box[0] < box[0] + box[2] <= width and 0 <= box[1] < height * 0.7
+    )
+
+
+def _support_bonus_overlay_visible(image: Any, items: Sequence[Any]) -> bool:
+    """Require corroborated dialog evidence before starting a toggle flow."""
+
+    headings = _support_bonus_dialog_headings(image, items)
+    if not headings:
+        return False
+    height, width = image.shape[:2]
+    evidence = [
+        item for item in items
+        if _text(item).strip() == "閉じる"
+        or re.fullmatch(r"\+[0-9]+(?:\.[0-9]+)?%", _text(item).strip())
+    ]
+    for heading in headings:
+        _, y, _, h = _box(heading)
+        for item in evidence:
+            ex, ey, ew, eh = _box(item)
+            if ew > 0 and eh > 0 and 0 <= ex < ex + ew <= width and y + h <= ey < ey + eh <= height:
+                return True
+    return False
+
+
 def _support_bonus_from_overlay(
     text: str,
     *,

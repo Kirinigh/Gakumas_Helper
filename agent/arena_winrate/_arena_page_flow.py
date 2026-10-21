@@ -14,7 +14,7 @@ from collections.abc import Sequence
 
 from .reader import ArenaPageState, ArenaReaderError, arena_page_allows_team_entry
 from .recovery import error_retry_box
-from ._reader_visual import _box
+from ._reader_visual import _box, _support_bonus_dialog_headings, _support_bonus_overlay_visible
 
 
 @dataclass
@@ -224,7 +224,9 @@ class ArenaPageFlow:
         """
         titles = self.port.matching_ocr_items(items, r"^\s*サポートボーナス\s*$")
         toggle = self.port.state.support_bonus_toggle
-        if toggle is None and not titles:
+        dialog_headings = _support_bonus_dialog_headings(image, items)
+        overlay_visible = _support_bonus_overlay_visible(image, items)
+        if toggle is None and not dialog_headings:
             return False
         self.port.check_cancelled()
         closes = self.port.matching_ocr_items(items, r"^閉じる$")
@@ -234,6 +236,11 @@ class ArenaPageFlow:
                 "support recovery has non-unique title/close anchors; no toggle or back sent",
             )
         if toggle is None:
+            if not overlay_visible:
+                raise ArenaReaderError(
+                    "support_bonus_close_unconfirmed",
+                    "support dialog heading has no independent close/body evidence; no toggle or back sent",
+                )
             toggle = SupportBonusToggle("opening", recovery_reads=1, recovery_deadline=self.clock.monotonic() + 8.0)
             self.port.state.support_bonus_toggle = toggle
         if self.clock.monotonic() >= toggle.recovery_deadline:
@@ -241,7 +248,7 @@ class ArenaPageFlow:
                 "support_bonus_close_unconfirmed",
                 "interrupted support observation exceeded its eight-second confirmation; no toggle or back sent",
             )
-        if titles and len(closes) == 1 and toggle.direction != "closing":
+        if overlay_visible and len(closes) == 1 and toggle.direction != "closing":
             # Consume before input: cancellation after dispatch must retain the
             # closing intent even while the next capture still shows the popup.
             self.port.state.support_bonus_toggle = SupportBonusToggle("closing")
@@ -254,9 +261,17 @@ class ArenaPageFlow:
             and len(self.port.matching_ocr_items(items, r"^総合力$")) == 1
             and len(self.port.matching_ocr_items(items, r"^ステージ\s*[123]$")) <= 1
         )
+        preview = (
+            len(self.port.matching_ocr_items(items, r"^挑戦開始$")) == 1
+            and len(self.port.matching_ocr_items(items, r"^総合力$")) == 6
+            and all(len(self.port.matching_ocr_items(items, rf"^ステージ\s*{number}$")) == 1 for number in (1, 2, 3))
+        )
         if (
-            toggle.direction == "closing" and not titles and not closes
-            and (member or state in {ArenaPageState.READY, ArenaPageState.TEAM_PREVIEW, ArenaPageState.OPPONENTS_UNAVAILABLE})
+            toggle.direction == "closing" and not dialog_headings and not closes
+            and (
+                preview
+                or not titles and (member or state in {ArenaPageState.READY, ArenaPageState.TEAM_PREVIEW, ArenaPageState.OPPONENTS_UNAVAILABLE})
+            )
         ):
             self.port.state.support_bonus_toggle = None
             return False
