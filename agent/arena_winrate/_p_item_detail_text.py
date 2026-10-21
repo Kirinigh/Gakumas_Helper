@@ -178,6 +178,9 @@ def atom_text_view(atoms: list[dict], layout: dict) -> tuple[str, list[dict]]:
     for row in layout["atoms"]:
         for index in row:
             text = normalize(atoms[index]["text"]).translate(str.maketrans({"值": "値", "增": "増", "·": "・"}))
+            # Native OCR can emit the simplified glyph in this fixed cost
+            # label. Keep every operand and the original atom boundary intact.
+            text = text.replace("体力消费", "体力消費")
             if not text:
                 continue
             # A percentage is also a complete numeric edge. An independent
