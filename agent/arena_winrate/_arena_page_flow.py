@@ -18,12 +18,22 @@ from ._reader_visual import _box
 
 
 @dataclass
+class SupportBonusToggle:
+    """A sent toggle is completed by observation, never by sending it again."""
+
+    direction: str
+    recovery_reads: int = 0
+    recovery_deadline: float | None = None
+
+
+@dataclass
 class PageRecoveryState:
     """Input opportunities shared by member cleanup and outer page recovery."""
 
     communication_retry_attempted: bool = False
     contest_details_close_attempts: int = 0
     last_retry_dialog_seen: bool = False
+    support_bonus_toggle: SupportBonusToggle | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +119,17 @@ class ArenaPageFlow:
         loading_reads = 0
         loading_deadline: float | None = None
         while steps < maximum_steps:
+            toggle = self.port.state.support_bonus_toggle
+            if toggle is not None:
+                self.port.check_cancelled()
+                if toggle.recovery_deadline is None:
+                    toggle.recovery_deadline = self.clock.monotonic() + 8.0
+                if toggle.recovery_reads >= 3 or self.clock.monotonic() >= toggle.recovery_deadline:
+                    raise ArenaReaderError(
+                        "support_bonus_close_unconfirmed",
+                        "interrupted support toggle exhausted its three-frame/eight-second confirmation; no back sent",
+                    )
+                toggle.recovery_reads += 1
             observation, initial_observation = initial_observation, None
             if observation is None:
                 image = self.port.capture()
@@ -118,17 +139,30 @@ class ArenaPageFlow:
                 self.port.check_cancelled()
                 image = observation.image
             self.port.state.last_retry_dialog_seen = False
+            items = None
             if observation is None:
-                state, _ = self.port.arena_page_state(image)
+                if toggle is None:
+                    state, _ = self.port.arena_page_state(image)
+                else:
+                    items = self.port.ocr(image, r".+")
+                    state, _ = self.port.arena_page_state(image, observations=items)
             else:
                 state, _ = self.port.arena_page_state(image, observations=observation.items)
                 self.port.check_cancelled()
+            if toggle is not None:
+                if items is None:
+                    items = observation.items
+                if self._finish_support_bonus_toggle(image, items, state):
+                    continue
             if arena_page_allows_team_entry(
                 state,
                 require_opponents=require_opponents,
             ):
                 return
-            items = self.port.ocr(image, r".+") if observation is None else observation.items
+            if items is None:
+                items = self.port.ocr(image, r".+") if observation is None else observation.items
+            if toggle is None and self._finish_support_bonus_toggle(image, items, state):
+                continue
             if self.port.matching_ocr_items(items, r"(?i)^\s*NOW\s*LOADING[.\s…]*$"):
                 loading_reads += 1
                 self.port.increment("arena_recovery_loading_frames")
@@ -180,6 +214,59 @@ class ArenaPageFlow:
             error_code,
             f"back navigation did not reach an arena main page {required_state}",
         )
+
+    def _finish_support_bonus_toggle(self, image: Any, items: Sequence[Any], state: ArenaPageState) -> bool:
+        """Use the existing three-frame/eight-second support confirmation limit.
+
+        A cancelled open may still be rendering over a bare member. A cancelled
+        close may still show the old popup. Neither frame authorizes a toggle
+        replay or navigation through the popup's visible background arrow.
+        """
+        titles = self.port.matching_ocr_items(items, r"^\s*サポートボーナス\s*$")
+        toggle = self.port.state.support_bonus_toggle
+        if toggle is None and not titles:
+            return False
+        self.port.check_cancelled()
+        closes = self.port.matching_ocr_items(items, r"^閉じる$")
+        if len(titles) > 1 or len(closes) > 1:
+            raise ArenaReaderError(
+                "support_bonus_close_ambiguous",
+                "support recovery has non-unique title/close anchors; no toggle or back sent",
+            )
+        if toggle is None:
+            toggle = SupportBonusToggle("opening", recovery_reads=1, recovery_deadline=self.clock.monotonic() + 8.0)
+            self.port.state.support_bonus_toggle = toggle
+        if self.clock.monotonic() >= toggle.recovery_deadline:
+            raise ArenaReaderError(
+                "support_bonus_close_unconfirmed",
+                "interrupted support observation exceeded its eight-second confirmation; no toggle or back sent",
+            )
+        if titles and len(closes) == 1 and toggle.direction != "closing":
+            # Consume before input: cancellation after dispatch must retain the
+            # closing intent even while the next capture still shows the popup.
+            self.port.state.support_bonus_toggle = SupportBonusToggle("closing")
+            height, width = image.shape[:2]
+            self.port.increment("support_bonus_recovery_closes")
+            self.port.click((int(width * 0.955), int(height * 0.022), 1, 1), settle_seconds=0)
+            return True
+        member = (
+            len(self.port.matching_ocr_items(items, r"^体力$")) == 1
+            and len(self.port.matching_ocr_items(items, r"^総合力$")) == 1
+            and len(self.port.matching_ocr_items(items, r"^ステージ\s*[123]$")) <= 1
+        )
+        if (
+            toggle.direction == "closing" and not titles and not closes
+            and (member or state in {ArenaPageState.READY, ArenaPageState.TEAM_PREVIEW, ArenaPageState.OPPONENTS_UNAVAILABLE})
+        ):
+            self.port.state.support_bonus_toggle = None
+            return False
+        if toggle.recovery_reads >= 3 or self.clock.monotonic() >= toggle.recovery_deadline:
+            raise ArenaReaderError(
+                "support_bonus_close_unconfirmed",
+                "interrupted support toggle did not reach a proven closed page within three frames/eight seconds; no back sent",
+            )
+        self.port.sleep(0.12)
+        return True
 
     def dismiss_contest_details_items(self, image: Any, items: Sequence[Any]) -> bool:
         """Close a proven contest overlay using recovery's existing OCR frame."""
@@ -286,6 +373,12 @@ class ArenaPageFlow:
         return True
 
     def back(self, *, image: Any = None) -> None:
+        if self.port.state.support_bonus_toggle is not None:
+            self.port.check_cancelled()
+            raise ArenaReaderError(
+                "support_bonus_close_unconfirmed",
+                "a support toggle is awaiting closed-page confirmation; no back sent",
+            )
         if image is None:
             image = self.port.capture()
         height, width = image.shape[:2]

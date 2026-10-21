@@ -17,7 +17,9 @@ from arena_winrate import (
     fixed_member_slot_boxes,
     infer_parameter_label_boxes,
 )
+from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded
 from arena_winrate._reader_visual import _box, _text
+from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle
 from arena_winrate._reader_evidence import _DetailIdentityProof
 from arena_winrate._member_read_session import (
     MemberDetailRecovery,
@@ -73,6 +75,7 @@ class MemberNavigationReaderPort(Protocol):
     def _ocr(self, image: Any, expected: str, *, roi: tuple[int, int, int, int] | None = ..., only_rec: bool = ...) -> list[Any]: ...
 
     _pending_stage_preview: Any
+    _page_recovery_state: PageRecoveryState
 
     def _read_enhanced_numeric_roi(self, image: Any, roi: tuple[int, int, int, int]) -> tuple[int | None, tuple[str, ...]]: ...
     def _read_member_recovery_page(self, image: Any = ...) -> tuple[Any, Sequence[Any]]: ...
@@ -214,7 +217,7 @@ class MemberNavigationReader:
             1,
             1,
         )
-        self.port._click(info_box, settle_seconds=0)
+        self._toggle_support_bonus(info_box, "opening")
         started = self.clock.perf_counter()
         deadline = self.clock.monotonic() + 2.0
         value: float | None = None
@@ -277,7 +280,7 @@ class MemberNavigationReader:
             recovery_started = self.clock.perf_counter()
             recovery_deadline = self.clock.monotonic() + 8.0
             self.port._increment("support_bonus_open_retries")
-            self.port._click(info_box, settle_seconds=0)
+            self._toggle_support_bonus(info_box, "opening")
             reads = 0
             while reads < 3 and self.clock.monotonic() < recovery_deadline:
                 reads += 1
@@ -304,6 +307,11 @@ class MemberNavigationReader:
                 )
             )
         if value is None:
+            if recent_member_frames == [True, True]:
+                # The ordinary dropped-open path already exhausted its
+                # unchanged-member proof and retry allowance. Only an actual
+                # interruption leaves an unobserved opening for cleanup.
+                self.port._page_recovery_state.support_bonus_toggle = None
             bonuses = re.findall(
                 r"(?<![0-9])\+([0-9]+(?:\.[0-9]+)?)%",
                 last_text,
@@ -311,7 +319,7 @@ class MemberNavigationReader:
             cleanup = "not attempted: overlay identity unproven"
             if self.port._has_support_bonus_heading(last_text) and last_close_count <= 1:
                 try:
-                    self.port._click(info_box, settle_seconds=0)
+                    self._toggle_support_bonus(info_box, "closing")
                     self.port._assert_support_bonus_closed()
                     cleanup = "closed and member page confirmed"
                 except ArenaReaderError as error:
@@ -324,19 +332,47 @@ class MemberNavigationReader:
         # The same info icon is the stable toggle on both own and opponent
         # member pages.  OCR's visible 閉じる label belongs to overlay content
         # and is not a reliable hit target across these two layouts.
-        self.port._click(info_box, settle_seconds=0)
+        self._toggle_support_bonus(info_box, "closing")
         self.port._assert_support_bonus_closed()
         return value
 
+    def _toggle_support_bonus(self, box: tuple[int, int, int, int], direction: str) -> None:
+        # The existing completed-action counter distinguishes cancellation at
+        # _click's pre-dispatch guard from its post-dispatch guard. No input or
+        # cancellation boundary is deferred to finish the transition.
+        self.port._check_cancelled()
+        state = self.port._page_recovery_state
+        previous = state.support_bonus_toggle
+        toggle = SupportBonusToggle(direction)
+        before = self.port._runtime_counts.get("click_actions", 0)
+        state.support_bonus_toggle = toggle
+        try:
+            self.port._click(box, settle_seconds=0)
+        except (ArenaTaskCancelled, ArenaReadSuperseded):
+            if self.port._runtime_counts.get("click_actions", 0) == before:
+                state.support_bonus_toggle = previous
+            raise
+
     def _assert_support_bonus_closed(self) -> None:
-        deadline = self.clock.monotonic() + 8.0
-        for _ in range(3):
-            if self.clock.monotonic() >= deadline:
+        state = self.port._page_recovery_state
+        toggle = state.support_bonus_toggle
+        if toggle is None:
+            toggle = SupportBonusToggle("closing")
+            state.support_bonus_toggle = toggle
+        if toggle.recovery_deadline is None:
+            toggle.recovery_deadline = self.clock.monotonic() + 8.0
+        while toggle.recovery_reads < 3:
+            if self.clock.monotonic() >= toggle.recovery_deadline:
                 break
+            toggle.recovery_reads += 1
             image = self.port._capture()
             items = self.port._ocr(image, r".+")
+            if self.clock.monotonic() >= toggle.recovery_deadline:
+                break
             text = "\n".join(_text(item) for item in items)
             communication = self.port._retry_transient_communication_items(items)
+            if self.clock.monotonic() >= toggle.recovery_deadline:
+                break
             if (
                 not communication
                 and not self.port._has_support_bonus_heading(text)
@@ -344,6 +380,7 @@ class MemberNavigationReader:
                 and self.port._matching_ocr_items(items, r"^体力$")
                 and self.port._matching_ocr_items(items, r"^総合力$")
             ):
+                self.port._page_recovery_state.support_bonus_toggle = None
                 return
             self.port._sleep(0.12)
         raise ArenaReaderError(

@@ -15,7 +15,7 @@ from arena_winrate import (
     arena_page_allows_team_entry,
 )
 from arena_winrate._reader_visual import _box, _text
-from arena_winrate._arena_page_flow import RecoveryPageObservation
+from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle, RecoveryPageObservation
 
 
 class ArenaNavigationReaderPort(Protocol):
@@ -45,6 +45,7 @@ class ArenaNavigationReaderPort(Protocol):
     def _ocr_detail(self, image: Any, expected: str, *, roi: tuple[int, int, int, int] | None = ..., only_rec: bool = ...) -> Any: ...
 
     _pending_stage_preview: Any
+    _page_recovery_state: PageRecoveryState
     _progressive_abandoned_member: Any
 
     def _read_grade(self, image: Any, *, observations: Sequence[Any] | None = ...) -> int: ...
@@ -351,11 +352,21 @@ class ArenaNavigationReader:
         self.port._progressive_abandoned_member = None
         initial_observation = None
         if position is not None:
+            pending_support = self.port._page_recovery_state.support_bonus_toggle
+            if pending_support is not None and pending_support.recovery_deadline is None:
+                pending_support.recovery_deadline = self.clock.monotonic() + 8.0
             image = self.port._capture()
             items = self.port._ocr(image, r".+")
-            if self.port._matching_ocr_items(items, r"サポートボーナス") and self.port._matching_ocr_items(items, r"^閉じる$"):
+            support = self.port._matching_ocr_items(items, r"^\s*サポートボーナス\s*$")
+            closes = self.port._matching_ocr_items(items, r"^閉じる$")
+            if pending_support is not None:
+                initial_observation = RecoveryPageObservation(image, tuple(items))
+            elif len(support) == 1 and len(closes) == 1:
+                self.port._page_recovery_state.support_bonus_toggle = SupportBonusToggle("closing")
                 height, width = image.shape[:2]
                 self.port._click((int(width * 0.955), int(height * 0.022), 1, 1), settle_seconds=0)
+            elif support:
+                initial_observation = RecoveryPageObservation(image, tuple(items))
             elif (
                 len(self.port._matching_ocr_items(items, r"^体力$")) == 1
                 and len(self.port._matching_ocr_items(items, r"^総合力$")) == 1
@@ -431,6 +442,10 @@ class ArenaNavigationReader:
             stage_total_count,
             exhausted_notice_count,
         )
+        if self.port._matching_ocr_items(items, r"^\s*サポートボーナス\s*$"):
+            # A popup can leave background page anchors/template matches
+            # visible. It cannot prove that the underlying page is usable.
+            return ArenaPageState.AMBIGUOUS, counts
         return (
             classify_arena_page(
                 rehearsal_count=rehearsal_count,
