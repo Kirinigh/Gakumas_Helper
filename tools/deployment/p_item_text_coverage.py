@@ -10,6 +10,7 @@ from pathlib import Path
 CATALOG_PATH = "assets/arena-winrate/node_modules/gakumas-data/json/p_items.json"
 REFERENCE_PATH = "data/p_item_detail_text.json"
 RUNTIME_PATH = "agent/arena_winrate/p_item_text_reference.py"
+CLASSIFICATION_PATH = "data/p_item_classification.json"
 
 
 class PItemTextCoverageError(ValueError):
@@ -23,6 +24,42 @@ def _candidate_file(candidate: Path, relative: str) -> Path:
     if not path.is_file():
         raise PItemTextCoverageError(f"candidate P-item text file is missing: {relative}")
     return path
+
+
+def _validated_temporary_missing_ids(candidate: Path, catalog_path: Path) -> frozenset[int]:
+    classification_path = candidate / CLASSIFICATION_PATH
+    if not classification_path.exists():
+        return frozenset()
+    classification_path = _candidate_file(candidate, CLASSIFICATION_PATH)
+    try:
+        classification = json.loads(classification_path.read_text(encoding="utf-8"))
+        if not isinstance(classification, dict):
+            raise ValueError("P-item classification must be an object")
+        if classification.get("temporary_missing_references") is None:
+            return frozenset()
+    except (OSError, UnicodeError, ValueError) as error:
+        raise PItemTextCoverageError("candidate temporary missing P-item classification is invalid") from error
+
+    # Import lazily: both packers already import this coverage module. Reuse
+    # their exact gallery/catalog/disabled-row/blank-image contract instead of
+    # interpreting reference_available=False as a text-coverage exemption.
+    try:
+        from tools.deployment import build_release_asset as release
+    except ModuleNotFoundError:  # Direct script execution from tools/deployment.
+        import build_release_asset as release
+    try:
+        manifest_path = _candidate_file(candidate, release.COMPONENT_MANIFESTS["p_item_reference"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        gallery_path = release._resolve_inside(manifest_path.parent, manifest["reference_gallery"]["path"])
+        annotation = release._validate_p_item_release_contract(
+            manifest, gallery_path=gallery_path, catalog_path=catalog_path,
+            classification_path=classification_path, asset_root=candidate,
+        )
+        if annotation is None:
+            raise ValueError("explicit missing-reference declaration was not validated")
+        return frozenset(annotation["business_ids"])
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError, release.ReleaseBuildError) as error:
+        raise PItemTextCoverageError("candidate temporary missing P-item reference contract is invalid") from error
 
 
 def validate_candidate_p_item_text(candidate: Path) -> dict[str, Any]:
@@ -50,6 +87,14 @@ def validate_candidate_p_item_text(candidate: Path) -> dict[str, Any]:
         report = runtime.reference_coverage(reference, catalog)
     except (OSError, UnicodeError, ValueError, TypeError, KeyError, AttributeError, ImportError, SyntaxError) as error:
         raise PItemTextCoverageError("candidate P-item text reference or catalog is invalid") from error
+    temporary_ids = _validated_temporary_missing_ids(candidate, catalog_path)
+    if temporary_ids:
+        actual_missing = set(report["missing_ids"])
+        report = {
+            **report,
+            "missing_ids": sorted(actual_missing - temporary_ids),
+            "temporary_missing_ids": sorted(actual_missing & temporary_ids),
+        }
     if report["missing_ids"] or report["binding_mismatch_ids"]:
         raise PItemTextCoverageError(
             "candidate P-item text coverage is incomplete: "
