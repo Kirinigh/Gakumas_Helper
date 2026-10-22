@@ -94,6 +94,23 @@ APPROVED_REAL_CARD_UI_REFRESH_MANIFESTS = {
     "task410_arena_card_reference": "243953208A093263D7DD8BB9279D2CFDA84EEBC2EF3141BE18B1B0125FC72629",
 }
 APPROVED_REAL_CARD_CLASSIFICATION_ROWS_SHA256 = "5BDE68DF1AFE2F3589C8849ACEAD948EFC1899F554F25A58E3F87AF23B641D35"
+# The released-910 parent and its inactive 911-922 extension are a separate,
+# source-bound delivery. Do not turn catalog growth into approval of a new base.
+APPROVED_RELEASED_910_BASE_MANIFESTS = {
+    "128-dimensional card-art embedding retrieval": "F34BF0E3B9DBB22B815F4F6B1AA5624DF996FBC7CF20D487F065F1CE866F84F2",
+    "arena_custom_card_embedding": "1DE6AD5FE3B3A287FA6C44870D74F10C08A2A40D1852DD7A2721FE17E4362BFA",
+    "task410_arena_card_reference": "45D468ED6B6F52FB18E147A01252F0A70171C7D50B7F392C783B0FB75EB7AF74",
+}
+APPROVED_RELEASED_910_CLASSIFICATION_SHA256 = "D9D445D325FE09CE2A0364E8CD2A7AD58279A38BA3A3717DBACCA46255F6E921"
+APPROVED_RELEASED_910_PLACEHOLDER_CATALOG = {
+    "repository": "https://github.com/gakumas-tools/gakumas-tools",
+    "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+    "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509",
+}
+# CSV-derived catalogs can differ in JSON formatting only. This full-object
+# digest was independently frozen from the raw F112 catalog pinned above.
+# It preserves array order, all fields and JSON scalar types.
+APPROVED_RELEASED_910_CATALOG_CONTENT_SHA256 = "4E385BC9C639FB838B9DE761B35786BFE49F8BA29470D13631256A37FAFA8BF5"
 P_ITEM_PRODUCTION_SOURCE_EVIDENCE_TOOL_CONTRACT = (
     "task095-p-item-production-source-evidence-v1"
 )
@@ -2370,6 +2387,7 @@ def validate_temporary_placeholder_component(
     classification_path: Path,
     preserved_classification_path: Path,
     catalog_path: Path,
+    arena_component_root: Path | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """Validate the authorized inactive extension and return its unchanged base.
 
@@ -2398,6 +2416,53 @@ def validate_temporary_placeholder_component(
         with np.load(path, allow_pickle=False) as payload:
             return {key: payload[key] for key in payload.files}
 
+    def validate_complete_910_base(root: Path, value: Mapping[str, Any], payload: dict[str, Any]) -> None:
+        def complete_files(directory: Path, item: Mapping[str, Any], values: dict[str, Any]) -> None:
+            if "embeddings" in values:
+                model = item["model"]
+                require(sha256_file(inside(directory, model["path"])).upper() == str(model["sha256"]).upper(), "910 base encoder bytes changed")
+                table = item["gallery"]
+                class_path = inside(directory, table["class_table_path"])
+                require(sha256_file(class_path).upper() == str(table["class_table_sha256"]).upper(), "910 base class table bytes changed")
+                require(json.loads(class_path.read_text(encoding="utf-8-sig")) == values["class_names"].tolist(), "910 base class table order changed")
+            else:
+                evaluation = item["evaluation"]
+                report_path = inside(directory, evaluation["path"])
+                require(evaluation.get("status") == "PASS" and sha256_file(report_path).upper() == str(evaluation["sha256"]).upper(), "910 base evaluation bytes changed")
+                require(_load_object(report_path, label="910 base evaluation").get("status") == "PASS", "910 base evaluation did not pass")
+
+        complete_files(root, value, payload)
+        if value.get("component") != "arena_custom_card_embedding":
+            return
+        union = value["build"]
+        require(union.get("tool_contract") == "task095-arena-full-ui-union-v1", "910 arena base must retain the full-UI union")
+        nested_root = root / "preserved_base"
+        nested_path = inside(nested_root, "manifest.json")
+        require(sha256_file(nested_path).upper() == str(union["base_manifest_sha256"]).upper(), "910 nested manifest bytes changed")
+        nested = _load_object(nested_path, label="910 arena raw base")
+        require(type(nested.get("schema_version")) is int and nested["schema_version"] == 1 and nested.get("production_handoff", {}).get("status") in {"READY", PROMOTED_STATUS}, "910 nested base is not release-ready")
+        require(nested.get("model") == value.get("model"), "910 nested encoder declaration changed")
+        raw = arrays(nested_root, nested)
+        keys = {"embeddings", "class_names", "card_ids", "visual_group_ids", "upgrade_counts", "upgrade_markers"}
+        require(set(raw) == set(payload) == keys, "910 nested array inventory changed")
+        require(str(nested["gallery"]["sha256"]).upper() == str(union["base_gallery_sha256"]).upper(), "910 nested gallery binding changed")
+        complete_files(nested_root, nested, raw)
+        count = len(raw["card_ids"])
+        appended = union["appended_rows"]
+        require(type(appended) is int and 0 < appended <= count and union["preserved_rows"] == count and len(payload["card_ids"]) == count + appended, "910 full-UI row counts changed")
+        for key in keys:
+            prefix = payload[key][:count]
+            if key == "class_names":
+                # The union widens Unicode storage for the _full_ui suffix.
+                require(np.array_equal(prefix, raw[key]) and prefix.astype(raw[key].dtype).tobytes() == raw[key].tobytes(), "910 raw class names changed")
+            else:
+                require(prefix.dtype == raw[key].dtype and prefix.tobytes() == raw[key].tobytes(), f"910 raw {key} rows changed")
+            if key != "embeddings":
+                expected = raw[key][:appended]
+                if key == "class_names":
+                    expected = np.asarray([str(name) + "_full_ui" for name in expected])
+                require(np.array_equal(payload[key][count:], expected), "910 frozen full-UI identities changed")
+
     try:
         root = component_root.resolve()
         require(type(manifest.get("schema_version")) is int and manifest["schema_version"] == 2, "schema must be 2")
@@ -2420,11 +2485,24 @@ def validate_temporary_placeholder_component(
         require(set(old) == keys and set(new) == keys | {"reference_enabled"}, "array inventory is incompatible")
         id_key = "card_ids" if embedding else "business_ids"
         count = len(old[id_key])
-        active_business_count = 888 if set(map(int, old[id_key])) == set(range(1, 889)) else 886
-        real_card_update = active_business_count == 888
-        placeholder_ids = tuple(range(active_business_count + 1, 909))
+        active_ids = set(map(int, old[id_key]))
+        released_910 = active_ids == set(range(1, 911))
+        active_business_count = 910 if released_910 else 888 if active_ids == set(range(1, 889)) else 886
+        catalog_count = 922 if released_910 else 908
+        real_card_update = active_business_count in {888, 910}
+        placeholder_ids = tuple(range(active_business_count + 1, catalog_count + 1))
         placeholder_count = len(placeholder_ids)
-        if real_card_update:
+        if released_910:
+            require(
+                sha256_file(base_path).upper() == APPROVED_RELEASED_910_BASE_MANIFESTS.get(manifest.get("component")),
+                "active 910 base is not the approved source-bound delivery",
+            )
+            require(
+                sha256_file(preserved_classification_path).upper() == APPROVED_RELEASED_910_CLASSIFICATION_SHA256,
+                "active 910 classification is not the approved source-bound delivery",
+            )
+            validate_complete_910_base(base_root, base, old)
+        elif real_card_update:
             require(
                 sha256_file(base_path).upper() in (
                     APPROVED_REAL_CARD_BASE_MANIFESTS.get(manifest.get("component")),
@@ -2481,11 +2559,21 @@ def validate_temporary_placeholder_component(
         source = manifest["source"]
         declaration = source["temporary_placeholders"]
         catalog = json.loads(catalog_path.read_text(encoding="utf-8-sig"))
-        require(isinstance(catalog, list) and [row.get("id") for row in catalog] == list(range(1, 909)), "packaged catalog coverage differs")
+        require(isinstance(catalog, list) and [row.get("id") for row in catalog] == list(range(1, catalog_count + 1)), "packaged catalog coverage differs")
         catalog_source = declaration["catalog"]
         require(isinstance(catalog_source, Mapping) and set(catalog_source) == {"repository", "revision", "sha256"}, "catalog source metadata is invalid")
         require(catalog_source["repository"] == "https://github.com/gakumas-tools/gakumas-tools" and _is_sha1(catalog_source["revision"]), "catalog source is not a fixed approved repository")
-        require(str(catalog_source["sha256"]).upper() == sha256_file(catalog_path).upper(), "catalog bytes are not bound to the source")
+        if released_910:
+            require(dict(catalog_source) == APPROVED_RELEASED_910_PLACEHOLDER_CATALOG, "910 placeholder catalog is not the approved frozen source")
+            canonical_catalog = json.dumps(
+                catalog, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")
+            require(
+                hashlib.sha256(canonical_catalog).hexdigest().upper() == APPROVED_RELEASED_910_CATALOG_CONTENT_SHA256,
+                "910 packaged catalog content differs from the approved frozen source",
+            )
+        else:
+            require(str(catalog_source["sha256"]).upper() == sha256_file(catalog_path).upper(), "catalog bytes are not bound to the source")
         image_path = inside(root, declaration["image_path"])
         require(declaration["image_path"] == "temporary-card.png" and declaration["image_sha256"] == TEMPORARY_PLACEHOLDER_IMAGE_SHA256, "neutral artwork source is invalid")
         require(sha256_file(image_path).upper() == TEMPORARY_PLACEHOLDER_IMAGE_SHA256, "neutral artwork bytes changed")
@@ -2506,12 +2594,33 @@ def validate_temporary_placeholder_component(
         }, "source references are inconsistent")
         inherited_domain = base.get("source", {}).get("source_domain")
         expected_source = dict(base.get("source", {}))
-        all_ids = list(range(1, 909))
+        if released_910 and not embedding:
+            require(arena_component_root is not None, "910 badge requires its current arena sibling")
+            arena_root = arena_component_root.resolve()
+            require(arena_root.parent == root.parent and arena_root != root, "910 badge arena must be an exact sibling")
+            arena_path = inside(arena_root, "manifest.json")
+            arena_manifest = _load_object(arena_path, label="910 badge arena sibling")
+            require(arena_manifest.get("component") == "arena_custom_card_embedding", "910 badge sibling is not the arena component")
+            # Preserve the badge's pinned formal parent and its raw lineage;
+            # only the current source pointers follow the qualified schema-2 arena.
+            validate_temporary_placeholder_component(
+                arena_root, arena_manifest,
+                classification_path=classification_path,
+                preserved_classification_path=preserved_classification_path,
+                catalog_path=catalog_path,
+            )
+            arena_gallery = inside(arena_root, arena_manifest["gallery"]["path"])
+            require(expected_source.get("arena_component") == "arena_custom_card_embedding", "910 badge historical arena identity changed")
+            expected_source.update(
+                arena_component_manifest_sha256=sha256_file(arena_path).upper(),
+                arena_gallery_sha256=sha256_file(arena_gallery).upper(),
+            )
+        all_ids = list(range(1, catalog_count + 1))
         expected_source.update(
             inherited_source_domain=inherited_domain,
             source_domain=(inherited_domain or "INHERITED_REFERENCES") + "_WITH_EXCLUDED_TEMPORARY_PLACEHOLDERS",
-            business_card_ids=all_ids, business_card_id_count=908, business_card_id_min=1,
-            business_card_id_max=908,
+            business_card_ids=all_ids, business_card_id_count=catalog_count, business_card_id_min=1,
+            business_card_id_max=catalog_count,
             business_card_id_set_sha256=hashlib.sha256(json.dumps(all_ids, separators=(",", ":")).encode("ascii")).hexdigest().upper(),
             temporary_placeholders=declaration,
         )
@@ -2540,7 +2649,7 @@ def validate_temporary_placeholder_component(
             expected_markers = np.repeat(extract_upgrade_marker(pixels)[None, :], placeholder_count, axis=0)
             require(np.array_equal(new["upgrade_markers"][count:], expected_markers), "disabled neutral markers changed")
         else:
-            expected_gallery.update(business_card_id_count=908, visual_group_count=len(set(map(str, new["visual_group_ids"]))))
+            expected_gallery.update(business_card_id_count=catalog_count, visual_group_count=len(set(map(str, new["visual_group_ids"]))))
             require(new["reference_names"][count:].tolist() == [f"T{value:04d}" for value in placeholder_ids], "disabled reference names are invalid")
             normalized = cv2.resize(pixels[:, :, ::-1], (96, 96), interpolation=cv2.INTER_AREA)
             coarse = cv2.resize(normalized[:48], (16, 8), interpolation=cv2.INTER_AREA)
@@ -2551,15 +2660,16 @@ def validate_temporary_placeholder_component(
         require(classification.get("status") == TEMPORARY_PLACEHOLDER_STATUS and classification.get("runtime_filtering_enabled") is False, "classification status changed")
         require(len(previous["cards"]) == active_business_count and classification["cards"][:active_business_count] == previous["cards"], "previous classification records changed")
         if real_card_update:
-            rows = json.dumps(previous["cards"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            require(hashlib.sha256(rows).hexdigest().upper() == APPROVED_REAL_CARD_CLASSIFICATION_ROWS_SHA256, "real-card classification differs from the approved source identities")
+            if not released_910:
+                rows = json.dumps(previous["cards"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                require(hashlib.sha256(rows).hexdigest().upper() == APPROVED_REAL_CARD_CLASSIFICATION_ROWS_SHA256, "real-card classification differs from the approved source identities")
             require(all("temporary_placeholder" not in row["source"] for row in previous["cards"]), "active classification still declares an inactive placeholder")
         require([row["business_id"] for row in classification["cards"]] == all_ids, "classification coverage differs")
         require(classification.get("sources", {}).get("temporary_placeholder_catalog") == catalog_source, "classification catalog binding differs")
         require(classification["sources"] == {**previous["sources"], "temporary_placeholder_catalog": catalog_source}, "historical classification sources changed")
         for key in set(previous) - {"cards", "revision", "status", "sources", "indexes", "counts", "gallery_coverage"}:
             require(classification.get(key) == previous[key], f"historical classification {key} changed")
-        require(classification.get("revision") == "task095-temporary-placeholder-908-v1", "classification revision is invalid")
+        require(classification.get("revision") == f"task095-temporary-placeholder-{catalog_count}-v1", "classification revision is invalid")
         component_name = {
             "128-dimensional card-art embedding retrieval": "skill-base",
             "arena_custom_card_embedding": "skill-arena",
@@ -2574,7 +2684,7 @@ def validate_temporary_placeholder_component(
             "manifest_sha256": sha256_file(root / "manifest.json").upper(),
             "gallery_sha256": str(manifest["gallery"]["sha256"]).upper(),
             "row_count": count + placeholder_count,
-            "business_id_count": 908,
+            "business_id_count": catalog_count,
             "enabled_business_id_count": active_business_count,
             "temporary_placeholder_business_id_count": placeholder_count,
             "join_key": "business_id",

@@ -2505,6 +2505,10 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
                     classification_path=classification_path,
                     preserved_classification_path=preserved_classification_path,
                     catalog_path=cost_catalog_dir / "skill_cards.json",
+                    arena_component_root=(
+                        _resolve_inside(candidate, COMPONENT_MANIFESTS["arena_card_vision"]).parent
+                        if component == "arena_badge_reference" else None
+                    ),
                 )
                 _validate_component_production_handoff(component, base)
                 placeholder_bases[component] = (base_root, base)
