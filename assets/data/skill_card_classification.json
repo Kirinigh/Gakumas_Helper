@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": "task095-20261020-released910-alternate130-v1",
-  "status": "OFFLINE_VALIDATED",
+  "revision": "task095-temporary-placeholder-922-v1",
+  "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
   "sources": {
@@ -45,7 +45,12 @@
         "dataset_id": "task095-skill-card-extension-pc-705100-0073-released910-ui-20261020",
         "manifest_sha256": "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8"
       }
-    ]
+    ],
+    "temporary_placeholder_catalog": {
+      "repository": "https://github.com/gakumas-tools/gakumas-tools",
+      "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+      "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+    }
   },
   "facets": {
     "plan": {
@@ -21070,6 +21075,462 @@
         "originCharacterId": "",
         "kind_basis": "official_idol_origin"
       }
+    },
+    {
+      "business_id": 911,
+      "name": "結果としての今",
+      "upgraded": false,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 161,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:911",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 912,
+      "name": "結果としての今+",
+      "upgraded": true,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 161,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:911",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 913,
+      "name": "ファンが望むこと",
+      "upgraded": false,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 161,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:913",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 914,
+      "name": "ファンが望むこと+",
+      "upgraded": true,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 161,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:913",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 915,
+      "name": "なにかを続ける尊さ",
+      "upgraded": false,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 162,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:915",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 916,
+      "name": "なにかを続ける尊さ+",
+      "upgraded": true,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 162,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:915",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 917,
+      "name": "わずかずつの歩み",
+      "upgraded": false,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 162,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:917",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 918,
+      "name": "わずかずつの歩み+",
+      "upgraded": true,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 162,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:917",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 919,
+      "name": "ありのままのわたし",
+      "upgraded": false,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "logic",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 163,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:919",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 920,
+      "name": "ありのままのわたし+",
+      "upgraded": true,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "logic",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 163,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:919",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 921,
+      "name": "認めてくれるひと",
+      "upgraded": false,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "logic",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 163,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:921",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 922,
+      "name": "認めてくれるひと+",
+      "upgraded": true,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "logic",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 163,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:921",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
     }
   ],
   "indexes": {
@@ -21745,7 +22206,11 @@
         901,
         902,
         903,
-        904
+        904,
+        919,
+        920,
+        921,
+        922
       ],
       "anomaly": [
         368,
@@ -21990,7 +22455,15 @@
         905,
         906,
         907,
-        908
+        908,
+        911,
+        912,
+        913,
+        914,
+        915,
+        916,
+        917,
+        918
       ]
     },
     "kind": {
@@ -22330,7 +22803,19 @@
         887,
         888,
         909,
-        910
+        910,
+        911,
+        912,
+        913,
+        914,
+        915,
+        916,
+        917,
+        918,
+        919,
+        920,
+        921,
+        922
       ],
       "support": [
         236,
@@ -23377,7 +23862,19 @@
         887,
         888,
         909,
-        910
+        910,
+        911,
+        912,
+        913,
+        914,
+        915,
+        916,
+        917,
+        918,
+        919,
+        920,
+        921,
+        922
       ],
       "SR": [
         70,
@@ -23840,18 +24337,18 @@
     "plan": {
       "free": 65,
       "sense": 291,
-      "logic": 311,
-      "anomaly": 243
+      "logic": 315,
+      "anomaly": 251
     },
     "kind": {
-      "p_idol": 336,
+      "p_idol": 348,
       "support": 118,
       "basic": 68,
       "other": 388
     },
     "rarity": {
       "L": 27,
-      "SSR": 434,
+      "SSR": 446,
       "SR": 216,
       "R": 152,
       "N": 81
@@ -23860,26 +24357,32 @@
   "gallery_coverage": [
     {
       "component": "skill-base",
-      "manifest_sha256": "F34BF0E3B9DBB22B815F4F6B1AA5624DF996FBC7CF20D487F065F1CE866F84F2",
-      "gallery_sha256": "B723141BC3A3A30D42D180DA8276EBF590238977FE03921AB74867EEC4CF0058",
-      "row_count": 4356,
-      "business_id_count": 910,
+      "manifest_sha256": "7416582900D42D0CEF1A0E791821409E3D329D492191CFB7AEB15CE8DDE52539",
+      "gallery_sha256": "0B8DDA50EFBA160CE08FBDDBB3DA981CE52F72BF70F042389E76D54F89935CA3",
+      "row_count": 4368,
+      "business_id_count": 922,
+      "enabled_business_id_count": 910,
+      "temporary_placeholder_business_id_count": 12,
       "join_key": "business_id"
     },
     {
       "component": "skill-arena",
-      "manifest_sha256": "1DE6AD5FE3B3A287FA6C44870D74F10C08A2A40D1852DD7A2721FE17E4362BFA",
-      "gallery_sha256": "1D33B775A395C840B3727A2635C82DC175244866C95B20D82327B9471C5BD0D6",
-      "row_count": 8532,
-      "business_id_count": 910,
+      "manifest_sha256": "9E615FF7EC9CAB1F4EAFA7788E6D5C7EF1AEEB58D76E8063140BE227F2D9097C",
+      "gallery_sha256": "AF5064FC9796A49BE4BE843F9BBC0C6CD63C1D58BCACFC18A296774FAD8DBE36",
+      "row_count": 8544,
+      "business_id_count": 922,
+      "enabled_business_id_count": 910,
+      "temporary_placeholder_business_id_count": 12,
       "join_key": "business_id"
     },
     {
       "component": "badge-reference",
-      "manifest_sha256": "45D468ED6B6F52FB18E147A01252F0A70171C7D50B7F392C783B0FB75EB7AF74",
-      "gallery_sha256": "E01E8A681ECFBDD53881588D308CB3B92795CFEA86D238659461999627313681",
-      "row_count": 3589,
-      "business_id_count": 910,
+      "manifest_sha256": "5237D1C6F93FDA09DBAE8D5015F37C52712A7F649F3C54CBA26D81CEE3491ACC",
+      "gallery_sha256": "A9F49EE445DC9D79D710D6895EA7DF1B55616592DA11F81A3FEA23849582D175",
+      "row_count": 3601,
+      "business_id_count": 922,
+      "enabled_business_id_count": 910,
+      "temporary_placeholder_business_id_count": 12,
       "join_key": "business_id"
     }
   ]

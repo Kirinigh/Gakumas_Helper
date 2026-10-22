@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "revision": "task095-batch13-888-real-card-v1",
+  "revision": "task095-20261020-released910-alternate130-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
   "sources": {
-    "catalog_revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
-    "catalog_sha256": "96EBAF7B54E3AD5F93D458FD1CE0CB0B832113F86229CDDDA999548817EEA8AA",
-    "decoded_master_sha256": "FA18BCADC4D8E12BE21B71B29CBB75ADFA35B1009E0DEC045C0C9072C2D32AAE",
+    "catalog_revision": "68ff32517466da526e0d2e39724fcbe212556518",
+    "catalog_sha256": "35E0E767BE6974E202C349EA55164A4ACDEFD72DAB7AE6103501D961974A69FF",
+    "decoded_master_sha256": "A724DEFB454FA4749727626D094B94B4907233E8220800F739C13D1ACC9E7F49",
     "datasets": [
       {
         "dataset_id": "task075-authoritative-705100:0036",
@@ -40,6 +40,10 @@
       {
         "dataset_id": "task095-skill-card-extension-pc-705100-0069-released888-ui",
         "manifest_sha256": "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7"
+      },
+      {
+        "dataset_id": "task095-skill-card-extension-pc-705100-0073-released910-ui-20261020",
+        "manifest_sha256": "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8"
       }
     ]
   },
@@ -20327,14 +20331,14 @@
         "originCharacterId": "",
         "kind_basis": "catalog_source_with_joint_identity",
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 881,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
             "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
           }
         }
@@ -20362,14 +20366,14 @@
         "originCharacterId": "",
         "kind_basis": "catalog_source_with_joint_identity",
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 882,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
             "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
           }
         }
@@ -20397,14 +20401,14 @@
         "originCharacterId": "",
         "kind_basis": "catalog_source_with_joint_identity",
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 883,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
             "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
           }
         }
@@ -20432,14 +20436,14 @@
         "originCharacterId": "",
         "kind_basis": "catalog_source_with_joint_identity",
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 884,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
             "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
           }
         }
@@ -20467,14 +20471,14 @@
         "originCharacterId": "",
         "kind_basis": "catalog_source_with_joint_identity",
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 885,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
             "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
           }
         }
@@ -20502,14 +20506,14 @@
         "originCharacterId": "",
         "kind_basis": "catalog_source_with_joint_identity",
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 886,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "43FDFFA5A12A84AE2B860D5992F7F0C530B4501B947FC32785ED53CAE9DA10F6",
             "catalog": "D87898FAC44EC32DA9264EE507667728A30211B7DF8D29DFF69D22914B1989FD",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "413B45BEF9FA739242B591DBEAD01B7CD9B172AF2B64D790CA4EB20EC2461577"
           }
         }
@@ -20555,6 +20559,512 @@
         "official_plan": "ProducePlanType_Plan2",
         "official_rarity": "ProduceCardRarity_Ssr",
         "originIdolCardId": "i_card-hski-3-022",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
+      }
+    },
+    {
+      "business_id": 889,
+      "name": "競争原理",
+      "upgraded": false,
+      "internal_id": "p_card-01-men-1_026",
+      "asset_id": "img_general_skillcard_men-1_026",
+      "plan": "sense",
+      "kind": "other",
+      "rarity": "R",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "R",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_R",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 890,
+      "name": "競争原理+",
+      "upgraded": true,
+      "internal_id": "p_card-01-men-1_026",
+      "asset_id": "img_general_skillcard_men-1_026",
+      "plan": "sense",
+      "kind": "other",
+      "rarity": "R",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "R",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_R",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 891,
+      "name": "安定感",
+      "upgraded": false,
+      "internal_id": "p_card-01-men-1_091",
+      "asset_id": "img_general_skillcard_men-1_091",
+      "plan": "sense",
+      "kind": "other",
+      "rarity": "R",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "R",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_R",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 892,
+      "name": "安定感+",
+      "upgraded": true,
+      "internal_id": "p_card-01-men-1_091",
+      "asset_id": "img_general_skillcard_men-1_091",
+      "plan": "sense",
+      "kind": "other",
+      "rarity": "R",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "R",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_R",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 893,
+      "name": "再始動",
+      "upgraded": false,
+      "internal_id": "p_card-01-act-2_108",
+      "asset_id": "img_general_skillcard_act-2_108",
+      "plan": "sense",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 894,
+      "name": "再始動+",
+      "upgraded": true,
+      "internal_id": "p_card-01-act-2_108",
+      "asset_id": "img_general_skillcard_act-2_108",
+      "plan": "sense",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 895,
+      "name": "衝動",
+      "upgraded": false,
+      "internal_id": "p_card-01-act-2_113",
+      "asset_id": "img_general_skillcard_act-2_113",
+      "plan": "sense",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 896,
+      "name": "衝動+",
+      "upgraded": true,
+      "internal_id": "p_card-01-act-2_113",
+      "asset_id": "img_general_skillcard_act-2_113",
+      "plan": "sense",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 897,
+      "name": "メイクアップ",
+      "upgraded": false,
+      "internal_id": "p_card-02-men-1_093",
+      "asset_id": "img_general_skillcard_men-1_093",
+      "plan": "logic",
+      "kind": "other",
+      "rarity": "R",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "R",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_R",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 898,
+      "name": "メイクアップ+",
+      "upgraded": true,
+      "internal_id": "p_card-02-men-1_093",
+      "asset_id": "img_general_skillcard_men-1_093",
+      "plan": "logic",
+      "kind": "other",
+      "rarity": "R",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "R",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_R",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 899,
+      "name": "ロマンチック",
+      "upgraded": false,
+      "internal_id": "p_card-02-men-1_094",
+      "asset_id": "img_general_skillcard_men-1_094",
+      "plan": "logic",
+      "kind": "other",
+      "rarity": "R",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "R",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_R",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 900,
+      "name": "ロマンチック+",
+      "upgraded": true,
+      "internal_id": "p_card-02-men-1_094",
+      "asset_id": "img_general_skillcard_men-1_094",
+      "plan": "logic",
+      "kind": "other",
+      "rarity": "R",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "R",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_R",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 901,
+      "name": "天使の微笑み",
+      "upgraded": false,
+      "internal_id": "p_card-02-act-2_044",
+      "asset_id": "img_general_skillcard_act-2_044",
+      "plan": "logic",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 902,
+      "name": "天使の微笑み+",
+      "upgraded": true,
+      "internal_id": "p_card-02-act-2_044",
+      "asset_id": "img_general_skillcard_act-2_044",
+      "plan": "logic",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 903,
+      "name": "ごきげんスキップ",
+      "upgraded": false,
+      "internal_id": "p_card-02-act-2_116",
+      "asset_id": "img_general_skillcard_act-2_116",
+      "plan": "logic",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 904,
+      "name": "ごきげんスキップ+",
+      "upgraded": true,
+      "internal_id": "p_card-02-act-2_116",
+      "asset_id": "img_general_skillcard_act-2_116",
+      "plan": "logic",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan2",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 905,
+      "name": "ラッシュ",
+      "upgraded": false,
+      "internal_id": "p_card-03-act-2_118",
+      "asset_id": "img_general_skillcard_act-2_118",
+      "plan": "anomaly",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 906,
+      "name": "ラッシュ+",
+      "upgraded": true,
+      "internal_id": "p_card-03-act-2_118",
+      "asset_id": "img_general_skillcard_act-2_118",
+      "plan": "anomaly",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 907,
+      "name": "ブースト",
+      "upgraded": false,
+      "internal_id": "p_card-03-act-2_120",
+      "asset_id": "img_general_skillcard_act-2_120",
+      "plan": "anomaly",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 908,
+      "name": "ブースト+",
+      "upgraded": true,
+      "internal_id": "p_card-03-act-2_120",
+      "asset_id": "img_general_skillcard_act-2_120",
+      "plan": "anomaly",
+      "kind": "other",
+      "rarity": "SR",
+      "source": {
+        "catalog_source_type": "produce",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Sr",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "remaining_card"
+      }
+    },
+    {
+      "business_id": 909,
+      "name": "獲物はあなた",
+      "upgraded": false,
+      "internal_id": "p_card-01-ido-3_249",
+      "asset_id": "img_general_skillcard_ido-3_249",
+      "plan": "sense",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 160,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-jsna-3-021",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
+      }
+    },
+    {
+      "business_id": 910,
+      "name": "獲物はあなた+",
+      "upgraded": true,
+      "internal_id": "p_card-01-ido-3_249",
+      "asset_id": "img_general_skillcard_ido-3_249",
+      "plan": "sense",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 160,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-jsna-3-021",
         "originSupportCardId": "",
         "originPrimaStellaIdolCardId": "",
         "originCharacterId": "",
@@ -20912,7 +21422,17 @@
         883,
         884,
         885,
-        886
+        886,
+        889,
+        890,
+        891,
+        892,
+        893,
+        894,
+        895,
+        896,
+        909,
+        910
       ],
       "logic": [
         9,
@@ -21217,7 +21737,15 @@
         874,
         876,
         887,
-        888
+        888,
+        897,
+        898,
+        899,
+        900,
+        901,
+        902,
+        903,
+        904
       ],
       "anomaly": [
         368,
@@ -21458,7 +21986,11 @@
         879,
         880,
         881,
-        882
+        882,
+        905,
+        906,
+        907,
+        908
       ]
     },
     "kind": {
@@ -21796,7 +22328,9 @@
         883,
         884,
         887,
-        888
+        888,
+        909,
+        910
       ],
       "support": [
         236,
@@ -22356,7 +22890,27 @@
         853,
         854,
         875,
-        876
+        876,
+        889,
+        890,
+        891,
+        892,
+        893,
+        894,
+        895,
+        896,
+        897,
+        898,
+        899,
+        900,
+        901,
+        902,
+        903,
+        904,
+        905,
+        906,
+        907,
+        908
       ]
     },
     "rarity": {
@@ -22821,7 +23375,9 @@
         885,
         886,
         887,
-        888
+        888,
+        909,
+        910
       ],
       "SR": [
         70,
@@ -23027,7 +23583,19 @@
         751,
         752,
         863,
-        864
+        864,
+        893,
+        894,
+        895,
+        896,
+        901,
+        902,
+        903,
+        904,
+        905,
+        906,
+        907,
+        908
       ],
       "R": [
         24,
@@ -23173,7 +23741,15 @@
         745,
         746,
         747,
-        748
+        748,
+        889,
+        890,
+        891,
+        892,
+        897,
+        898,
+        899,
+        900
       ],
       "N": [
         1,
@@ -23263,47 +23839,47 @@
   "counts": {
     "plan": {
       "free": 65,
-      "sense": 281,
-      "logic": 303,
-      "anomaly": 239
+      "sense": 291,
+      "logic": 311,
+      "anomaly": 243
     },
     "kind": {
-      "p_idol": 334,
+      "p_idol": 336,
       "support": 118,
       "basic": 68,
-      "other": 368
+      "other": 388
     },
     "rarity": {
       "L": 27,
-      "SSR": 432,
-      "SR": 204,
-      "R": 144,
+      "SSR": 434,
+      "SR": 216,
+      "R": 152,
       "N": 81
     }
   },
   "gallery_coverage": [
     {
-      "component": "128-dimensional card-art embedding retrieval",
-      "manifest_sha256": "C0667DA5433AE500A90E62157BB34C84839A4BC5D6D625825846D907808269FC",
-      "gallery_sha256": "6D1CD3FA6542B197B159537EC4F53B88DFFF1376D9461C0CB76446ADC18BED95",
-      "row_count": 4188,
-      "business_id_count": 888,
+      "component": "skill-base",
+      "manifest_sha256": "F34BF0E3B9DBB22B815F4F6B1AA5624DF996FBC7CF20D487F065F1CE866F84F2",
+      "gallery_sha256": "B723141BC3A3A30D42D180DA8276EBF590238977FE03921AB74867EEC4CF0058",
+      "row_count": 4356,
+      "business_id_count": 910,
       "join_key": "business_id"
     },
     {
-      "component": "arena_custom_card_embedding",
-      "manifest_sha256": "D47DC89AA28D0D9121E9B021436D9564B644767BC7A382D1698C31CBF7CFB506",
-      "gallery_sha256": "19BC0B08FD820D938E32E5B7220E3A5009151B9BC4346C842BE704867780CA6E",
-      "row_count": 8364,
-      "business_id_count": 888,
+      "component": "skill-arena",
+      "manifest_sha256": "1DE6AD5FE3B3A287FA6C44870D74F10C08A2A40D1852DD7A2721FE17E4362BFA",
+      "gallery_sha256": "1D33B775A395C840B3727A2635C82DC175244866C95B20D82327B9471C5BD0D6",
+      "row_count": 8532,
+      "business_id_count": 910,
       "join_key": "business_id"
     },
     {
-      "component": "task410_arena_card_reference",
-      "manifest_sha256": "EF408E5F70E941DE649B09481D8481436B48055EAB0D7E8ABF94DF10AD72EA39",
-      "gallery_sha256": "3DBD80BCCAD34BA9DCFAFC8605C4B4F6D510A582BADBCA6BC470B942346B9453",
-      "row_count": 3421,
-      "business_id_count": 888,
+      "component": "badge-reference",
+      "manifest_sha256": "45D468ED6B6F52FB18E147A01252F0A70171C7D50B7F392C783B0FB75EB7AF74",
+      "gallery_sha256": "E01E8A681ECFBDD53881588D308CB3B92795CFEA86D238659461999627313681",
+      "row_count": 3589,
+      "business_id_count": 910,
       "join_key": "business_id"
     }
   ]
