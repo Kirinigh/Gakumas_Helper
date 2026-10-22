@@ -43,7 +43,12 @@ from .adapter import (
 from .catalog import ArenaCatalogError, ArenaEntityCatalog
 from .season_ui import ArenaSeasonUiSynchronizer
 from .badge_reference import BadgeReferenceError, BadgeReferenceGallery
-from .component_builder import build_runtime_component
+from .component_builder import (
+    ArenaComponentBuildError,
+    parse_ris_csv_rows,
+    build_runtime_component,
+    missing_ris_source_paths,
+)
 from .github_rate_limit import GitHubRateLimit, GitHubRateLimitError
 from .p_item_text_component import (
     GitHubPItemTextSource,
@@ -94,7 +99,6 @@ REQUIRED_SOURCE_PATHS = {
     "LICENSE",
     "packages/gakumas-engine/package.json",
     "packages/gakumas-data/package.json",
-    "packages/gakumas-data/json/stages.json",
 }
 
 
@@ -497,27 +501,50 @@ class GitHubProductionSource:
                 return commit
         return None
 
-    def fetch_stage_rows(self, commit: str) -> object:
+    def _fetch_catalog_rows(self, commit: str, name: str, cache_name: str) -> object:
         _validate_commit(commit)
-        url = f"{RAW_BASE}/{commit}/packages/gakumas-data/json/stages.json"
-        if self._stage_source is not None and self._stage_source[0] == commit:
-            data = self._stage_source[1]
+        json_path = f"packages/gakumas-data/json/{name}.json"
+        csv_path = f"packages/gakumas-data/csv/{name}.csv"
+        cached = getattr(self, cache_name)
+        path = getattr(self, cache_name + "_path", json_path)
+        if cached is not None and cached[0] == commit:
+            data = cached[1]
         else:
-            data = self._request_bytes(url, timeout=self.download_timeout_seconds, maximum=MAX_API_RESPONSE_BYTES)
+            path = json_path
+            try:
+                data = self._request_bytes(
+                    f"{RAW_BASE}/{commit}/{path}",
+                    timeout=self.download_timeout_seconds, maximum=MAX_API_RESPONSE_BYTES,
+                )
+            except (ArenaComponentError, urllib.error.HTTPError) as error:
+                cause: BaseException | None = error
+                seen: set[int] = set()
+                while cause is not None and id(cause) not in seen:
+                    if isinstance(cause, urllib.error.HTTPError) and cause.code == 404:
+                        break
+                    seen.add(id(cause))
+                    cause = cause.__cause__
+                else:
+                    raise
+                path = csv_path
+                data = self._request_bytes(
+                    f"{RAW_BASE}/{commit}/{path}",
+                    timeout=self.download_timeout_seconds, maximum=MAX_API_RESPONSE_BYTES,
+                )
         try:
-            rows = json.loads(data.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ArenaComponentError(f"RIS response is not valid JSON: {url}") from error
-        self._stage_source = (commit, data)
-        return rows
+            rows = parse_ris_csv_rows(data) if path == csv_path else json.loads(data.decode("utf-8"))
+            setattr(self, cache_name, (commit, data))
+            setattr(self, cache_name + "_path", path)
+            return rows
+        except (UnicodeDecodeError, json.JSONDecodeError, ArenaComponentBuildError) as error:
+            kind = "CSV" if path == csv_path else "JSON"
+            raise ArenaComponentError(f"RIS response is not valid {kind}: {path}") from error
+
+    def fetch_stage_rows(self, commit: str) -> object:
+        return self._fetch_catalog_rows(commit, "stages", "_stage_source")
 
     def fetch_p_item_rows(self, commit: str) -> object:
-        _validate_commit(commit)
-        if self._p_item_source is None or self._p_item_source[0] != commit:
-            url = f"{RAW_BASE}/{commit}/packages/gakumas-data/json/p_items.json"
-            data = self._request_bytes(url, timeout=self.download_timeout_seconds, maximum=MAX_API_RESPONSE_BYTES)
-            self._p_item_source = (commit, data)
-        return json.loads(self._p_item_source[1].decode("utf-8"))
+        return self._fetch_catalog_rows(commit, "p_items", "_p_item_source")
 
     def _source_file_sizes(self, commit: str) -> dict[str, int]:
         if self._source_manifest is not None and self._source_manifest[0] == commit:
@@ -565,7 +592,7 @@ class GitHubProductionSource:
             raise ArenaComponentError("RIS source tree contains too many runtime package files")
         if sum(files.values()) > MAX_SOURCE_TOTAL_BYTES:
             raise ArenaComponentError("RIS runtime package source exceeds the accepted total size")
-        missing = REQUIRED_SOURCE_PATHS.difference(unique_paths)
+        missing = missing_ris_source_paths(unique_paths)
         if missing:
             raise ArenaComponentError(f"RIS source tree is missing required files: {sorted(missing)}")
         self._source_manifest = (commit, files)
@@ -603,12 +630,12 @@ class GitHubProductionSource:
     def _download_source_file(self, commit: str, path: str, expected_size: int) -> bytes:
         encoded_path = urllib.parse.quote(path, safe="/")
         if (
-            path == "packages/gakumas-data/json/stages.json"
+            path == getattr(self, "_stage_source_path", "packages/gakumas-data/json/stages.json")
             and self._stage_source is not None
             and self._stage_source[0] == commit
         ):
             data = self._stage_source[1]
-        elif (path == "packages/gakumas-data/json/p_items.json"
+        elif (path == getattr(self, "_p_item_source_path", "packages/gakumas-data/json/p_items.json")
               and self._p_item_source is not None and self._p_item_source[0] == commit):
             data = self._p_item_source[1]
         else:

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import io
 import os
 import re
+import csv
 import json
 import shutil
+import hashlib
+import subprocess
 from pathlib import Path
-from collections.abc import Mapping
+from collections.abc import Mapping, Iterable
 
 from .adapter import PROTOCOL_VERSION
 
@@ -27,6 +31,99 @@ class ArenaComponentBuildError(RuntimeError):
     """Raised when a downloaded RIS source tree cannot form a runtime bundle."""
 
 
+RIS_SOURCE_BASE_PATHS = frozenset({
+    "LICENSE", "packages/gakumas-engine/package.json", "packages/gakumas-data/package.json",
+})
+RIS_CSV_PARSER = "packages/gakumas-data/utils/csv.js"
+
+
+def missing_ris_source_paths(paths: Iterable[str]) -> set[str]:
+    available = set(paths)
+    missing = set(RIS_SOURCE_BASE_PATHS - available)
+    if "packages/gakumas-data/json/stages.json" not in available:
+        missing.update({
+            "packages/gakumas-data/csv/stages.csv", RIS_CSV_PARSER,
+        } - available)
+    return missing
+
+
+def parse_ris_csv_rows(data: bytes) -> list[dict[str, object]]:
+    """Match the official csv.js value conversion for immutable catalog queries."""
+    try:
+        rows = list(csv.reader(io.StringIO(data.decode("utf-8"), newline=""), strict=True))
+    except (UnicodeDecodeError, csv.Error) as error:
+        raise ArenaComponentBuildError("RIS CSV is not valid UTF-8 CSV") from error
+    rows = [row for row in rows if row]
+    if not rows:
+        raise ArenaComponentBuildError("RIS CSV header is missing")
+    header, *records = rows
+    result = []
+    for row in records:
+        if len(row) != len(header):
+            raise ArenaComponentBuildError("RIS CSV row width differs from its header")
+        result.append({
+            key: (True if value == "TRUE" else False if value == "FALSE"
+                  else int(value) if re.fullmatch(r"[0-9]+", value) else value)
+            for key, value in zip(header, row, strict=True)
+        })
+    return result
+
+
+def materialize_ris_csv_json(data_root: Path, node: Path) -> dict[str, object] | None:
+    """Use this revision's official zero-dependency parser via the bundled Node."""
+    if (data_root / "json/stages.json").is_file() or not (data_root / "csv/stages.csv").is_file():
+        return None
+    parser = data_root / "utils/csv.js"
+    if not (data_root / "csv/stages.csv").is_file() or not parser.is_file():
+        raise ArenaComponentBuildError("RIS data needs tracked JSON or CSV with its official parser")
+    if not node.is_file():
+        raise ArenaComponentBuildError("bundled Node is required for the official RIS CSV parser")
+    program = (
+        "import fs from 'node:fs';import path from 'node:path';"
+        "import {pathToFileURL} from 'node:url';const root=process.argv[1];"
+        "const {parseCsvRecords}=await import(pathToFileURL(path.join(root,'utils/csv.js')).href);"
+        "const result={};for(const name of fs.readdirSync(path.join(root,'csv')).sort()){"
+        "if(!/^[a-z_]+\\.csv$/.test(name))continue;"
+        "result[name]=parseCsvRecords(fs.readFileSync(path.join(root,'csv',name),'utf8'));}"
+        "process.stdout.write(JSON.stringify(result));"
+    )
+    completed = subprocess.run(
+        [str(node), "--input-type=module", "-e", program, str(data_root)],
+        cwd=data_root, capture_output=True, text=True, encoding="utf-8", timeout=30, check=False,
+    )
+    if completed.returncode:
+        raise ArenaComponentBuildError("official RIS CSV parsing failed: " + completed.stderr[:1000])
+    try:
+        converted = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise ArenaComponentBuildError("official RIS CSV parser returned invalid records") from error
+    if not isinstance(converted, dict) or "stages.csv" not in converted:
+        raise ArenaComponentBuildError("official RIS CSV parser omitted stage records")
+    generated = {}
+    for name, rows in sorted(converted.items()):
+        if not re.fullmatch(r"[a-z_]+\.csv", name) or not isinstance(rows, list):
+            raise ArenaComponentBuildError("official RIS CSV parser returned an invalid data entry")
+        source = data_root / "csv" / name
+        target = data_root / "json" / (Path(name).stem + ".json")
+        if target.exists():
+            raise ArenaComponentBuildError("derived RIS JSON must not replace tracked source")
+        target.parent.mkdir(exist_ok=True)
+        target.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+        generated["node_modules/gakumas-data/json/" + target.name] = {
+            "source_csv": "packages/gakumas-data/csv/" + name,
+            "source_csv_sha256": hashlib.sha256(source.read_bytes()).hexdigest().upper(),
+            "json_sha256": hashlib.sha256(target.read_bytes()).hexdigest().upper(),
+        }
+    return {
+        "schema_version": 1, "source_format": "csv",
+        "transformer": RIS_CSV_PARSER,
+        "transformer_sha256": hashlib.sha256(parser.read_bytes()).hexdigest().upper(),
+        "node_sha256": hashlib.sha256(node.read_bytes()).hexdigest().upper(),
+        "generation": "official parseCsvRecords(UTF-8 CSV); JSON ensure_ascii=false indent=2 LF",
+        "files": generated,
+    }
+
+
 def rewrite_module_specifiers(path: Path) -> None:
     """Make the checked-in RIS JavaScript directly runnable by Node ESM."""
 
@@ -34,6 +131,15 @@ def rewrite_module_specifiers(path: Path) -> None:
 
     def replace(match: re.Match[str]) -> str:
         specifier = match.group("path")
+        if Path(specifier).suffix == ".csv":
+            source_csv = (path.parent / specifier).resolve()
+            generated = source_csv.parent.parent / "json" / (source_csv.stem + ".json")
+            if source_csv.parent.name != "csv" or not generated.is_file():
+                raise ArenaComponentBuildError(f"RIS CSV import has no derived JSON: {specifier}")
+            specifier = os.path.relpath(generated, path.parent).replace(os.sep, "/")
+            if not specifier.startswith("."):
+                specifier = "./" + specifier
+            return f'{match.group("prefix")}{specifier}{match.group("suffix")}'
         if Path(specifier).suffix:
             return match.group(0)
         target = (path.parent / specifier).resolve()
@@ -106,6 +212,7 @@ def build_runtime_component(
             shutil.copytree(source, destination)
             destinations.append(destination)
 
+        csv_data = materialize_ris_csv_json(output / "node_modules/gakumas-data", baseline_bundle / "node.exe")
         for destination in destinations:
             for javascript in destination.rglob("*.js"):
                 rewrite_module_specifiers(javascript)
@@ -175,6 +282,8 @@ def build_runtime_component(
                 "host_revision": host_revision,
             },
         }
+        if csv_data is not None:
+            manifest["csv_data"] = csv_data
         (output / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",

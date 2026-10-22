@@ -405,6 +405,74 @@ def _validate_ris_deployment_evidence(
     return value
 
 
+def _ris_csv_derived_file_count(manifest: Mapping[str, Any], files: Mapping[str, Any]) -> int:
+    """Bind each official CSV projection to the existing verified payload inventory."""
+    if "csv_data" not in manifest:
+        return 0
+    data = manifest["csv_data"]
+    expected_keys = {
+        "schema_version", "source_format", "transformer", "transformer_sha256",
+        "node_sha256", "generation", "files",
+    }
+    if (
+        not isinstance(data, Mapping) or set(data) != expected_keys
+        or type(data.get("schema_version")) is not int or data["schema_version"] != 1
+        or data.get("source_format") != "csv"
+        or data.get("transformer") != "packages/gakumas-data/utils/csv.js"
+        or data.get("generation") != "official parseCsvRecords(UTF-8 CSV); JSON ensure_ascii=false indent=2 LF"
+        or not isinstance(data.get("files"), Mapping) or not data["files"]
+    ):
+        raise ReleaseBuildError("arena engine derived CSV provenance is invalid")
+
+    def bound_digest(declared: object, relative: str) -> bool:
+        actual = files.get(relative)
+        return bool(
+            isinstance(declared, str) and SHA256_PATTERN.fullmatch(declared)
+            and isinstance(actual, str) and SHA256_PATTERN.fullmatch(actual)
+            and declared.casefold() == actual.casefold()
+        )
+
+    if (
+        not bound_digest(data["transformer_sha256"], "node_modules/gakumas-data/utils/csv.js")
+        or not bound_digest(data["node_sha256"], "node.exe")
+    ):
+        raise ReleaseBuildError("arena engine derived CSV parser or Node is not bound to its payload")
+    csv_inventory = {
+        relative for relative in files
+        if isinstance(relative, str) and re.fullmatch(r"node_modules/gakumas-data/csv/[a-z_]+\.csv", relative)
+    }
+    json_inventory = {
+        relative for relative in files
+        if isinstance(relative, str) and relative.startswith("node_modules/gakumas-data/json/")
+        and relative.endswith(".json")
+    }
+    derived = data["files"]
+    expected_csv = set()
+    for relative, item in derived.items():
+        match = re.fullmatch(r"node_modules/gakumas-data/json/([a-z_]+)\.json", relative) if isinstance(relative, str) else None
+        if (
+            match is None or not isinstance(item, Mapping)
+            or set(item) != {"source_csv", "source_csv_sha256", "json_sha256"}
+        ):
+            raise ReleaseBuildError("arena engine derived CSV file declaration is invalid")
+        stem = match.group(1)
+        source_csv = "packages/gakumas-data/csv/" + stem + ".csv"
+        payload_csv = "node_modules/gakumas-data/csv/" + stem + ".csv"
+        if (
+            item.get("source_csv") != source_csv
+            or not bound_digest(item.get("source_csv_sha256"), payload_csv)
+            or not bound_digest(item.get("json_sha256"), relative)
+        ):
+            raise ReleaseBuildError("arena engine derived CSV source or JSON is not bound to its payload")
+        expected_csv.add(payload_csv)
+    if (
+        expected_csv != csv_inventory or set(derived) != json_inventory
+        or "node_modules/gakumas-data/json/stages.json" not in derived
+    ):
+        raise ReleaseBuildError("arena engine derived CSV inventory has missing or extra entries")
+    return len(derived)
+
+
 def _validate_ris_engine_production_handoff(manifest: Mapping[str, Any]) -> None:
     """Reject a release engine unless its READY state is bound to promotion evidence."""
 
@@ -506,6 +574,8 @@ def _validate_ris_engine_production_handoff(manifest: Mapping[str, Any]) -> None
         raise ReleaseBuildError("arena engine promotion validation evidence is missing")
     declared_file_count = validation.get("declared_file_count")
     source_file_count = validation.get("source_archive_file_count")
+    derived_file_count = _ris_csv_derived_file_count(manifest, files)
+    declared_derived_count = validation.get("derived_csv_json_file_count", 0)
     ris_rebuilt_file_count = validation.get("ris_rebuilt_payload_file_count")
     reused_files = validation.get("reused_host_payload_files")
     reused_file_count = validation.get("reused_host_payload_file_count")
@@ -521,7 +591,9 @@ def _validate_ris_engine_production_handoff(manifest: Mapping[str, Any]) -> None
         or declared_file_count != len(files)
         or not _positive_int(source_file_count)
         or not _positive_int(ris_rebuilt_file_count)
-        or source_file_count != ris_rebuilt_file_count
+        or type(declared_derived_count) is not int
+        or declared_derived_count != derived_file_count
+        or source_file_count + derived_file_count != ris_rebuilt_file_count
         or ris_rebuilt_file_count != len(actual_ris_files)
         or reused_files != list(RIS_ENGINE_REUSED_HOST_PAYLOAD_FILES)
         or reused_file_count != len(RIS_ENGINE_REUSED_HOST_PAYLOAD_FILES)
