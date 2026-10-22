@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "revision": "task095-20261016-released908-primary130-ui-replacement-v1",
+  "revision": "task095-20261020-released910-alternate130-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
   "sources": {
-    "catalog_revision": "4d1b68d64bb825e564ad45442df25c3fe51f273b",
-    "catalog_sha256": "429CC3693D73F4FD1B8CDFFB65E6D47981DC265F88F4A95C4A90A55D12D7BE86",
-    "decoded_master_sha256": "D07D0F0FF77A4823DD8B3B1468ED01F7FA3647DF56ADEDC818A17BDB9C1272F9",
+    "catalog_revision": "68ff32517466da526e0d2e39724fcbe212556518",
+    "catalog_sha256": "35E0E767BE6974E202C349EA55164A4ACDEFD72DAB7AE6103501D961974A69FF",
+    "decoded_master_sha256": "A724DEFB454FA4749727626D094B94B4907233E8220800F739C13D1ACC9E7F49",
     "datasets": [
       {
         "dataset_id": "task075-authoritative-705100:0036",
@@ -42,8 +42,8 @@
         "manifest_sha256": "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7"
       },
       {
-        "dataset_id": "task095-released908-primary-ui-replacement-20261016",
-        "manifest_sha256": "0564D51FD42A82D136F2EC2E1B0B0E6CB1D8DD6B06A917EBD3A63C0A702DC7D6"
+        "dataset_id": "task095-skill-card-extension-pc-705100-0073-released910-ui-20261020",
+        "manifest_sha256": "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8"
       }
     ]
   },
@@ -21024,6 +21024,52 @@
         "originCharacterId": "",
         "kind_basis": "remaining_card"
       }
+    },
+    {
+      "business_id": 909,
+      "name": "獲物はあなた",
+      "upgraded": false,
+      "internal_id": "p_card-01-ido-3_249",
+      "asset_id": "img_general_skillcard_ido-3_249",
+      "plan": "sense",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 160,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-jsna-3-021",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
+      }
+    },
+    {
+      "business_id": 910,
+      "name": "獲物はあなた+",
+      "upgraded": true,
+      "internal_id": "p_card-01-ido-3_249",
+      "asset_id": "img_general_skillcard_ido-3_249",
+      "plan": "sense",
+      "kind": "p_idol",
+      "rarity": "SSR",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 160,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-jsna-3-021",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
+      }
     }
   ],
   "indexes": {
@@ -21384,7 +21430,9 @@
         893,
         894,
         895,
-        896
+        896,
+        909,
+        910
       ],
       "logic": [
         9,
@@ -22280,7 +22328,9 @@
         883,
         884,
         887,
-        888
+        888,
+        909,
+        910
       ],
       "support": [
         236,
@@ -23325,7 +23375,9 @@
         885,
         886,
         887,
-        888
+        888,
+        909,
+        910
       ],
       "SR": [
         70,
@@ -23787,19 +23839,19 @@
   "counts": {
     "plan": {
       "free": 65,
-      "sense": 289,
+      "sense": 291,
       "logic": 311,
       "anomaly": 243
     },
     "kind": {
-      "p_idol": 334,
+      "p_idol": 336,
       "support": 118,
       "basic": 68,
       "other": 388
     },
     "rarity": {
       "L": 27,
-      "SSR": 432,
+      "SSR": 434,
       "SR": 216,
       "R": 152,
       "N": 81
@@ -23808,26 +23860,26 @@
   "gallery_coverage": [
     {
       "component": "skill-base",
-      "manifest_sha256": "0F4AA07C5F5C0BA5C9D420427A85B150EBEC5B3EE1A0BA9807D4BD0ECDF16692",
-      "gallery_sha256": "E86D34BBD291B1D7D46D702103AC27E96D44A9C05DAEA384BB2286C6F7E46E64",
-      "row_count": 4354,
-      "business_id_count": 908,
+      "manifest_sha256": "F34BF0E3B9DBB22B815F4F6B1AA5624DF996FBC7CF20D487F065F1CE866F84F2",
+      "gallery_sha256": "B723141BC3A3A30D42D180DA8276EBF590238977FE03921AB74867EEC4CF0058",
+      "row_count": 4356,
+      "business_id_count": 910,
       "join_key": "business_id"
     },
     {
       "component": "skill-arena",
-      "manifest_sha256": "93F30D3A86D05C2EE9954C35F3FA7E146B2C93C883D8B7208645207E8B5ED658",
-      "gallery_sha256": "762A14F22000BD6A23AC00CA74A42CCE9B67F8C1260ACBE2B21044C1830B136E",
-      "row_count": 8530,
-      "business_id_count": 908,
+      "manifest_sha256": "1DE6AD5FE3B3A287FA6C44870D74F10C08A2A40D1852DD7A2721FE17E4362BFA",
+      "gallery_sha256": "1D33B775A395C840B3727A2635C82DC175244866C95B20D82327B9471C5BD0D6",
+      "row_count": 8532,
+      "business_id_count": 910,
       "join_key": "business_id"
     },
     {
       "component": "badge-reference",
-      "manifest_sha256": "BF4E31BB9BA3633186C55CC332F66C47DF1627F0F76E9C419847BCD91C0E641C",
-      "gallery_sha256": "C5E4D0B0C48D8471FC0D44B3EC2DC6FACF33F53CB0C2938DA65060465130DB38",
-      "row_count": 3587,
-      "business_id_count": 908,
+      "manifest_sha256": "45D468ED6B6F52FB18E147A01252F0A70171C7D50B7F392C783B0FB75EB7AF74",
+      "gallery_sha256": "E01E8A681ECFBDD53881588D308CB3B92795CFEA86D238659461999627313681",
+      "row_count": 3589,
+      "business_id_count": 910,
       "join_key": "business_id"
     }
   ]

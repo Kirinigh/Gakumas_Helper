@@ -1,6 +1,6 @@
 {
   "build": {
-    "base_dataset_manifest_sha256": "1232E508A38B98BEE6287CF4120C096E6CC67F71A1D9547018FC171A86758601",
+    "base_dataset_manifest_sha256": "0564D51FD42A82D136F2EC2E1B0B0E6CB1D8DD6B06A917EBD3A63C0A702DC7D6",
     "base_dataset_lineage_manifest_sha256s": [
       "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
       "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
@@ -12,13 +12,14 @@
       "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7",
       "2198A72B04313FB09DA9A4249AF7667763C59D875E165016DA1CB7FB594C3744",
       "1793FFEEF31D8BE75DCC78276F3BBBFCF4FC4F4C72ED073F23F2DC07EE82BB2C",
-      "1232E508A38B98BEE6287CF4120C096E6CC67F71A1D9547018FC171A86758601"
+      "1232E508A38B98BEE6287CF4120C096E6CC67F71A1D9547018FC171A86758601",
+      "0564D51FD42A82D136F2EC2E1B0B0E6CB1D8DD6B06A917EBD3A63C0A702DC7D6"
     ],
     "tool_contract": "task095-arena-full-ui-union-v1",
     "mode": "GALLERY_ONLY",
-    "base_manifest_sha256": "68286F725A0CBBC67E727826D2F4BEF3FE93A795560F8FDA19BC6707CD4FA66E",
-    "base_gallery_sha256": "0BBA460D881393B14DC06C8C08A6C4D528FAB8F8EE5DEF8931DA6B688AE2EC6E",
-    "preserved_rows": 4354,
+    "base_manifest_sha256": "2FF0FCF6A98C8120409E796C80C30703A427EC784F16C802BF055D3E681ACF47",
+    "base_gallery_sha256": "2DF9F643E3BBA03D577DAA91D438E990239BE1048008E0848E55229D0D66FC51",
+    "preserved_rows": 4356,
     "appended_rows": 4176,
     "frozen_gallery_sha256": "674B3B995926EC36D3743E41E544ADF0DF52A9A3EC99CBDC1126DE3BB0B65FF9",
     "reference_manifest_sha256s": [
@@ -33,14 +34,14 @@
   },
   "component": "arena_custom_card_embedding",
   "gallery": {
-    "bytes": 10700087,
-    "class_table_bytes": 153953,
+    "bytes": 10704064,
+    "class_table_bytes": 153973,
     "class_table_path": "arena_card_embedding_classes.json",
-    "class_table_sha256": "0A4B0C9930E2A832AA7C54CD1C4C86284F8D7C3B2AAF7723F85DBF5C517D6232",
+    "class_table_sha256": "863114E6369D656E9AEBC1B82125FBE0F50B435F3918CE80438D7EFFE3BBF5B4",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "arena_card_embedding_gallery.npz",
-    "sha256": "762A14F22000BD6A23AC00CA74A42CCE9B67F8C1260ACBE2B21044C1830B136E"
+    "sha256": "1D33B775A395C840B3727A2635C82DC175244866C95B20D82327B9471C5BD0D6"
   },
   "model": {
     "bytes": 441780,
@@ -63,8 +64,8 @@
   },
   "schema_version": 1,
   "source": {
-    "business_card_id_count": 908,
-    "business_card_id_set_sha256": "C010D2AAD56D6E50674A9E19D9AD7BDEFE180C2F970A71898D9F8488AA809BFA",
+    "business_card_id_count": 910,
+    "business_card_id_set_sha256": "B652B9FE12D3FF9DB656E5F72BC2FB7B9F31E215D216B852ED69A7D4CEA775AC",
     "business_card_ids": [
       1,
       2,
@@ -973,13 +974,15 @@
       905,
       906,
       907,
-      908
+      908,
+      909,
+      910
     ],
-    "dataset_id": "task095-released908-primary-ui-replacement-20261016",
+    "dataset_id": "task095-skill-card-extension-pc-705100-0073-released910-ui-20261020",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "0564D51FD42A82D136F2EC2E1B0B0E6CB1D8DD6B06A917EBD3A63C0A702DC7D6",
-    "dataset_revision": "20261016-ris4d1b68d6-primary130-ui-replacement",
-    "extension_business_card_id_count": 20,
+    "dataset_manifest_sha256": "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8",
+    "dataset_revision": "pc-705100-0073-released910-ui-20261020",
+    "extension_business_card_id_count": 22,
     "extension_business_card_ids": [
       889,
       890,
@@ -1000,12 +1003,14 @@
       905,
       906,
       907,
-      908
+      908,
+      909,
+      910
     ],
-    "image_class_count": 8530,
+    "image_class_count": 8532,
     "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES",
     "training_target": "encoder unchanged; gallery reference augmentation only",
-    "visual_identity_count": 466
+    "visual_identity_count": 467
   },
   "validation": {
     "state": "USER_AUTHORIZED_ENABLE_VALIDATION_PENDING",

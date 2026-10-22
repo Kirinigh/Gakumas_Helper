@@ -13,19 +13,19 @@
   "component": "task410_arena_card_reference",
   "evaluation": {
     "path": "hard_negative_evaluation.json",
-    "sha256": "182613846D4810766E5F57AF385B7CDA5FB299B67ACDD1B6001F4C225B6EDD81",
+    "sha256": "722E6A6021733F0B881815E9EEACA41E255DD58F5477D14A9B438F18451CB4DB",
     "status": "PASS",
     "tool_contract": "task095-card-badge-hard-negative-evaluation-v1"
   },
   "gallery": {
-    "business_card_id_count": 908,
+    "business_card_id_count": 910,
     "normalization_size": [
       96,
       96
     ],
     "path": "badge_reference_gallery.npz",
-    "sha256": "C5E4D0B0C48D8471FC0D44B3EC2DC6FACF33F53CB0C2938DA65060465130DB38",
-    "visual_group_count": 466
+    "sha256": "E01E8A681ECFBDD53881588D308CB3B92795CFEA86D238659461999627313681",
+    "visual_group_count": 467
   },
   "production_handoff": {
     "reason": "private-live target, inherited rows, geometry stress, and authoritative hard negatives passed offline; independent live holdout remains PENDING",
@@ -42,16 +42,16 @@
   "source": {
     "added_reference_file_count": 1,
     "arena_component": "arena_custom_card_embedding",
-    "arena_component_manifest_sha256": "68286F725A0CBBC67E727826D2F4BEF3FE93A795560F8FDA19BC6707CD4FA66E",
-    "arena_gallery_sha256": "0BBA460D881393B14DC06C8C08A6C4D528FAB8F8EE5DEF8931DA6B688AE2EC6E",
-    "base_manifest_sha256": "F16CA2F1B2BDE16943A3B4B69F57D7D8BD63509DA7BA4E36AB9AE18DE943FC18",
-    "base_reference_file_count": 3586,
+    "arena_component_manifest_sha256": "2FF0FCF6A98C8120409E796C80C30703A427EC784F16C802BF055D3E681ACF47",
+    "arena_gallery_sha256": "2DF9F643E3BBA03D577DAA91D438E990239BE1048008E0848E55229D0D66FC51",
+    "base_manifest_sha256": "2A5C1952D3FC7A194B84E7CED20E7374E4E971D15938914CE9021F36A91DDFB8",
+    "base_reference_file_count": 3588,
     "catalog_license": "BSD-3-Clause",
     "catalog_repository": "https://github.com/surisuririsu/gakumas-tools",
-    "catalog_revision": "4d1b68d64bb825e564ad45442df25c3fe51f273b",
-    "extension_dataset_id": "task095-released908-primary-ui-replacement-20261016",
-    "extension_dataset_manifest_sha256": "0564D51FD42A82D136F2EC2E1B0B0E6CB1D8DD6B06A917EBD3A63C0A702DC7D6",
-    "fixed_icon_provenance_sha256": "1A2FC6720518A815A1AA2D919106A75B2AF8F3E526FB8715D6CBE210A4BC9CE9",
+    "catalog_revision": "68ff32517466da526e0d2e39724fcbe212556518",
+    "extension_dataset_id": "task095-skill-card-extension-pc-705100-0073-released910-ui-20261020",
+    "extension_dataset_manifest_sha256": "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8",
+    "fixed_icon_provenance_sha256": "EC18A806EB722912A228B27F920FCB2916EFF70D684DA8D260E42DD5C3FFE8F1",
     "fixed_icons": {
       "references": {
         "889": {
@@ -693,6 +693,70 @@
           "rgb_pixel_sha256": "7CD5E8FBA8053F04ED2839B563A40E360AF4E07C3F26D1898509966B4BE2BED5",
           "size": 24897,
           "upgraded": true
+        },
+        "909": {
+          "business_id": 909,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            0,
+            0,
+            130,
+            130
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-10-20",
+          "kind": "skill_card",
+          "name": "獲物はあなた",
+          "original_dimensions": [
+            130,
+            130
+          ],
+          "original_file": "909.png",
+          "original_sha256": "6BA11C92343E16E615F1A40241C0D84F716ECE8B0003A02E48CB39D16B9ACFD6",
+          "original_size": 29472,
+          "original_url": "https://raw.githubusercontent.com/unoeins/gakumas-tools/327e3a72e8410388af84a230254f5c39bde7866e/packages/gakumas-images/images/skillCards/icons/909.png",
+          "page_url": "https://github.com/unoeins/gakumas-tools/blob/327e3a72e8410388af84a230254f5c39bde7866e/packages/gakumas-images/images/skillCards/icons/909.png",
+          "png_sha256": "4C18862F66DB3BA708FA7568D38B3B9ABEBC1CB08990B134BC43002F6F89E961",
+          "publisher": "unoeins/gakumas-tools",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "AA58551E2C13A666D9B7FEC1EE5980BD8E7048CA876B40B58525A3BC9EED0035",
+          "size": 28854,
+          "upgraded": false
+        },
+        "910": {
+          "business_id": 910,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            0,
+            0,
+            130,
+            130
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-10-20",
+          "kind": "skill_card",
+          "name": "獲物はあなた",
+          "original_dimensions": [
+            130,
+            130
+          ],
+          "original_file": "910.png",
+          "original_sha256": "CBE8174939F12E8AD421307D8D5B41BB4DD2F2F58E3AE6F94D87D1079A68E46E",
+          "original_size": 29839,
+          "original_url": "https://raw.githubusercontent.com/unoeins/gakumas-tools/327e3a72e8410388af84a230254f5c39bde7866e/packages/gakumas-images/images/skillCards/icons/910.png",
+          "page_url": "https://github.com/unoeins/gakumas-tools/blob/327e3a72e8410388af84a230254f5c39bde7866e/packages/gakumas-images/images/skillCards/icons/910.png",
+          "png_sha256": "4D98C5BEFA13723AC3FA2C89C08F0F142862E1AD541A72BA53B06467DA5DBBDA",
+          "publisher": "unoeins/gakumas-tools",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "76677E96DF6B7F345E01764EA9CCF1DB071E63BA474AB22A4427966CFDB0E8D1",
+          "size": 29210,
+          "upgraded": true
         }
       },
       "schema_version": 1,
@@ -721,10 +785,10 @@
         ]
       }
     ],
-    "reference_file_count": 3587,
+    "reference_file_count": 3589,
     "reference_set_digest_contract": "sha256(base_reference_set_sha256 || public_dataset_id || NUL || public_dataset_revision || NUL || ordered(public_reference_name || NUL || business_id || NUL || visual_group_id || NUL || top_coarse_bytes || reused_green_mask_bytes))",
-    "reference_set_sha256": "308D2169486C6EC9FF6BFB5666E8D7E69D57413D8F46625A3D56D64753B3A89F",
+    "reference_set_sha256": "483B0E94CE72A57AB98580A9E7DED98E2384401F8871E44BD8F79A579890F969",
     "replaced_reference_file_count": 0,
-    "retained_reference_file_count": 3586
+    "retained_reference_file_count": 3588
   }
 }

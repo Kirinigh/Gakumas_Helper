@@ -1,37 +1,37 @@
 {
   "artifact": {
     "path": "p_item_rendered_reference_gallery.npz",
-    "sha256": "F2C594781C31DBF04660485A922312AAA6AE85B6A4B18356269E894A361E1B1A"
+    "sha256": "DE7226F31A924D32F1555E394816B19A652F1BAB71E7612F9FEAC95F5302203F"
   },
-  "candidate_manifest_sha256": "EF47D8BC208EB8353C069FC77D7B8079916ABEDA9B28D852D21983BF36AD2BF8",
+  "candidate_manifest_sha256": "D56E09073B421D5AF0006F9929C777F9BEFAC2463B6A9D808940205C9884AB63",
   "component": "p_item_reference",
   "privacy": "PUBLIC_SAFE_AGGREGATE_ONLY",
   "promotion_evidence": {
-    "base_gallery_sha256": "9B37C597E8B5CCD4D4A9347461B58678B1595C3FBC38694C40FD946484AA8981",
-    "catalog_git_blob_sha1": "F9CDD483642501C1ECA695F931E8EC43EEAEC261",
-    "catalog_sha256": "F50C6777172CEC91CA673A66EA14884057ED04EF3102AEA4B48464EC4C2621C5",
-    "production_source_evidence_sha256": "36D368D6460FB8D75A0209998BF967C3E1B7C4BC49304BE0FB298FF9CC36DDDE",
+    "base_gallery_sha256": "F2C594781C31DBF04660485A922312AAA6AE85B6A4B18356269E894A361E1B1A",
+    "catalog_git_blob_sha1": "8B0A1FE915B554478BB50A63BFDF1503A117109F",
+    "catalog_sha256": "1358358BA52894FDBB497B056B4AAEC9AFCB84F63A22D1552978196E52D95307",
+    "production_source_evidence_sha256": "F427D490AE4BDD67D014A0D920998B1626BA477186C6FBF1A5BACE701A523CCF",
     "published_ui_reference_count": 2,
-    "source_icon_count": 442,
-    "source_icons_sha256": "EAEDB2EE0DBEAA153BC72282D9EC1719C718C974FB057B5576FAF931148DF282",
-    "source_pixel_match_count": 442
+    "source_icon_count": 444,
+    "source_icons_sha256": "B797947B93EF655B64EBC85E02192C0C5ABEAE3E917116292E4A70BDAA0ABB6A",
+    "source_pixel_match_count": 444
   },
   "schema_version": 1,
   "status": "PASS",
   "tool_contract": "task095-static-reference-production-promotion-v1",
   "validation": {
     "array_count": 3,
-    "base_gallery_sha256": "9B37C597E8B5CCD4D4A9347461B58678B1595C3FBC38694C40FD946484AA8981",
-    "business_id_count": 442,
+    "base_gallery_sha256": "F2C594781C31DBF04660485A922312AAA6AE85B6A4B18356269E894A361E1B1A",
+    "business_id_count": 444,
     "changed_business_ids": [
-      496,
-      497
+      500,
+      501
     ],
-    "decoded_png_count": 442,
+    "decoded_png_count": 444,
     "independent_live_holdout": "PENDING",
-    "metadata_free_png_count": 442,
+    "metadata_free_png_count": 444,
     "self_ranking": {
-      "minimum_top1_margin": 0.020681,
+      "minimum_top1_margin": 0.013324,
       "passed": 2,
       "sample_count": 2
     }

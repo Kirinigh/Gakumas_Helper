@@ -5,7 +5,7 @@
   },
   "evaluation": {
     "path": "production_handoff_evaluation.json",
-    "sha256": "53DB27779E1F6BEE796FE270F6D1DA3210C309A38A19FB998CEF4DC3CE75F5CD",
+    "sha256": "CC0CF7D31758D0452D494FD07687192E9A45028733A0BFE1F8D43E31CFF70E9C",
     "status": "PASS",
     "tool_contract": "task095-static-reference-production-promotion-v1"
   },
@@ -15,13 +15,13 @@
   },
   "recognizer": "p_item_rendered_reference_v1",
   "reference_gallery": {
-    "business_id_count": 442,
+    "business_id_count": 444,
     "color_order": "BGR",
     "image_shape": "original_png_dimensions",
     "image_shape_count": 19,
     "path": "p_item_rendered_reference_gallery.npz",
     "provisional_business_ids": [],
-    "sha256": "F2C594781C31DBF04660485A922312AAA6AE85B6A4B18356269E894A361E1B1A"
+    "sha256": "DE7226F31A924D32F1555E394816B19A652F1BAB71E7612F9FEAC95F5302203F"
   },
   "runtime": {
     "ambiguous_action": "bounded_detail_or_fail_closed",
@@ -54,7 +54,7 @@
   },
   "schema_version": 1,
   "source": {
-    "business_id_count": 442,
+    "business_id_count": 444,
     "business_ids": [
       7,
       8,
@@ -497,20 +497,22 @@
       493,
       494,
       496,
-      497
+      497,
+      500,
+      501
     ],
-    "evidence_id": "published-ui-20261013",
+    "evidence_id": "published-ui-20261020",
     "extension_provenance": {
       "base_gallery": {
-        "added_business_ids": [],
-        "base_business_id_count": 442,
-        "inherited_business_id_count": 440,
-        "replaced_business_ids": [
-          496,
-          497
+        "added_business_ids": [
+          500,
+          501
         ],
-        "sha256": "9B37C597E8B5CCD4D4A9347461B58678B1595C3FBC38694C40FD946484AA8981",
-        "target_business_id_count": 442
+        "base_business_id_count": 442,
+        "inherited_business_id_count": 442,
+        "replaced_business_ids": [],
+        "sha256": "F2C594781C31DBF04660485A922312AAA6AE85B6A4B18356269E894A361E1B1A",
+        "target_business_id_count": 444
       },
       "catalog": {
         "arena_stage_business_ids": [
@@ -878,7 +880,9 @@
           493,
           494,
           496,
-          497
+          497,
+          500,
+          501
         ],
         "excluded_current_rows": [
           {
@@ -894,88 +898,102 @@
             "name": "お手製ぴったり衣装",
             "reason": "non-stage row is outside the arena-stage contract",
             "source_type": "support"
+          },
+          {
+            "business_id": 502,
+            "mode": "produce",
+            "name": "お誘いチケット",
+            "reason": "non-stage row is outside the arena-stage contract",
+            "source_type": "support"
+          },
+          {
+            "business_id": 503,
+            "mode": "produce",
+            "name": "ねぎらいコーヒー",
+            "reason": "non-stage row is outside the arena-stage contract",
+            "source_type": "support"
           }
         ],
         "included_business_ids": [
-          496,
-          497
+          500,
+          501
         ],
-        "p_items_git_blob_sha1": "f9cdd483642501c1eca695f931e8ec43eeaec261",
-        "p_items_sha256": "F50C6777172CEC91CA673A66EA14884057ED04EF3102AEA4B48464EC4C2621C5",
+        "p_items_git_blob_sha1": "8b0a1fe915b554478bb50a63bfdf1503a117109f",
+        "p_items_sha256": "1358358BA52894FDBB497B056B4AAEC9AFCB84F63A22D1552978196E52D95307",
         "path": "packages/gakumas-data/json/p_items.json",
         "repository": "https://github.com/surisuririsu/gakumas-tools",
-        "revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
+        "revision": "68ff32517466da526e0d2e39724fcbe212556518",
         "stage_scope_contract": "EntityBank selectable entities use modes=['stage']; coverage/generate-suite filters p.mode === 'stage'"
       },
       "published_ui_crops": {
         "catalog_production_deployment": {
-          "deployment_id": 6961164205,
-          "revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
+          "deployment_id": 7190210376,
+          "revision": "68ff32517466da526e0d2e39724fcbe212556518",
           "status": "success"
         },
         "references": {
-          "496": {
-            "business_id": 496,
+          "500": {
+            "business_id": 500,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
               0,
               0,
-              96,
-              96
+              130,
+              130
             ],
             "dimensions": [
               130,
               130
             ],
-            "frozen_at": "2026-10-13",
+            "frozen_at": "2026-10-20",
             "kind": "p_item",
-            "name": "規格外の魅力",
+            "name": "世界を魅了する姿",
             "original_dimensions": [
-              96,
-              96
+              130,
+              130
             ],
-            "original_file": "gkimg-p_item-496.webp",
-            "original_sha256": "D3E33C21666EF3579AAFEE75274E6A227798E7E8806B65143BAE012A2F27383B",
-            "original_size": 1904,
-            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gk-img/a41b8faece10dbebc6b06fd752d0bcfd11d03412/docs/p_items/icons/496.webp",
-            "page_url": "https://github.com/gakumas-tools/gk-img/blob/a41b8faece10dbebc6b06fd752d0bcfd11d03412/docs/p_items/icons/496.webp",
-            "png_sha256": "FE605475341F0669F9A7E1629B83AAFE72A81991A169F03509818C03C067C8DA",
-            "publisher": "gk-img (third-party public UI)",
+            "original_file": "500.png",
+            "original_sha256": "74F581E8F871E01C4F38D976AF32358DD59A164C26507506C2CC7C0768D3EE4D",
+            "original_size": 14332,
+            "original_url": "https://raw.githubusercontent.com/unoeins/gakumas-tools/327e3a72e8410388af84a230254f5c39bde7866e/packages/gakumas-images/images/pItems/icons/500.png",
+            "page_url": "https://github.com/unoeins/gakumas-tools/blob/327e3a72e8410388af84a230254f5c39bde7866e/packages/gakumas-images/images/pItems/icons/500.png",
+            "png_sha256": "13CC2B4A2FA244D1788A8741E7D531315A715A53BE3AD411711C4B7324495077",
+            "publisher": "unoeins/gakumas-tools",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "7E41AFA82B6546FB6782EAEE2CBABB17D428745C5AFA28A749A17A735A7BCCF7",
-            "size": 23047,
+            "rgb_pixel_sha256": "1F3B93BB775DA91D7E59217E20F834D77BEE3676D63773D582E78214343EE1BD",
+            "size": 13918,
             "upgraded": false
           },
-          "497": {
-            "business_id": 497,
+          "501": {
+            "business_id": 501,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
               0,
               0,
-              96,
-              96
+              130,
+              130
             ],
             "dimensions": [
               130,
               130
             ],
-            "frozen_at": "2026-10-13",
+            "frozen_at": "2026-10-20",
             "kind": "p_item",
-            "name": "規格外の魅力",
+            "name": "世界を魅了する姿",
             "original_dimensions": [
-              96,
-              96
+              130,
+              130
             ],
-            "original_file": "gkimg-p_item-497.webp",
-            "original_sha256": "95AA9E50D8517BDBA2E0CC71E4273A63B5C22D009A179CC0BBBAFE71F20DF4CD",
-            "original_size": 2012,
-            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gk-img/a41b8faece10dbebc6b06fd752d0bcfd11d03412/docs/p_items/icons/497.webp",
-            "page_url": "https://github.com/gakumas-tools/gk-img/blob/a41b8faece10dbebc6b06fd752d0bcfd11d03412/docs/p_items/icons/497.webp",
-            "png_sha256": "FA8719E5041C8E04EB6DB50C3A966F97F8D37BC3651E1A9A926200E5D8005670",
-            "publisher": "gk-img (third-party public UI)",
+            "original_file": "501.png",
+            "original_sha256": "0EC5E9746D6D0D3474E66874754469B9F40B85FCF84FA528D6BA41AAA6DAB17F",
+            "original_size": 15113,
+            "original_url": "https://raw.githubusercontent.com/unoeins/gakumas-tools/327e3a72e8410388af84a230254f5c39bde7866e/packages/gakumas-images/images/pItems/icons/501.png",
+            "page_url": "https://github.com/unoeins/gakumas-tools/blob/327e3a72e8410388af84a230254f5c39bde7866e/packages/gakumas-images/images/pItems/icons/501.png",
+            "png_sha256": "5AD3576337A9AC17E2524981B228676A1180D31FF2EE5482FAB4CFDE956463F5",
+            "publisher": "unoeins/gakumas-tools",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "67C5F198EB16F100BA3FAAFDBF2A37277E29F9CC350B781D6F47BA4E99490C4E",
-            "size": 23232,
+            "rgb_pixel_sha256": "3CE3ABA4E1F0B9E8895B0BA897522F037AA09C214193E96DC513D18BC4DADE09",
+            "size": 14668,
             "upgraded": true
           }
         },
@@ -984,19 +1002,19 @@
       "schema_version": 4,
       "validation": {
         "full_gallery_64px": {
-          "496": {
-            "margin": 0.020680665969848633,
-            "top1_business_id": 496,
-            "top1_similarity": 0.9999997615814209,
-            "top2_business_id": 497,
-            "top2_similarity": 0.9793190956115723
+          "500": {
+            "margin": 0.013324201107025146,
+            "top1_business_id": 500,
+            "top1_similarity": 0.9999998807907104,
+            "top2_business_id": 501,
+            "top2_similarity": 0.9866756796836853
           },
-          "497": {
-            "margin": 0.020680904388427734,
-            "top1_business_id": 497,
-            "top1_similarity": 1.0,
-            "top2_business_id": 496,
-            "top2_similarity": 0.9793190956115723
+          "501": {
+            "margin": 0.01332402229309082,
+            "top1_business_id": 501,
+            "top1_similarity": 0.9999997019767761,
+            "top2_business_id": 500,
+            "top2_similarity": 0.9866756796836853
           },
           "coarse_fine_guard": "fails_safe_to_full_gallery"
         },
@@ -1004,12 +1022,12 @@
           "runtime_detail_authority": false,
           "status": "PENDING"
         },
-        "metadata_removed_business_id_count": 442,
-        "source_added_business_ids": [],
-        "source_replacement_changed_business_ids": [
-          496,
-          497
-        ]
+        "metadata_removed_business_id_count": 444,
+        "source_added_business_ids": [
+          500,
+          501
+        ],
+        "source_replacement_changed_business_ids": []
       }
     },
     "plan_ambiguous_business_ids": [
@@ -1022,10 +1040,10 @@
       "logic": 407,
       "sense": 406
     },
-    "revision": "base-gallery-sha256@9B37C597E8B5CCD4D4A9347461B58678B1595C3FBC38694C40FD946484AA8981+gakumas-tools@6f138bd7eb4300935a473b3529bd82a1eb6661c6+published-ui-crops-v1",
-    "sanitized_icons_sha256": "61BA47E07F4672DF3E6CFFC9BE3405F9E81BA6F0DD6D07D387F7E73AC7C64684",
-    "scope": "440 immutable inherited references; replace 496/497 from fixed third-party published UI; independent real JJC pending",
-    "source_icons_sha256": "EAEDB2EE0DBEAA153BC72282D9EC1719C718C974FB057B5576FAF931148DF282"
+    "revision": "base-gallery-sha256@F2C594781C31DBF04660485A922312AAA6AE85B6A4B18356269E894A361E1B1A+gakumas-tools@68ff32517466da526e0d2e39724fcbe212556518+published-ui-crops-v1",
+    "sanitized_icons_sha256": "F46DA7BE58877111C0DC4E9ACA86C55EC18B47B837AF7A7735F43A70792589B3",
+    "scope": "442 immutable inherited references plus 500/501 third-party full UI; independent live JJC pending",
+    "source_icons_sha256": "B797947B93EF655B64EBC85E02192C0C5ABEAE3E917116292E4A70BDAA0ABB6A"
   },
   "validation": {
     "coarse_fine_720_calibration": "TWO_FULL_GALLERY_RANKINGS_PASS_REAL_JJC_PENDING",

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "task095-batch13-p-item-classification-499-accepted-history-official-append-v1",
+  "revision": "task095-batch14-p-item-classification-503-accepted-history-official-append-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "p_item_plan_and_four_kinds_v1",
   "runtime_filtering_enabled": false,
@@ -8,24 +8,42 @@
     "catalog": {
       "repository": "https://github.com/gakumas-tools/gakumas-tools",
       "path": "packages/gakumas-data/json/p_items.json",
-      "revision": "6f138bd7eb4300935a473b3529bd82a1eb6661c6",
-      "p_items_sha256": "F50C6777172CEC91CA673A66EA14884057ED04EF3102AEA4B48464EC4C2621C5"
+      "revision": "68ff32517466da526e0d2e39724fcbe212556518",
+      "p_items_sha256": "1358358BA52894FDBB497B056B4AAEC9AFCB84F63A22D1552978196E52D95307"
     },
     "official_master": {
+      "accepted_source_sha256": "1CD4E2B5DAC0562CD9BA5F4B6E3925338A12D98E697B9211FEDB2A341E618140",
       "file": "ProduceItem.yaml",
-      "source_kind": "ACCEPTED_HISTORY_WITH_OFFICIAL_APPEND",
-      "sha256": "1CD4E2B5DAC0562CD9BA5F4B6E3925338A12D98E697B9211FEDB2A341E618140",
-      "accepted_source_sha256": "65EA1749C8B50039A770E3180FB3065D6BBEBCD5BF91CA6B25CD721ED2E9EA00",
-      "official_append_sha256": "8A0045A8118D02BE95155FBB5DE2A8C8B9CE03B67D29EBF7020C3815D91FF608",
+      "full_official_master_claimed": false,
       "official_append_business_ids": [
-        495,
-        496,
-        497,
-        498,
-        499
-      ]
+        500,
+        501,
+        502,
+        503
+      ],
+      "official_append_sha256": "467939A697578ADD99D5EBA19B766DE354962C6AC1421055237E57EC41379484",
+      "projection_fields": [
+        "id",
+        "assetId",
+        "name",
+        "planType",
+        "isExamEffect",
+        "isUpgraded",
+        "rarity",
+        "originIdolCardId",
+        "originSupportCardId",
+        "libraryHidden",
+        "isChallenge",
+        "isHighScoreRush",
+        "isResearch",
+        "isEasy",
+        "isLimited",
+        "identity_source"
+      ],
+      "sha256": "D49ADD2719A591E52FDDE6664AE7474D741F128AA5B7E25C11C9BA1AC700AD25",
+      "source_kind": "ACCEPTED_HISTORY_CLASSIFICATION_FIELD_PROJECTION_WITH_FORMAL_OFFICIAL_APPEND"
     },
-    "catalog_evidence_sha256": "6D169CED09E8520F523AA279CC3099A3D65550DD9823111F2AB4541F3978A771",
+    "catalog_evidence_sha256": "892791B9A649AF9A331AEB86D3168890F42EB17784EB2BB0AC4AA0D996A9998D",
     "visual_dataset_manifest_sha256": "78AA1885B75925D34C9186F15FFB3723D78A4DF1F6D183CE6A4523768D71492B",
     "visual_crosswalk_sha256": "9E7CCC422C9308F20CB157DAF922E048CB49CE03B1C8EA581EA1C60BB9544182"
   },
@@ -18049,14 +18067,14 @@
         "official_mapping": "joint_source_not_official_master",
         "official": null,
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 491,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A",
             "catalog": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "E51AA8505594F2B125E50860E9EAA29F2AF322F705BA05AF0D631F102E215D17"
           }
         }
@@ -18082,14 +18100,14 @@
         "official_mapping": "joint_source_not_official_master",
         "official": null,
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 492,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A",
             "catalog": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "E51AA8505594F2B125E50860E9EAA29F2AF322F705BA05AF0D631F102E215D17"
           }
         }
@@ -18115,14 +18133,14 @@
         "official_mapping": "joint_source_not_official_master",
         "official": null,
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 493,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A",
             "catalog": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "E51AA8505594F2B125E50860E9EAA29F2AF322F705BA05AF0D631F102E215D17"
           }
         }
@@ -18148,14 +18166,14 @@
         "official_mapping": "joint_source_not_official_master",
         "official": null,
         "joint_identity": {
-          "contract": "catalog-public-id-official-art-ui-v1",
           "business_id": 494,
+          "contract": "catalog-public-id-official-art-ui-v1",
           "field_basis": "catalog_labels_public_internal_id_official_asset_name",
           "sources": {
             "base_master": "16E52CAF082A500987F1D8C3D4D24420C1C1854D9688180D8E10CAFC0349B44A",
             "catalog": "346BFAB3EC488CDB5B88A74E495BDE4FDFF3A433A70926B674BB7F18C78C981B",
-            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "official_manifest": "493A46A16E74EA3A515C3602033D9C4AF9A3FD9E05865968921220924ABEBA30",
+            "public_ids": "5E95F3A77634F8DBF4783F4435767F1C61339C264A7355597633F52CC512267F",
             "ui_manifest": "E51AA8505594F2B125E50860E9EAA29F2AF322F705BA05AF0D631F102E215D17"
           }
         }
@@ -18337,6 +18355,154 @@
           "rarity": "ProduceItemRarity_Sr",
           "originIdolCardId": "",
           "originSupportCardId": "s_card-2-0082",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
+    },
+    {
+      "business_id": 500,
+      "name": "世界を魅了する姿",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 160,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-3-349-0",
+          "assetId": "img_general_pitem_3-349",
+          "name": "世界を魅了する姿",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": true,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "i_card-jsna-3-021",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 501
+    },
+    {
+      "business_id": 501,
+      "name": "世界を魅了する姿+",
+      "upgraded": true,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 160,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-3-349-1",
+          "assetId": "img_general_pitem_3-349",
+          "name": "世界を魅了する姿+",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": true,
+          "isUpgraded": true,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "i_card-jsna-3-021",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 500
+    },
+    {
+      "business_id": 502,
+      "name": "お誘いチケット",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-3-355-0",
+          "assetId": "img_general_pitem_3-355",
+          "name": "お誘いチケット",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-3-0113",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
+    },
+    {
+      "business_id": 503,
+      "name": "ねぎらいコーヒー",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-2-095-0",
+          "assetId": "img_general_pitem_2-095",
+          "name": "ねぎらいコーヒー",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Sr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-2-0057",
           "libraryHidden": false,
           "isChallenge": false,
           "isHighScoreRush": false,
@@ -18559,7 +18725,11 @@
         483,
         493,
         494,
-        495
+        495,
+        500,
+        501,
+        502,
+        503
       ],
       "logic": [
         5,
@@ -19174,7 +19344,9 @@
         493,
         494,
         496,
-        497
+        497,
+        500,
+        501
       ],
       "support_inheritable": [
         71,
@@ -19314,7 +19486,9 @@
         490,
         495,
         498,
-        499
+        499,
+        502,
+        503
       ],
       "other": [
         1,
@@ -19371,14 +19545,14 @@
   "counts": {
     "plan": {
       "free": 50,
-      "sense": 157,
+      "sense": 161,
       "logic": 175,
       "anomaly": 117
     },
     "kind": {
-      "p_idol": 315,
+      "p_idol": 317,
       "support_inheritable": 50,
-      "support_non_inheritable": 86,
+      "support_non_inheritable": 88,
       "other": 48
     }
   },
@@ -19400,9 +19574,9 @@
   "gallery_coverage": {
     "component": "p_item_reference",
     "join_key": "business_id",
-    "business_id_count": 442,
-    "manifest_sha256": "DA938C97D0D9A921D831136B2C4F483D1A4D8A3D02996521DDF2E120659B3339",
-    "gallery_sha256": "9B37C597E8B5CCD4D4A9347461B58678B1595C3FBC38694C40FD946484AA8981",
+    "business_id_count": 444,
+    "manifest_sha256": "CF17AC33E559705B4BB4DE16318A9418C16051281E17AC41CB8299C110575113",
+    "gallery_sha256": "DE7226F31A924D32F1555E394816B19A652F1BAB71E7612F9FEAC95F5302203F",
     "without_reference_business_ids": [
       1,
       2,
@@ -19460,7 +19634,9 @@
       490,
       495,
       498,
-      499
+      499,
+      502,
+      503
     ]
   }
 }
