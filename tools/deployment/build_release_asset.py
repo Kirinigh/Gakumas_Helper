@@ -208,6 +208,9 @@ ARENA_PREVIEW_VERSION_PATTERN = re.compile(
 MINIMUM_INDEPENDENT_PROJECT_VERSION = "v0.1.0"
 MINIMUM_P_ITEM_REFERENCE_BUSINESS_ID_COUNT = 426
 P_ITEM_CATALOG_RELATIVE_PATH = "node_modules/gakumas-data/json/p_items.json"
+P_ITEM_TEMPORARY_MISSING_RULE = "catalog-only-blank-reference-v1"
+P_ITEM_TEMPORARY_MISSING_STATUS = "USER_AUTHORIZED_TEMPORARY_MISSING_REFERENCES"
+P_ITEM_MISSING_DISPLAY_IMAGE = "resource/base/model/embedding/p_item_missing-reference.png"
 SKILL_CARD_CATALOG_RELATIVE_PATH = "node_modules/gakumas-data/json/skill_cards.json"
 P_ITEM_PRODUCTION_SOURCE_EVIDENCE_DIR = (
     Path(__file__).resolve().parents[1]
@@ -1669,7 +1672,9 @@ def _validate_p_item_release_contract(
     *,
     gallery_path: Path,
     catalog_path: Path,
-) -> None:
+    classification_path: Path | None = None,
+    asset_root: Path | None = None,
+) -> dict[str, Any] | None:
     gallery = manifest.get("reference_gallery")
     if not isinstance(gallery, Mapping):
         raise ReleaseBuildError("P-item reference catalog is incompatible")
@@ -1743,7 +1748,16 @@ def _validate_p_item_release_contract(
             f"catalog: {unknown_gallery_ids!r}"
         )
     missing = tuple(sorted(required_id_set - set(gallery_ids)))
-    if missing:
+    missing_annotation = _validate_temporary_missing_p_item_references(
+        missing_ids=missing,
+        gallery_ids=frozenset(gallery_ids),
+        provisional_ids=frozenset(provisional_ids),
+        required_ids=frozenset(required_id_set),
+        catalog_rows=rows,
+        classification_path=classification_path,
+        asset_root=asset_root,
+    )
+    if missing and missing_annotation is None:
         raise ReleaseBuildError(
             "P-item reference gallery does not cover arena-stage catalog IDs: "
             f"{missing!r}"
@@ -1762,6 +1776,126 @@ def _validate_p_item_release_contract(
             "provisional P-item reference IDs are absent from the packaged arena-stage "
             f"catalog: {provisional_outside_stage!r}"
         )
+    return missing_annotation
+
+
+def _validate_temporary_missing_p_item_references(
+    *,
+    missing_ids: tuple[int, ...],
+    gallery_ids: frozenset[int],
+    provisional_ids: frozenset[int],
+    required_ids: frozenset[int],
+    catalog_rows: list[Any],
+    classification_path: Path | None,
+    asset_root: Path | None,
+) -> dict[str, Any] | None:
+    if classification_path is None or not classification_path.is_file():
+        return None
+    classification = _load_object(classification_path)
+    declaration = classification.get("temporary_missing_references")
+    if declaration is None:
+        return None
+    expected_keys = {
+        "rule_version", "business_ids", "placeholder_image", "reference_enabled", "status",
+    }
+    if (
+        not isinstance(declaration, Mapping)
+        or set(declaration) != expected_keys
+        or declaration.get("rule_version") != P_ITEM_TEMPORARY_MISSING_RULE
+        or declaration.get("status") != P_ITEM_TEMPORARY_MISSING_STATUS
+        or declaration.get("reference_enabled") is not False
+        or declaration.get("placeholder_image") != P_ITEM_MISSING_DISPLAY_IMAGE
+        or classification.get("schema_version") != 1
+        or classification.get("classification_rule") != "p_item_plan_and_four_kinds_v1"
+    ):
+        raise ReleaseBuildError("temporary missing P-item reference declaration is invalid")
+    declared = _positive_business_ids(
+        declaration.get("business_ids"), label="temporary missing P-item references",
+    )
+    declared_set = frozenset(declared)
+    if (
+        not declared
+        or tuple(sorted(declared)) != declared
+        or not declared_set.issubset(required_ids)
+        or declared_set.intersection(gallery_ids)
+        or declared_set.intersection(provisional_ids)
+        or declared_set != frozenset(missing_ids)
+    ):
+        raise ReleaseBuildError(
+            "temporary missing P-item references must exactly declare the authorized "
+            "missing arena-stage IDs and stay outside active/provisional references"
+        )
+    items = classification.get("items")
+    if not isinstance(items, list):
+        raise ReleaseBuildError("temporary missing P-item classification rows are invalid")
+    by_id: dict[int, Mapping[str, Any]] = {}
+    for row in items:
+        if (
+            not isinstance(row, Mapping)
+            or type(row.get("business_id")) is not int
+            or row["business_id"] < 1
+            or row["business_id"] in by_id
+        ):
+            raise ReleaseBuildError("temporary missing P-item classification IDs are invalid")
+        by_id[row["business_id"]] = row
+    catalog = {row["id"]: row for row in catalog_rows}
+    disclosed_items = []
+    source_fields = {
+        "catalog_plan": "plan", "catalog_mode": "mode",
+        "catalog_source_type": "sourceType", "catalog_p_idol_id": "pIdolId",
+        "catalog_rarity": "rarity",
+    }
+    for business_id in declared:
+        row = by_id.get(business_id)
+        item = catalog[business_id]
+        if row is None:
+            raise ReleaseBuildError("temporary missing P-item classification row is absent")
+        source = row.get("source")
+        temporary = source.get("temporary_missing_reference") if isinstance(source, Mapping) else None
+        if (
+            row.get("reference_available") is not False
+            or row.get("kind") != "p_idol"
+            or any(key not in item or row.get(key) != item[key] for key in ("name", "upgraded", "plan"))
+            or type(row.get("upgraded")) is not bool
+            or item.get("sourceType") != "pIdol"
+            or item.get("mode") != "stage"
+            or not isinstance(source, Mapping)
+            or "official" not in source
+            or source["official"] is not None
+            or source.get("official_mapping") != "catalog_only_temporary_missing_reference"
+            or any(key not in source or field not in item or source[key] != item[field]
+                   for key, field in source_fields.items())
+            or not isinstance(temporary, Mapping)
+            or dict(temporary) != {
+                "rule_version": P_ITEM_TEMPORARY_MISSING_RULE,
+                "reference_enabled": False,
+                "reason": "VERIFIED_IDENTITY_AND_UI_PENDING",
+            }
+            or temporary.get("reference_enabled") is not False
+        ):
+            raise ReleaseBuildError(
+                f"temporary missing P-item {business_id} identity, catalog scope, or disabled state is invalid"
+            )
+        disclosed_items.append({
+            "business_id": business_id, "name": item["name"],
+            "upgraded": item["upgraded"], "plan": item["plan"], "kind": row["kind"],
+        })
+    if asset_root is None:
+        raise ReleaseBuildError("temporary missing P-item references require the packaged asset root")
+    image_path = _resolve_inside(asset_root, P_ITEM_MISSING_DISPLAY_IMAGE)
+    try:
+        from PIL import Image
+
+        with Image.open(image_path) as image:
+            image.load()
+            valid_blank = image.format == "PNG" and image.mode == "RGB" and image.size == (64, 64)
+            if valid_blank:
+                valid_blank = bool(np.all(np.asarray(image) == 255))
+    except (OSError, ValueError) as error:
+        raise ReleaseBuildError("temporary missing P-item display image is unavailable or invalid") from error
+    if not valid_blank:
+        raise ReleaseBuildError("temporary missing P-item display image must be a pure-white RGB 64x64 PNG")
+    return {**dict(declaration), "items": disclosed_items}
 
 
 def _resolve_inside(root: Path, relative_text: str) -> Path:
@@ -2568,11 +2702,15 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         p_item_root,
         str(p_item["reference_gallery"]["path"]),
     )
-    _validate_p_item_release_contract(
+    missing_p_item_references = _validate_p_item_release_contract(
         p_item,
         gallery_path=p_item_gallery_path,
         catalog_path=_resolve_inside(engine_root, P_ITEM_CATALOG_RELATIVE_PATH),
+        classification_path=candidate / "data/p_item_classification.json",
+        asset_root=candidate,
     )
+    if missing_p_item_references is not None:
+        inventory["p_item_reference"]["temporary_missing_references"] = missing_p_item_references
     try:
         derived_package.validate_candidate_p_item_text(candidate)
     except derived_package.PItemTextCoverageError as error:

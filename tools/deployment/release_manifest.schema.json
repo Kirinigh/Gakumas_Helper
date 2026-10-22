@@ -247,7 +247,7 @@
         "arena_card_vision": { "$ref": "#/$defs/component" },
         "arena_badge_reference": { "$ref": "#/$defs/component" },
         "arena_cost_reference": { "$ref": "#/$defs/component" },
-        "p_item_reference": { "$ref": "#/$defs/component" },
+        "p_item_reference": { "$ref": "#/$defs/pItemComponent" },
         "arena_engine_catalog": { "$ref": "#/$defs/component" }
       },
       "additionalProperties": false
@@ -346,6 +346,50 @@
       "properties": {
         "manifest": { "type": "string", "minLength": 1 },
         "manifest_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "pItemComponent": {
+      "type": "object",
+      "required": ["manifest", "manifest_sha256"],
+      "properties": {
+        "manifest": { "type": "string", "minLength": 1 },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "temporary_missing_references": { "$ref": "#/$defs/temporaryMissingPItemReferences" }
+      },
+      "additionalProperties": false
+    },
+    "temporaryMissingPItemReferences": {
+      "type": "object",
+      "required": ["rule_version", "business_ids", "placeholder_image", "reference_enabled", "status", "items"],
+      "properties": {
+        "rule_version": { "const": "catalog-only-blank-reference-v1" },
+        "status": { "const": "USER_AUTHORIZED_TEMPORARY_MISSING_REFERENCES" },
+        "reference_enabled": { "const": false },
+        "placeholder_image": { "const": "resource/base/model/embedding/p_item_missing-reference.png" },
+        "business_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["business_id", "name", "upgraded", "plan", "kind"],
+            "properties": {
+              "business_id": { "type": "integer", "minimum": 1 },
+              "name": { "type": "string", "minLength": 1 },
+              "upgraded": { "type": "boolean" },
+              "plan": { "enum": ["free", "sense", "logic", "anomaly"] },
+              "kind": { "const": "p_idol" }
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "additionalProperties": false
     },

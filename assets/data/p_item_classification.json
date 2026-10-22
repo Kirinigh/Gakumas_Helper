@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": "task095-batch14-p-item-classification-503-accepted-history-official-append-v1",
-  "status": "OFFLINE_VALIDATED",
+  "revision": "task095-temporary-missing-p-items-509-v1",
+  "status": "USER_AUTHORIZED_TEMPORARY_MISSING_REFERENCES",
   "classification_rule": "p_item_plan_and_four_kinds_v1",
   "runtime_filtering_enabled": false,
   "sources": {
@@ -45,7 +45,13 @@
     },
     "catalog_evidence_sha256": "892791B9A649AF9A331AEB86D3168890F42EB17784EB2BB0AC4AA0D996A9998D",
     "visual_dataset_manifest_sha256": "78AA1885B75925D34C9186F15FFB3723D78A4DF1F6D183CE6A4523768D71492B",
-    "visual_crosswalk_sha256": "9E7CCC422C9308F20CB157DAF922E048CB49CE03B1C8EA581EA1C60BB9544182"
+    "visual_crosswalk_sha256": "9E7CCC422C9308F20CB157DAF922E048CB49CE03B1C8EA581EA1C60BB9544182",
+    "temporary_placeholder_catalog": {
+      "repository": "https://github.com/gakumas-tools/gakumas-tools",
+      "path": "packages/gakumas-data/json/p_items.json",
+      "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
+      "sha256": "CEF6DB5DBDF3E0E149BA6FCEAD40BEC2C6AF37EB7AAD90BD42B2DFA3E0CED09B"
+    }
   },
   "facets": {
     "plan": {
@@ -18512,6 +18518,162 @@
         }
       },
       "paired_business_id": null
+    },
+    {
+      "business_id": 504,
+      "name": "ヒーローの輝き",
+      "upgraded": false,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 505,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 161,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
+    },
+    {
+      "business_id": 505,
+      "name": "ヒーローの輝き+",
+      "upgraded": true,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 504,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 161,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
+    },
+    {
+      "business_id": 506,
+      "name": "夢見る輝き",
+      "upgraded": false,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 507,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 162,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
+    },
+    {
+      "business_id": 507,
+      "name": "夢見る輝き+",
+      "upgraded": true,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 506,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 162,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
+    },
+    {
+      "business_id": 508,
+      "name": "星々を統べる輝き",
+      "upgraded": false,
+      "plan": "logic",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 509,
+      "source": {
+        "catalog_plan": "logic",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 163,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
+    },
+    {
+      "business_id": 509,
+      "name": "星々を統べる輝き+",
+      "upgraded": true,
+      "plan": "logic",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 508,
+      "source": {
+        "catalog_plan": "logic",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 163,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
     }
   ],
   "indexes": {
@@ -18906,7 +19068,9 @@
         496,
         497,
         498,
-        499
+        499,
+        508,
+        509
       ],
       "anomaly": [
         166,
@@ -19025,7 +19189,11 @@
         489,
         490,
         491,
-        492
+        492,
+        504,
+        505,
+        506,
+        507
       ]
     },
     "kind": {
@@ -19346,7 +19514,13 @@
         496,
         497,
         500,
-        501
+        501,
+        504,
+        505,
+        506,
+        507,
+        508,
+        509
       ],
       "support_inheritable": [
         71,
@@ -19546,11 +19720,11 @@
     "plan": {
       "free": 50,
       "sense": 161,
-      "logic": 175,
-      "anomaly": 117
+      "logic": 177,
+      "anomaly": 121
     },
     "kind": {
-      "p_idol": 317,
+      "p_idol": 323,
       "support_inheritable": 50,
       "support_non_inheritable": 88,
       "other": 48
@@ -19569,7 +19743,13 @@
     491,
     492,
     493,
-    494
+    494,
+    504,
+    505,
+    506,
+    507,
+    508,
+    509
   ],
   "gallery_coverage": {
     "component": "p_item_reference",
@@ -19636,7 +19816,27 @@
       498,
       499,
       502,
-      503
+      503,
+      504,
+      505,
+      506,
+      507,
+      508,
+      509
     ]
+  },
+  "temporary_missing_references": {
+    "rule_version": "catalog-only-blank-reference-v1",
+    "business_ids": [
+      504,
+      505,
+      506,
+      507,
+      508,
+      509
+    ],
+    "placeholder_image": "resource/base/model/embedding/p_item_missing-reference.png",
+    "reference_enabled": false,
+    "status": "USER_AUTHORIZED_TEMPORARY_MISSING_REFERENCES"
   }
 }
