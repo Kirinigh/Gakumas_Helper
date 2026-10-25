@@ -111,6 +111,11 @@ APPROVED_RELEASED_910_PLACEHOLDER_CATALOG = {
 # digest was independently frozen from the raw F112 catalog pinned above.
 # It preserves array order, all fields and JSON scalar types.
 APPROVED_RELEASED_910_CATALOG_CONTENT_SHA256 = "4E385BC9C639FB838B9DE761B35786BFE49F8BA29470D13631256A37FAFA8BF5"
+# The official 63eccb8318d2a99aeb78a8102829e34ff3eb7247 correction changes
+# only ID 869 actions: concentration+=6 -> concentration+=5. The complete
+# 922-row digest still binds every other field, scalar type and row order;
+# the frozen F112 source declaration and all gallery lineage gates remain.
+APPROVED_RELEASED_910_CORRECTED_CATALOG_CONTENT_SHA256 = "2C28356B28B92BECB1CCB5CFB2626CA8877AF5503196F5EAD662036CB130C4A9"
 P_ITEM_PRODUCTION_SOURCE_EVIDENCE_TOOL_CONTRACT = (
     "task095-p-item-production-source-evidence-v1"
 )
@@ -2569,7 +2574,10 @@ def validate_temporary_placeholder_component(
                 catalog, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
             ).encode("utf-8")
             require(
-                hashlib.sha256(canonical_catalog).hexdigest().upper() == APPROVED_RELEASED_910_CATALOG_CONTENT_SHA256,
+                hashlib.sha256(canonical_catalog).hexdigest().upper() in {
+                    APPROVED_RELEASED_910_CATALOG_CONTENT_SHA256,
+                    APPROVED_RELEASED_910_CORRECTED_CATALOG_CONTENT_SHA256,
+                },
                 "910 packaged catalog content differs from the approved frozen source",
             )
         else:
