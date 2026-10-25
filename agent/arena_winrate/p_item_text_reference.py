@@ -20,6 +20,11 @@ PLANS = {"ProducePlanType_Plan1": "sense", "ProducePlanType_Plan2": "logic",
 RARITIES = {"ProduceItemRarity_Ssr": "SSR", "ProduceItemRarity_Sr": "SR",
             "ProduceItemRarity_R": "R", "ProduceItemRarity_N": "N"}
 DYNAMIC = ("effectValue1", "effectValue2", "effectCount", "turn", "costValue", "targetLevel")
+LABEL_REFERENCE_TYPES = frozenset((
+    "ProduceDescriptionType_ProduceDescription", "ProduceDescriptionType_ProduceDescriptionName",
+    "ProduceDescriptionType_ProduceExamEffectType", "ProduceDescriptionType_ProduceCardCategory",
+    "ProduceDescriptionType_ProduceCardGrowEffectType",
+))
 NUMBER = re.compile(r"[+＋\-－]?\d+(?:\.\d+)?[%％]?")
 TEMPLATE = re.compile(r"[{}]|\$\(|%[sd]|<[^>]+>")
 SPECIAL_FLAGS = ("isChallenge", "isHighScoreRush", "isResearch", "isEasy")
@@ -144,6 +149,13 @@ def render_paragraphs(source: Mapping, labels: Mapping, swaps: Mapping) -> list[
             if not isinstance(original, str):
                 raise ValueError("invalid source literal")
             target = segment.get("targetId", "")
+            # Label-bearing types and explicit Label/Convert references require
+            # their formal record even when its swap is empty. Card IDs and
+            # decoded literal slots do not require a row in this table.
+            requires_label = (segment.get("produceDescriptionType") in LABEL_REFERENCE_TYPES
+                              or isinstance(target, str) and target.startswith(("Label_", "Convert_")))
+            if requires_label and target not in labels:
+                raise ValueError(f"missing source label: {target}")
             label = labels.get(target, {})
             if isinstance(label, list):
                 if len(label) != 1:
