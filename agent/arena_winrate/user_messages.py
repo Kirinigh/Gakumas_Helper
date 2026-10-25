@@ -175,6 +175,28 @@ def describe_arena_error(
     """
 
     raw = _normalise_error(error)
+    code, _, detail = raw.partition(": ")
+    if code in {"recovery_failed", "member_reopen_recovery_failed", "p_item_detail_recovery_failed"}:
+        # These wrappers serialize both failures through the existing provider
+        # and own-score string channels. Split the final wrapper, not a quoted
+        # OCR fragment in the first failure. This is presentation only.
+        original, separator, recovery = detail.rpartition("; recovery also failed: ")
+        if not separator and code == "member_reopen_recovery_failed":
+            original, separator, recovery = detail.rpartition("; returning to its team preview also failed: ")
+            original = original.removeprefix("member read failed: ")
+        if separator:
+            inherited_location = location if location is not None else _raw_location(original)
+            if original.startswith(("read failed at ", "own-team read failed while active=", "opponent read failed at ")):
+                original = original.partition(": ")[2]
+            original = re.sub(r"^(?:own|self|opponent-[0-2])/stage-[1-3]/member-[1-3]:\s*", "", original)
+            first = describe_arena_error(original, location=inherited_location).removesuffix("；请查看详细日志")
+            # Keep the failed return's destination even if its leaf error is
+            # only a low-level missing anchor. That destination controls STOP.
+            following = (
+                dict(_ERROR_LABELS)[code] if code != "recovery_failed"
+                else describe_arena_error(recovery, location={}).removesuffix("；请查看详细日志")
+            )
+            return f"{first}；随后返回失败：{following}；请查看详细日志"
     lowered = raw.lower()
     error_token, label = next(
         ((token, label) for token, label in _ERROR_LABELS if token in lowered),
@@ -225,7 +247,8 @@ def describe_arena_error(
         ),
     )
     prefix = f"{position}：" if position else ""
-    return f"{prefix}{label}；请查看详细日志"
+    restored = "；已恢复队伍预览" if raw.endswith("; member_preview_restored=True") else ""
+    return f"{prefix}{label}{restored}；请查看详细日志"
 
 
 def own_score_user_status(
@@ -274,17 +297,7 @@ def _provider_failure_message(
     location: Mapping[str, object] | None = None,
 ) -> str:
     raw = f"{failure.code}: {failure.detail}" if failure.code else failure.detail
-    recovery = ""
-    # This wrapper is produced by the reader's existing recovery contract.
-    # Keep the original failure separate so recovery labels cannot override it.
-    if failure.code == "recovery_failed":
-        original, separator, recovery = failure.detail.partition("; recovery also failed: ")
-        if separator:
-            raw = original
-    message = describe_arena_error(raw, location=location).removesuffix("；请查看详细日志")
-    if recovery:
-        message += "；随后返回失败：" + describe_arena_error(recovery, location={}).removesuffix("；请查看详细日志")
-    return message
+    return describe_arena_error(raw, location=location).removesuffix("；请查看详细日志")
 
 
 def win_rate_stop_user_status(

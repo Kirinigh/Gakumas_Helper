@@ -15,7 +15,7 @@ from collections.abc import Mapping
 
 from .cancellation import ArenaReadSuperseded
 from ._reader_errors import ArenaReaderError
-from ._member_retry_errors import p_item_text_reference_unavailable
+from ._member_retry_errors import fixed_member_read_failure, p_item_text_reference_unavailable
 
 if TYPE_CHECKING:
     from .reader import TeamTarget, MemberObservation, MemberObservationScope
@@ -211,10 +211,13 @@ class MemberReadSession:
                 except Exception as error:
                     failure = error
                     self._diagnostic("persist_member_read_failure", error)
+                    fixed_failure = fixed_member_read_failure(error)
+                    if fixed_failure is not None:
+                        error.retry_whole_read = False
                     recovery_code = member_reopen_error_code(
                         error, during_close=self.state.attempt_closing,
                     )
-                    recognition_code = member_recognition_error_code(error)
+                    recognition_code = None if fixed_failure is not None else member_recognition_error_code(error)
                     recognition_recovery = recognition_code is not None or (
                         recovery_code is not None
                         and isinstance(error, ArenaReaderError)
@@ -262,10 +265,20 @@ class MemberReadSession:
                     except Exception as recovery_error:
                         raise ArenaReaderError(
                             "member_reopen_recovery_failed",
-                            f"member read failed: {error}; returning to its team "
-                            f"preview also failed: {recovery_error}",
+                            f"{error}; recovery also failed: {recovery_error}",
                             retry_whole_read=False,
+                            primary_error=error,
                         ) from recovery_error
+                    if fixed_failure is not None:
+                        # The existing return opportunity was still required.
+                        # Once it succeeds, another business read cannot repair
+                        # this task's fixed catalog/configuration. Keep the
+                        # earlier failed return in the exception chain.
+                        raise ArenaReaderError(
+                            fixed_failure.code,
+                            f"{fixed_failure.detail}; member_preview_restored=True",
+                            retry_whole_read=False,
+                        ) from error
                     # No partial observation escaped the failed invocation. The
                     # next invocation reopens and rereads this member completely.
                 finally:

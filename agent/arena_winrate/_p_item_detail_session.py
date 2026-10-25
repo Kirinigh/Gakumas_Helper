@@ -121,10 +121,16 @@ class PItemDetailSession:
                 self.clock.perf_counter() - recovery_started,
             )
             self.backend._record_duration_sample("p_item_detail_failed_transaction", elapsed)
+            primary_error = self._read_failure(safe_region)
+            detail = (
+                "P-item detail transaction did not restore the original member page; "
+                f"states={self.transaction_states!r}; cause={recovery_error}"
+                if primary_error is None else f"{primary_error}; recovery also failed: {recovery_error}"
+            )
             raise ArenaReaderError(
                 "p_item_detail_recovery_failed",
-                "P-item detail transaction did not restore the original member page; "
-                f"states={self.transaction_states!r}; cause={recovery_error}",
+                detail,
+                primary_error=primary_error,
             ) from recovery_error
         self.backend._add_timing(
             "p_item_detail_close_restore",
@@ -132,18 +138,27 @@ class PItemDetailSession:
         )
         elapsed = self.clock.perf_counter() - started
         self.backend._add_timing("p_item_detail_transactions", elapsed)
+        failure = self._read_failure(safe_region)
+        if failure is not None:
+            self.backend._record_duration_sample("p_item_detail_failed_transaction", elapsed)
+            raise failure from self.terminal_error
+        self.backend._record_duration_sample("p_item_detail_transaction", elapsed)
+        return self.resolved
+
+    def _read_failure(self, safe_region):
+        """Describe only the observation result, before or after restoration."""
         if self.terminal_error is not None:
-            self.backend._record_duration_sample("p_item_detail_failed_transaction", elapsed)
-            raise ArenaReaderError(
+            error = ArenaReaderError(
                 "p_item_detail_parser_failed",
-                f"P-item detail parsing failed after the source page was restored; states={self.transaction_states!r}; error={self.last_error}",
-            ) from self.terminal_error
+                f"P-item detail parsing failed; states={self.transaction_states!r}; error={self.last_error}",
+            )
+            error.__cause__ = self.terminal_error
+            return error
         if self.resolved is None:
-            self.backend._record_duration_sample("p_item_detail_failed_transaction", elapsed)
             error_code = (
                 "p_item_detail_ambiguous" if self.detail_confirmed or self.candidate_title_seen else "p_item_detail_open_or_title_failed"
             )
-            raise ArenaReaderError(
+            return ArenaReaderError(
                 error_code,
                 f"P-item detail did not uniquely confirm {tuple(self.candidate_ids)!r}: "
                 f"{self.last_error}; states={self.transaction_states!r}; "
@@ -157,8 +172,7 @@ class PItemDetailSession:
                 f"title_OCR={self.last_title_text[:160]!r}; "
                 f"panel_OCR={self.last_panel_text[:240]!r}; OCR={self.last_text[:400]!r}",
             )
-        self.backend._record_duration_sample("p_item_detail_transaction", elapsed)
-        return self.resolved
+        return None
 
     def _wait_for_detail(self):
         while self.clock.monotonic() < self.deadline:
