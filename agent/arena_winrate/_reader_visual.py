@@ -577,6 +577,9 @@ def _background_parameter_column_left(
     same words and digits may legitimately occur inside card effects. A
     missing neighboring attribute label may instead be proved by two
     separately paired percentage rows in the ordered attribute column.
+    A fused Visual value/percentage box needs the independent full width
+    of the preceding attribute row plus the adjacent labelled stamina row;
+    its digits are never split or interpreted as an attribute value.
     """
 
     title_x, title_y, title_width, _ = title_box
@@ -591,6 +594,8 @@ def _background_parameter_column_left(
     column_max_x = int(round(frame_width * 0.72))
     labels: list[tuple[str, tuple[int, int, int, int]]] = []
     numbers: list[tuple[int, int, int, int]] = []
+    percentages: list[tuple[int, int, int, int]] = []
+    fused_numbers: list[tuple[int, int, int, int]] = []
     for item in items:
         text = re.sub(
             r"\s+",
@@ -611,6 +616,15 @@ def _background_parameter_column_left(
             and column_min_x <= x <= column_max_x
         ):
             numbers.append(box)
+        elif re.fullmatch(r"[0-9]{1,3}%", text):
+            percentages.append(box)
+        elif (
+            re.fullmatch(r"[0-9]{4,9}%", text)
+            and column_min_x <= x <= column_max_x
+            and box[1] < roi_bottom
+            and box[1] + height > max(roi_top, title_y)
+        ):
+            fused_numbers.append(box)
 
     pair_candidates: list[
         tuple[
@@ -662,6 +676,77 @@ def _background_parameter_column_left(
         seen_labels.add(label)
         seen_numbers.add(number_box)
         unique_pairs.append((label, label_box, number_box))
+    fused_proof_boxes: tuple[tuple[int, int, int, int], ...] = ()
+    if len(unique_pairs) == 1 and len(labels) == 2 and fused_numbers:
+        # Do not turn a long percentage token into an invented number box.
+        # The preceding split row independently proves the entire value/%
+        # lane; Visual and stamina prove the two adjacent labelled rows.
+        if (
+            len(fused_numbers) != 1
+            or {label for label, _ in labels} != {"ビジュアル", "体力"}
+            or unique_pairs[0][0] != "体力"
+        ):
+            return None
+        visual_box = next(box for label, box in labels if label == "ビジュアル")
+        _, stamina_box, stamina_number = unique_pairs[0]
+        fused = fused_numbers[0]
+        fx, fy, fw, fh = fused
+        vx, vy, _, vh = visual_box
+        if (
+            abs(fx - vx) > frame_width * 0.04
+            or fy + fh / 2.0 < vy + vh / 2.0 + max(4.0, vh * 0.35)
+            or fy > vy + vh + frame_height * 0.045
+            or fy + fh > stamina_box[1]
+        ):
+            return None
+        reference_rows = []
+        for number in numbers:
+            nx, ny, nw, nh = number
+            if ny >= roi_bottom or ny + nh <= max(roi_top, title_y):
+                continue
+            mates = [
+                percent for percent in percentages
+                if 0 <= percent[0] - (nx + nw) <= frame_width * 0.06
+                and abs(percent[1] + percent[3] / 2.0 - (ny + nh / 2.0))
+                <= min(nh, percent[3]) * 0.35
+            ]
+            if len(mates) > 1:
+                return None
+            if mates:
+                reference_rows.append((number, mates[0]))
+        if len(reference_rows) != 1:
+            return None
+        reference_number, reference_percent = reference_rows[0]
+        reference_left = min(reference_number[0], reference_percent[0])
+        reference_right = max(reference_number[0] + reference_number[2], reference_percent[0] + reference_percent[2])
+        reference_top = min(reference_number[1], reference_percent[1])
+        reference_bottom = max(reference_number[1] + reference_number[3], reference_percent[1] + reference_percent[3])
+        lane_tolerance = max(4, int(round(frame_width * 0.035)))
+        row_tolerance = max(4.0, frame_height * 0.01)
+        row_steps = (
+            fy + fh / 2.0 - reference_number[1] - reference_number[3] / 2.0,
+            stamina_number[1] + stamina_number[3] / 2.0 - fy - fh / 2.0,
+            stamina_box[1] + stamina_box[3] / 2.0 - vy - vh / 2.0,
+        )
+        if (
+            reference_bottom > vy
+            or abs(fx - reference_left) > lane_tolerance
+            or abs(fx + fw - reference_right) > lane_tolerance
+            or abs(fh - (reference_bottom - reference_top)) > row_tolerance
+            or min(row_steps) < frame_height * 0.02
+            or max(row_steps) > frame_height * 0.08
+            or max(row_steps) - min(row_steps) > row_tolerance
+        ):
+            return None
+        fused_proof_boxes = (visual_box, fused, stamina_box, stamina_number, reference_number, reference_percent)
+        if (
+            len(set(fused_proof_boxes)) != len(fused_proof_boxes)
+            or any(not (0 <= x < x + width <= frame_width and 0 <= y < y + height <= frame_height)
+                   for x, y, width, height in fused_proof_boxes)
+            or any(sum(_box(item) == box for item in items) != 1 for box in fused_proof_boxes)
+        ):
+            return None
+        unique_pairs.append(("ビジュアル", visual_box, fused))
     if len(unique_pairs) < 2:
         # A top-clamped panel can expose the Dance value while its label is
         # outside the frame. Do not infer a row from the naked value: both
@@ -673,12 +758,6 @@ def _background_parameter_column_left(
         label, label_box, labelled_number = unique_pairs[0]
         if label not in attribute_order:
             return None
-        percentages: list[tuple[int, int, int, int]] = []
-        for item in items:
-            text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", _text(item)))
-            box = _box(item)
-            if re.fullmatch(r"[0-9]{1,3}%", text) and box[2] > 0 and box[3] > 0:
-                percentages.append(box)
         percent_rows: list[
             tuple[tuple[int, int, int, int], tuple[int, int, int, int]]
         ] = []
@@ -824,6 +903,24 @@ def _background_parameter_column_left(
     boundary = column_left - max(2, int(round(frame_width * 0.008)))
     if boundary <= title_right + max(4, int(round(frame_width * 0.02))):
         return None
+    if fused_proof_boxes:
+        # This additional route may remove only the six independently proved
+        # stat observations. A right-side effect, unknown value or unfinished
+        # numeric prefix on the retained left side keeps the wide ROI intact.
+        for item in items:
+            item_box = _box(item)
+            x, y, width, height = item_box
+            if width <= 0 or height <= 0 or y + height <= max(roi_top, title_y) or y >= roi_bottom:
+                continue
+            if x + width <= boundary:
+                text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", _text(item)))
+                if item_box != title_box and re.search(
+                    r"(?:[+の]|消費|追加|値増加|スコア|コア|元気|体力|集中|"
+                    r"やる気|好印象|好調|全力値)$", text,
+                ):
+                    return None
+            elif item_box not in fused_proof_boxes:
+                return None
     return boundary
 
 

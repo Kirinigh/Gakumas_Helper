@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import json
+import unicodedata
 from typing import Any, Protocol
 from collections.abc import Callable, Sequence
 
@@ -102,6 +103,94 @@ class DetailEffectOcr:
         self.recover_distant_number_text = recover_distant_number_text
         self.recover_wrapped_signed_text = recover_wrapped_signed_text
         self.recover_skill_effect_body = recover_skill_effect_body
+
+    @staticmethod
+    def _without_proven_background_parameters(
+        items: Sequence[Any],
+        title_box: tuple[int, int, int, int],
+        roi: tuple[int, int, int, int],
+        boundary: int | None,
+        *,
+        frame_size: tuple[int, int],
+    ) -> list[Any] | None:
+        """Exclude only stat atoms in an independently proved same-frame column.
+
+        Keep the full observation outside this band. An unfinished operand,
+        crossing box or other text in the strip makes exclusion ambiguous;
+        a clean crop must never license discarding that evidence.
+        """
+        if boundary is None or boundary <= title_box[0] + title_box[2]:
+            return None
+        left, top, width, height = roi
+        if not left < boundary < left + width:
+            return None
+        frame_width, frame_height = frame_size
+        strip = []
+        for item in items:
+            box = _box(item)
+            x, y, w, h = box
+            if w <= 0 or h <= 0:
+                return None
+            if y + h <= max(top, title_box[1]) or y >= top + height or x >= left + width:
+                continue
+            text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", _text(item)))
+            if x + w <= boundary:
+                if box != title_box and re.search(
+                    r"(?:[+の]|消費|追加|値増加|スコア|コア|元気|体力|集中|"
+                    r"やる気|好印象|好調|全力値)$", text,
+                ):
+                    return None
+            elif x < boundary or (
+                text not in {"ボーカル", "ダンス", "ビジュアル", "体力"}
+                and re.fullmatch(r"[0-9]{1,6}|[0-9]{1,9}%", text) is None
+            ):
+                return None
+            else:
+                if x + w > left + width or y < top or y + h > top + height:
+                    return None
+                strip.append((item, text, box))
+        labels = [entry for entry in strip if entry[1] in {"ボーカル", "ダンス", "ビジュアル", "体力"}]
+        values = [entry for entry in strip if re.fullmatch(r"[0-9]{1,6}|[0-9]{4,9}%", entry[1])]
+        percentages = [entry for entry in strip if re.fullmatch(r"[0-9]{1,3}%", entry[1])]
+        if len({entry[1] for entry in labels}) != len(labels):
+            return None
+        removed_boxes = set()
+        for _, label, label_box in labels:
+            lx, ly, lw, lh = label_box
+            candidates = []
+            for entry in values:
+                _, value, (x, y, w, h) = entry
+                fused = value.endswith('%')
+                if (
+                    (not fused or label != "体力")
+                    and y + h / 2 >= ly + lh / 2 + max(4.0, lh * 0.35)
+                    and y <= ly + lh + frame_height * 0.045
+                    and abs(x - lx) <= frame_width * 0.04
+                    and (fused or abs(x + w / 2 - lx - lw / 2) <= frame_width * 0.04)
+                ):
+                    candidates.append(entry)
+            if len(candidates) != 1:
+                return None
+            _, value, value_box = candidates[0]
+            if label_box in removed_boxes or value_box in removed_boxes:
+                return None
+            removed_boxes.update((label_box, value_box))
+            if value.endswith('%'):
+                continue  # Its full width was independently proved by the column gate.
+            x, y, w, h = value_box
+            mates = [entry for entry in percentages if (
+                0 <= entry[2][0] - (x + w) <= frame_width * 0.06
+                and abs(entry[2][1] + entry[2][3] / 2 - y - h / 2) <= min(h, entry[2][3]) * 0.35
+            )]
+            if len(mates) > 1 or (mates and mates[0][2] in removed_boxes):
+                return None
+            if mates:
+                removed_boxes.add(mates[0][2])
+        if not removed_boxes or any(sum(_box(item) == box for item in items) != 1 for box in removed_boxes):
+            return None
+        # Unpaired atoms (including unrelated digits below the popover) remain
+        # in the full observation and must pass its unchanged conflict gate.
+        return [item for item in items if _box(item) not in removed_boxes]
 
     def _recover_failed_skill_card_effect_text(
         self,
@@ -496,14 +585,49 @@ class DetailEffectOcr:
             except ArenaReaderError as error:
                 if error.code != "skill_card_detail_effect_view_conflict":
                     raise
-                # Keep the observed enlarged view. Geometry may remove only
-                # a proven icon-lane fragment, never override its operands.
+                # Preserve the existing decoration proof when it applies.
                 roi = (left, top, roi_width, roi_height)
                 recovered_native = recover_wrapped_effect_decoration(
                     tuple((_text(item), _box(item)) for item in native_roi_items),
                     title_box, roi, self.port._spatial_ocr_rows(native_roi_items),
                     image=image,
                 )
+                if roi_merged and not recovered_native.changed:
+                    # The crop can already be sound while spatial assembly of
+                    # the full frame attached a stat value to an effect. Prove
+                    # and certify the full replacement independently of the
+                    # wrapped-decoration repair below.
+                    wide_roi = self.port._title_anchored_effect_roi(width, height, title_box)
+                    clipped_boundary = (
+                        left + roi_width
+                        if (left, top, roi_height) == (wide_roi[0], wide_roi[1], wide_roi[3])
+                        and roi_width < wide_roi[2] else None
+                    )
+                    background_items = self._without_proven_background_parameters(
+                        native_items, title_box, wide_roi, clipped_boundary,
+                        frame_size=(width, height),
+                    )
+                    if background_items is not None:
+                        background_text = self.port._spatial_ocr_text(background_items)
+                        # Rebuild the same constrained whole-term repair on
+                        # these cleaned atoms, so a full replacement cannot
+                        # undo a caller's already repaired body vocabulary.
+                        repaired_body = self.recover_skill_effect_body(
+                            tuple((_text(item), _box(item)) for item in background_items),
+                            title_box, wide_roi, self.port._spatial_ocr_rows(background_items),
+                        )
+                        if repaired_body.changed:
+                            background_text = repaired_body.text
+                        try:
+                            self.port._merge_skill_card_effect_detail_views(card_id, (background_text, merged))
+                        except ArenaReaderError as background_error:
+                            if background_error.code != "skill_card_detail_effect_view_conflict":
+                                raise
+                        else:
+                            self.port._increment("skill_card_detail_full_background_repairs")
+                            return _TitleBoundEffectRoiText(
+                                merged, len(observations), recovered_full_text=background_text,
+                            )
                 if not recovered_native.changed:
                     if roi_merged:
                         # This extra raw-view check must not supersede a
