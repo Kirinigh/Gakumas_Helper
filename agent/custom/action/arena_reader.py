@@ -2230,7 +2230,7 @@ class MaaArenaReaderBackend:
 
     def _component_p_item_detail_workflow(self) -> PItemDetailWorkflow:
         return PItemDetailWorkflow(
-            self, clock=time, session_factory=PItemDetailSession, probe_factory=RecognitionProbe, probe_root=DEFAULT_CHALLENGE_RECORD_ROOT
+            self, clock=time, session_factory=PItemDetailSession, probe_factory=RecognitionProbe, probe_root=DEFAULT_CHALLENGE_RECORD_ROOT, logger=logger
         )
 
     def _component_p_item_page_observation(self) -> PItemPageObservation:

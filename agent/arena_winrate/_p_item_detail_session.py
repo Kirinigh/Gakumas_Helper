@@ -94,6 +94,10 @@ class PItemDetailSession:
         self.last_family_title = None
         self.last_family_image = None
         self.consecutive_family_titles = 0
+        self.last_text_result = None
+        self.ordinary_title_fallback = None
+        self.ordinary_fallback_blocked = False
+        self.ordinary_fallback_family = None
         open_wait_started = self.clock.perf_counter()
         self._wait_for_detail()
         self.backend._add_timing(
@@ -142,6 +146,11 @@ class PItemDetailSession:
         if failure is not None:
             self.backend._record_duration_sample("p_item_detail_failed_transaction", elapsed)
             raise failure from self.terminal_error
+        if self.ordinary_title_fallback is not None:
+            self.backend._increment("p_item_detail_ordinary_title_fallbacks")
+            if self.diagnostic is not None:
+                self.diagnostic["p_item_ordinary_title_fallback"] = self.ordinary_title_fallback
+                self.diagnostic["position"]["p_item_name"] = self.last_title_text
         self.backend._record_duration_sample("p_item_detail_transaction", elapsed)
         return self.resolved
 
@@ -177,6 +186,7 @@ class PItemDetailSession:
     def _wait_for_detail(self):
         while self.clock.monotonic() < self.deadline:
             self.last_text_resolution = ""
+            self.last_text_result = None
             self.diagnostic = getattr(self.backend, "_detail_failure_frames", None)
             if self.diagnostic is not None:
                 self.diagnostic.pop("p_item_text", None)
@@ -307,13 +317,14 @@ class PItemDetailSession:
                 self.transaction_states.append("OPEN_FAILED")
                 break
             self.backend._sleep(0.12)
+        else:
+            self._try_ordinary_title_fallback()
 
     def _record_family_title(self, new_detail):
-        """Diagnostic family name only; it never supplies an identity vote."""
-        if self.diagnostic is None:
-            return
+        """Track source-excluded title evidence, independently of diagnostics."""
         family = self.raw_matches if (
             new_detail and self.image is not None and self.source_images
+            and not any(self.image is source for source in self.source_images)
             and not self.last_source_row_uncertain and self.last_title_text
         ) else ()
         rows = getattr(self.backend.catalog, "_p_items_by_id", {})
@@ -327,6 +338,10 @@ class PItemDetailSession:
                 self.diagnostic.pop("p_item_family_name", None)
         if signature is not None and self.image is not self.last_family_image:
             self.consecutive_family_titles += 1
+        if family:
+            # A repaired title cannot authorize this assumption, but its
+            # already accepted body evidence must still block a downgrade.
+            self._track_ordinary_fallback_conflicts(family, title)
         self.last_family_title = signature
         self.last_family_image = self.image
         if signature is not None and self.consecutive_family_titles >= 2 and self.diagnostic is not None:
@@ -334,6 +349,67 @@ class PItemDetailSession:
                 "name": next(iter(names)), "title_text": self.last_title_text,
                 "candidate_ids": family, "confirmed_frames": 2,
             }
+
+    def _ordinary_id(self, family, title):
+        rows = getattr(self.backend.catalog, "_p_items_by_id", {})
+        ids = []
+        for item_id in family:
+            row = rows.get(item_id, {})
+            name = self.evidence.normalize_title_row(str(row.get("name", "")))
+            upgraded = row.get("upgraded")
+            if not isinstance(upgraded, bool):
+                upgraded = name.endswith("+")
+            if name == title and name and not name.endswith("+") and not upgraded:
+                ids.append(item_id)
+        return ids[0] if len(ids) == 1 else None
+
+    def _track_ordinary_fallback_conflicts(self, family, title):
+        # A later unreadable frame cannot erase earlier valid contradictory
+        # evidence from this opening. Source/transition frames do not vote.
+        if self.ordinary_fallback_family not in (None, family):
+            self.ordinary_fallback_blocked = True
+        self.ordinary_fallback_family = family
+        ordinary = self._ordinary_id(family, title)
+        result = self.last_text_result
+        if title.endswith("+") or ordinary is None:
+            self.ordinary_fallback_blocked = True
+        if result is None:
+            return
+        diagnostics = result.diagnostics
+        support = diagnostics.get("positive_support", {})
+        conflicts = diagnostics.get("conflicts", {})
+        if (
+            result.status == "unknown"
+            or diagnostics.get("unbound_reference_ids")
+            or conflicts.get(ordinary, conflicts.get(str(ordinary), ()))
+            or any(support.get(item_id, support.get(str(item_id), ())) for item_id in family if item_id != ordinary)
+            or (result.status == "unique" and result.ids != (ordinary,))
+        ):
+            self.ordinary_fallback_blocked = True
+
+    def _try_ordinary_title_fallback(self):
+        """Apply the approved ordinary assumption only at natural budget end."""
+        result = self.last_text_result
+        if (
+            self.resolved is not None or self.terminal_error is not None
+            or self.ordinary_fallback_blocked or not self.detail_confirmed
+            or self.consecutive_family_titles < 2 or self.last_family_title is None
+            or result is None or result.status != "ambiguous"
+            or result.reason != "insufficient_difference_evidence"
+        ):
+            return
+        family, title = self.last_family_title
+        ordinary = self._ordinary_id(family, title)
+        if ordinary is None or ordinary not in result.ids:
+            return
+        self.resolved = ordinary
+        self.ordinary_title_fallback = {
+            "assumed": True, "resolved_id": ordinary, "title_text": self.last_title_text,
+            "confirmed_frames": self.consecutive_family_titles,
+            "body_status": result.status, "body_reason": result.reason,
+            "observation_budget_exhausted": True,
+        }
+        self.transaction_states.extend(("ORDINARY_TITLE_FALLBACK", "RESOLVED"))
 
     def _observe_detail(self):
         try:
@@ -530,6 +606,7 @@ class PItemDetailSession:
                         self.backend._increment("p_item_detail_panel_reuses")
                 self.backend._add_timing("p_item_detail_text", self.clock.perf_counter() - text_started)
                 self.backend._increment(f"p_item_detail_text_{text_result.status}")
+                self.last_text_result = text_result
                 self.last_text_resolution = f"{text_result.status}: {text_result.reason}"
                 if self.diagnostic is not None:
                     self.diagnostic["p_item_text"] = {

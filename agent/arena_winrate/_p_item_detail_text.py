@@ -350,6 +350,26 @@ class PItemDetailTextIndex:
         bound = set(scoped) & available
         unbound = set(scoped) - available
         fields = self._tables.get(family, {})
+        # Restore only source-owned katakana words with a long vowel between
+        # kana. A numeric minus, hyphenated label or longer OCR word is never
+        # rewritten; equal-length edits retain every original atom boundary.
+        long_vowels = {}
+        for literals in fields:
+            for literal in literals:
+                for word in re.findall(r"[ァ-ヶー]+", literal):
+                    if re.search(r"[ァ-ヶ]ー[ァ-ヶ]", word):
+                        alias = re.sub(r"(?<=[ァ-ヶ])ー(?=[ァ-ヶ])", "-", word)
+                        long_vowels.setdefault(alias, set()).add(word)
+        vowel_edits = []
+        for alias, words in long_vowels.items():
+            if len(words) != 1:
+                continue
+            word = next(iter(words))
+            pattern = re.compile(r"(?<![ァ-ヶー-])" + re.escape(alias) + r"(?![ァ-ヶー-])")
+            for match in pattern.finditer(text):
+                if BOUNDARY not in match.group():
+                    vowel_edits.append({"span": (match.start(), match.end()), "observed": alias, "reference": word})
+            text = pattern.sub(word, text)
         conflicts = {item_id: [] for item_id in scoped}
         support = {item_id: [] for item_id in scoped}
         observations, protected = [], []
@@ -443,6 +463,8 @@ class PItemDetailTextIndex:
         remaining = tuple(item_id for item_id in scoped if not conflicts[item_id])
         supported = tuple(item_id for item_id in remaining if support[item_id])
         diagnostics = {"title_family_ids": family, "plan_scoped_ids": scoped, "unbound_reference_ids": tuple(sorted(unbound)), "positive_support": support, "conflicts": conflicts, "observed_fields": observations, "protected_fields": protected}
+        if vowel_edits:
+            diagnostics["long_vowel_recovery"] = {"edits": vowel_edits, "numeric_value_edits": 0, "additional_ocr_calls": 0}
         if layout_diagnostics:
             diagnostics["layout"] = dict(layout_diagnostics)
         if not remaining:
@@ -544,6 +566,76 @@ class PItemDetailTextIndex:
                               "numeric_edits": 0, "additional_ocr_calls": 0},
         })
 
+    def _recover_wrapped_numeric_paragraph(
+        self, atoms: list[dict], title_index: int, sources: PItemSourceTextFrames,
+        panel_box: tuple[int, int, int, int], *, plan: str | None,
+        eligible_ids: frozenset[int] | None,
+    ) -> PItemDetailTextResult | None:
+        """Read an intact numeric paragraph beyond one proved missing wrap.
+
+        The earlier complete-body proof remains preferred. Here unrelated
+        missing trigger words/punctuation cannot hide an intact cost, but the
+        wrap row still has exactly one missing final source letter. No text is
+        inserted and every observed numeric token must match the whole source
+        in order, including otherwise unclaimed independent digits.
+        """
+        title = str(atoms[title_index]["text"])
+        scoped = self.family_ids_for_title(title, plan=plan, eligible_ids=eligible_ids)
+        if len(scoped) < 2 or any(item_id not in self._bodies for item_id in scoped):
+            return None
+        layout = body_layout(atoms, title_index, sources, panel_box, allow_wrapped_gap=True)
+        gaps = layout.get("wrapped_gaps", ())
+        if (layout["status"] != "resolved" or len(gaps) != 1 or any(
+                entry["reason"] in ("after_body_geometric_gap", "outside_connected_body_column")
+                for entry in layout.get("rejected", ()))):
+            return None
+        rows = layout["atoms"]
+        gap_row = next(i for i, row in enumerate(rows) if row[-1] == gaps[0]["after_atom_index"])
+        prior, _ = atom_text_view(atoms, {"atoms": [rows[gap_row]]})
+        paragraphs = {normalize(paragraph) for item_id in scoped
+                      for paragraph in self._references[item_id]["paragraphs"]}
+        if not any(paragraph[:-1] == prior and paragraph[-1:].isalpha()
+                   and not paragraph[-1:].isnumeric() for paragraph in paragraphs):
+            return None
+        tail = []
+        for row in rows[gap_row + 1:]:
+            row_text, _ = atom_text_view(atoms, {"atoms": [row]})
+            literals, values, _ = source_field(row_text)
+            if row_text not in paragraphs:
+                return None
+            if _is_complete_numeric_field(literals, values):
+                tail.append(tuple(row))
+        if not tail:
+            return None
+        text, spans = atom_text_view(atoms, layout)
+        result = self._resolve(title, text, spans, plan=plan, eligible_ids=eligible_ids,
+                               layout_diagnostics={"panel_box": panel_box, "status": layout["status"],
+                                                   "reason": "wrapped_numeric_paragraph",
+                                                   "body_atom_indices": rows,
+                                                   "excluded_atom_count": len(layout.get("rejected", ())),
+                                                   "uncertainty": ()})
+        if (result.status != "unique" or "reference_difference" not in
+                result.diagnostics["positive_support"][result.ids[0]]):
+            return None
+        item_id = result.ids[0]
+        observed = tuple(match.group() for match in NUMBER.finditer(text))
+        expected = tuple(match.group() for match in NUMBER.finditer(self._bodies[item_id]))
+        if observed != expected:
+            return None
+        # The independent, complete tail paragraph itself must distinguish the
+        # family; no earlier partial body field can authorize this recovery.
+        tail_text, tail_spans = atom_text_view(atoms, {"atoms": tail})
+        tail_result = self._resolve(title, tail_text, tail_spans, plan=plan, eligible_ids=eligible_ids)
+        if tail_result.status != "unique" or tail_result.ids != result.ids:
+            return None
+        return PItemDetailTextResult("unique", result.ids, "wrapped_numeric_paragraph_recovery", {
+            **result.diagnostics,
+            "numeric_paragraph_recovery": {"paragraph_atom_indices": tail, "wrapped_gaps": gaps,
+                                           "observed_text": text, "observed_numbers": observed,
+                                           "numeric_value_edits": 0, "inserted_characters": 0,
+                                           "additional_ocr_calls": 0},
+        })
+
     def _recover_delay_bullet(
         self, atoms: list[dict], title_index: int, layout: dict,
         result: PItemDetailTextResult, *, plan: str | None,
@@ -642,6 +734,11 @@ class PItemDetailTextIndex:
                 return recovered
         if result.reason == "insufficient_difference_evidence" and panel_box is not None:
             recovered = self._recover_wrapped_body(atom_rows, title_index, sources, panel_box, plan=plan, eligible_ids=eligible_ids)
+            if recovered is not None:
+                return recovered
+            recovered = self._recover_wrapped_numeric_paragraph(
+                atom_rows, title_index, sources, panel_box, plan=plan, eligible_ids=eligible_ids,
+            )
             if recovered is not None:
                 return recovered
             if detail_image is not None and layout["status"] == "resolved":

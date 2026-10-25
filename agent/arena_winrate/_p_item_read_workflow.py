@@ -48,6 +48,8 @@ class PItemWorkflowClock(Protocol):
 
 class PItemWorkflowLogger(Protocol):
     def info(self, message: str) -> Any: ...
+    def warning(self, message: str) -> Any: ...
+    def bind(self, **kwargs: Any) -> PItemWorkflowLogger: ...
 
 
 class PItemReadPort(Protocol):
@@ -570,12 +572,14 @@ class PItemDetailWorkflow:
         session_factory: Callable[..., Any],
         probe_factory: Callable[..., Any],
         probe_root: str | Path,
+        logger: PItemWorkflowLogger | None = None,
     ) -> None:
         self.port = port
         self.clock = clock
         self.session_factory = session_factory
         self.probe_factory = probe_factory
         self.probe_root = probe_root
+        self.logger = logger
 
     def confirm_detail(
         self,
@@ -594,6 +598,7 @@ class PItemDetailWorkflow:
         failed_before = len(getattr(self.port, "_runtime_duration_samples", {}).get("p_item_detail_failed_transaction", ()))
         if getattr(self.port, "_detail_failure_frames", None) is None:
             self.port._begin_detail_diagnostics(kind="p_item", box=list(box), source=source_images[0] if source_images else None)
+        self.port._detail_failure_frames.pop("p_item_ordinary_title_fallback", None)
         probe = getattr(self.port, "_recognition_probe", None)
         if probe is None:
             probe = self.port._recognition_probe = self.probe_factory(self.probe_root)
@@ -624,8 +629,28 @@ class PItemDetailWorkflow:
             self.port._persist_detail_failure(str(error))
             raise
         self.port._save_recognition_probe(self.port._detail_failure_frames, "completed", None)
+        self._log_ordinary_title_fallback(result)
         self.port._detail_failure_frames = None
         return result
+
+    def _log_ordinary_title_fallback(self, result: int) -> None:
+        detail = self.port._detail_failure_frames
+        proof = detail.get("p_item_ordinary_title_fallback") if detail is not None else None
+        if self.logger is None or not isinstance(proof, Mapping) or proof.get("assumed") is not True or proof.get("resolved_id") != result:
+            return
+        title = proof.get("title_text")
+        if not isinstance(title, str) or not title.strip():
+            return
+        self.logger.info(json.dumps({
+            "event": "arena_p_item_ordinary_title_fallback",
+            "resolved_id": result,
+            "title_text": title,
+            "proof": dict(proof),
+            "location": dict(detail.get("position", {})),
+            "transaction_id": detail.get("transaction_id"),
+            "member_read_id": detail.get("member_read_id"),
+        }, ensure_ascii=False))
+        self.logger.bind(ui_visible=True).warning(f"P 道具「{title}」正文未能区分普通／强化，已按普通态继续")
 
     def confirm_detail_once(
         self,
