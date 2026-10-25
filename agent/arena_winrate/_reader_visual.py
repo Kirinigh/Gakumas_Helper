@@ -1103,7 +1103,7 @@ def _isolated_p_item_title_row(
     image: Any, source_images: Sequence[Any], atoms: Sequence[dict[str, Any]],
 ) -> _PItemPanelRow | None:
     """Recover only the top row of a proven new panel, never search prose for a name."""
-    from arena_winrate._detail_title_region import _white_detail_panels, isolated_p_item_body_region
+    from arena_winrate._detail_title_region import _white_detail_panels, _isolated_p_item_body_region
 
     panels = _white_detail_panels(image)
     if len(panels) != 1:
@@ -1124,7 +1124,7 @@ def _isolated_p_item_title_row(
     title_box = tuple(v * scale for v, scale in zip(rows[0][1], (sx, sy, sx, sy), strict=True))
     if title_box[1] - py > height * .018:
         return None  # A missing title must not promote the first effect line.
-    if isolated_p_item_body_region(image, source_images, title_box) is None:
+    if _isolated_p_item_body_region(image, source_images, title_box, panels=panels) is None:
         return None
     return rows[0]
 

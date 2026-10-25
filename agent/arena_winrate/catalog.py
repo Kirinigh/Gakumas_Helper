@@ -3942,20 +3942,24 @@ class ArenaEntityCatalog:
                 )
 
         merged = f"\n{_OCR_EFFECT_VIEW_BOUNDARY}\n".join(views)
+        compact_views: tuple[str, ...] | None = None
+        merged_compact = ""
         for customization_id in available:
             matcher = self._cached_effective_detail_matcher(card, customization_id)
             if matcher is None:
                 continue
+            if compact_views is None:
+                compact_views = tuple(_normalise_effect_text(view) for view in views)
+                merged_compact = _normalise_effect_text(merged)
             maximum = int(self._customizations[customization_id]["max"])
             source_levels = tuple(
                 frozenset(
                     level
                     for level in range(maximum + 1)
-                    if matcher(_normalise_effect_text(view), level)
+                    if matcher(compact_view, level)
                 )
-                for view in views
+                for compact_view in compact_views
             )
-            merged_compact = _normalise_effect_text(merged)
             merged_levels = frozenset(
                 level
                 for level in range(maximum + 1)

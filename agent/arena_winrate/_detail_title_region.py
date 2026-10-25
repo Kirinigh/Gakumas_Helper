@@ -110,11 +110,20 @@ def isolated_p_item_body_region(
     image: np.ndarray, sources: Sequence[np.ndarray], title_box: tuple[int, int, int, int],
 ) -> tuple[int, int, int, int] | None:
     """Bound an existing P-item tooltip without guessing its title or effects."""
+    return _isolated_p_item_body_region(image, sources, title_box)
+
+
+def _isolated_p_item_body_region(
+    image: np.ndarray, sources: Sequence[np.ndarray], title_box: tuple[int, int, int, int],
+    *, panels: Sequence[tuple[int, int, int, int]] | None = None,
+) -> tuple[int, int, int, int] | None:
+    """Reuse only a panel scan from this image in the current caller invocation."""
     if (image.ndim != 3 or image.shape[2] != 3 or len(sources) != 3
             or any(source.shape != image.shape for source in sources)):
         return None
     height, width = image.shape[:2]
-    panels = _white_detail_panels(image)
+    if panels is None:
+        panels = _white_detail_panels(image)
     if len(panels) != 1:
         return None
     x, y, w, h = panels[0]
