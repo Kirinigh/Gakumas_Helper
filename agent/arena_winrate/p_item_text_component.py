@@ -127,15 +127,29 @@ def coverage_warnings(bundle: Path, fallback: Path) -> tuple[str, ...]:
     except (OSError, ValueError):
         if bound is not None:
             raise
-        return ("P道具正文对照资源不可用；现有图像和唯一标题确认仍可使用，遇到正文缺项将明确提示。",)
-    coverage = reference_coverage(reference, read_p_item_rows(bundle))
-    gaps = sorted(set(coverage["missing_ids"]) | set(coverage["binding_mismatch_ids"]))
-    if not gaps:
-        return ()
-    return ("P道具正文对照尚未覆盖当前 RIS 的 " + str(len(gaps))
-            + " 项（ID：" + ", ".join(map(str, gaps[:16]))
-            + ("…" if len(gaps) > 16 else "")
-            + "）。已支持的道具仍可使用；遇到缺项将明确提示，重启客户端可检查正文更新。",)
+        return ("P道具正文资料不可用；现有图像和唯一标题确认仍可使用，需要正文区分时将无法确认，请等待正文资料补齐。",)
+    rows = read_p_item_rows(bundle)
+    coverage = reference_coverage(reference, rows)
+    missing = set(coverage["missing_ids"])
+    mismatched = set(coverage["binding_mismatch_ids"]) - missing
+    names = {row["id"]: row.get("name") for row in rows}
+
+    def describe(ids: set[int]) -> str:
+        entries = []
+        for item_id in sorted(ids)[:16]:
+            name = names.get(item_id)
+            name = re.sub(r"\s+", " ", name).strip() if isinstance(name, str) else ""
+            entries.append(f"「{name}」（ID {item_id}）" if name else f"ID {item_id}")
+        return "、".join(entries) + ("…" if len(ids) > 16 else "")
+
+    warnings = []
+    if missing:
+        warnings.append(f"P道具正文资料尚未补齐 {len(missing)} 项：{describe(missing)}。"
+                        "已支持的道具可继续使用；上述道具若需要正文区分，将无法确认，需等待资料补齐。")
+    if mismatched:
+        warnings.append(f"P道具正文资料与当前 RIS 不匹配 {len(mismatched)} 项：{describe(mismatched)}。"
+                        "已支持的道具可继续使用；上述道具若需要正文区分，将无法确认，需同步正文资料。")
+    return tuple(warnings)
 
 
 class GitHubPItemTextSource:
