@@ -566,19 +566,12 @@ class PItemDetailTextIndex:
                               "numeric_edits": 0, "additional_ocr_calls": 0},
         })
 
-    def _recover_wrapped_numeric_paragraph(
+    def _wrapped_body_tail(
         self, atoms: list[dict], title_index: int, sources: PItemSourceTextFrames,
         panel_box: tuple[int, int, int, int], *, plan: str | None,
         eligible_ids: frozenset[int] | None,
-    ) -> PItemDetailTextResult | None:
-        """Read an intact numeric paragraph beyond one proved missing wrap.
-
-        The earlier complete-body proof remains preferred. Here unrelated
-        missing trigger words/punctuation cannot hide an intact cost, but the
-        wrap row still has exactly one missing final source letter. No text is
-        inserted and every observed numeric token must match the whole source
-        in order, including otherwise unclaimed independent digits.
-        """
+    ) -> tuple[dict, int, set[str]] | None:
+        """Prove one bounded missing wrap before considering its tail text."""
         title = str(atoms[title_index]["text"])
         scoped = self.family_ids_for_title(title, plan=plan, eligible_ids=eligible_ids)
         if len(scoped) < 2 or any(item_id not in self._bodies for item_id in scoped):
@@ -597,6 +590,29 @@ class PItemDetailTextIndex:
         if not any(paragraph[:-1] == prior and paragraph[-1:].isalpha()
                    and not paragraph[-1:].isnumeric() for paragraph in paragraphs):
             return None
+        return layout, gap_row, paragraphs
+
+    def _recover_wrapped_numeric_paragraph(
+        self, atoms: list[dict], title_index: int, sources: PItemSourceTextFrames,
+        panel_box: tuple[int, int, int, int], *, plan: str | None,
+        eligible_ids: frozenset[int] | None,
+    ) -> PItemDetailTextResult | None:
+        """Read an intact numeric paragraph beyond one proved missing wrap.
+
+        The earlier complete-body proof remains preferred. Here unrelated
+        missing trigger words/punctuation cannot hide an intact cost, but the
+        wrap row still has exactly one missing final source letter. No text is
+        inserted and every observed numeric token must match the whole source
+        in order, including otherwise unclaimed independent digits.
+        """
+        candidate = self._wrapped_body_tail(
+            atoms, title_index, sources, panel_box, plan=plan, eligible_ids=eligible_ids,
+        )
+        if candidate is None:
+            return None
+        layout, gap_row, paragraphs = candidate
+        rows, gaps = layout["atoms"], layout["wrapped_gaps"]
+        title = str(atoms[title_index]["text"])
         tail = []
         for row in rows[gap_row + 1:]:
             row_text, _ = atom_text_view(atoms, {"atoms": [row]})
@@ -634,6 +650,51 @@ class PItemDetailTextIndex:
                                            "observed_text": text, "observed_numbers": observed,
                                            "numeric_value_edits": 0, "inserted_characters": 0,
                                            "additional_ocr_calls": 0},
+        })
+
+    def _retain_wrapped_numeric_conflicts(
+        self, atoms: list[dict], title_index: int, sources: PItemSourceTextFrames,
+        panel_box: tuple[int, int, int, int], result: PItemDetailTextResult, *,
+        plan: str | None, eligible_ids: frozenset[int] | None,
+    ) -> PItemDetailTextResult:
+        """An excluded complete field can reject an assumption, never prove it."""
+        candidate = self._wrapped_body_tail(
+            atoms, title_index, sources, panel_box, plan=plan, eligible_ids=eligible_ids,
+        )
+        if candidate is None:
+            return result
+        layout, gap_row, _ = candidate
+        conflicts = {item_id: list(entries) for item_id, entries in result.diagnostics["conflicts"].items()}
+        retained = []
+        for row in layout["atoms"][gap_row + 1:]:
+            text, spans = atom_text_view(atoms, {"atoms": [row]})
+            literals, values, _ = source_field(text)
+            if not _is_complete_numeric_field(literals, values) or literals not in self._complete_fields:
+                continue
+            observed = self._resolve(str(atoms[title_index]["text"]), text, spans,
+                                     plan=plan, eligible_ids=eligible_ids)
+            added = False
+            for item_id, entries in observed.diagnostics["conflicts"].items():
+                for entry in entries:
+                    if entry["reason"] in {
+                        "explicit_complete_field_value_conflict", "explicit_reference_field_conflict",
+                        "explicit_known_field_absent_from_family",
+                    }:
+                        conflicts[item_id].append({**entry, "evidence": "wrapped_numeric_tail",
+                                                   "atom_indices": tuple(row)})
+                        added = True
+            if added:
+                retained.append({"text": text, "atom_indices": tuple(row)})
+        if not retained:
+            return result
+        return PItemDetailTextResult(result.status, result.ids, result.reason, {
+            **result.diagnostics,
+            "conflicts": conflicts,
+            "wrapped_numeric_negative_evidence": {
+                "observed_fields": retained, "wrapped_gaps": layout["wrapped_gaps"],
+                "numeric_value_edits": 0, "additional_ocr_calls": 0,
+                "positive_confirmation": False,
+            },
         })
 
     def _recover_delay_bullet(
@@ -818,6 +879,12 @@ class PItemDetailTextIndex:
                         # short-field conclusion cannot hide a newly observed
                         # contradiction elsewhere in the original body.
                         return recovered
+        if (result.status == "ambiguous" and result.reason == "insufficient_difference_evidence"
+                and panel_box is not None):
+            return self._retain_wrapped_numeric_conflicts(
+                atom_rows, title_index, sources, panel_box, result,
+                plan=plan, eligible_ids=eligible_ids,
+            )
         return result
 
     def match_text(self, title_text: str, detail_text: str, *, plan: str | None = None, eligible_ids: frozenset[int] | None = None) -> PItemDetailTextResult:

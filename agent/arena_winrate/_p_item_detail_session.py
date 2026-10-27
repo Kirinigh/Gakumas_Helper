@@ -89,6 +89,7 @@ class PItemDetailSession:
         self.last_source_visual_errors: tuple[float, ...] = ()
         self.last_source_match_route = "none"
         self.last_source_row_uncertain = False
+        self.isolated_title_family_proven = False
         self.consecutive_source_transition_reads = 0
         self.last_frame_may_have_overlay = False
         self.last_family_title = None
@@ -325,7 +326,8 @@ class PItemDetailSession:
         family = self.raw_matches if (
             new_detail and self.image is not None and self.source_images
             and not any(self.image is source for source in self.source_images)
-            and not self.last_source_row_uncertain and self.last_title_text
+            and (not self.last_source_row_uncertain or getattr(self, "isolated_title_family_proven", False))
+            and self.last_title_text
         ) else ()
         rows = getattr(self.backend.catalog, "_p_items_by_id", {})
         catalog_titles = {self.evidence.normalize_title_row(str(rows.get(item_id, {}).get("name", ""))) for item_id in family}
@@ -412,6 +414,7 @@ class PItemDetailSession:
         self.transaction_states.extend(("ORDINARY_TITLE_FALLBACK", "RESOLVED"))
 
     def _observe_detail(self):
+        self.isolated_title_family_proven = False
         try:
             self.image = self.backend._capture()
             ocr_started = self.clock.perf_counter()
@@ -550,6 +553,20 @@ class PItemDetailSession:
                     self.last_title_text, row_box, isolated_components = isolated_row
                     components = tuple((text, self.evidence.normalize_title_row(text), bounds) for text, bounds in isolated_components)
                     self.raw_matches = self.evidence.match_title_rows(self.last_title_text)
+                    exact_family = self.evidence.match_title_rows_exact(self.last_title_text)
+                    rows = getattr(self.backend.catalog, "_p_items_by_id", {})
+                    names = {
+                        self.evidence.normalize_title_row(str(rows.get(item_id, {}).get("name", ""))).removesuffix("+")
+                        for item_id in self.raw_matches
+                    }
+                    # A proved fuzzy family may retain contradictory evidence;
+                    # it still cannot authorize an exact ordinary signature.
+                    self.isolated_title_family_proven = bool(self.raw_matches and len(names) == 1 and "" not in names)
+                    if exact_family == self.raw_matches and self.isolated_title_family_proven:
+                        # The new panel's first row independently proves the
+                        # title. Earlier OCR drift in a background source row
+                        # no longer makes this same-frame title uncertain.
+                        self.last_source_row_uncertain = False
                     self.backend._increment("p_item_isolated_title_reuses")
             self.matches = self.raw_matches
             self.effect_disambiguated = False
