@@ -702,7 +702,7 @@ class ArenaEntityCatalog:
         *,
         plan: str | None = None,
     ) -> tuple[int, ...]:
-        """Return P-items that can affect an arena-stage simulation.
+        """Return arena P-items requiring real image coverage, excluding placeholders.
 
         The engine EntityBank arena selector requests ``modes: ["stage"]``;
         its coverage and generated-suite tests use the same reachability rule.

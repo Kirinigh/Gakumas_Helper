@@ -10,6 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 from collections.abc import Mapping, Sequence
 
+from ._p_item_eligibility import ArenaPItemEligibility
 from .p_item_text_reference import (
     MAX_REFERENCE_BYTES,
     reference_coverage,
@@ -130,8 +131,9 @@ def coverage_warnings(bundle: Path, fallback: Path) -> tuple[str, ...]:
         return ("P道具正文资料不可用；现有图像和唯一标题确认仍可使用，需要正文区分时将无法确认，请等待正文资料补齐。",)
     rows = read_p_item_rows(bundle)
     coverage = reference_coverage(reference, rows)
-    missing = set(coverage["missing_ids"])
-    mismatched = set(coverage["binding_mismatch_ids"]) - missing
+    placeholders = ArenaPItemEligibility(rows).reference_placeholder_ids
+    missing = set(coverage["missing_ids"]) - placeholders
+    mismatched = set(coverage["binding_mismatch_ids"]) - missing - placeholders
     names = {row["id"]: row.get("name") for row in rows}
 
     def describe(ids: set[int]) -> str:
