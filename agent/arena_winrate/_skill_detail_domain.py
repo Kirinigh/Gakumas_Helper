@@ -101,6 +101,67 @@ def _panel_core(image: np.ndarray, panel: Box) -> np.ndarray:
     return cv2.erode(core, np.ones((3, 3), np.uint8)).astype(bool)
 
 
+def _old_edge_pixels(
+    image: np.ndarray, sources: Sequence[np.ndarray], box: Box, panel: Box, core: np.ndarray,
+) -> bool:
+    """Prove exposed source ink when the ordinary shadow mask has no room.
+
+    This does not relax an observed pixel contradiction. Only a box crossing
+    the panel with insufficient ordinary exposed area can use this proof.
+    New ink in a rounded corner and changes to exposed strokes still veto it.
+    """
+    x, y, w, h = box
+    px, py, pw, ph = panel
+    left, top, right, bottom = max(x, px), max(y, py), min(x + w, px + pw), min(y + h, py + ph)
+    if left >= right or top >= bottom:
+        return False
+    margin = max(3, round(image.shape[1] * .01))
+    shadow_width = max(0, min(x + w, px + pw + margin) - max(x, px - margin))
+    shadow_height = max(0, min(y + h, py + ph + margin) - max(y, py - margin))
+    if w * h - shadow_width * shadow_height >= w * h * .25:
+        return False
+    exposed = np.ones((h, w), bool)
+    exposed[top - y:bottom - y, left - x:right - x] = False
+    if exposed.sum() < w * h * .25:
+        return False
+    local_core = np.zeros((h, w), bool)
+    local_core[top - y:bottom - y, left - x:right - x] = core[top - py:bottom - py, left - px:right - px]
+    # The core was eroded by one pixel. Restore its surface plus the existing
+    # one-pixel antialias boundary, restricted to the proven panel rectangle.
+    covered = np.zeros((h, w), bool)
+    surface_edge = cv2.dilate(core.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
+    covered[top - y:bottom - y, left - x:right - x] = surface_edge[top - py:bottom - py, left - px:right - px]
+    current = image[y:y + h, x:x + w].astype(np.int16)
+    current_dark = current.min(axis=2) < 230
+    if np.any(current_dark & local_core):
+        return False
+    votes = 0
+    for source in sources:
+        previous = source[y:y + h, x:x + w].astype(np.int16)
+        delta = np.abs(current - previous)
+        visible_delta = delta[exposed]
+        if visible_delta.mean() > 4 or (visible_delta.max(axis=1) > 32).mean() > .01:
+            continue
+        previous_dark = previous.min(axis=2) < 230
+        current_strong = current.min(axis=2) < 230 - 32
+        previous_strong = previous.min(axis=2) < 230 - 32
+        # A blank tail cannot explain a character. Strong exposed ink must
+        # remain at the same pixels; the aggregate 1% allowance is not a
+        # licence to add/remove one stroke in a small glyph.
+        if (not np.any(exposed & current_strong & previous_dark)
+                or np.any(exposed & (current_strong | previous_strong) & (delta.max(axis=2) > 32))):
+            continue
+        # White panel coverage can brighten old ink inside its rectangle.
+        # A new dark stroke outside the actual surface has no such explanation,
+        # even if an unchanged old right-hand tail passes the exposed-area gate.
+        if np.any(~local_core & current_dark & ((previous - current).max(axis=2) > 32)):
+            continue
+        if np.any(~covered & previous_dark & ((current - previous).max(axis=2) > 32)):
+            continue
+        votes += 1
+    return votes >= 2
+
+
 def attribute_skill_detail(
     image: np.ndarray, sources: Sequence[np.ndarray], items: Sequence[Any], *, title_box: Box | None = None,
 ) -> SkillDetailDomain:
@@ -151,7 +212,8 @@ def attribute_skill_detail(
         possible_operand = any(character.isnumeric() for character in text) or text[:1] in {"+", "-", "−"}
         empty_surface_overlap = (overlaps and not crossing_ink and decoration and not _EFFECT.search(text)
                                  and not (incomplete and possible_operand))
-        if not crossing_ink and (empty_surface_overlap or not relevant or _old_pixels(image, sources, box, panel)):
+        if not crossing_ink and (empty_surface_overlap or not relevant or _old_pixels(image, sources, box, panel)
+                                 or (overlaps and not incomplete and _old_edge_pixels(image, sources, box, panel, core))):
             background.append(item)
         else:
             unknown.append(item)
