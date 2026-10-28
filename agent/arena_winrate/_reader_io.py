@@ -157,11 +157,9 @@ class IoReader:
         if not evidence.hit:
             raise ArenaReaderError("ocr_empty", "full-screen OCR returned no text")
         items = list(evidence.all_items)
-        # Skill details and their title-bound ROI must use the same visual
-        # rows. Maa's top-edge ordering can otherwise place a taller right
-        # fragment before its left-hand score on the very same line.
-        detail_capture = getattr(self.port, "_full_frame_ocr_kind_hint", None) == "detail_capture"
-        if spatial_reading_order or (detail_capture and len(items) > 1):
+        # Semantic detail callers attribute the cached boxes before ordering.
+        # A generic full-screen observation is diagnostic, never a paragraph.
+        if spatial_reading_order:
             return self.port._spatial_ocr_text(items)
         return "\n".join(_text(item) for item in items)
 

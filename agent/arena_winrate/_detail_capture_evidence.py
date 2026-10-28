@@ -24,6 +24,9 @@ class _FullFrameOcrEvidence(NamedTuple):
     filtered_items: tuple[Any, ...]
     all_items: tuple[Any, ...]
     reco_id: int | None = None
+    skill_domain: Any = None
+    skill_domain_binding: tuple | None = None
+    skill_body_repair: Any = None
 
 
 class _TitleAnchorOcrEvidence(NamedTuple):

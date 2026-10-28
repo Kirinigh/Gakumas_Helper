@@ -81,7 +81,8 @@ def isolated_title_region(
 
 def _white_detail_panels(image: np.ndarray) -> list[tuple[int, int, int, int]]:
     height, width = image.shape[:2]
-    white = (image.min(axis=2) >= 250).astype(np.uint8)
+    white = (cv2.inRange(image, (250, 250, 250), (255, 255, 255))
+             if image.dtype == np.uint8 else (image.min(axis=2) >= 250).astype(np.uint8))
     _, labels, stats, _ = cv2.connectedComponentsWithStats(white)
     panels = []
     for label, (x, y, w, h, area) in enumerate(stats[1:], 1):

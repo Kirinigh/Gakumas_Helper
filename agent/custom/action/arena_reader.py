@@ -1829,8 +1829,8 @@ class MaaArenaReaderBackend:
             source_card_slot=source_card_slot,
         )
 
-    def _skill_card_detail_ocr_text(self, image: Any, *, phase: str) -> str:
-        return self._component_detail_effect_ocr()._skill_card_detail_ocr_text(image, phase=phase)
+    def _skill_card_detail_ocr_text(self, image: Any, *, phase: str, key: tuple[int, int] | None = None) -> str:
+        return self._component_detail_effect_ocr()._skill_card_detail_ocr_text(image, phase=phase, key=key)
 
     _title_anchored_effect_roi = staticmethod(_reader_visual._title_anchored_effect_roi)
 
