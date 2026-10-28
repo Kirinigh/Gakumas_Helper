@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 import json
-import unicodedata
 from typing import Any, Protocol
 from collections.abc import Callable, Sequence
 
@@ -33,7 +32,7 @@ class DetailEffectOcrPort(Protocol):
     def _add_timing(self, name: str, elapsed: float) -> None: ...
 
     def _auxiliary_badge_glyph_count(
-        self, key: tuple[int, int], *, maximum_count: int, admissible_counts: Sequence[int] | None = None, allow_ocr: bool = True
+        self, key: tuple[int, int], *, maximum_count: int, admissible_counts: Sequence[int] | None = None, allow_ocr: bool | None = None
     ) -> int: ...
 
     def _background_parameter_column_left(
@@ -242,7 +241,6 @@ class DetailEffectOcr:
                         key,
                         maximum_count=maximum,
                         admissible_counts=tuple(by_count),
-                        allow_ocr=False,
                     )
                     if count == 0:
                         return None

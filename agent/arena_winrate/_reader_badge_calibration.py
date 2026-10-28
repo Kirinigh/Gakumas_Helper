@@ -63,8 +63,7 @@ def _stable_badge_glyph_exemplar_signature(
 ):
     """Return one exact tail-stable glyph plus its normalized geometry.
 
-    This is stricter than the generic OCR fallback.  An exemplar is valid
-    only when every frozen source frame contains exactly one component and
+    An exemplar is valid only when every frozen source frame contains exactly one component and
     the final two chronological frames have byte-identical descriptors and
     normalized geometry.  The first frame may be a narrowly bounded
     contour-rasterization outlier with the same component box; an unordered
@@ -234,11 +233,11 @@ def _badge_glyph_frames_are_bounded_raster_settling(
     BADGE_GLYPH_RASTER_SETTLING_L1_MAX: float,
     BADGE_GLYPH_RASTER_SETTLING_XOR_MAX: float,
 ) -> bool:
-    """Allow independent OCR across one narrowly settling glyph contour.
+    """Classify one narrowly settling contour without assigning a count.
 
     This is deliberately weaker than an exemplar signature and therefore
-    returns only a boolean.  All three frames still go through multi-view
-    OCR and must independently choose the same validated digit.  An
+    returns only a boolean, never a numeric label or permission to recognize
+    one.  Without an independent image exemplar the count stays unknown. An
     unordered majority, averaged descriptor, nearest-neighbour label, or
     changing component geometry remains ineligible.
     """

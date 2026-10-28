@@ -95,7 +95,6 @@ from arena_winrate._p_item_read_workflow import p_item_decision_evidence as _com
 from arena_winrate._reader_badge_capture import BadgeCapture
 from arena_winrate._reader_badge_capture import _parallel_badge_jobs as _component_function_parallel_badge_jobs
 from arena_winrate._reader_badge_capture import _badge_detail_inferable as _component_function_badge_detail_inferable
-from arena_winrate._reader_badge_capture import _badge_glyph_ocr_canvases as _component_function_badge_glyph_ocr_canvases
 from arena_winrate._reader_badge_capture import (
     _badge_glyph_observations_need_fresh_group as _component_function_badge_glyph_observations_need_fresh_group,
 )
@@ -206,14 +205,6 @@ BADGE_GLYPH_FRESH_GROUP_INTERVAL_SECONDS = 0.08
 # Capture starts can occur at 0.00 through 0.56 seconds; a ninth start at
 # 0.64 seconds would exceed the fixed deadline.
 BADGE_GLYPH_FRESH_GROUP_MAX_FRAMES = 8
-# The packaged OCR and current extractor have independent positive holdout
-# coverage for count 1 only.  The wider 1-9 recognition domain remains active
-# as a veto except for one audited preprocessing shape: both wider polarity
-# pairs agree on the validated winner while the narrowest pair contains that
-# winner plus exactly one digit outside both the detail and validated domains.
-# A readable competing legal or validated count still stops and can never be
-# hidden by the clicked card's legal-state filter.
-BADGE_GLYPH_OCR_VALIDATED_ACCEPTANCE_COUNTS = frozenset((1,))
 
 
 class _BadgeShortlistResult(NamedTuple):
@@ -1004,9 +995,6 @@ class MaaArenaReaderBackend:
     def _bind_badge_glyph_task_domain(self, frames: Sequence[Any]) -> None:
         return self._component_badge_capture()._bind_badge_glyph_task_domain(frames)
 
-    @staticmethod
-    def _badge_glyph_ocr_canvases(descriptor: Any) -> tuple[tuple[int, str, Any], ...]:
-        return _component_function_badge_glyph_ocr_canvases(descriptor)
 
     @staticmethod
     def _stable_badge_glyph_exemplar_signature(
@@ -1128,10 +1116,12 @@ class MaaArenaReaderBackend:
         )
 
     def _auxiliary_badge_glyph_count(
-        self, key: tuple[int, int], *, maximum_count: int, admissible_counts: Sequence[int] | None = None, allow_ocr: bool = True
+        self, key: tuple[int, int], *, maximum_count: int, admissible_counts: Sequence[int] | None = None, allow_ocr: bool | None = None
     ) -> int:
+        # Legacy callers may supply this keyword; it cannot enable recognition.
+        del allow_ocr
         return self._component_badge_inference()._auxiliary_badge_glyph_count(
-            key, maximum_count=maximum_count, admissible_counts=admissible_counts, allow_ocr=allow_ocr
+            key, maximum_count=maximum_count, admissible_counts=admissible_counts
         )
 
     def _card_recognizer(self, *, customized: bool) -> tuple[EmbeddingCardRecognizer, float, float]:
@@ -2176,7 +2166,7 @@ class MaaArenaReaderBackend:
         )
 
     def _component_badge_inference(self) -> BadgeInference:
-        return BadgeInference(self, clock=time, validated_acceptance_counts=BADGE_GLYPH_OCR_VALIDATED_ACCEPTANCE_COUNTS)
+        return BadgeInference(self, clock=time)
 
     def _component_badge_runtime(self) -> BadgeRuntime:
         return BadgeRuntime(self)
