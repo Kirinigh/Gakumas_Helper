@@ -567,6 +567,8 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
         self._entry_deadline = deadline
         returns = 0
         home_entry_sent = False
+        home_return_sent = False
+        home_return_pending = False
         title_seen = False
         title_start_sent = False
         startup_actions = {}
@@ -610,6 +612,9 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                 title, tap_box = self._title_start_observation(image, items)
                 if title:
                     last_page = "title"
+                    # A proven title transfers navigation to its existing
+                    # startup handler, including recognized startup popups.
+                    home_return_pending = False
                     if not title_seen:
                         title_seen = True
                         deadline = started + 60.0
@@ -634,6 +639,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                 )
                 if home_page:
                     last_page = "home"
+                    home_return_pending = False
                     if not home_entry_sent:
                         if self._recognize("CloseRoundButton", image) or self._recognize("CloseMenu", image):
                             raise ArenaReaderError("arena_entry_home_overlay", "home navigation is covered by a closeable overlay")
@@ -647,6 +653,10 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                     last_page = state.value
                     succeeded = True
                     return
+                if home_return_pending:
+                    last_page = "home_return_pending"
+                    self._sleep(0.25)
+                    continue
                 stages = matches(r"^ステージ\s*[123]$")
                 totals = matches(r"^総合力$")
                 stamina = matches(r"^体力$")
@@ -669,17 +679,47 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                     if title_start_sent and self._advance_title_startup(image, startup_actions):
                         last_page = "startup_popup"
                         continue
+                    society = matches(r"^サークル$")
+                    request = matches(r"^リクエスト$")
+                    recruit = matches(r"^募集リスト$")
+                    society_page = (
+                        len(society) == len(request) == len(recruit) == 1
+                        and society[0].box[1] < image.shape[0] * 0.15
+                        and request[0].box[1] > image.shape[0] * 0.75
+                        and recruit[0].box[1] > image.shape[0] * 0.75
+                    )
+                    home_navigation = len(home) == 1 and home[0].box[1] > image.shape[0] * 0.85
+                    if society_page:
+                        last_page = "society"
+                    if not home_return_sent and (home_navigation or society_page):
+                        self._check_cancelled()
+                        navigation = self._recognize("ReturnHome", image)
+                        self._check_cancelled()
+                        if len(navigation) == 1 and navigation[0].box[1] > image.shape[0] * 0.85:
+                            home_flag = self._recognize("HomeFlag", image)
+                            self._check_cancelled()
+                            if not home_flag:
+                                if self._recognize("CloseRoundButton", image) or self._recognize("CloseMenu", image):
+                                    raise ArenaReaderError("arena_entry_home_overlay", "home navigation is covered by a closeable overlay")
+                                self._check_cancelled()
+                                home_return_sent = True
+                                home_return_pending = True
+                                self._click(tuple(navigation[0].box))
+                                self._check_cancelled()
+                                self._sleep(0.25)
+                                continue
                     # Loading or an unproven page gets another bounded frame,
                     # never a Back merely because a back-shaped control exists.
                     self._sleep(0.25)
             raise ArenaReaderError(
-                "arena_entry_recovery_exhausted",
+                "arena_entry_home_return_unconfirmed" if home_return_pending else "arena_entry_recovery_exhausted",
                 f"entry remained {last_page} after bounded recovery; back_actions={returns}",
             )
         finally:
             logger.info(json.dumps({
                 "event": "arena_reader_recovery", "action": "entry_return",
                 "succeeded": succeeded, "last_page": last_page, "back_actions": returns,
+                "home_return_sent": home_return_sent,
                 "title_start_sent": title_start_sent, "startup_actions": dict(startup_actions),
                 "wall_seconds": round(time.monotonic() - started, 6),
                 "extra_counts": dict(self._runtime_counts),
