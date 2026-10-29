@@ -11,6 +11,7 @@ import numpy as np
 
 from ._reader_visual import _box, _text, _spatial_ocr_rows
 from ._detail_title_region import _white_detail_panels, detail_title_in_header
+from ._detail_shadow_source import shadow_source_projection
 
 Box = tuple[int, int, int, int]
 _EFFECT = re.compile(r"スコア|元気|集中|好印象|好調|やる気|全力|体力消費|ターン追加|スキルカード|消費|増加|減少|不可|ない|無効|以外|不|無|非|未|禁|除")
@@ -122,17 +123,15 @@ def _surface_coverage(core: np.ndarray, panel: Box, box: Box, radius: int) -> np
 def _old_edge_pixels(
     image: np.ndarray, sources: Sequence[np.ndarray], box: Box, panel: Box, core: np.ndarray,
 ) -> bool:
-    """Prove exposed source ink when the ordinary shadow mask has no room.
+    """Prove nearby source ink when the ordinary shadow mask has no room.
 
-    This does not relax an observed pixel contradiction. Only a box crossing
+    This does not relax an observed pixel contradiction. Only a box near
     the panel with insufficient ordinary exposed area can use this proof.
     New ink in a rounded corner and changes to exposed strokes still veto it.
     """
     x, y, w, h = box
     px, py, pw, ph = panel
     left, top, right, bottom = max(x, px), max(y, py), min(x + w, px + pw), min(y + h, py + ph)
-    if left >= right or top >= bottom:
-        return False
     margin = max(3, round(image.shape[1] * .01))
     shadow_width = max(0, min(x + w, px + pw + margin) - max(x, px - margin))
     shadow_height = max(0, min(y + h, py + ph + margin) - max(y, py - margin))
@@ -143,7 +142,8 @@ def _old_edge_pixels(
     if exposed.sum() < w * h * .25:
         return False
     local_core = np.zeros((h, w), bool)
-    local_core[top - y:bottom - y, left - x:right - x] = core[top - py:bottom - py, left - px:right - px]
+    if left < right and top < bottom:
+        local_core[top - y:bottom - y, left - x:right - x] = core[top - py:bottom - py, left - px:right - px]
     # The existing radius also covers paint outside the contour's crop bbox.
     current = image[y:y + h, x:x + w].astype(np.int16)
     current_dark = current.min(axis=2) < 230
@@ -154,8 +154,6 @@ def _old_edge_pixels(
         previous = source[y:y + h, x:x + w].astype(np.int16)
         delta = np.abs(current - previous)
         visible_delta = delta[exposed]
-        if visible_delta.mean() > 4 or (visible_delta.max(axis=1) > 32).mean() > .01:
-            continue
         previous_dark = previous.min(axis=2) < 230
         current_strong = current.min(axis=2) < 230 - 32
         previous_strong = previous.min(axis=2) < 230 - 32
@@ -172,6 +170,13 @@ def _old_edge_pixels(
             continue
         if np.any(~covered & previous_dark & ((current - previous).max(axis=2) > 32)):
             continue
+        if visible_delta.mean() > 4 or (visible_delta.max(axis=1) > 32).mean() > .01:
+            projected = shadow_source_projection(image, source, box, panel, core, exposed=exposed)
+            if projected is None:
+                continue
+            residual = np.abs(current - projected)[exposed]
+            if residual.mean() > 4 or (residual.max(axis=1) > 32).mean() > .01:
+                continue
         votes += 1
     return votes >= 2
 
@@ -417,7 +422,7 @@ def attribute_skill_detail(
         old_header_label = (title_verified is True and text.isalpha() and not _EFFECT.search(text)
                             and title_box[1] <= y and y + h <= title_box[1] + title_box[3])
         if old_border or old_title_overlap or (not crossing_ink and (empty_surface_overlap or not relevant or _old_pixels(image, sources, box, panel)
-                                               or (overlaps and (not incomplete or old_header_label)
+                                               or ((not incomplete or old_header_label)
                                                    and _old_edge_pixels(image, sources, box, panel, core)))):
             background.append(item)
         else:
