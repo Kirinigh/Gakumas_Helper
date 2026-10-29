@@ -3,6 +3,7 @@
 import re
 import unicodedata
 from typing import Any
+from itertools import combinations
 from dataclasses import dataclass
 from collections.abc import Sequence
 
@@ -13,6 +14,7 @@ from ._reader_visual import _box, _text, _spatial_ocr_rows
 from ._detail_shadow_field import shadow_field_projection, shadow_field_confirms_weak_ink
 from ._detail_title_region import _white_detail_panels, detail_title_in_header
 from ._detail_shadow_source import shadow_source_projection
+from ._decoration_pixel_evidence import has_four_point_decoration_consensus
 
 Box = tuple[int, int, int, int]
 _EFFECT = re.compile(r"スコア|元気|集中|好印象|好調|やる気|全力|体力消費|ターン追加|スキルカード|消費|増加|減少|不可|ない|無効|以外|不|無|非|未|禁|除")
@@ -250,7 +252,24 @@ def _old_border_pixels(
     return votes >= 2
 
 
-def _unfinished_body_operand(items: Sequence[Any], panel: Box, title: Box) -> bool:
+def _body_marker_is_decoration(item: Any, body: Sequence[Any], image: np.ndarray | None) -> bool:
+    """A separately proved bullet is not an unfinished arithmetic operator."""
+    if image is None or _text(item).strip() not in {"+", "＋"}:
+        return False
+    x, y, w, h = _box(item)
+    center_y = y + h / 2
+    anchors = [_box(other) for other in body
+               if sum(char.isalpha() for char in _text(other)) >= 2
+               and _box(other)[0] > x + w + max(h, _box(other)[3]) * .5
+               and abs(_box(other)[1] + _box(other)[3] / 2 - center_y) >= .7 * max(h, _box(other)[3])]
+    nearest = sorted(anchors, key=lambda box: abs(box[1] + box[3] / 2 - center_y))[:4]
+    return any(has_four_point_decoration_consensus(image, (x, y, w, h), pair)
+               for pair in combinations(nearest, 2))
+
+
+def _unfinished_body_operand(
+    items: Sequence[Any], panel: Box, title: Box, *, image: np.ndarray | None = None,
+) -> bool:
     """Keep open operands without treating an icon-split linker as a row end."""
     body = [item for item in items if _contains(panel, _box(item))
             and _box(item)[1] >= title[1] + title[3]]
@@ -259,6 +278,8 @@ def _unfinished_body_operand(items: Sequence[Any], panel: Box, title: Box) -> bo
         return False
     rows = _spatial_ocr_rows(body)
     for item in opened:
+        if _body_marker_is_decoration(item, body, image):
+            continue
         text, box = _text(item).strip(), _box(item)
         index = next((i for i, (_, _, parts) in enumerate(rows)
                       if (text, box) in parts), None)
@@ -441,7 +462,7 @@ def attribute_skill_detail(
     owned, background, unknown = [], [], []
     blocked = False
     core = _panel_core(image, panel)
-    incomplete = _unfinished_body_operand(items, panel, title_box)
+    incomplete = _unfinished_body_operand(items, panel, title_box, image=image)
     for item in items:
         box, text = _box(item), _text(item).strip()
         if not text:

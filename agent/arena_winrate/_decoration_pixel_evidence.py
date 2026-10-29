@@ -24,6 +24,27 @@ def has_repeated_four_point_decoration(
     the same left lane, fully visible, independently star-shaped, and similar.
     No capture, OCR, external template, catalog answer, or cached proof is used.
     """
+    return _four_point_consensus(image, glyph_box, reference_rows, decoration_class=False)
+
+
+def has_four_point_decoration_consensus(
+    image: Any, glyph_box: Box, reference_rows: Sequence[Box],
+) -> bool:
+    """Prove the decoration class from three separately proved star shapes.
+
+    This is not glyph identity, a numeral, or an enhancement-count proof.
+    Candidate and two independent rows retain every original component-shape,
+    position, size and grayscale requirement. Different raster sizes need not
+    match after nearest-neighbor resizing; equal-sized masks retain the old
+    similarity requirement. The candidate row cannot be its own reference.
+    Callers still own the surrounding semantic and isolated-slot requirements.
+    """
+    return _four_point_consensus(image, glyph_box, reference_rows, decoration_class=True)
+
+
+def _four_point_consensus(
+    image: Any, glyph_box: Box, reference_rows: Sequence[Box], *, decoration_class: bool,
+) -> bool:
     import cv2
     import numpy as np
 
@@ -41,6 +62,8 @@ def has_repeated_four_point_decoration(
     centers = [box[1] + box[3] / 2 for box in reference_rows]
     if any(abs(first - second) < 0.7 * font_height
            for index, first in enumerate(centers) for second in centers[index + 1:]):
+        return False
+    if decoration_class and any(abs(y + height / 2 - center) < 0.7 * font_height for center in centers):
         return False
     center_x = x + width / 2
     if any(center_x + 0.75 * font_height >= box[0] for box in reference_rows):
@@ -119,7 +142,8 @@ def has_repeated_four_point_decoration(
         if (abs(reference[0][0] - a) > 0.15 * font_height
                 or abs(reference[0][2] - w) > 0.15 * font_height
                 or abs(reference[0][3] - h) > 0.15 * font_height
-                or np.logical_and(candidate[1], reference[1]).sum()
-                / np.logical_or(candidate[1], reference[1]).sum() < 0.8):
+                or ((not decoration_class or reference[0][2:] == (w, h))
+                    and np.logical_and(candidate[1], reference[1]).sum()
+                    / np.logical_or(candidate[1], reference[1]).sum() < 0.8)):
             return False
     return True
