@@ -102,6 +102,23 @@ def _panel_core(image: np.ndarray, panel: Box) -> np.ndarray:
     return cv2.erode(core, np.ones((3, 3), np.uint8)).astype(bool)
 
 
+def _surface_coverage(core: np.ndarray, panel: Box, box: Box, radius: int) -> np.ndarray:
+    """Map the existing surface dilation without clipping at its crop edge."""
+    px, py, pw, ph = panel
+    x, y, w, h = box
+    covered = np.zeros((h, w), bool)
+    surface = cv2.dilate(
+        np.pad(core.astype(np.uint8), radius), np.ones((radius * 2 + 1, radius * 2 + 1), np.uint8),
+    ).astype(bool)
+    l, t = max(x, px - radius), max(y, py - radius)
+    r, b = min(x + w, px + pw + radius), min(y + h, py + ph + radius)
+    if l < r and t < b:
+        covered[t - y:b - y, l - x:r - x] = surface[
+            t - py + radius:b - py + radius, l - px + radius:r - px + radius,
+        ]
+    return covered
+
+
 def _old_edge_pixels(
     image: np.ndarray, sources: Sequence[np.ndarray], box: Box, panel: Box, core: np.ndarray,
 ) -> bool:
@@ -121,17 +138,13 @@ def _old_edge_pixels(
     shadow_height = max(0, min(y + h, py + ph + margin) - max(y, py - margin))
     if w * h - shadow_width * shadow_height >= w * h * .25:
         return False
-    exposed = np.ones((h, w), bool)
-    exposed[top - y:bottom - y, left - x:right - x] = False
+    covered = _surface_coverage(core, panel, box, 2)
+    exposed = ~covered
     if exposed.sum() < w * h * .25:
         return False
     local_core = np.zeros((h, w), bool)
     local_core[top - y:bottom - y, left - x:right - x] = core[top - py:bottom - py, left - px:right - px]
-    # The core was eroded by one pixel. Restore its surface plus the existing
-    # one-pixel antialias boundary, restricted to the proven panel rectangle.
-    covered = np.zeros((h, w), bool)
-    surface_edge = cv2.dilate(core.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
-    covered[top - y:bottom - y, left - x:right - x] = surface_edge[top - py:bottom - py, left - px:right - px]
+    # The existing radius also covers paint outside the contour's crop bbox.
     current = image[y:y + h, x:x + w].astype(np.int16)
     current_dark = current.min(axis=2) < 230
     if np.any(current_dark & local_core):
@@ -306,19 +319,11 @@ def _old_title_overlap_pixels(
     current = image[y:y + h, x:x + w].astype(np.int16)
     local_core = np.zeros((h, w), bool)
     local_core[t - y:b - y, l - x:r - x] = core[t - py:b - py, l - px:r - px]
-    covered = np.zeros((h, w), bool)
     # Keep the eroded surface plus its three-pixel paint/antialias transition
     # even at the crop edge. Strong new strokes still veto the source proof.
     # Clipping this dilation to the panel bbox would misclassify its genuine
     # outer shadow as new ink, repeating the original rectangle assumption.
-    surface_edge = cv2.dilate(
-        np.pad(core.astype(np.uint8), 3), np.ones((7, 7), np.uint8),
-    ).astype(bool)
-    cl, ct = max(x, px - 3), max(y, py - 3)
-    cr, cb = min(x + w, px + pw + 3), min(y + h, py + ph + 3)
-    covered[ct - y:cb - y, cl - x:cr - x] = surface_edge[
-        ct - py + 3:cb - py + 3, cl - px + 3:cr - px + 3,
-    ]
+    covered = _surface_coverage(core, panel, box, 3)
     current_dark = current.min(axis=2) < 230
     current_strong = current.min(axis=2) < 230 - 32
     votes = 0
@@ -410,8 +415,11 @@ def attribute_skill_detail(
         old_title_overlap = (crossing_ink and title_verified is True and not incomplete
                              and _numeric_background_decoration(text)
                              and _old_title_overlap_pixels(image, sources, box, panel, title_box, core))
+        old_header_label = (title_verified is True and text.isalpha() and not _EFFECT.search(text)
+                            and title_box[1] <= y and y + h <= title_box[1] + title_box[3])
         if old_border or old_title_overlap or (not crossing_ink and (empty_surface_overlap or not relevant or _old_pixels(image, sources, box, panel)
-                                               or (overlaps and not incomplete and _old_edge_pixels(image, sources, box, panel, core)))):
+                                               or (overlaps and (not incomplete or old_header_label)
+                                                   and _old_edge_pixels(image, sources, box, panel, core)))):
             background.append(item)
         else:
             unknown.append(item)
