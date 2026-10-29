@@ -1,6 +1,7 @@
 """Attribute one skill tooltip before any spatial or numeric text assembly."""
 
 import re
+import unicodedata
 from typing import Any
 from dataclasses import dataclass
 from collections.abc import Sequence
@@ -338,6 +339,21 @@ def _old_title_overlap_pixels(
     return votes >= 2
 
 
+def _numeric_background_decoration(text: str) -> bool:
+    """OCR decoration is not an operand; pixel ownership still needs proof."""
+    normalized = unicodedata.normalize("NFKC", text)
+    # Operators, game percentages/points and Japanese effect/unit words must
+    # never borrow the title proof. ASCII OCR confusions and non-math symbols
+    # can, but only alongside a digit and the unchanged old-pixel proof.
+    operator_names = ("PLUS", "MINUS", "MULTIPLICATION", "DIVISION", "EQUAL", "GREATER", "LESS", "PERCENT", "FRACTION", "RATIO")
+    return (any("0" <= char <= "9" for char in normalized)
+            and "pt" not in normalized.casefold()
+            and all(char.isascii() and char.isalnum()
+                    or (unicodedata.category(char) == "So"
+                        and not any(word in unicodedata.name(char, "") for word in operator_names))
+                    for char in normalized))
+
+
 def attribute_skill_detail(
     image: np.ndarray, sources: Sequence[np.ndarray], items: Sequence[Any], *, title_box: Box | None = None,
     title_verified: bool = False,
@@ -392,7 +408,7 @@ def attribute_skill_detail(
                       and not (incomplete and possible_operand)
                       and _old_border_pixels(image, sources, box, panel, core))
         old_title_overlap = (crossing_ink and title_verified is True and not incomplete
-                             and re.fullmatch(r"[0-9]+", text) is not None
+                             and _numeric_background_decoration(text)
                              and _old_title_overlap_pixels(image, sources, box, panel, title_box, core))
         if old_border or old_title_overlap or (not crossing_ink and (empty_surface_overlap or not relevant or _old_pixels(image, sources, box, panel)
                                                or (overlaps and not incomplete and _old_edge_pixels(image, sources, box, panel, core)))):
