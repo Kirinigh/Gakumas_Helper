@@ -254,8 +254,83 @@ def _unfinished_body_operand(items: Sequence[Any], panel: Box, title: Box) -> bo
     return False
 
 
+def _old_title_overlap_pixels(
+    image: np.ndarray, sources: Sequence[np.ndarray], box: Box, panel: Box, title: Box, core: np.ndarray,
+) -> bool:
+    """Separate an old header number's rectangle from a complete title glyph.
+
+    OCR rectangles are not foreground masks. A partially covered background
+    number can include the left edge of a newly drawn, independently confirmed
+    title. Every intersecting glyph must belong wholly to that title and have
+    substantial support outside the background rectangle. Body rows and newly
+    isolated strokes cannot borrow the title's rectangle as a blanket mask.
+    """
+    x, y, w, h = box
+    px, py, pw, ph = panel
+    if not _contains(panel, title) or y + h > title[1] + title[3] or _contains(panel, box):
+        return False
+    l, t, r, b = max(x, px), max(y, py), min(x + w, px + pw), min(y + h, py + ph)
+    if l >= r or t >= b:
+        return False
+    foreground = ((image[py:py + ph, px:px + pw].min(axis=2) < 230) & core).astype(np.uint8)
+    _, labels, stats, _ = cv2.connectedComponentsWithStats(foreground)
+    overlapping = labels[t - py:b - py, l - px:r - px]
+    glyphs = np.unique(overlapping[overlapping != 0])
+    if not len(glyphs):
+        return False
+    for glyph in glyphs:
+        gx, gy, gw, gh, area = map(int, stats[glyph])
+        if (not _contains(title, (px + gx, py + gy, gw, gh))
+                or np.count_nonzero(overlapping == glyph) > area * .75):
+            return False
+
+    margin = max(3, round(image.shape[1] * .01))
+    exposed = np.ones((h, w), bool)
+    a, c = max(0, px - margin - x), min(w, px + pw + margin - x)
+    d, e = max(0, py - margin - y), min(h, py + ph + margin - y)
+    if a < c and d < e:
+        exposed[d:e, a:c] = False
+    if exposed.sum() < w * h * .25:
+        return False
+    current = image[y:y + h, x:x + w].astype(np.int16)
+    local_core = np.zeros((h, w), bool)
+    local_core[t - y:b - y, l - x:r - x] = core[t - py:b - py, l - px:r - px]
+    covered = np.zeros((h, w), bool)
+    # Keep the eroded surface plus its three-pixel paint/antialias transition
+    # even at the crop edge. Strong new strokes still veto the source proof.
+    # Clipping this dilation to the panel bbox would misclassify its genuine
+    # outer shadow as new ink, repeating the original rectangle assumption.
+    surface_edge = cv2.dilate(
+        np.pad(core.astype(np.uint8), 3), np.ones((7, 7), np.uint8),
+    ).astype(bool)
+    cl, ct = max(x, px - 3), max(y, py - 3)
+    cr, cb = min(x + w, px + pw + 3), min(y + h, py + ph + 3)
+    covered[ct - y:cb - y, cl - x:cr - x] = surface_edge[
+        ct - py + 3:cb - py + 3, cl - px + 3:cr - px + 3,
+    ]
+    current_dark = current.min(axis=2) < 230
+    current_strong = current.min(axis=2) < 230 - 32
+    votes = 0
+    for source in sources:
+        previous = source[y:y + h, x:x + w].astype(np.int16)
+        delta = np.abs(current - previous)
+        visible_delta = delta[exposed]
+        previous_strong = previous.min(axis=2) < 230 - 32
+        previous_dark = previous.min(axis=2) < 230
+        if (visible_delta.mean() > 4 or (visible_delta.max(axis=1) > 32).mean() > .01
+                or not np.any(exposed & current_strong & previous_strong)
+                or np.any(exposed & (current_strong | previous_strong) & (delta.max(axis=2) > 32))
+                or np.any(~covered & current_dark & ~previous_dark & ((previous - current).max(axis=2) > 4))
+                or np.any(~local_core & current_dark & ((previous - current).max(axis=2) > 32))
+                or np.any(~covered & previous_dark & ((current - previous).max(axis=2) > 32))):
+            continue
+        votes += 1
+    return votes >= 2
+
+
 def attribute_skill_detail(
     image: np.ndarray, sources: Sequence[np.ndarray], items: Sequence[Any], *, title_box: Box | None = None,
+    title_verified: bool = False,
 ) -> SkillDetailDomain:
     """OWNED / proved BACKGROUND / UNATTRIBUTED, without consulting card values."""
     if (not isinstance(image, np.ndarray) or image.ndim != 3 or image.shape[2] != 3
@@ -306,7 +381,10 @@ def attribute_skill_detail(
         old_border = (crossing_ink and not decoration and not _EFFECT.search(text)
                       and not (incomplete and possible_operand)
                       and _old_border_pixels(image, sources, box, panel, core))
-        if old_border or (not crossing_ink and (empty_surface_overlap or not relevant or _old_pixels(image, sources, box, panel)
+        old_title_overlap = (crossing_ink and title_verified is True and not incomplete
+                             and re.fullmatch(r"[0-9]+", text) is not None
+                             and _old_title_overlap_pixels(image, sources, box, panel, title_box, core))
+        if old_border or old_title_overlap or (not crossing_ink and (empty_surface_overlap or not relevant or _old_pixels(image, sources, box, panel)
                                                or (overlaps and not incomplete and _old_edge_pixels(image, sources, box, panel, core)))):
             background.append(item)
         else:

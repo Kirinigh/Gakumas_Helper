@@ -11,8 +11,9 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 
 from arena_winrate import TeamTarget, ArenaReaderError, _reader_metrics
-from arena_winrate.recognition_probe import RecognitionProbe
+from arena_winrate.recognition_probe import RecognitionProbe, _skill_domain_failure
 from arena_winrate._card_detail_state import ClosedCardDetail
+from arena_winrate._detail_capture_evidence import _FullFrameOcrEvidence
 
 
 def _bind_confirmed_p_item_family_name(diagnostic: dict[str, Any]) -> None:
@@ -50,6 +51,7 @@ class TelemetryReaderPort(Protocol):
     _badge_worker_selection: Any
     _card_candidate_groups: Any
     _card_content_generation_diagnostics: Any
+    _card_detail_images: Any
     _card_detail_texts: Any
     _card_empty_diagnostics: Any
     _card_empty_flags: Any
@@ -61,11 +63,13 @@ class TelemetryReaderPort(Protocol):
     _card_stage_plan: Any
     _card_swipe_duration_ms: Any
     _card_transaction_started: Any
+    _card_transaction_tokens: Any
     _cost_customization_fallbacks: Any
     _detail_count_overrides: Any
     _detail_failure_frames: Any
     _detail_semantic_confirmations: Any
     _detail_title_disambiguations: Any
+    _full_frame_ocr_evidence: Any
 
     def _emit_detail_fallback_diagnostic(self, outcome: str, error: str | None = ...) -> None: ...
     def _increment(self, name: str) -> None: ...
@@ -195,6 +199,48 @@ class TelemetryReader:
                     probe_frames=[],
                 )
 
+    def _bind_domain_probe_sources(self, detail: dict, key: tuple[int, int]) -> None:
+        """Retain the cache's actual sources, never promote guard frames to them."""
+        import numpy as np
+
+        guard = detail["probe_sources"]
+        detail["probe_domain_source_binding"] = {
+            "exact": False, "status": "guard_only" if len(guard) == 3 and len({id(image) for image in guard}) == 3 else "source_triplet_missing",
+            "source_role": "source_guard_frames", "detail_key": list(key),
+            "card_id": detail["position"].get("observed_detail_card_id"), "reco_id": None,
+        }
+        image = getattr(self.port, "_card_detail_images", {}).get(key)
+        evidence = getattr(self.port, "_full_frame_ocr_evidence", {}).get(id(image))
+        token = getattr(self.port, "_card_transaction_tokens", {}).get(key)
+        if token is None:
+            # Closing invalidates the live token before the telemetry callback.
+            # The snapshot was made while this same capture was observed.
+            token = detail.get("probe_frame_tokens", {}).get(id(image))
+        card_id = detail["position"].get("observed_detail_card_id")
+        observed = next((frame for frame in detail["probe_frames"] if frame["image"] is image), None)
+        if (not isinstance(image, np.ndarray) or image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8
+                or not isinstance(evidence, _FullFrameOcrEvidence)
+                or evidence.image is not image or not evidence.hit or observed is None
+                or type(token) is not int or token < 1 or type(card_id) is not int or card_id < 1):
+            return
+        binding = evidence.skill_domain_binding
+        if not isinstance(binding, tuple) or len(binding) != 4 or binding[:3] != (key, token, card_id):
+            return
+        sources = binding[3]
+        observed_reco = observed.get("reco_id")
+        if (not isinstance(sources, tuple) or len(sources) != 3 or len({id(source) for source in sources}) != 3
+                or any(not isinstance(source, np.ndarray) or source.shape != image.shape or source.dtype != image.dtype for source in sources)
+                or type(observed_reco) is not int or observed_reco < 1
+                or type(evidence.reco_id) is not int or evidence.reco_id < 1
+                or observed_reco != evidence.reco_id):
+            return
+        detail["probe_sources"] = sources
+        detail["probe_domain_source_image"] = image
+        detail["probe_domain_source_binding"] = {
+            "exact": True, "status": "exact_domain_binding", "source_role": "card_count_frames",
+            "detail_key": list(key), "card_id": card_id, "transaction_token": token, "reco_id": evidence.reco_id,
+        }
+
     def _save_recognition_probe(self, detail: dict, outcome: str, error: str | None) -> None:
         if "probe_sources" not in detail or detail.get("probe_finished"):
             return
@@ -205,8 +251,11 @@ class TelemetryReader:
             position = detail["position"]
             key = (position.get("group_index"), position.get("card_slot"))
             detail["probe_body_text"] = getattr(self.port, "_card_detail_texts", {}).get(key)
+            domain_failure = _skill_domain_failure(position, outcome, error)
+            if domain_failure:
+                self._bind_domain_probe_sources(detail, key)
             cost_failure = getattr(self.port, "_card_face_cost_failed_sources", {}).get(key)
-            if (position.get("kind") == "skill_card" and cost_failure is not None
+            if (not domain_failure and position.get("kind") == "skill_card" and cost_failure is not None
                     and position.get("observed_detail_card_id") == cost_failure["card_id"]):
                 # Retain the exact observations rejected by the cost gate. The
                 # source guard may have advanced since these frames were read.
@@ -240,6 +289,11 @@ class TelemetryReader:
             # Derived OCR crops are not original screenshots; keep only frames
             # already delivered by _capture in this transaction.
             if any(frame[1] is image for frame in detail["frames"]):
+                position = detail["position"]
+                key = (position.get("group_index"), position.get("card_slot"))
+                token = getattr(self.port, "_card_transaction_tokens", {}).get(key)
+                if position.get("kind") == "skill_card" and type(token) is int and token > 0:
+                    detail.setdefault("probe_frame_tokens", {})[id(image)] = token
                 RecognitionProbe.observe(
                     detail,
                     image,

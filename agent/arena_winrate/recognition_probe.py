@@ -21,6 +21,11 @@ CAMPAIGN = "arena-feedback-20260920"
 EXPIRES_AT = "2026-11-01T00:00:00+08:00"
 
 
+def _skill_domain_failure(position: Mapping[str, Any], outcome: str, error: str | None) -> bool:
+    return (position.get("kind") == "skill_card" and outcome == "failed" and isinstance(error, str)
+            and re.search(r"(?:^|:\s*)skill_card_detail_domain_unconfirmed(?::|$)", error) is not None)
+
+
 def release_probe_settings(package_root: Path | None = None) -> dict:
     """Enable the approved campaign in installed packages, not development trees."""
     root = package_root or Path(__file__).resolve().parents[2]
@@ -273,7 +278,14 @@ class RecognitionProbe:
         if not cache_sources or member != self._source_png_member:
             self._source_png_cache.clear()
             self._source_png_member = member if cache_sources else None
-        if outcome in {"cancelled", "superseded"} or (not p_item and not cost_evidence and card_id in self.RETIRED_TARGETS):
+        domain_failure = _skill_domain_failure(position, outcome, error)
+        if domain_failure and not isinstance(diagnostic.get("probe_domain_source_binding"), Mapping):
+            diagnostic["probe_domain_source_binding"] = {
+                "exact": False, "status": "source_binding_unavailable", "source_role": "unclassified_sources",
+                "detail_key": [position.get("group_index"), position.get("card_slot")],
+                "card_id": card_id, "reco_id": None,
+            }
+        if outcome in {"cancelled", "superseded"} or (not p_item and not cost_evidence and card_id in self.RETIRED_TARGETS and not domain_failure):
             return None
         if p_item and outcome != "completed" and "p_item_source_restore_unproven" not in str(error):
             return None
@@ -347,6 +359,9 @@ class RecognitionProbe:
             encoded_frames.append(data)
             saved.append({"file": f"{index:02d}.png", "role": role,
                           "shape": list(image.shape), "ocr": ocr})
+            source_binding = diagnostic.get("probe_domain_source_binding")
+            if isinstance(source_binding, Mapping) and index < len(diagnostic["probe_sources"]):
+                saved[-1]["source_role"] = source_binding["source_role"]
         evidence = {
             "event": "arena_recognition_probe_sample", **position,
             "campaign": self.settings.get("campaign", CAMPAIGN),
@@ -382,6 +397,15 @@ class RecognitionProbe:
             "truth_status": "unreviewed_observation_not_training_label",
             "extra_screenshots": 0, "extra_ocr": 0, "extra_clicks": 0,
         }
+        source_binding = diagnostic.get("probe_domain_source_binding")
+        if isinstance(source_binding, Mapping):
+            observation_file = next((f"{index:02d}.png" for index, (_, image, _) in enumerate(images[:10])
+                                     if image is diagnostic.get("probe_domain_source_image")), None)
+            evidence["domain_source_binding"] = {
+                **source_binding, "observation_file": observation_file,
+            }
+            if source_binding.get("exact") is True and observation_file is None:
+                evidence["domain_source_binding"].update(exact=False, status="domain_observation_not_saved")
         victims = []
         while True:
             # Persist replacement ownership before deletion, even below the

@@ -379,7 +379,9 @@ class DetailEffectOcr:
             title_box = _box(matches[0])
         started = self.clock.perf_counter()
         try:
-            domain = attribute_skill_detail(image, sources, items, title_box=title_box)
+            domain = attribute_skill_detail(
+                image, sources, items, title_box=title_box, title_verified=card_id is not None,
+            )
         finally:
             self.port._increment("skill_card_detail_domain_scans")
             self.port._add_timing("skill_card_detail_domain_attribution", self.clock.perf_counter() - started)
