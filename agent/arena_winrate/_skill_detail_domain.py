@@ -186,6 +186,49 @@ def _old_edge_pixels(
     return votes >= 2
 
 
+def _white_cover_pixels(current: np.ndarray, previous: np.ndarray) -> bool:
+    """Prove a neutral white layer over old colored edge pixels.
+
+    Preserve the existing all-channel brightening proof first. For colored
+    sources, fit only the source's lowest/highest channels in linear sRGB;
+    its remaining channel independently checks the neutral mixing model.
+    """
+    if current.shape != previous.shape or current.size == 0 or current.shape[-1] != 3:
+        return False
+    current = current.reshape(-1, 3).astype(np.float64)
+    previous = previous.reshape(-1, 3).astype(np.float64)
+    gain = current - previous
+    fallback = np.any(gain <= 32, axis=1)
+    if not np.any(fallback):
+        return True
+    observed, source, gain = current[fallback], previous[fallback], gain[fallback]
+    if (np.any(gain < -4) or np.any(gain.max(axis=1) <= 32)
+            or np.any(np.ptp(source, axis=1) <= 32)):
+        return False
+
+    def linear_srgb(rgb: np.ndarray) -> np.ndarray:
+        scaled = rgb / 255
+        return np.where(scaled <= .04045, scaled / 12.92, ((scaled + .055) / 1.055) ** 2.4)
+
+    low, high = source.argmin(axis=1), source.argmax(axis=1)
+    rows = np.arange(len(source))
+    source_linear, observed_linear = linear_srgb(source), linear_srgb(observed)
+    slope = ((observed_linear[rows, high] - observed_linear[rows, low])
+             / (source_linear[rows, high] - source_linear[rows, low]))
+    intercept = observed_linear[rows, low] - slope * source_linear[rows, low]
+    # Quantized endpoint values may just cross a physical boundary. Clip the
+    # endpoint-derived model, then require the original four-level tolerance
+    # at every channel; the middle channel never chooses/fits the model.
+    intercept = np.clip(intercept, 0, 1)
+    slope = np.clip(slope, 0, 1 - intercept)
+    prediction = intercept[:, None] + slope[:, None] * source_linear
+    predicted_rgb = 255 * np.where(
+        prediction <= .0031308, prediction * 12.92,
+        1.055 * prediction ** (1 / 2.4) - .055,
+    )
+    return bool(np.all(np.abs(predicted_rgb - observed) <= 4))
+
+
 def _old_border_pixels(
     image: np.ndarray, sources: Sequence[np.ndarray], box: Box, panel: Box, core: np.ndarray,
 ) -> bool:
@@ -245,7 +288,7 @@ def _old_border_pixels(
                 or not np.any(exposed & current_strong & previous_strong)
                 or np.any(exposed & (current_strong | previous_strong) & (delta.max(axis=2) > 32))
                 or not np.all(previous_strong[ink])
-                or np.any((current - previous).min(axis=2)[ink] <= 32)
+                or not _white_cover_pixels(current[ink], previous[ink])
                 or np.any(~local_core & current_dark & ((previous - current).max(axis=2) > 32))):
             continue
         votes += 1
@@ -273,13 +316,14 @@ def _unfinished_body_operand(
     """Keep open operands without treating an icon-split linker as a row end."""
     body = [item for item in items if _contains(panel, _box(item))
             and _box(item)[1] >= title[1] + title[3]]
-    opened = [item for item in body if _OPEN_OPERAND.search(_text(item).strip())]
+    # Use a structural view only: a proved bullet must not stand between a
+    # wrapped label and its value. Keep every original atom in the domain.
+    structural = [item for item in body if not _body_marker_is_decoration(item, body, image)]
+    opened = [item for item in structural if _OPEN_OPERAND.search(_text(item).strip())]
     if not opened:
         return False
-    rows = _spatial_ocr_rows(body)
+    rows = _spatial_ocr_rows(structural)
     for item in opened:
-        if _body_marker_is_decoration(item, body, image):
-            continue
         text, box = _text(item).strip(), _box(item)
         index = next((i for i, (_, _, parts) in enumerate(rows)
                       if (text, box) in parts), None)
