@@ -229,7 +229,7 @@ def _old_border_pixels(
 
 
 def _unfinished_body_operand(items: Sequence[Any], panel: Box, title: Box) -> bool:
-    """Keep open atoms, except a wrapped, explicitly positive addition row."""
+    """Keep open operands without treating an icon-split linker as a row end."""
     body = [item for item in items if _contains(panel, _box(item))
             and _box(item)[1] >= title[1] + title[3]]
     opened = [item for item in body if _OPEN_OPERAND.search(_text(item).strip())]
@@ -237,12 +237,22 @@ def _unfinished_body_operand(items: Sequence[Any], panel: Box, title: Box) -> bo
         return False
     rows = _spatial_ocr_rows(body)
     for item in opened:
+        text, box = _text(item).strip(), _box(item)
+        index = next((i for i, (_, _, parts) in enumerate(rows)
+                      if (text, box) in parts), None)
+        if text.endswith("の") and index is not None:
+            parts = rows[index][2]
+            part_index = parts.index((text, box))
+            if part_index + 1 < len(parts):
+                following_text, following_box = parts[part_index + 1]
+                gap = following_box[0] - box[0] - box[2]
+                if (0 <= gap <= max(box[3], following_box[3]) * .75
+                        and re.match(r"[\u3040-\u30ff\u3400-\u9fff]", following_text)):
+                    continue
         # This closes a known UI wrap, not arbitrary fragmented arithmetic.
         # A written operator, negative value or another field stays open.
-        if not re.search(r"(?:スキルカード使用数|ターン)追加$", _text(item).strip()):
+        if not re.search(r"(?:スキルカード使用数|ターン)追加$", text):
             return True
-        index = next((i for i, (_, _, parts) in enumerate(rows)
-                      if (_text(item).strip(), _box(item)) in parts), None)
         if index is not None and index + 1 < len(rows):
             _, box, _ = rows[index]
             following, next_box, _ = rows[index + 1]
