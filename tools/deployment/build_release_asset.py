@@ -1452,11 +1452,22 @@ def _load_p_item_gallery_ids(path: Path) -> tuple[int, ...]:
     return _positive_business_ids(raw_ids, label="P-item reference gallery")
 
 
+def _enabled_gallery_prefix(arrays: Any, count: int) -> dict[str, Any]:
+    """Read an already source-validated inline base without changing its NPZ."""
+    if type(count) is not int or count <= 0 or "reference_enabled" not in arrays:
+        raise ReleaseBuildError("inline enabled gallery prefix is invalid")
+    flags = arrays["reference_enabled"]
+    if flags.dtype != np.bool_ or flags.ndim != 1 or not count < len(flags) or not flags[:count].all() or flags[count:].any():
+        raise ReleaseBuildError("inline enabled gallery mask is invalid")
+    return {key: arrays[key][:count] for key in arrays.files if key != "reference_enabled"}
+
+
 def _load_skill_card_gallery_contract(
     path: Path,
     *,
     label: str,
     allow_inactive_placeholders: bool = False,
+    active_prefix_count: int | None = None,
 ) -> tuple[
     tuple[str, ...],
     tuple[tuple[str, str, str], ...],
@@ -1466,6 +1477,8 @@ def _load_skill_card_gallery_contract(
 ]:
     try:
         with np.load(path, allow_pickle=False) as arrays:
+            if active_prefix_count is not None:
+                arrays = _enabled_gallery_prefix(arrays, active_prefix_count)
             required = {
                 "embeddings",
                 "class_names",
@@ -1475,7 +1488,7 @@ def _load_skill_card_gallery_contract(
                 "upgrade_markers",
             }
             expected = required | ({"reference_enabled"} if allow_inactive_placeholders else set())
-            if set(arrays.files) != expected:
+            if set(arrays) != expected:
                 raise ReleaseBuildError(
                     f"{label} gallery array inventory is incompatible"
                 )
@@ -1533,6 +1546,7 @@ def _load_badge_gallery_contract(
     path: Path,
     *,
     allow_inactive_placeholders: bool = False,
+    active_prefix_count: int | None = None,
 ) -> tuple[
     frozenset[int],
     frozenset[str],
@@ -1543,6 +1557,8 @@ def _load_badge_gallery_contract(
 ]:
     try:
         with np.load(path, allow_pickle=False) as arrays:
+            if active_prefix_count is not None:
+                arrays = _enabled_gallery_prefix(arrays, active_prefix_count)
             required = {
                 "business_ids",
                 "visual_group_ids",
@@ -1551,7 +1567,7 @@ def _load_badge_gallery_contract(
                 "green_masks",
             }
             expected = required | ({"reference_enabled"} if allow_inactive_placeholders else set())
-            if set(arrays.files) != expected:
+            if set(arrays) != expected:
                 raise ReleaseBuildError(
                     "arena badge gallery array inventory is incompatible"
                 )
@@ -2484,6 +2500,7 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         SKILL_CARD_CATALOG_RELATIVE_PATH,
     ).parent
     placeholder_bases: dict[str, tuple[Path, dict[str, Any]]] = {}
+    inline_placeholder_bases: set[str] = set()
     placeholder_components = {"card_vision", "arena_card_vision", "arena_badge_reference"}
     temporary = {
         name for name in placeholder_components
@@ -2497,6 +2514,9 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
             candidate,
             str(Path(COMPONENT_MANIFESTS["card_vision"]).parent / "preserved_base/skill_card_classification.json"),
         )
+        inline_placeholder_bases = {name for name in temporary if static_handoff.is_released914_placeholder_component(raw[name])}
+        if inline_placeholder_bases and inline_placeholder_bases != temporary:
+            raise ReleaseBuildError("914 inline placeholder components must be packaged together")
         for component in sorted(temporary):
             component_root = _resolve_inside(candidate, COMPONENT_MANIFESTS[component]).parent
             try:
@@ -2572,10 +2592,11 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
     badge_arena_rows = arena_rows
     if placeholder_bases:
         preserved_arena_root, badge_arena_manifest = placeholder_bases["arena_card_vision"]
-        badge_arena_manifest_path = preserved_arena_root / "manifest.json"
+        badge_arena_manifest_path = preserved_arena_root / ("inherited-manifest.json" if "arena_card_vision" in inline_placeholder_bases else "manifest.json")
         _, badge_arena_rows, _, _, _ = _load_skill_card_gallery_contract(
             _resolve_inside(preserved_arena_root, badge_arena_manifest["gallery"]["path"]),
             label="preserved active arena card vision",
+            active_prefix_count=arena_card["build"]["preserved_rows"] if "arena_card_vision" in inline_placeholder_bases else None,
         )
     arena_build = badge_arena_manifest.get("build", {})
     if arena_build.get("tool_contract") == "task095-arena-full-ui-union-v1":
@@ -2592,12 +2613,13 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
             raise ReleaseBuildError("full UI reference extension changed the encoder")
         with np.load(base_gallery, allow_pickle=False) as old, np.load(
             _resolve_inside(union_root, union_manifest["gallery"]["path"]), allow_pickle=False
-        ) as new:
+        ) as stored_union:
+            new = _enabled_gallery_prefix(stored_union, arena_card["build"]["preserved_rows"]) if "arena_card_vision" in inline_placeholder_bases else stored_union
             count = len(old["class_names"])
             if (
                 count != arena_build.get("preserved_rows")
                 or len(new["class_names"]) != count + arena_build.get("appended_rows", 0)
-                or set(old.files) != set(new.files)
+                or set(old.files) != set(new)
                 or any(not np.array_equal(old[key], new[key][:count]) for key in old.files)
             ):
                 raise ReleaseBuildError("full UI preserved base arrays changed")
@@ -2636,6 +2658,7 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         evaluation_badge_rows, evaluation_rows_by_id, evaluation_live_rows,
     ) = _load_badge_gallery_contract(
         _resolve_inside(evaluation_badge_root, str(evaluation_badge["gallery"]["path"])),
+        active_prefix_count=badge["build"]["preserved_rows"] if "arena_badge_reference" in inline_placeholder_bases else None,
     )
     _validate_badge_live_evaluation(
         evaluation_badge_root,
