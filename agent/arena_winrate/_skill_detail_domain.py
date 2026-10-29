@@ -162,6 +162,98 @@ def _old_edge_pixels(
     return votes >= 2
 
 
+def _old_border_pixels(
+    image: np.ndarray, sources: Sequence[np.ndarray], box: Box, panel: Box, core: np.ndarray,
+) -> bool:
+    """Explain white-surface antialiasing over an otherwise intact old label.
+
+    The convex core can reach the crop's outermost pixel. That pixel is not
+    necessarily text: a white tooltip blends with old page ink at its edge.
+    Only a weak, source-backed rim with three white pixels immediately inward
+    can use this proof. Interior ink and new/darkened strokes remain unknown.
+    The caller excludes operands and effect clauses independently of pixels.
+    """
+    x, y, w, h = box
+    px, py, pw, ph = panel
+    l, t, r, b = max(x, px), max(y, py), min(x + w, px + pw), min(y + h, py + ph)
+    if l >= r or t >= b or min(pw, ph) < 5:
+        return False
+    current = image[y:y + h, x:x + w].astype(np.int16)
+    local_core = np.zeros((h, w), bool)
+    local_core[t - y:b - y, l - x:r - x] = core[t - py:b - py, l - px:r - px]
+    ink = (current.min(axis=2) < 230) & local_core
+    rows, cols = np.nonzero(ink)
+    if not len(rows) or np.any(current.min(axis=2)[ink] < 230 - 32):
+        return False
+    global_x, global_y = cols + x, rows + y
+    left, right = global_x == px, global_x == px + pw - 1
+    top, bottom = global_y == py, global_y == py + ph - 1
+    if not np.all(left | right | top | bottom):
+        return False
+    # Requiring the whole adjacent strip also excludes a real glyph that
+    # starts at the rim and continues into the tooltip's readable surface.
+    dx, dy = left.astype(int) - right.astype(int), top.astype(int) - bottom.astype(int)
+    for step in (1, 2, 3):
+        inward_x, inward_y = global_x + dx * step, global_y + dy * step
+        if (not np.all(core[inward_y - py, inward_x - px])
+                or np.any(image[inward_y, inward_x].min(axis=1) < 250)):
+            return False
+
+    # Keep the normal exposed-area contract, with an actual old glyph at the
+    # same positions. A blank external tail cannot authenticate a new label.
+    margin = max(3, round(image.shape[1] * .01))
+    exposed = np.ones((h, w), bool)
+    a, c = max(0, px - margin - x), min(w, px + pw + margin - x)
+    d, e = max(0, py - margin - y), min(h, py + ph + margin - y)
+    if a < c and d < e:
+        exposed[d:e, a:c] = False
+    if exposed.sum() < w * h * .25:
+        return False
+    current_dark = current.min(axis=2) < 230
+    current_strong = current.min(axis=2) < 230 - 32
+    votes = 0
+    for source in sources:
+        previous = source[y:y + h, x:x + w].astype(np.int16)
+        delta = np.abs(current - previous)
+        visible_delta = delta[exposed]
+        previous_strong = previous.min(axis=2) < 230 - 32
+        if (visible_delta.mean() > 4 or (visible_delta.max(axis=1) > 32).mean() > .01
+                or not np.any(exposed & current_strong & previous_strong)
+                or np.any(exposed & (current_strong | previous_strong) & (delta.max(axis=2) > 32))
+                or not np.all(previous_strong[ink])
+                or np.any((current - previous).min(axis=2)[ink] <= 32)
+                or np.any(~local_core & current_dark & ((previous - current).max(axis=2) > 32))):
+            continue
+        votes += 1
+    return votes >= 2
+
+
+def _unfinished_body_operand(items: Sequence[Any], panel: Box, title: Box) -> bool:
+    """Keep open atoms, except a wrapped, explicitly positive addition row."""
+    body = [item for item in items if _contains(panel, _box(item))
+            and _box(item)[1] >= title[1] + title[3]]
+    opened = [item for item in body if _OPEN_OPERAND.search(_text(item).strip())]
+    if not opened:
+        return False
+    rows = _spatial_ocr_rows(body)
+    for item in opened:
+        # This closes a known UI wrap, not arbitrary fragmented arithmetic.
+        # A written operator, negative value or another field stays open.
+        if not re.search(r"(?:スキルカード使用数|ターン)追加$", _text(item).strip()):
+            return True
+        index = next((i for i, (_, _, parts) in enumerate(rows)
+                      if (_text(item).strip(), _box(item)) in parts), None)
+        if index is not None and index + 1 < len(rows):
+            _, box, _ = rows[index]
+            following, next_box, _ = rows[index + 1]
+            gap = next_box[1] - box[1] - box[3]
+            if (re.fullmatch(r"[+＋][1-9][0-9]*", following.strip())
+                    and 0 <= gap <= max(box[3], next_box[3]) * .75):
+                continue
+        return True
+    return False
+
+
 def attribute_skill_detail(
     image: np.ndarray, sources: Sequence[np.ndarray], items: Sequence[Any], *, title_box: Box | None = None,
 ) -> SkillDetailDomain:
@@ -193,8 +285,7 @@ def attribute_skill_detail(
     owned, background, unknown = [], [], []
     blocked = False
     core = _panel_core(image, panel)
-    incomplete = any(_contains(panel, _box(item)) and _box(item)[1] >= title_box[1] + title_box[3]
-                     and _OPEN_OPERAND.search(_text(item).strip()) for item in items)
+    incomplete = _unfinished_body_operand(items, panel, title_box)
     for item in items:
         box, text = _box(item), _text(item).strip()
         if not text:
@@ -212,8 +303,11 @@ def attribute_skill_detail(
         possible_operand = any(character.isnumeric() for character in text) or text[:1] in {"+", "-", "−"}
         empty_surface_overlap = (overlaps and not crossing_ink and decoration and not _EFFECT.search(text)
                                  and not (incomplete and possible_operand))
-        if not crossing_ink and (empty_surface_overlap or not relevant or _old_pixels(image, sources, box, panel)
-                                 or (overlaps and not incomplete and _old_edge_pixels(image, sources, box, panel, core))):
+        old_border = (crossing_ink and not decoration and not _EFFECT.search(text)
+                      and not (incomplete and possible_operand)
+                      and _old_border_pixels(image, sources, box, panel, core))
+        if old_border or (not crossing_ink and (empty_surface_overlap or not relevant or _old_pixels(image, sources, box, panel)
+                                               or (overlaps and not incomplete and _old_edge_pixels(image, sources, box, panel, core)))):
             background.append(item)
         else:
             unknown.append(item)
