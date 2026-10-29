@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 
 from ._reader_visual import _box, _text, _spatial_ocr_rows
+from ._detail_shadow_field import shadow_field_projection
 from ._detail_title_region import _white_detail_panels, detail_title_in_header
 from ._detail_shadow_source import shadow_source_projection
 
@@ -172,6 +173,8 @@ def _old_edge_pixels(
             continue
         if visible_delta.mean() > 4 or (visible_delta.max(axis=1) > 32).mean() > .01:
             projected = shadow_source_projection(image, source, box, panel, core, exposed=exposed)
+            if projected is None:
+                projected = shadow_field_projection(image, source, box, panel, core, exposed=exposed)
             if projected is None:
                 continue
             residual = np.abs(current - projected)[exposed]
