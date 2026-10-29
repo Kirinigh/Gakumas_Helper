@@ -369,7 +369,7 @@ def attribute_skill_detail(
             or any(not isinstance(source, np.ndarray) or source.shape != image.shape or source.dtype != image.dtype for source in sources)):
         return SkillDetailDomain(None, None, reason="source_frames_unavailable")
     ih, iw = image.shape[:2]
-    panels = _white_detail_panels(image)
+    panels = _white_detail_panels(image, full_canvas=True)
     if len(panels) != 1:
         return SkillDetailDomain(None, None, reason="panel_not_unique")
     panel = panels[0]

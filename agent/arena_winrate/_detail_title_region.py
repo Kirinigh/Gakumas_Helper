@@ -46,7 +46,7 @@ def isolated_title_region(
         return None
     # White fill is connected around the title and effect glyphs. Other page
     # surfaces are grey; artwork islands must also pass rectangular edge tests.
-    panels = _white_detail_panels(image)
+    panels = _white_detail_panels(image, full_canvas=True)
     # Do not select whichever of several panels happens to name a known card.
     if len(panels) != 1:
         return None
@@ -95,7 +95,9 @@ def isolated_title_region(
     return left, top, right - left, bottom - top
 
 
-def _white_detail_panels(image: np.ndarray) -> list[tuple[int, int, int, int]]:
+def _white_detail_panels(
+    image: np.ndarray, *, full_canvas: bool = False,
+) -> list[tuple[int, int, int, int]]:
     height, width = image.shape[:2]
     white = (cv2.inRange(image, (250, 250, 250), (255, 255, 255))
              if image.dtype == np.uint8 else (image.min(axis=2) >= 250).astype(np.uint8))
@@ -106,7 +108,9 @@ def _white_detail_panels(image: np.ndarray) -> list[tuple[int, int, int, int]]:
         if not (
             width * .40 <= w <= width * .65
             and height * .08 <= h <= height * .45
-            and y + h <= height * .60 and area >= w * h * .62
+            and (y + h <= height * .60
+                 or (full_canvas and x > 0 and y > 0 and x + w < width and y + h < height))
+            and area >= w * h * .62
         ):
             continue
         inset = max(3, round(width * .004))
@@ -140,7 +144,7 @@ def _isolated_p_item_body_region(
         return None
     height, width = image.shape[:2]
     if panels is None:
-        panels = _white_detail_panels(image)
+        panels = _white_detail_panels(image, full_canvas=True)
     if len(panels) != 1:
         return None
     x, y, w, h = panels[0]

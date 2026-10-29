@@ -1202,7 +1202,7 @@ def _isolated_p_item_title_row(
     """Recover only the top row of a proven new panel, never search prose for a name."""
     from arena_winrate._detail_title_region import _white_detail_panels, _isolated_p_item_body_region
 
-    panels = _white_detail_panels(image)
+    panels = _white_detail_panels(image, full_canvas=True)
     if len(panels) != 1:
         return None
     px, py, pw, ph = panels[0]
