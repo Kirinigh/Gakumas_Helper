@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from ._reader_visual import _box, _text, _spatial_ocr_rows
-from ._detail_title_region import _white_detail_panels
+from ._detail_title_region import _white_detail_panels, detail_title_in_header
 
 Box = tuple[int, int, int, int]
 _EFFECT = re.compile(r"スコア|元気|集中|好印象|好調|やる気|全力|体力消費|ターン追加|スキルカード|消費|増加|減少|不可|ない|無効|以外|不|無|非|未|禁|除")
@@ -378,15 +378,14 @@ def attribute_skill_detail(
         if not _contains((0, 0, iw, ih), _box(item)):
             return SkillDetailDomain(None, None, reason="invalid_ocr_box")
     if title_box is None:
-        header = [item for item in items if _contains(panel, _box(item))
-                  and _box(item)[1] + _box(item)[3] <= py + min(ph * .35, ih * .05)]
+        header = [item for item in items if detail_title_in_header(panel, _box(item), ih)]
         rows = _spatial_ocr_rows(header)
         if not rows:
             return SkillDetailDomain(None, None, reason="title_region_unavailable")
         title_box = rows[0][1]
-    if (not _contains(panel, title_box)
-            or title_box[1] + title_box[3] > py + min(ph * .35, ih * .05)
-            or not _new_panel(image, sources, panel)):
+    if not detail_title_in_header(panel, title_box, ih):
+        return SkillDetailDomain(None, None, reason="title_region_unconfirmed")
+    if not _new_panel(image, sources, panel):
         return SkillDetailDomain(None, None, reason="panel_source_unconfirmed")
     owned, background, unknown = [], [], []
     blocked = False

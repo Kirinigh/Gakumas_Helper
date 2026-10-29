@@ -6,6 +6,22 @@ import cv2
 import numpy as np
 
 
+def detail_title_in_header(
+    panel: tuple[int, int, int, int], title: tuple[int, int, int, int], height: int,
+) -> bool:
+    """Keep legacy headers and a short panel's independently sized title."""
+    x, y, w, h = panel
+    tx, ty, tw, th = title
+    if not (tw > 0 and th > 0 and x <= tx < tx + tw <= x + w and y <= ty < ty + th <= y + h):
+        return False
+    if ty + th <= y + min(h * .35, height * .05):
+        return True
+    # UI title font/margin do not shrink with the number of effect rows.
+    # Keep the existing screen-relative header cap; a body row starting well
+    # below the top or a merged title/body box cannot borrow this route.
+    return th <= height * .05 and ty - y <= th * .75 and ty + th <= y + height * .05
+
+
 def isolated_title_region(
     image: np.ndarray,
     sources: Sequence[np.ndarray],
@@ -128,9 +144,7 @@ def _isolated_p_item_body_region(
     if len(panels) != 1:
         return None
     x, y, w, h = panels[0]
-    tx, ty, tw, th = title_box
-    if not (tw > 0 and th > 0 and x <= tx < tx + tw <= x + w
-            and y <= ty < ty + th <= y + min(h * .35, height * .05)):
+    if not detail_title_in_header(panels[0], title_box, height):
         return None
     margin = max(5, round(width * .018))
     outside = np.zeros((height, width), dtype=bool)
