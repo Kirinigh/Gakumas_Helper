@@ -410,18 +410,22 @@ def attribute_skill_detail(
             continue
         x, y, w, h = box
         l, t, r, bottom = max(x, px), max(y, py), min(x + w, px + pw), min(y + h, py + ph)
-        crossing_ink = (l < r and t < bottom
-                        and np.any((image[t:bottom, l:r].min(axis=2) < 230) & core[t - py:bottom - py, l - px:r - px]))
+        crossing_rows = np.zeros(0, bool)
+        if l < r and t < bottom:
+            crossing_rows = np.any((image[t:bottom, l:r].min(axis=2) < 230)
+                                   & core[t - py:bottom - py, l - px:r - px], axis=1)
+        crossing_ink = bool(crossing_rows.any())
         overlaps = x < px + pw and x + w > px and y < py + ph and y + h > py
         relevant = (title_box[1] <= y + h and y < py + ph) or bool(_EFFECT.search(text))
         decoration = re.fullmatch(r"[A-Za-z0-9()+−\-]+", text) is not None
         possible_operand = any(character.isnumeric() for character in text) or text[:1] in {"+", "-", "−"}
         empty_surface_overlap = (overlaps and not crossing_ink and decoration and not _EFFECT.search(text)
                                  and not (incomplete and possible_operand))
-        # A proved old number wholly above the body's title boundary cannot
-        # supply an operand to a later body row. Its weak rim pixels still
-        # need the same source/three-white-pixel proof as any old label.
-        header_number = (title_verified is True and py <= y and y + h <= title_box[1] + title_box[3]
+        # A wide OCR box is not a foreground mask. Only its ink intersecting
+        # the panel determines whether it reaches the body. The old rim still
+        # needs the complete source/three-white-pixel proof below.
+        header_number = (title_verified is True and crossing_ink
+                         and t + int(np.flatnonzero(crossing_rows)[-1]) < title_box[1] + title_box[3]
                          and _numeric_background_decoration(text))
         old_border = (crossing_ink and (not decoration or header_number) and not _EFFECT.search(text)
                       and (not (incomplete and possible_operand) or header_number)
