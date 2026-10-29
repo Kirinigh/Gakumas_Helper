@@ -13,19 +13,19 @@
   "component": "task410_arena_card_reference",
   "evaluation": {
     "path": "hard_negative_evaluation.json",
-    "sha256": "722E6A6021733F0B881815E9EEACA41E255DD58F5477D14A9B438F18451CB4DB",
+    "sha256": "55F41AD1F969EF5D0DE308937E8ED3DD35049010620F5740FF4434CE35D65B65",
     "status": "PASS",
     "tool_contract": "task095-card-badge-hard-negative-evaluation-v1"
   },
   "gallery": {
-    "business_card_id_count": 910,
+    "business_card_id_count": 914,
     "normalization_size": [
       96,
       96
     ],
     "path": "badge_reference_gallery.npz",
-    "sha256": "E01E8A681ECFBDD53881588D308CB3B92795CFEA86D238659461999627313681",
-    "visual_group_count": 467
+    "sha256": "D81546A678A0651A1007B0DD16A118D4D64081E32F856CC8EB6EA0DFB50D2825",
+    "visual_group_count": 469
   },
   "production_handoff": {
     "reason": "private-live target, inherited rows, geometry stress, and authoritative hard negatives passed offline; independent live holdout remains PENDING",
@@ -42,16 +42,16 @@
   "source": {
     "added_reference_file_count": 1,
     "arena_component": "arena_custom_card_embedding",
-    "arena_component_manifest_sha256": "2FF0FCF6A98C8120409E796C80C30703A427EC784F16C802BF055D3E681ACF47",
-    "arena_gallery_sha256": "2DF9F643E3BBA03D577DAA91D438E990239BE1048008E0848E55229D0D66FC51",
-    "base_manifest_sha256": "2A5C1952D3FC7A194B84E7CED20E7374E4E971D15938914CE9021F36A91DDFB8",
-    "base_reference_file_count": 3588,
+    "arena_component_manifest_sha256": "D5CB3518C4DDF09C0D24E7D9C4B2AF8B90D0B67240797C41F450DC72E5ACEEBE",
+    "arena_gallery_sha256": "3743D878CAD513382A0B5C63DB30B81870490CEA77338F1DC68779CCB2BC63BC",
+    "base_manifest_sha256": "09A2FE43CC8722DF4C338DF4AFE3FF6B7CEC3D2182886BA335ACB22A8DD0D88D",
+    "base_reference_file_count": 3592,
     "catalog_license": "BSD-3-Clause",
     "catalog_repository": "https://github.com/surisuririsu/gakumas-tools",
-    "catalog_revision": "68ff32517466da526e0d2e39724fcbe212556518",
-    "extension_dataset_id": "task095-skill-card-extension-pc-705100-0073-released910-ui-20261020",
-    "extension_dataset_manifest_sha256": "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8",
-    "fixed_icon_provenance_sha256": "EC18A806EB722912A228B27F920FCB2916EFF70D684DA8D260E42DD5C3FFE8F1",
+    "catalog_revision": "880be403add7894d49543cca7ba15e512c323285",
+    "extension_dataset_id": "task095-skill-reference-ui-pc7051000076-primary20261029",
+    "extension_dataset_manifest_sha256": "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25",
+    "fixed_icon_provenance_sha256": "DA5C0D6AA4802FB54F251B2FD351CC8444880CECCBC585D9A5E12FE378FBB006",
     "fixed_icons": {
       "references": {
         "889": {
@@ -757,6 +757,134 @@
           "rgb_pixel_sha256": "76677E96DF6B7F345E01764EA9CCF1DB071E63BA474AB22A4427966CFDB0E8D1",
           "size": 29210,
           "upgraded": true
+        },
+        "911": {
+          "business_id": 911,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            0,
+            0,
+            130,
+            130
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-10-29",
+          "kind": "skill_card",
+          "name": "結果としての今",
+          "original_dimensions": [
+            130,
+            130
+          ],
+          "original_file": "911.png",
+          "original_sha256": "AB7C7FE6BAABE4DFBFB88550E065E91BC01098033A762E3215AB2993A961A420",
+          "original_size": 30815,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/skillCards/icons/911.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/skillCards/icons/911.png",
+          "png_sha256": "17428F9CA9D391DB19A8A57C3744E7A6D5929B81891E55821532F86A0502CD55",
+          "publisher": "gakumas-tools/gakumas-tools",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "3D3CB0AB33B07D9D473FCE62978B4019B2E4C41F77EF0CA4185FE03C957A1B28",
+          "size": 30262,
+          "upgraded": false
+        },
+        "912": {
+          "business_id": 912,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            0,
+            0,
+            130,
+            130
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-10-29",
+          "kind": "skill_card",
+          "name": "結果としての今",
+          "original_dimensions": [
+            130,
+            130
+          ],
+          "original_file": "912.png",
+          "original_sha256": "CF84E35BED478689D63C46D56EC6627BD255AAB38956A5AD7D2872599CBA5D48",
+          "original_size": 31001,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/skillCards/icons/912.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/skillCards/icons/912.png",
+          "png_sha256": "1224C947D919396618FA9C17A65DDCF25122B9A3CC2DE05D9BE81E861AB023F3",
+          "publisher": "gakumas-tools/gakumas-tools",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "99B56395827FDC96DAF447B812CCDFB3FCB9BA2937E52BE52BF862DA52E6DECB",
+          "size": 30450,
+          "upgraded": true
+        },
+        "913": {
+          "business_id": 913,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            0,
+            0,
+            130,
+            130
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-10-29",
+          "kind": "skill_card",
+          "name": "ファンが望むこと",
+          "original_dimensions": [
+            130,
+            130
+          ],
+          "original_file": "913.png",
+          "original_sha256": "7E7A3B779B918C04439AB5C7BC56F5463E179893D87E15B2121376BD01ABBA5A",
+          "original_size": 32238,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/skillCards/icons/913.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/skillCards/icons/913.png",
+          "png_sha256": "D57E2E97126D8F3B06555009358D1AE26C2BA43B592A0E852FAFC20121B99542",
+          "publisher": "gakumas-tools/gakumas-tools",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "9789365BDA2E9D1FAC7FDFBA288D8AD65EC6C62248D1CCAB55FB17A61B04CF6E",
+          "size": 31739,
+          "upgraded": false
+        },
+        "914": {
+          "business_id": 914,
+          "capture_provenance": "UNKNOWN",
+          "crop_box": [
+            0,
+            0,
+            130,
+            130
+          ],
+          "dimensions": [
+            130,
+            130
+          ],
+          "frozen_at": "2026-10-29",
+          "kind": "skill_card",
+          "name": "ファンが望むこと",
+          "original_dimensions": [
+            130,
+            130
+          ],
+          "original_file": "914.png",
+          "original_sha256": "9996CB844FE6DF3FDE063CE2A4A217BFB573D2EAF35AEC0F5721E8D2690649AF",
+          "original_size": 32354,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/skillCards/icons/914.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/skillCards/icons/914.png",
+          "png_sha256": "2DEA2A6EE668C0A50C08508E2CC05678A2A4EC85E5FA8727B6E16D898BBCE953",
+          "publisher": "gakumas-tools/gakumas-tools",
+          "resampling": "PILLOW_BICUBIC",
+          "rgb_pixel_sha256": "8989E96E4940C5ABCA646E9122544BD72420EB56960A20E11D22495A9EA84599",
+          "size": 31816,
+          "upgraded": true
         }
       },
       "schema_version": 1,
@@ -785,10 +913,10 @@
         ]
       }
     ],
-    "reference_file_count": 3589,
+    "reference_file_count": 3593,
     "reference_set_digest_contract": "sha256(base_reference_set_sha256 || public_dataset_id || NUL || public_dataset_revision || NUL || ordered(public_reference_name || NUL || business_id || NUL || visual_group_id || NUL || top_coarse_bytes || reused_green_mask_bytes))",
-    "reference_set_sha256": "483B0E94CE72A57AB98580A9E7DED98E2384401F8871E44BD8F79A579890F969",
+    "reference_set_sha256": "DED824ADEBA081890DC58114E3044894C148B777816D71595712202F95072F23",
     "replaced_reference_file_count": 0,
-    "retained_reference_file_count": 3588
+    "retained_reference_file_count": 3592
   }
 }

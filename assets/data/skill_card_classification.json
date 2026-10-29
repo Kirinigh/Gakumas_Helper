@@ -5,9 +5,9 @@
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
   "sources": {
-    "catalog_revision": "68ff32517466da526e0d2e39724fcbe212556518",
-    "catalog_sha256": "35E0E767BE6974E202C349EA55164A4ACDEFD72DAB7AE6103501D961974A69FF",
-    "decoded_master_sha256": "A724DEFB454FA4749727626D094B94B4907233E8220800F739C13D1ACC9E7F49",
+    "catalog_revision": "880be403add7894d49543cca7ba15e512c323285",
+    "catalog_sha256": "C4A1295B106CFDC72E2765E617D8648BFDA751BC9B0DDCAEAD26B55C13B37AEB",
+    "decoded_master_sha256": "3C233DFCB4CAB8BAA32EDFB15C05D4D978DA7651546941A33C24847FF471EFB4",
     "datasets": [
       {
         "dataset_id": "task075-authoritative-705100:0036",
@@ -42,14 +42,14 @@
         "manifest_sha256": "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7"
       },
       {
-        "dataset_id": "task095-skill-card-extension-pc-705100-0073-released910-ui-20261020",
-        "manifest_sha256": "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8"
+        "dataset_id": "task095-skill-reference-ui-pc7051000076-primary20261029",
+        "manifest_sha256": "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25"
       }
     ],
     "temporary_placeholder_catalog": {
       "repository": "https://github.com/gakumas-tools/gakumas-tools",
-      "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-      "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+      "revision": "880be403add7894d49543cca7ba15e512c323285",
+      "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
     }
   },
   "facets": {
@@ -21080,152 +21080,92 @@
       "business_id": 911,
       "name": "結果としての今",
       "upgraded": false,
-      "internal_id": null,
-      "asset_id": null,
+      "internal_id": "p_card-03-ido-3_209",
+      "asset_id": "img_general_skillcard_ido-3_209",
       "plan": "anomaly",
-      "rarity": "SSR",
       "kind": "p_idol",
+      "rarity": "SSR",
       "source": {
         "catalog_source_type": "pIdol",
         "catalog_p_idol_id": 161,
         "catalog_rarity": "SSR",
         "card_type": "active",
-        "official_plan": null,
-        "official_rarity": null,
-        "originIdolCardId": null,
-        "originSupportCardId": null,
-        "originPrimaStellaIdolCardId": null,
-        "originCharacterId": null,
-        "kind_basis": "catalog_source_for_temporary_placeholder",
-        "temporary_placeholder": {
-          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-          "reference_enabled": false,
-          "rule_version": "temporary-placeholder-reference-v1",
-          "provisional_family_id": "provisional:911",
-          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
-          "catalog": {
-            "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
-          },
-          "official_identity_status": "UNKNOWN_PENDING",
-          "decoded_master_sha256": null,
-          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
-        }
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-atbm-3-015",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
       }
     },
     {
       "business_id": 912,
       "name": "結果としての今+",
       "upgraded": true,
-      "internal_id": null,
-      "asset_id": null,
+      "internal_id": "p_card-03-ido-3_209",
+      "asset_id": "img_general_skillcard_ido-3_209",
       "plan": "anomaly",
-      "rarity": "SSR",
       "kind": "p_idol",
+      "rarity": "SSR",
       "source": {
         "catalog_source_type": "pIdol",
         "catalog_p_idol_id": 161,
         "catalog_rarity": "SSR",
         "card_type": "active",
-        "official_plan": null,
-        "official_rarity": null,
-        "originIdolCardId": null,
-        "originSupportCardId": null,
-        "originPrimaStellaIdolCardId": null,
-        "originCharacterId": null,
-        "kind_basis": "catalog_source_for_temporary_placeholder",
-        "temporary_placeholder": {
-          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-          "reference_enabled": false,
-          "rule_version": "temporary-placeholder-reference-v1",
-          "provisional_family_id": "provisional:911",
-          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
-          "catalog": {
-            "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
-          },
-          "official_identity_status": "UNKNOWN_PENDING",
-          "decoded_master_sha256": null,
-          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
-        }
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-atbm-3-015",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
       }
     },
     {
       "business_id": 913,
       "name": "ファンが望むこと",
       "upgraded": false,
-      "internal_id": null,
-      "asset_id": null,
+      "internal_id": "p_card-03-ido-3_222",
+      "asset_id": "img_general_skillcard_ido-3_222",
       "plan": "anomaly",
-      "rarity": "SSR",
       "kind": "p_idol",
+      "rarity": "SSR",
       "source": {
         "catalog_source_type": "pIdol",
         "catalog_p_idol_id": 161,
         "catalog_rarity": "SSR",
         "card_type": "mental",
-        "official_plan": null,
-        "official_rarity": null,
-        "originIdolCardId": null,
-        "originSupportCardId": null,
-        "originPrimaStellaIdolCardId": null,
-        "originCharacterId": null,
-        "kind_basis": "catalog_source_for_temporary_placeholder",
-        "temporary_placeholder": {
-          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-          "reference_enabled": false,
-          "rule_version": "temporary-placeholder-reference-v1",
-          "provisional_family_id": "provisional:913",
-          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
-          "catalog": {
-            "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
-          },
-          "official_identity_status": "UNKNOWN_PENDING",
-          "decoded_master_sha256": null,
-          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
-        }
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-atbm-3-015",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
       }
     },
     {
       "business_id": 914,
       "name": "ファンが望むこと+",
       "upgraded": true,
-      "internal_id": null,
-      "asset_id": null,
+      "internal_id": "p_card-03-ido-3_222",
+      "asset_id": "img_general_skillcard_ido-3_222",
       "plan": "anomaly",
-      "rarity": "SSR",
       "kind": "p_idol",
+      "rarity": "SSR",
       "source": {
         "catalog_source_type": "pIdol",
         "catalog_p_idol_id": 161,
         "catalog_rarity": "SSR",
         "card_type": "mental",
-        "official_plan": null,
-        "official_rarity": null,
-        "originIdolCardId": null,
-        "originSupportCardId": null,
-        "originPrimaStellaIdolCardId": null,
-        "originCharacterId": null,
-        "kind_basis": "catalog_source_for_temporary_placeholder",
-        "temporary_placeholder": {
-          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-          "reference_enabled": false,
-          "rule_version": "temporary-placeholder-reference-v1",
-          "provisional_family_id": "provisional:913",
-          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
-          "catalog": {
-            "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
-          },
-          "official_identity_status": "UNKNOWN_PENDING",
-          "decoded_master_sha256": null,
-          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
-        }
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-atbm-3-015",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "official_idol_origin"
       }
     },
     {
@@ -21257,8 +21197,8 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+            "revision": "880be403add7894d49543cca7ba15e512c323285",
+            "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
           },
           "official_identity_status": "UNKNOWN_PENDING",
           "decoded_master_sha256": null,
@@ -21295,8 +21235,8 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+            "revision": "880be403add7894d49543cca7ba15e512c323285",
+            "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
           },
           "official_identity_status": "UNKNOWN_PENDING",
           "decoded_master_sha256": null,
@@ -21333,8 +21273,8 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+            "revision": "880be403add7894d49543cca7ba15e512c323285",
+            "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
           },
           "official_identity_status": "UNKNOWN_PENDING",
           "decoded_master_sha256": null,
@@ -21371,8 +21311,8 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+            "revision": "880be403add7894d49543cca7ba15e512c323285",
+            "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
           },
           "official_identity_status": "UNKNOWN_PENDING",
           "decoded_master_sha256": null,
@@ -21409,8 +21349,8 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+            "revision": "880be403add7894d49543cca7ba15e512c323285",
+            "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
           },
           "official_identity_status": "UNKNOWN_PENDING",
           "decoded_master_sha256": null,
@@ -21447,8 +21387,8 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+            "revision": "880be403add7894d49543cca7ba15e512c323285",
+            "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
           },
           "official_identity_status": "UNKNOWN_PENDING",
           "decoded_master_sha256": null,
@@ -21485,8 +21425,8 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+            "revision": "880be403add7894d49543cca7ba15e512c323285",
+            "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
           },
           "official_identity_status": "UNKNOWN_PENDING",
           "decoded_master_sha256": null,
@@ -21523,8 +21463,8 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-            "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+            "revision": "880be403add7894d49543cca7ba15e512c323285",
+            "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
           },
           "official_identity_status": "UNKNOWN_PENDING",
           "decoded_master_sha256": null,
@@ -24357,32 +24297,32 @@
   "gallery_coverage": [
     {
       "component": "skill-base",
-      "manifest_sha256": "7416582900D42D0CEF1A0E791821409E3D329D492191CFB7AEB15CE8DDE52539",
-      "gallery_sha256": "0B8DDA50EFBA160CE08FBDDBB3DA981CE52F72BF70F042389E76D54F89935CA3",
+      "manifest_sha256": "16EFFACE97C4AE364A84539710E5B5A554D4482F0E5468F5E0B2230831A670CF",
+      "gallery_sha256": "01DCBD166830836DB4A3079B2B389D284C0927DBBB5133F32AD251A445A291CA",
       "row_count": 4368,
       "business_id_count": 922,
-      "enabled_business_id_count": 910,
-      "temporary_placeholder_business_id_count": 12,
+      "enabled_business_id_count": 914,
+      "temporary_placeholder_business_id_count": 8,
       "join_key": "business_id"
     },
     {
       "component": "skill-arena",
-      "manifest_sha256": "9E615FF7EC9CAB1F4EAFA7788E6D5C7EF1AEEB58D76E8063140BE227F2D9097C",
-      "gallery_sha256": "AF5064FC9796A49BE4BE843F9BBC0C6CD63C1D58BCACFC18A296774FAD8DBE36",
+      "manifest_sha256": "0C97F1F7EE19BAABCC244F7502CAB41E6B0B4F824C83D86643CD865AC6AA977E",
+      "gallery_sha256": "7D73619D62165F06A3F9898F9D7D722C8E0291C71261DFB169E36BF89E69737E",
       "row_count": 8544,
       "business_id_count": 922,
-      "enabled_business_id_count": 910,
-      "temporary_placeholder_business_id_count": 12,
+      "enabled_business_id_count": 914,
+      "temporary_placeholder_business_id_count": 8,
       "join_key": "business_id"
     },
     {
       "component": "badge-reference",
-      "manifest_sha256": "5237D1C6F93FDA09DBAE8D5015F37C52712A7F649F3C54CBA26D81CEE3491ACC",
-      "gallery_sha256": "A9F49EE445DC9D79D710D6895EA7DF1B55616592DA11F81A3FEA23849582D175",
+      "manifest_sha256": "DE6BA47EBB90F52340E0CE438916BF135EABAB32A223FFA08A6A093F83FB6FD7",
+      "gallery_sha256": "A8AB28D90B5BDD8D61B9E8D0BF740022AF6846DA1BE14D8D4CB63A07F8DE8A2E",
       "row_count": 3601,
       "business_id_count": 922,
-      "enabled_business_id_count": 910,
-      "temporary_placeholder_business_id_count": 12,
+      "enabled_business_id_count": 914,
+      "temporary_placeholder_business_id_count": 8,
       "join_key": "business_id"
     }
   ]

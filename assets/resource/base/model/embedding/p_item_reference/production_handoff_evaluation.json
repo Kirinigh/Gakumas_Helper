@@ -1,37 +1,37 @@
 {
   "artifact": {
     "path": "p_item_rendered_reference_gallery.npz",
-    "sha256": "DE7226F31A924D32F1555E394816B19A652F1BAB71E7612F9FEAC95F5302203F"
+    "sha256": "184A8B2259EA3E81D64202921798A51EA04AAF1E144F117A1B9C01418CDA5AB2"
   },
-  "candidate_manifest_sha256": "D56E09073B421D5AF0006F9929C777F9BEFAC2463B6A9D808940205C9884AB63",
+  "candidate_manifest_sha256": "301EABF89931DE708568404CAB9BB06D85F6E1706A5DFE115E9D0148ACFDE531",
   "component": "p_item_reference",
   "privacy": "PUBLIC_SAFE_AGGREGATE_ONLY",
   "promotion_evidence": {
-    "base_gallery_sha256": "F2C594781C31DBF04660485A922312AAA6AE85B6A4B18356269E894A361E1B1A",
-    "catalog_git_blob_sha1": "8B0A1FE915B554478BB50A63BFDF1503A117109F",
-    "catalog_sha256": "1358358BA52894FDBB497B056B4AAEC9AFCB84F63A22D1552978196E52D95307",
-    "production_source_evidence_sha256": "F427D490AE4BDD67D014A0D920998B1626BA477186C6FBF1A5BACE701A523CCF",
+    "base_gallery_sha256": "1A2F43A0931EF82EBE061F8F57123D4443080576B706414CB5E792EBB7CB0CC9",
+    "catalog_git_blob_sha1": "C2D33B4C241F154941DF3330EF037A90B8E63302",
+    "catalog_sha256": "476E169D8B188A7D4672BF6545CA49A094E22E84954E13AE6B2FB60AE46CE000",
+    "production_source_evidence_sha256": "2CD503C67BAE38B9ADE4014555C4544A3EF9A69D092AB9441459FF42AD6CF870",
     "published_ui_reference_count": 2,
-    "source_icon_count": 444,
-    "source_icons_sha256": "B797947B93EF655B64EBC85E02192C0C5ABEAE3E917116292E4A70BDAA0ABB6A",
-    "source_pixel_match_count": 444
+    "source_icon_count": 446,
+    "source_icons_sha256": "046CB4325D859589DB31CD4181211546AB449F82975F7A6C33204BC9A36F5338",
+    "source_pixel_match_count": 446
   },
   "schema_version": 1,
   "status": "PASS",
   "tool_contract": "task095-static-reference-production-promotion-v1",
   "validation": {
     "array_count": 3,
-    "base_gallery_sha256": "F2C594781C31DBF04660485A922312AAA6AE85B6A4B18356269E894A361E1B1A",
-    "business_id_count": 444,
+    "base_gallery_sha256": "1A2F43A0931EF82EBE061F8F57123D4443080576B706414CB5E792EBB7CB0CC9",
+    "business_id_count": 446,
     "changed_business_ids": [
-      500,
-      501
+      504,
+      505
     ],
-    "decoded_png_count": 444,
+    "decoded_png_count": 446,
     "independent_live_holdout": "PENDING",
-    "metadata_free_png_count": 444,
+    "metadata_free_png_count": 446,
     "self_ranking": {
-      "minimum_top1_margin": 0.013324,
+      "minimum_top1_margin": 0.020683,
       "passed": 2,
       "sample_count": 2
     }

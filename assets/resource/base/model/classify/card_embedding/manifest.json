@@ -2,31 +2,30 @@
   "build": {
     "tool_contract": "task095-temporary-placeholder-append-v1",
     "mode": "GALLERY_ONLY_NO_TRAINING",
-    "base_manifest_sha256": "F34BF0E3B9DBB22B815F4F6B1AA5624DF996FBC7CF20D487F065F1CE866F84F2",
-    "base_gallery_sha256": "B723141BC3A3A30D42D180DA8276EBF590238977FE03921AB74867EEC4CF0058",
-    "preserved_rows": 4356,
-    "appended_rows": 12,
-    "enabled_rows": 4356,
+    "base_manifest_sha256": "466B0ECA642F3A2D45E6B63AFF3FDD1E6F017807FE54C3B5262323E37C22BF12",
+    "base_gallery_sha256": "3BBD545942C6F967D187A088AC6BCABF6E1094E2634B606C8BD5EE328C3BD9D6",
+    "preserved_rows": 4360,
+    "appended_rows": 8,
+    "enabled_rows": 4360,
     "inherited_validation": {
       "manifest_path": "inherited-manifest.json",
-      "manifest_sha256": "F34BF0E3B9DBB22B815F4F6B1AA5624DF996FBC7CF20D487F065F1CE866F84F2",
-      "gallery_sha256": "B723141BC3A3A30D42D180DA8276EBF590238977FE03921AB74867EEC4CF0058",
-      "row_count": 4356,
+      "manifest_sha256": "466B0ECA642F3A2D45E6B63AFF3FDD1E6F017807FE54C3B5262323E37C22BF12",
+      "gallery_sha256": "3BBD545942C6F967D187A088AC6BCABF6E1094E2634B606C8BD5EE328C3BD9D6",
+      "row_count": 4360,
       "scope": "enabled_original_rows_only",
       "array_relation": "EXACT_PREFIX"
-    },
-    "base_classification_sha256": "D9D445D325FE09CE2A0364E8CD2A7AD58279A38BA3A3717DBACCA46255F6E921"
+    }
   },
   "component": "128-dimensional card-art embedding retrieval",
   "gallery": {
-    "bytes": 4990445,
-    "class_table_bytes": 61760,
+    "bytes": 4998177,
+    "class_table_bytes": 61740,
     "class_table_path": "card_embedding_classes.json",
-    "class_table_sha256": "21B24B49D25D93F0E903C95BDD585E27F40D7205B6D6C6CAB5F666D80077BD58",
+    "class_table_sha256": "572CBE4EC436AEE8CDFA0D8C0EC02D3917F49E363FACCF9DA80E12C92EDB105D",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "card_embedding_gallery.npz",
-    "sha256": "0B8DDA50EFBA160CE08FBDDBB3DA981CE52F72BF70F042389E76D54F89935CA3",
+    "sha256": "01DCBD166830836DB4A3079B2B389D284C0927DBBB5133F32AD251A445A291CA",
     "top_k": 5
   },
   "model": {
@@ -49,10 +48,6 @@
     "upgrade_minimum_margin": 0.015,
     "temporary_reference_rule_version": "temporary-placeholder-reference-v1",
     "temporary_placeholder_business_ids": [
-      911,
-      912,
-      913,
-      914,
       915,
       916,
       917,
@@ -991,11 +986,11 @@
       921,
       922
     ],
-    "dataset_id": "task095-skill-card-extension-pc-705100-0073-released910-ui-20261020",
+    "dataset_id": "task095-skill-reference-ui-pc7051000076-primary20261029",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8",
-    "dataset_revision": "pc-705100-0073-released910-ui-20261020",
-    "extension_business_card_id_count": 22,
+    "dataset_manifest_sha256": "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25",
+    "dataset_revision": "pc7051000076-primary20261029",
+    "extension_business_card_id_count": 26,
     "extension_business_card_ids": [
       889,
       890,
@@ -1018,7 +1013,11 @@
       907,
       908,
       909,
-      910
+      910,
+      911,
+      912,
+      913,
+      914
     ],
     "image_class_count": 4368,
     "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_EXCLUDED_TEMPORARY_PLACEHOLDERS",
@@ -1033,16 +1032,12 @@
       "historical_provenance_scope": "inherited enabled rows only",
       "catalog": {
         "repository": "https://github.com/gakumas-tools/gakumas-tools",
-        "revision": "f112a77a439600bbec93badf1bcfd0539ea0e1e4",
-        "sha256": "6604D372DDA5730E4379120261D84D0B73828E2D0159988C8B7796EA070EA509"
+        "revision": "880be403add7894d49543cca7ba15e512c323285",
+        "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
       },
       "image_path": "temporary-card.png",
       "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
       "business_ids": [
-        911,
-        912,
-        913,
-        914,
         915,
         916,
         917,
@@ -1053,34 +1048,6 @@
         922
       ],
       "references": [
-        {
-          "business_id": 911,
-          "name": "結果としての今",
-          "upgraded": false,
-          "visual_group_id": "provisional:911",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 912,
-          "name": "結果としての今+",
-          "upgraded": true,
-          "visual_group_id": "provisional:911",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 913,
-          "name": "ファンが望むこと",
-          "upgraded": false,
-          "visual_group_id": "provisional:913",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 914,
-          "name": "ファンが望むこと+",
-          "upgraded": true,
-          "visual_group_id": "provisional:913",
-          "reference_enabled": false
-        },
         {
           "business_id": 915,
           "name": "なにかを続ける尊さ",
