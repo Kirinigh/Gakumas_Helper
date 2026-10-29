@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from ._reader_visual import _box, _text, _spatial_ocr_rows
-from ._detail_shadow_field import shadow_field_projection
+from ._detail_shadow_field import shadow_field_projection, shadow_field_confirms_weak_ink
 from ._detail_title_region import _white_detail_panels, detail_title_in_header
 from ._detail_shadow_source import shadow_source_projection
 
@@ -344,9 +344,11 @@ def _old_title_overlap_pixels(
         if (visible_delta.mean() > 4 or (visible_delta.max(axis=1) > 32).mean() > .01
                 or not np.any(exposed & current_strong & previous_strong)
                 or np.any(exposed & (current_strong | previous_strong) & (delta.max(axis=2) > 32))
-                or np.any(~covered & current_dark & ~previous_dark & ((previous - current).max(axis=2) > 4))
                 or np.any(~local_core & current_dark & ((previous - current).max(axis=2) > 32))
                 or np.any(~covered & previous_dark & ((current - previous).max(axis=2) > 32))):
+            continue
+        weak = ~covered & current_dark & ~previous_dark & ((previous - current).max(axis=2) > 4)
+        if weak.any() and not shadow_field_confirms_weak_ink(image, source, box, panel, core, weak=weak):
             continue
         votes += 1
     return votes >= 2

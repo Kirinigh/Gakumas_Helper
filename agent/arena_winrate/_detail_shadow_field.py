@@ -52,6 +52,19 @@ def _complete_core(core: np.ndarray) -> bool:
     return not bool(np.any(interior & ~core))
 
 
+def _reconstructed_core(image: np.ndarray, panel: Box) -> np.ndarray | None:
+    """Reproduce the existing white-component/hull/erosion geometry exactly."""
+    x, y, w, h = panel
+    white = cv2.inRange(image[y:y + h, x:x + w], (250, 250, 250), (255, 255, 255))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(white)
+    if count < 2:
+        return None
+    component = (labels == 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))).astype(np.uint8)
+    core = np.zeros_like(component)
+    cv2.fillConvexPoly(core, cv2.convexHull(cv2.findNonZero(component)), 1)
+    return cv2.erode(core, np.ones((3, 3), np.uint8)).astype(bool)
+
+
 def _passes(observed: np.ndarray, predicted: np.ndarray) -> bool:
     residual = np.abs(observed - predicted)
     # Every source-flat donor is a physical-field witness. A strong outlier
@@ -134,6 +147,15 @@ def shadow_field_projection(
             or not isinstance(exposed, np.ndarray) or exposed.dtype != np.bool_
             or exposed.shape != (box[3], box[2]) or not exposed.any()):
         return None
+    return _field_projection(image, source, box, box, panel, core, exposed)
+
+
+def _field_projection(
+    image: np.ndarray, source: np.ndarray, box: Box, exclude_box: Box, panel: Box, core: np.ndarray,
+    exposed: np.ndarray, *, target_radius: int = 2, all_targets: bool = False,
+) -> np.ndarray | None:
+    """Fit outside an independent exclusion box, then evaluate target pixels."""
+    height, width = image.shape[:2]
     x, y, w, h = box
     px, py, pw, ph = panel
     margin = max(3, round(width * .01))
@@ -151,10 +173,12 @@ def shadow_field_projection(
     distance = cv2.distanceTransform(1 - canvas, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
     covered = cv2.dilate(canvas, np.ones((5, 5), np.uint8)).astype(bool)
     region = np.s_[y - top:y - top + h, x - left:x - left + w]
-    if np.any(exposed & covered[region]):
+    target_covered = (covered if target_radius == 2 else cv2.dilate(
+        canvas, np.ones((target_radius * 2 + 1, target_radius * 2 + 1), np.uint8)).astype(bool))
+    if np.any(exposed & target_covered[region]):
         return None
     target = exposed & (distance[region] < margin)
-    if not target.any():
+    if not target.any() or (all_targets and not np.array_equal(target, exposed)):
         return None
 
     yy, xx = np.indices(shape)
@@ -166,7 +190,8 @@ def shadow_field_projection(
     high = cv2.dilate(previous.max(axis=2), np.ones((3, 3), np.uint8))
     # The one-pixel exclusion also prevents the source qualification window
     # from touching candidate pixels. All selection precedes observed tests.
-    outside = ~((xx >= x - 1) & (xx < x + w + 1) & (yy >= y - 1) & (yy < y + h + 1))
+    ex, ey, ew, eh = exclude_box
+    outside = ~((xx >= ex - 1) & (xx < ex + ew + 1) & (yy >= ey - 1) & (yy < ey + eh + 1))
     qualified = ((distance >= 3) & (distance < margin + 3) & ~covered & outside
                  & (low >= 240) & (high.astype(np.int16) - low.astype(np.int16) <= _RESIDUAL))
     bins = np.floor(distance).astype(np.int16)
@@ -220,3 +245,46 @@ def shadow_field_projection(
     if agreement.mean() > _RESIDUAL or (agreement.max(axis=1) > _STRONG_DELTA).mean() > .01:
         return None
     return ((model_predictions[0] + model_predictions[1]) / 2).astype(np.float32)
+
+
+def shadow_field_confirms_weak_ink(
+    image: np.ndarray, source: np.ndarray, box: Box, panel: Box, core: np.ndarray, *, weak: np.ndarray,
+) -> bool:
+    """Prove every weak-AA threshold crossing without altering another gate.
+
+    The whole OCR box stays excluded from fitting, even when it spans two
+    panel sides. Only the small weak-point envelope is evaluated. A supplied
+    core must exactly match the current production reconstruction; a caller
+    cannot provide a hole, shifted surface or a broader replacement mask.
+    """
+    if (not isinstance(image, np.ndarray) or not isinstance(source, np.ndarray)
+            or image.dtype != np.uint8 or source.dtype != np.uint8
+            or image.ndim != 3 or image.shape[2] != 3 or source.shape != image.shape):
+        return False
+    height, width = image.shape[:2]
+    if (not _box_valid(box, width, height) or not _box_valid(panel, width, height)
+            or not isinstance(core, np.ndarray) or core.dtype != np.bool_
+            or core.shape != (panel[3], panel[2])
+            or not isinstance(weak, np.ndarray) or weak.dtype != np.bool_
+            or weak.shape != (box[3], box[2]) or not weak.any()):
+        return False
+    reconstructed = _reconstructed_core(image, panel)
+    if reconstructed is None or not np.array_equal(core, reconstructed):
+        return False
+    x, y, w, h = box
+    previous = source[y:y + h, x:x + w][weak].astype(np.int16)
+    current = image[y:y + h, x:x + w][weak].astype(np.int16)
+    if (np.any(previous.min(axis=1) < 230) or np.any(np.ptp(previous, axis=1) > _RESIDUAL)
+            or np.any(current.min(axis=1) < 230 - _STRONG_DELTA)
+            or np.any(current.max(axis=1) >= 230) or np.any(np.ptp(current, axis=1) > _RESIDUAL)):
+        return False
+    rows, columns = np.nonzero(weak)
+    left, top, right, bottom = int(columns.min()), int(rows.min()), int(columns.max()) + 1, int(rows.max()) + 1
+    target_box = x + left, y + top, right - left, bottom - top
+    target_mask = weak[top:bottom, left:right]
+    projected = _field_projection(image, source, target_box, box, panel, core, target_mask,
+                                  target_radius=3, all_targets=True)
+    if projected is None:
+        return False
+    observed = image[y + top:y + bottom, x + left:x + right].astype(np.float32)
+    return bool(np.all(np.abs(observed - projected)[target_mask] <= _RESIDUAL))
