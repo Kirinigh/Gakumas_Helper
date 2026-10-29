@@ -369,6 +369,47 @@ def _numeric_background_decoration(text: str) -> bool:
                     for char in normalized))
 
 
+def _isolated_background_number(text: str, box: Box, panel: Box, title: Box, *, title_verified: bool) -> bool:
+    """A distant backdrop digit cannot supply any tooltip body operand.
+
+    Keep operators and units out of this route. Boundary atoms still need
+    the original pixel proofs; only a full two-font horizontal gap qualifies.
+    The caller has already proved the unique surface and its source change.
+    """
+    x, _, w, h = box
+    px, _, pw, _ = panel
+    gap = max(px - x - w, x - px - pw)
+    return (title_verified is True and gap >= 2 * max(h, title[3])
+            and text.isascii() and text.isalnum() and _numeric_background_decoration(text))
+
+
+def _old_isolated_glyph(image: np.ndarray, sources: Sequence[np.ndarray], box: Box) -> bool:
+    """Keep old light glyphs without confusing their colored ground with ink.
+
+    Only the far-domain route may use this evidence. The union includes newly
+    neutral pixels as well, so new dark/white strokes cannot select themselves
+    out. Flat sources and erased observations supply no old-symbol evidence.
+    """
+    x, y, w, h = box
+    current = image[y:y + h, x:x + w].astype(np.int16)
+    if np.ptp(current, axis=(0, 1)).max() < 32:
+        return False
+    current_neutral = np.ptp(current, axis=2) <= 24
+    votes = 0
+    for source in sources:
+        previous = source[y:y + h, x:x + w].astype(np.int16)
+        previous_neutral = np.ptp(previous, axis=2) <= 24
+        witnesses = previous_neutral | current_neutral
+        if (np.ptp(previous, axis=(0, 1)).max() < 32
+                or not np.any(previous_neutral & current_neutral
+                              & (previous.min(axis=2) >= 198) & (current.min(axis=2) >= 198))):
+            continue
+        delta = np.abs(current - previous)[witnesses]
+        if delta.mean() <= 4 and delta.max() <= 32:
+            votes += 1
+    return votes >= 2
+
+
 def attribute_skill_detail(
     image: np.ndarray, sources: Sequence[np.ndarray], items: Sequence[Any], *, title_box: Box | None = None,
     title_verified: bool = False,
@@ -407,6 +448,10 @@ def attribute_skill_detail(
             continue
         if _contains(panel, box):
             owned.append(item)
+            continue
+        if (_isolated_background_number(text, box, panel, title_box, title_verified=title_verified)
+                and _old_isolated_glyph(image, sources, box)):
+            background.append(item)
             continue
         x, y, w, h = box
         l, t, r, bottom = max(x, px), max(y, py), min(x + w, px + pw), min(y + h, py + ph)
