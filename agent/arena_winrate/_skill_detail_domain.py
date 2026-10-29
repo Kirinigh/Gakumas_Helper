@@ -336,6 +336,23 @@ def _unfinished_body_operand(
                 if (0 <= gap <= max(box[3], following_box[3]) * .75
                         and re.match(r"[\u3040-\u30ff\u3400-\u9fff]", following_text)):
                     continue
+        # A field name can wrap at the text column's right edge. Its first
+        # word alone is not an open value when the next adjacent row returns
+        # to the title margin and completes a known label plus its own value.
+        # Inspect structure only; do not concatenate or rewrite OCR atoms.
+        if text == "スコア" and index is not None and index + 1 < len(rows):
+            _, line_box, parts = rows[index]
+            following, next_box, _ = rows[index + 1]
+            scale = max(box[3], next_box[3], title[3])
+            gap = next_box[1] - line_box[1] - line_box[3]
+            if (parts[-1] == (text, box)
+                    and 0 <= panel[0] + panel[2] - box[0] - box[2] <= scale
+                    and abs(next_box[0] - title[0]) <= .75 * scale
+                    and max(box[3], next_box[3]) <= 1.5 * min(box[3], next_box[3])
+                    and 0 <= gap <= .75 * scale
+                    and re.match(r"(?:値(?:増加|增加)|上昇回数(?:増加|增加))[+＋][1-9][0-9]*(?=$|[・·、（(])",
+                                 following.strip())):
+                continue
         # This closes a known UI wrap, not arbitrary fragmented arithmetic.
         # A written operator, negative value or another field stays open.
         if not re.search(r"(?:スキルカード使用数|ターン)追加$", text):
