@@ -3553,6 +3553,144 @@ class ArenaEntityCatalog:
                 offset += match.end()
         return True
 
+    def _covered_view_merge_zero_signature_is_visible(
+        self,
+        card: Mapping[str, Any],
+        customization_id: int,
+        *,
+        resolved: Mapping[str, int],
+        combined_detail_text: str,
+        full_detail_text: str | None,
+        effect_roi_text: str | None,
+        effect_roi_title_bound: bool,
+        effect_roi_observation_count: int,
+    ) -> bool:
+        """Certify a pure score-repetition zero in each complete detail view.
+
+        The view-merger knows other zero families too. They cannot inherit this
+        certificate: a repeated threshold in another action is not proof of a
+        missing condition row. Only one literal score and a pure +1 repetition
+        patch are supported here. Existing generic-cost confirmation and the
+        side-specific cost policy still run after this non-cost proof.
+        """
+
+        definition = self._customizations[customization_id]
+        if (
+            type(definition.get("max")) is not int
+            or definition["max"] != 1
+            or _direct_prestage_target_this_increment(
+                definition.get("effects"), "scoreTimes", 1,
+            ) != 1
+            or any(definition.get(key) not in (None, "")
+                   for key in ("actions", "conditions", "cost", "limit"))
+            or definition.get("forceInitialHand") not in (None, "", False)
+            or any(_normalise_text(card.get(key)) for key in ("conditions", "effects"))
+            or len(_all_literal_integer_increments(card.get("actions"), "score")) != 1
+        ):
+            return False
+        views = self._covered_optional_row_detail_views(
+            card,
+            combined_detail_text=combined_detail_text,
+            full_detail_text=full_detail_text,
+            effect_roi_text=effect_roi_text,
+            effect_roi_title_bound=effect_roi_title_bound,
+            effect_roi_observation_count=effect_roi_observation_count,
+        )
+        if not views:
+            return False
+
+        # Inventory complete numeric rows, not just the presence of a good
+        # substring. A correct +2 beside an incorrect +20 must stay rejected.
+        rows: Counter[tuple[str, str, int]] = Counter()
+        base_fields: set[str] = set()
+        actions = _normalise_text(card.get("actions"))
+        for field, (prefix, suffix) in _ADDED_NUMERIC_EFFECT_LABELS.items():
+            values = _all_literal_integer_increments(actions, field)
+            if len(values) != len(re.findall(rf"(?<![.A-Za-z0-9_]){field}\+=", actions)):
+                return False
+            if len(values) > 1:
+                return False
+            if values:
+                base_fields.add(field)
+                rows[prefix, suffix, values[0] + self._selected_direct_growth_increment(resolved, field)] += 1
+        for identifier, level in resolved.items():
+            if not level or self._pure_generic_cost_delta(int(identifier)) is not None:
+                continue
+            sibling = self._customizations[int(identifier)]
+            if (
+                any(sibling.get(key) not in (None, "", False)
+                    for key in ("conditions", "cost", "limit", "forceInitialHand"))
+            ):
+                return False
+            if not _normalise_text(sibling.get("actions")) and any(
+                _direct_prestage_target_this_increment(sibling.get("effects"), field, level) is not None
+                for field in base_fields
+            ):
+                continue
+            hand_growth = re.fullmatch(
+                r"target:hand\{g\.score\+=([1-9][0-9]*);?\};?",
+                _normalise_text(_selected_level_patch(sibling.get("actions"), level)),
+            )
+            if hand_growth is None or _normalise_text(sibling.get("effects")):
+                return False
+            rows["手札のスコア値増加+", "", int(hand_growth[1])] += 1
+
+        matcher = self._cached_effective_detail_matcher(card, customization_id)
+        if matcher is None:
+            return False
+        markers = {
+            **dict(_ADDED_NUMERIC_EFFECT_LABELS.values()),
+            "固定元気+": "", "手札のスコア値増加+": "",
+        }
+        marker_pattern = re.compile("|".join(
+            _numeric_effect_label_pattern(prefix)
+            for prefix in sorted(markers, key=len, reverse=True)
+        ))
+        anchors = self._detail_coverage_anchors(card, resolved)
+        for view in views:
+            compact = _normalise_effect_text(view)
+            if (
+                not matcher(compact, 0) or matcher(compact, 1)
+                or not self._view_merge_zero_signature_is_visible(card, customization_id, compact)
+                or any(not self._detail_coverage_anchor_present(card, resolved, anchor, compact)
+                       for anchor in anchors)
+            ):
+                return False
+            for identifier, level in resolved.items():
+                if not level or self._pure_generic_cost_delta(int(identifier)) is not None:
+                    continue
+                sibling_matcher = self._cached_effective_detail_matcher(card, int(identifier))
+                if (
+                    sibling_matcher is None or not sibling_matcher(compact, level)
+                    or not self._positive_signature_is_visible(
+                        card, int(identifier), compact, level, resolved=resolved,
+                    )
+                ):
+                    return False
+            observed: Counter[tuple[str, str, int]] = Counter()
+            spans: list[tuple[int, int]] = []
+            for marker in marker_pattern.finditer(compact):
+                suffix = markers[marker[0]]
+                number = _ADDED_NUMERIC_INTEGER.match(compact, marker.end())
+                if (
+                    number is None or number[0] != str(int(number[0]))
+                    or not compact[number.end():].startswith(suffix)
+                ):
+                    return False
+                observed[marker[0], suffix, int(number[0])] += 1
+                spans.append((marker.start(), number.end() + len(suffix)))
+            if observed != rows:
+                return False
+            remainder = compact
+            for start, end in reversed(spans):
+                remainder = remainder[:start] + remainder[end:]
+            # Damaged score labels and detached repetition tails cannot turn
+            # into a zero merely because a different complete row was read.
+            remainder = remainder.replace("試験・ステージ中1回", "")
+            if re.search(r"スコ|コア|回|スキルカード使用数", remainder):
+                return False
+        return True
+
     def _view_merge_zero_signature_is_visible(
         self,
         card: Mapping[str, Any],
@@ -4454,6 +4592,15 @@ class ArenaEntityCatalog:
                         effect_roi_observation_count
                     ),
                 ) or self._covered_direct_score_zero_signature_is_visible(
+                    card,
+                    customization_id,
+                    resolved=representative,
+                    combined_detail_text=detail_text,
+                    full_detail_text=full_detail_text,
+                    effect_roi_text=effect_roi_text,
+                    effect_roi_title_bound=effect_roi_title_bound,
+                    effect_roi_observation_count=effect_roi_observation_count,
+                ) or self._covered_view_merge_zero_signature_is_visible(
                     card,
                     customization_id,
                     resolved=representative,
