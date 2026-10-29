@@ -1210,8 +1210,91 @@ def _dependency_versions(site_packages: Path) -> dict[str, str]:
     return versions
 
 
+def _validate_production_commit(value: object) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+        raise BuildError("production commit must be a full lowercase 40-character Git SHA")
+    return value
+
+
+def _verify_pinned_production(production_commit: str) -> dict[str, Any]:
+    """Verify historical production success without claiming it is the latest."""
+    from agent.arena_winrate.upstream_component import (
+        API_BASE,
+        ArenaComponentError,
+        GitHubProductionSource,
+    )
+
+    production_commit = _validate_production_commit(production_commit)
+    source = GitHubProductionSource()
+    deployments_query = (
+        f"{API_BASE}/deployments?sha={production_commit}&environment=production&per_page=100"
+    )
+
+    def request(url: str) -> object:
+        try:
+            return source._request_json(url, timeout=source.check_timeout_seconds)
+        except ArenaComponentError as error:
+            raise BuildError("cannot verify pinned production deployment") from error
+
+    deployments = request(deployments_query)
+    if not isinstance(deployments, list) or len(deployments) > 100:
+        raise BuildError("pinned production deployment response is invalid")
+    seen: set[int] = set()
+    for deployment in deployments:
+        if (
+            not isinstance(deployment, dict)
+            or isinstance(deployment.get("id"), bool)
+            or not isinstance(deployment.get("id"), int)
+            or deployment["id"] <= 0
+            or deployment["id"] in seen
+            or deployment.get("sha") != production_commit
+            or deployment.get("environment") != "production"
+        ):
+            raise BuildError("pinned production deployment is malformed or mismatched")
+        seen.add(deployment["id"])
+    states = {"error", "failure", "inactive", "pending", "queued", "in_progress", "success"}
+    for deployment in sorted(deployments, key=lambda row: row["id"], reverse=True):
+        deployment_id = deployment["id"]
+        deployment_url = deployment.get("url", f"{API_BASE}/deployments/{deployment_id}")
+        if not isinstance(deployment_url, str) or re.fullmatch(
+            r"https://api\.github\.com/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/deployments/"
+            + str(deployment_id), deployment_url,
+        ) is None:
+            raise BuildError("pinned production deployment URL is invalid")
+        # GitHub may canonicalize a transferred repository in response links.
+        # Requests stay on the fixed official API base and the validated ID.
+        statuses_query = f"{API_BASE}/deployments/{deployment_id}/statuses?per_page=100"
+        statuses = request(statuses_query)
+        if not isinstance(statuses, list) or len(statuses) > 100:
+            raise BuildError("pinned production status response is invalid")
+        status_ids: set[int] = set()
+        for status in statuses:
+            if (
+                not isinstance(status, dict)
+                or isinstance(status.get("id"), bool)
+                or not isinstance(status.get("id"), int)
+                or status["id"] <= 0
+                or status["id"] in status_ids
+                or not isinstance(status.get("state"), str)
+                or status["state"] not in states
+                or status.get("environment", "production") != "production"
+                or status.get("deployment_url", deployment_url) != deployment_url
+            ):
+                raise BuildError("pinned production status is malformed or mismatched")
+            status_ids.add(status["id"])
+        successful = [status for status in statuses if status["state"] == "success"]
+        if successful:
+            status = max(successful, key=lambda row: row["id"])
+            return {"deployment_id": deployment_id, "sha": production_commit,
+                    "environment": "production", "status_id": status["id"], "state": "success",
+                    "deployment_url": deployment_url,
+                    "deployments_query": deployments_query, "statuses_query": statuses_query}
+    raise BuildError("pinned commit has no successful production deployment in the checked window")
+
+
 def _validate_release_reference(
     installed_reference: Path | None, engine_bundle: Path, python_site_packages: Path,
+    *, production_commit: str | None = None,
 ) -> dict[str, Any]:
     """Read the locally updated reference; never import or copy its user state."""
     if installed_reference is None:
@@ -1225,15 +1308,22 @@ def _validate_release_reference(
         raise BuildError(f"release dependencies differ from the updated local reference: {differences}")
     from agent.arena_winrate.upstream_component import GitHubProductionSource
 
-    production = GitHubProductionSource().discover_production_commit()
+    production = (GitHubProductionSource().discover_production_commit()
+                  if production_commit is None else _validate_production_commit(production_commit))
     engine = _load_json(engine_bundle / "manifest.json")
     active_path = installed_reference / ".local/runtime-data/arena-components/active.json"
     active = (_load_json(active_path) if active_path.is_file()
               else _load_json(installed_reference / "assets/arena-winrate/manifest.json"))
     if engine.get("commit") != production or active.get("commit") != production:
+        if production_commit is not None:
+            raise BuildError("arena input/reference does not match the pinned production commit")
         raise BuildError("arena input/reference is not the latest successful RIS production deployment; update locally and rebuild the READY input first")
-    return {"installed_version": installed.get("derived_version"),
-            "python_packages": expected, "ris_production_commit": production}
+    result = {"installed_version": installed.get("derived_version"),
+              "python_packages": expected, "ris_production_commit": production}
+    if production_commit is not None:
+        result.update(production_selection="pinned_successful_deployment",
+                      production_deployment=_verify_pinned_production(production))
+    return result
 
 
 def build_derived_package(
@@ -1257,7 +1347,14 @@ def build_derived_package(
     framework_sha256: str | None = None,
     framework_version: str | None = None,
     installed_reference: Path | None = None,
+    production_commit: str | None = None,
 ) -> Path:
+    if production_commit is not None:
+        production_commit = _validate_production_commit(production_commit)
+        if not validate_python_runtime:
+            raise BuildError("pinned production requires Python runtime validation")
+        if allow_upstream_trial_channel or update_repository.rstrip("/") == UPSTREAM_REPOSITORY:
+            raise BuildError("pinned production cannot use the upstream trial channel")
     source_root = source_root.resolve()
     upstream_archive = upstream_archive.resolve()
     engine_bundle = engine_bundle.resolve()
@@ -1323,7 +1420,8 @@ def build_derived_package(
     mfa_core_manifest = _validate_mfa_core_bundle(mfa_core_bundle)
     _validate_input_tree(python_site_packages, label="embedded Python site-packages", reject_private_names=True)
     release_reference = (
-        _validate_release_reference(installed_reference, engine_bundle, python_site_packages)
+        _validate_release_reference(installed_reference, engine_bundle, python_site_packages,
+                                    production_commit=production_commit)
         if validate_python_runtime and update_repository != UPSTREAM_REPOSITORY else None
     )
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1541,6 +1639,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--python-site-packages", type=Path, required=True)
     parser.add_argument("--installed-reference", type=Path,
                         help="Locally updated installation used to check release dependencies and RIS production data")
+    parser.add_argument("--production-commit",
+                        help="Explicit successful production commit for an authorized fixed-input release")
     parser.add_argument("--framework-archive", type=Path)
     parser.add_argument("--framework-sha256")
     parser.add_argument("--framework-version")
@@ -1565,6 +1665,7 @@ def main() -> int:
         mfa_core_bundle=args.mfa_core_bundle,
         python_site_packages=args.python_site_packages,
         installed_reference=args.installed_reference,
+        production_commit=args.production_commit,
         output=args.output,
         update_repository=args.update_repository,
         allow_upstream_trial_channel=args.allow_upstream_trial_channel,
