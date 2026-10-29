@@ -418,8 +418,13 @@ def attribute_skill_detail(
         possible_operand = any(character.isnumeric() for character in text) or text[:1] in {"+", "-", "−"}
         empty_surface_overlap = (overlaps and not crossing_ink and decoration and not _EFFECT.search(text)
                                  and not (incomplete and possible_operand))
-        old_border = (crossing_ink and not decoration and not _EFFECT.search(text)
-                      and not (incomplete and possible_operand)
+        # A proved old number wholly above the body's title boundary cannot
+        # supply an operand to a later body row. Its weak rim pixels still
+        # need the same source/three-white-pixel proof as any old label.
+        header_number = (title_verified is True and py <= y and y + h <= title_box[1] + title_box[3]
+                         and _numeric_background_decoration(text))
+        old_border = (crossing_ink and (not decoration or header_number) and not _EFFECT.search(text)
+                      and (not (incomplete and possible_operand) or header_number)
                       and _old_border_pixels(image, sources, box, panel, core))
         old_title_overlap = (crossing_ink and title_verified is True and not incomplete
                              and _numeric_background_decoration(text)
