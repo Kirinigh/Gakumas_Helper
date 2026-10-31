@@ -16,6 +16,7 @@ from .catalog import ArenaCatalogError, ArenaEntityCatalog
 from ._reader_errors import ArenaReaderError
 from ._reader_visual import _box, _text
 from ._reader_evidence import _TitleBoundEffectRoiText
+from .recognition_probe import RecognitionProbe
 from ._detail_text_layout import ErrorNumericLayoutRecovery, ErrorWrappedSignedRecovery
 from ._skill_detail_domain import SkillDetailText, SkillDetailDomain, reobserved_unknowns, project_domain_items, attribute_skill_detail
 from ._detail_capture_evidence import _EvidenceClock, _FullFrameOcrEvidence
@@ -390,6 +391,15 @@ class DetailEffectOcr:
                 skill_domain=domain, skill_domain_binding=binding, skill_body_repair=None,
             )
         if not domain.complete:
+            try:
+                RecognitionProbe.observe_domain_uncertainty(
+                    getattr(self.port, "_detail_failure_frames", None), self.port._full_frame_ocr_evidence[id(image)],
+                )
+            except Exception:
+                # Optional evidence must not change recognition or recovery.
+                probe = getattr(self.port, "_recognition_probe", None)
+                if probe is not None:
+                    probe.disabled = True
             self.logger.debug(json.dumps({
                 "event": "arena_skill_detail_domain_unconfirmed", "key": key,
                 "card_id": card_id, "reason": domain.reason, "blocked": domain.blocked,

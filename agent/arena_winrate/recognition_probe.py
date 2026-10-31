@@ -10,15 +10,30 @@ import re
 import json
 import stat
 import shutil
-from typing import Any
+from typing import Any, NamedTuple
 from pathlib import Path
 from datetime import datetime, timezone
 from collections.abc import Mapping
 
 from .evidence_retention import _FRAME_NAME, _plain_stat
+from ._detail_capture_evidence import _FullFrameOcrEvidence
 
 CAMPAIGN = "arena-feedback-20260920"
 EXPIRES_AT = "2026-11-01T00:00:00+08:00"
+
+
+class _DomainUncertaintySnapshot(NamedTuple):
+    image: Any
+    sources: tuple
+    observation: dict
+    key: tuple[int, int]
+    token: int
+    card_id: int
+    reco_id: int
+    reason: str
+    unknown: tuple
+    transaction_id: str
+    member_read_id: str | None
 
 
 def _skill_domain_failure(position: Mapping[str, Any], outcome: str, error: str | None) -> bool:
@@ -220,6 +235,65 @@ class RecognitionProbe:
             "contact": contact, "accepted": accepted,
         })
 
+    @staticmethod
+    def observe_domain_uncertainty(diagnostic: dict | None, evidence: _FullFrameOcrEvidence) -> None:
+        """Pin the first known-ID uncertain capture with its actual source triplet.
+
+        This records an observation for review, never an incorrect-rejection
+        label. All arrays and OCR below already belong to this transaction.
+        """
+        if (diagnostic is None or "probe_sources" not in diagnostic
+                or "probe_domain_uncertainty" in diagnostic
+                or not isinstance(evidence, _FullFrameOcrEvidence) or not evidence.hit):
+            return
+        binding, domain = evidence.skill_domain_binding, evidence.skill_domain
+        if (not isinstance(binding, tuple) or len(binding) != 4 or domain is None
+                or domain.complete or not domain.unknown):
+            return
+        key, token, card_id, sources = binding
+        position = diagnostic["position"]
+        frame_token = diagnostic.get("probe_frame_tokens", {}).get(id(evidence.image))
+        if (position.get("kind") != "skill_card"
+                or key != (position.get("group_index"), position.get("card_slot"))
+                or type(token) is not int or token < 1 or type(card_id) is not int or card_id < 1
+                or type(evidence.reco_id) is not int or evidence.reco_id < 1
+                or type(frame_token) is not int or frame_token != token):
+            return
+        observation = next((frame for frame in diagnostic.get("probe_frames", ())
+                            if frame["image"] is evidence.image), None)
+        if (observation is None or type(observation.get("reco_id")) is not int
+                or observation["reco_id"] != evidence.reco_id):
+            return
+        import numpy as np
+
+        image = evidence.image
+        if (not isinstance(image, np.ndarray) or image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8
+                or not isinstance(sources, tuple) or len(sources) != 3 or len({id(source) for source in sources}) != 3
+                or any(not isinstance(source, np.ndarray) or source.shape != image.shape or source.dtype != image.dtype
+                       for source in sources)):
+            return
+        unknown = tuple({"text": str(item.get("text", "") if isinstance(item, Mapping) else getattr(item, "text", "")),
+                         "box": [int(value) for value in (item.get("box", ()) if isinstance(item, Mapping) else getattr(item, "box", ()))]}
+                        for item in domain.unknown)
+        diagnostic["probe_domain_uncertainty"] = _DomainUncertaintySnapshot(
+            image, sources, dict(observation), key, token, card_id, evidence.reco_id,
+            domain.reason, unknown, diagnostic["transaction_id"], diagnostic.get("member_read_id"),
+        )
+
+    @staticmethod
+    def domain_recovered_snapshot(diagnostic: dict, outcome: str) -> _DomainUncertaintySnapshot | None:
+        snapshot = diagnostic.get("probe_domain_uncertainty")
+        position = diagnostic["position"]
+        if (outcome != "completed" or not isinstance(snapshot, _DomainUncertaintySnapshot)
+                or position.get("kind") != "skill_card"
+                or snapshot.key != (position.get("group_index"), position.get("card_slot"))
+                or type(position.get("observed_detail_card_id")) is not int
+                or snapshot.card_id != position.get("observed_detail_card_id")
+                or snapshot.transaction_id != diagnostic.get("transaction_id")
+                or snapshot.member_read_id != diagnostic.get("member_read_id")):
+            return None
+        return snapshot
+
     def _source_png(self, image: Any) -> bytes:
         """Reuse only owned uint8 source arrays whose pixels still match."""
         import cv2
@@ -269,6 +343,9 @@ class RecognitionProbe:
         card_id = position.get("observed_detail_card_id")
         p_item = position.get("kind") == "p_item"
         cost_evidence = diagnostic.get("probe_cost_evidence") if not p_item else None
+        recovered = self.domain_recovered_snapshot(diagnostic, outcome) if not cost_evidence else None
+        if not diagnostic.get("probe_domain_recovered"):
+            recovered = None
         member = diagnostic.get("member_read_id")
         cache_sources = (
             not p_item and len(diagnostic["probe_sources"]) == 3
@@ -285,7 +362,7 @@ class RecognitionProbe:
                 "detail_key": [position.get("group_index"), position.get("card_slot")],
                 "card_id": card_id, "reco_id": None,
             }
-        if outcome in {"cancelled", "superseded"} or (not p_item and not cost_evidence and card_id in self.RETIRED_TARGETS and not domain_failure):
+        if outcome in {"cancelled", "superseded"} or (not p_item and not cost_evidence and card_id in self.RETIRED_TARGETS and not domain_failure and recovered is None):
             return None
         if p_item and outcome != "completed" and "p_item_source_restore_unproven" not in str(error):
             return None
@@ -294,11 +371,15 @@ class RecognitionProbe:
         category = ("p_item_return_control" if outcome == "completed" else "p_item_return_failed") if p_item else (str(target) if target else "control")
         if cost_evidence:
             category = "cost_evidence_inconclusive"
+        elif recovered is not None:
+            category = "skill_domain_recovered"
         key = [position.get(name) for name in (
             "team_id", "stage_number", "member_slot", "group_index", "card_slot",
         )] + [card_id, outcome]
         if p_item:
             key.append(position.get("screen_slot"))
+        if recovered is not None:
+            key.append(category)
         if not re.fullmatch(r"[0-9a-f]{32}", str(diagnostic.get("transaction_id", ""))):
             return None
         folder = self.root.resolve() / "reader-failures"
@@ -325,6 +406,8 @@ class RecognitionProbe:
         images = []
         for index, image in enumerate(diagnostic["probe_sources"]):
             images.append((f"source-{index + 1}", image, None))
+        if recovered is not None:
+            images.append(("domain-uncertain-observation", recovered.image, recovered.observation["ocr"]))
         identity_checks = diagnostic.get("probe_identity_checks", ())
         for check in identity_checks:
             if not any(image is check["image"] for _, image, _ in images):
@@ -362,6 +445,9 @@ class RecognitionProbe:
             source_binding = diagnostic.get("probe_domain_source_binding")
             if isinstance(source_binding, Mapping) and index < len(diagnostic["probe_sources"]):
                 saved[-1]["source_role"] = source_binding["source_role"]
+        observations = list(diagnostic["probe_frames"])
+        if recovered is not None and not any(frame["image"] is recovered.image for frame in observations):
+            observations.append(recovered.observation)
         evidence = {
             "event": "arena_recognition_probe_sample", **position,
             "campaign": self.settings.get("campaign", CAMPAIGN),
@@ -382,7 +468,7 @@ class RecognitionProbe:
             "observations": [{"file": f"{index:02d}.png", "phase": frame["phase"],
                               "reco_id": frame.get("reco_id"), "seconds": frame.get("seconds")}
                              for index, (_, img, _) in enumerate(images[:10])
-                             for frame in diagnostic["probe_frames"] if frame["image"] is img],
+                             for frame in observations if frame["image"] is img],
             "source_frame_count": len(diagnostic["probe_sources"]),
             "source_frames_distinct_objects": len({id(image) for image in diagnostic["probe_sources"]}),
             "source_card_box": diagnostic.get("probe_source_box"),
@@ -397,6 +483,12 @@ class RecognitionProbe:
             "truth_status": "unreviewed_observation_not_training_label",
             "extra_screenshots": 0, "extra_ocr": 0, "extra_clicks": 0,
         }
+        if recovered is not None:
+            evidence["domain_recovery"] = {
+                "status": "known_id_domain_uncertainty_then_completed_pending_review",
+                "reason": recovered.reason, "unattributed": recovered.unknown,
+                "not_a_false_rejection_label": True,
+            }
         source_binding = diagnostic.get("probe_domain_source_binding")
         if isinstance(source_binding, Mapping):
             observation_file = next((f"{index:02d}.png" for index, (_, image, _) in enumerate(images[:10])

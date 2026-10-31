@@ -255,6 +255,19 @@ class TelemetryReader:
             if domain_failure:
                 self._bind_domain_probe_sources(detail, key)
             cost_failure = getattr(self.port, "_card_face_cost_failed_sources", {}).get(key)
+            recovered = RecognitionProbe.domain_recovered_snapshot(detail, outcome)
+            if (not domain_failure and recovered is not None
+                    and not (cost_failure is not None and position.get("observed_detail_card_id") == cost_failure["card_id"])):
+                # The latest live cache may have advanced. Preserve the sources
+                # of the pinned uncertain observation, not those of its recovery.
+                detail["probe_domain_recovered"] = True
+                detail["probe_sources"] = recovered.sources
+                detail["probe_domain_source_image"] = recovered.image
+                detail["probe_domain_source_binding"] = {
+                    "exact": True, "status": "exact_domain_binding", "source_role": "card_count_frames",
+                    "detail_key": list(recovered.key), "card_id": recovered.card_id,
+                    "transaction_token": recovered.token, "reco_id": recovered.reco_id,
+                }
             if (not domain_failure and position.get("kind") == "skill_card" and cost_failure is not None
                     and position.get("observed_detail_card_id") == cost_failure["card_id"]):
                 # Retain the exact observations rejected by the cost gate. The
