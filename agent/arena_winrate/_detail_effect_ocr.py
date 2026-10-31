@@ -12,13 +12,13 @@ from typing import Any, Protocol
 from collections.abc import Callable, Sequence
 
 from .reader import ClickedSkillCard
-from .catalog import ArenaCatalogError, ArenaEntityCatalog
+from .catalog import _ADDED_NUMERIC_EFFECT_MARKERS, ArenaCatalogError, ArenaEntityCatalog
 from ._reader_errors import ArenaReaderError
 from ._reader_visual import _box, _text
 from ._reader_evidence import _TitleBoundEffectRoiText
 from .recognition_probe import RecognitionProbe
 from ._detail_text_layout import ErrorNumericLayoutRecovery, ErrorWrappedSignedRecovery
-from ._skill_detail_domain import SkillDetailText, SkillDetailDomain, reobserved_unknowns, project_domain_items, attribute_skill_detail
+from ._skill_detail_domain import SkillDetailDomain, project_domain_items, attribute_skill_detail
 from ._detail_capture_evidence import _EvidenceClock, _FullFrameOcrEvidence
 from ._skill_card_effect_recovery import EffectBodyRecovery, recover_wrapped_effect_decoration
 
@@ -140,17 +140,15 @@ class DetailEffectOcr:
             evidence = self.port._cached_full_frame_ocr_evidence(image)
             if evidence is None:
                 return None
-            domain = self._domain_for_frame(image, key=key, card_id=card_id)
-            if not domain.complete:
-                return None
             pattern = self.port._skill_card_frame_title_pattern(image, card_id)
-            native_items = domain.owned
+            isolated = self.port._isolated_skill_card_title_atoms(image, pattern)
+            native_items = evidence.all_items if isolated is None else isolated[1]
             atoms = tuple((_text(item), _box(item)) for item in native_items)
             titles = tuple(box for value, box in atoms if re.search(pattern, value))
             if len(titles) != 1:
                 return None
             height, width = image.shape[:2]
-            roi = domain.panel
+            roi = self.port._title_anchored_effect_roi_without_background_parameters(width, height, titles[0], native_items)
             wrapped = self.recover_wrapped_signed_text(atoms, titles[0], roi)
             if wrapped.status == "recovered":
                 self.port._increment("skill_card_error_wrapped_row_repairs")
@@ -291,11 +289,9 @@ class DetailEffectOcr:
         started = self.clock.perf_counter()
         self.port._increment("skill_card_error_body_attempts")
         try:
-            domain = self._domain_for_frame(image, key=key, card_id=card_id)
-            if not domain.complete:
-                return None
             pattern = self.port._skill_card_frame_title_pattern(image, card_id)
-            native_items = domain.owned
+            isolated = self.port._isolated_skill_card_title_atoms(image, pattern)
+            native_items = evidence.all_items if isolated is None else isolated[1]
             atoms = tuple((_text(item), _box(item)) for item in native_items)
             titles = tuple(box for value, box in atoms if re.search(pattern, value))
             if len(titles) != 1:
@@ -304,14 +300,11 @@ class DetailEffectOcr:
             repaired = self.recover_skill_effect_body(
                 atoms,
                 titles[0],
-                domain.panel,
+                self.port._title_anchored_effect_roi(width, height, titles[0]),
                 self.port._spatial_ocr_rows(native_items),
             )
             if not repaired.changed:
                 return None
-            current = self.port._cached_full_frame_ocr_evidence(image)
-            if isinstance(current, _FullFrameOcrEvidence) and current.image is image:
-                self.port._full_frame_ocr_evidence[id(image)] = current._replace(skill_body_repair=repaired)
             self.port._increment("skill_card_error_body_repairs")
             self.logger.debug(
                 json.dumps(
@@ -340,6 +333,7 @@ class DetailEffectOcr:
         return self._skill_card_title_anchored_effect_roi_text(image, self.port._card_detail_open_ids[keys[0]])
 
     def _domain_for_frame(self, image: Any, *, key: tuple[int, int] | None = None, card_id: int | None = None):
+        """Legacy pixel-attribution diagnostic; never a production text gate."""
         evidence = self.port._cached_full_frame_ocr_evidence(image)
         if not isinstance(evidence, _FullFrameOcrEvidence) or evidence.image is not image or not evidence.hit:
             return SkillDetailDomain(None, None, reason="frame_evidence_unavailable")
@@ -351,7 +345,9 @@ class DetailEffectOcr:
             key = keys[0]
         if card_id is None:
             card_id = getattr(self.port, "_card_detail_open_ids", {}).get(key)
-        sources = tuple(getattr(self.port, "_card_count_frames", {}).get(key[0], ()))
+        transaction_sources = getattr(self.port, "_card_detail_source_frames", None)
+        sources = (tuple(transaction_sources.get(key, ())) if transaction_sources is not None
+                   else tuple(getattr(self.port, "_card_count_frames", {}).get(key[0], ())))
         token = getattr(self.port, "_card_transaction_tokens", {}).get(key)
         binding = (key, token, card_id, sources)
         cached = evidence.skill_domain_binding if isinstance(evidence, _FullFrameOcrEvidence) else None
@@ -408,18 +404,25 @@ class DetailEffectOcr:
         return domain
 
     def _skill_card_detail_ocr_text(self, image: Any, *, phase: str, key: tuple[int, int] | None = None) -> str:
-        """Keep full OCR for diagnostics; serialize only the attributed tooltip."""
+        """Parse native OCR atoms first; local recovery is error-only.
+
+        Whole-screen spatial concatenation loses token boundaries between
+        tooltip values and game-page digits. Background pixels are not a
+        prerequisite for catalog evidence; the session retains identity,
+        fresh-frame confirmation and genuine cross-view value conflicts.
+        """
         if phase not in {"open", "reread"}:
             raise ValueError("skill-card detail OCR phase must be open or reread")
         if key is None:
             raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "detail transaction key is missing")
         started = self.clock.perf_counter()
         try:
-            self.port._with_full_frame_ocr_kind("detail_capture", self.port._full_ocr_text, image)
-            domain = self._domain_for_frame(image, key=key)
-            current = self.port._cached_full_frame_ocr_evidence(image)
-            repair = current.skill_body_repair if isinstance(current, _FullFrameOcrEvidence) else None
-            return SkillDetailText(repair.text if repair is not None else self.port._spatial_ocr_text(domain.owned), domain)
+            text = self.port._with_full_frame_ocr_kind("detail_capture", self.port._full_ocr_text, image)
+            lookup = getattr(self.port, "_cached_full_frame_ocr_evidence", None)
+            evidence = lookup(image) if lookup is not None else None
+            if evidence is not None and evidence.image is image and evidence.hit:
+                self._assert_effect_numeric_atom_boundaries(evidence.all_items)
+            return text
         finally:
             self.port._increment(f"skill_card_detail_{phase}_ocr_reads")
             self.port._add_timing(f"skill_card_detail_{phase}_ocr", self.clock.perf_counter() - started)
@@ -431,7 +434,7 @@ class DetailEffectOcr:
         title_box: tuple[int, int, int, int],
         items: Sequence[Any],
     ) -> tuple[int, int, int, int]:
-        """Legacy candidate geometry only; semantic reads use a proved domain."""
+        """Bound error-only local OCR by its unique title and known stat column."""
 
         left, top, width, height = self.port._title_anchored_effect_roi(
             frame_width,
@@ -453,104 +456,281 @@ class DetailEffectOcr:
             self.port._increment("skill_card_detail_title_anchored_background_parameter_clips")
         return left, top, clipped_width, height
 
-    def _skill_card_title_anchored_effect_roi_text(self, image: Any, card_id: int) -> str:
-        """Native and 2x observations share one source-proved tooltip domain."""
+    def _skill_card_title_anchored_effect_roi_text(
+        self,
+        image: Any,
+        card_id: int,
+    ) -> str:
+        """Retry effect OCR in the panel geometrically bound to its fixed title."""
+
         import cv2
 
-        domain = self._domain_for_frame(image, card_id=card_id)
-        if domain.panel is None or domain.blocked:
-            raise ArenaReaderError("skill_card_detail_domain_unconfirmed", domain.reason)
-        left, top, width, height = domain.panel
-        crop = image[top:top + height, left:left + width]
-        enlarged = cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        self._assert_detail_recovery_binding(image, card_id)
+        try:
+            title_pattern = self.port._skill_card_frame_title_pattern(image, card_id)
+        except ArenaCatalogError as error:
+            raise ArenaReaderError(
+                "skill_card_detail_title_catalog_missing",
+                str(error),
+            ) from error
+        matches, native_items = self.port._skill_card_title_anchor_evidence(
+            image,
+            title_pattern,
+        )
+        if len(matches) != 1:
+            self.port._increment("skill_card_detail_title_anchor_transition_retries")
+            raise ArenaReaderError(
+                "skill_card_detail_title_anchor_ambiguous",
+                f"card {card_id} has {len(matches)} title anchors on the retry frame",
+            )
+        height, width = image.shape[:2]
+        title_box = _box(matches[0])
+        left, top, roi_width, roi_height = self.port._title_anchored_effect_roi_without_background_parameters(
+            width,
+            height,
+            title_box,
+            native_items,
+        )
+        crop = image[top : top + roi_height, left : left + roi_width]
+        if crop.size == 0:
+            raise ArenaReaderError(
+                "skill_card_detail_effect_roi_invalid",
+                f"title-anchored detail effect ROI is empty for frame {width}x{height}",
+            )
+        # Preserve the native full-frame OCR boxes from the same recognition
+        # that proved the title. The enlarged crop is valuable for small
+        # glyphs, but interpolation can also erase a small standalone value.
+        # Keep native atom boundaries in both same-frame views;
+        # catalog resolution remains fail-closed when the views conflict.
+        native_roi_items = []
+        for item in native_items:
+            item_x, item_y, item_width, item_height = _box(item)
+            centre_x = item_x + item_width / 2.0
+            centre_y = item_y + item_height / 2.0
+            if left <= centre_x <= left + roi_width and top <= centre_y <= top + roi_height:
+                native_roi_items.append(item)
+        repair = self.recover_skill_effect_body(
+            tuple((_text(item), _box(item)) for item in native_roi_items), title_box,
+            (left, top, roi_width, roi_height), self.port._spatial_ocr_rows(native_roi_items),
+        )
+        native_text = repair.text if repair.changed else self._ordered_effect_atom_text(native_roi_items)
+        full_text = self._repaired_full_effect_text(native_items, native_roi_items, repair)
+        enlarged = cv2.resize(
+            crop,
+            None,
+            fx=2.0,
+            fy=2.0,
+            interpolation=cv2.INTER_CUBIC,
+        )
         started = self.clock.perf_counter()
         try:
-            self.port._with_full_frame_ocr_kind("derived_roi", self.port._full_ocr_text, enlarged)
+            enlarged_text = self.port._with_full_frame_ocr_kind(
+                "derived_roi",
+                self.port._full_ocr_text,
+                enlarged,
+                spatial_reading_order=False,
+            )
             observed = self.port._cached_full_frame_ocr_evidence(enlarged)
             if observed is None or observed.image is not enlarged or not observed.hit or observed.kind != "derived_roi":
-                raise ArenaReaderError("skill_card_detail_effect_roi_empty", "bounded ROI has no OCR evidence")
-            projected = project_domain_items(observed.all_items, domain.panel)
+                raise ArenaReaderError("skill_card_detail_effect_roi_empty", "bounded ROI has no matching OCR evidence")
+            projected = project_domain_items(observed.all_items, (left, top, roi_width, roi_height))
             if projected is None:
                 raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "derived OCR crosses its input crop")
-            if not reobserved_unknowns(domain, projected):
-                raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "crossing text was not completely re-observed")
-            current = self.port._cached_full_frame_ocr_evidence(image)
-            repair = current.skill_body_repair if isinstance(current, _FullFrameOcrEvidence) else None
-            if repair is None:
-                proposed = self.recover_skill_effect_body(
-                    tuple((_text(item), _box(item)) for item in domain.owned), domain.title, domain.panel,
-                    self.port._spatial_ocr_rows(domain.owned),
+            self._assert_effect_numeric_atom_boundaries(projected)
+            enlarged_text = self._ordered_effect_atom_text(projected)
+            observations = tuple(value for value in (native_text, enlarged_text) if value.strip())
+            texts = tuple(dict.fromkeys(observations))
+            if not texts:
+                raise ArenaReaderError(
+                    "skill_card_detail_effect_roi_empty",
+                    "title-bound native and enlarged OCR views were both empty",
                 )
-                if proposed.changed:
-                    repair = proposed
-                    if isinstance(current, _FullFrameOcrEvidence):
-                        self.port._full_frame_ocr_evidence[id(image)] = current._replace(skill_body_repair=repair)
-                    self.port._increment("skill_card_detail_domain_body_repairs")
-            native_items = list(domain.owned)
-            if repair is not None:
-                for index, _, replacement in repair.replacements:
-                    native_items[index] = {"text": replacement, "box": _box(native_items[index])}
-            native_text = repair.text if repair is not None else self.port._spatial_ocr_text(native_items)
-            enlarged_text = self.port._spatial_ocr_text(projected)
-            observations = tuple(text for text in (native_text, enlarged_text) if text.strip())
-            if not observations:
-                raise ArenaReaderError("skill_card_detail_effect_roi_empty", "bounded views are empty")
-            full_text = native_text if domain.complete else enlarged_text
             try:
-                merged = self.port._merge_skill_card_effect_detail_views(card_id, observations)
+                merged = self.port._merge_skill_card_effect_detail_views(card_id, (*texts, full_text))
             except ArenaReaderError as error:
                 if error.code != "skill_card_detail_effect_view_conflict":
                     raise
                 recovered = recover_wrapped_effect_decoration(
-                    tuple((_text(item), _box(item)) for item in native_items), domain.title, domain.panel,
-                    self.port._spatial_ocr_rows(native_items), image=image,
+                    tuple((_text(item), _box(item)) for item in native_roi_items),
+                    title_box, (left, top, roi_width, roi_height),
+                    self.port._spatial_ocr_rows(native_roi_items), image=image,
                 )
                 if not recovered.changed:
                     raise
-                filtered = tuple(item for index, item in enumerate(native_items) if index not in recovered.excluded_indices)
-                if repair is not None:
-                    composed = self.recover_skill_effect_body(
-                        tuple((_text(item), _box(item)) for item in filtered), domain.title, domain.panel,
-                        self.port._spatial_ocr_rows(filtered),
-                    )
-                    recovered_text = composed.text if composed.changed else self.port._spatial_ocr_text(filtered)
-                else:
-                    recovered_text = self.port._spatial_ocr_text(filtered)
-                merged = self.port._merge_skill_card_effect_detail_views(card_id, (recovered_text, enlarged_text))
-                full_text = recovered_text if domain.complete else enlarged_text
+                filtered = tuple(item for index, item in enumerate(native_roi_items)
+                                 if index not in recovered.excluded_indices)
+                composed = self.recover_skill_effect_body(
+                    tuple((_text(item), _box(item)) for item in filtered), title_box,
+                    (left, top, roi_width, roi_height), self.port._spatial_ocr_rows(filtered),
+                )
+                native_text = composed.text if composed.changed else self._ordered_effect_atom_text(filtered)
+                full_text = self._repaired_full_effect_text(
+                    native_items, filtered, composed,
+                    excluded=tuple(native_roi_items[index] for index in recovered.excluded_indices),
+                )
+                merged = self.port._merge_skill_card_effect_detail_views(card_id, (native_text, enlarged_text, full_text))
                 self.port._increment("skill_card_detail_wrapped_decoration_repairs")
-            count = len(observations) if domain.complete else int(bool(enlarged_text.strip()))
-            return _TitleBoundEffectRoiText(merged, count, recovered_full_text=full_text)
+            return _TitleBoundEffectRoiText(merged, len(observations), recovered_full_text=full_text)
         finally:
             self.port._increment("skill_card_detail_title_anchored_effect_roi_reads")
             self.port._increment("skill_card_detail_title_anchored_native_spatial_reads")
             self.port._increment("skill_card_detail_title_anchored_enlarged_spatial_reads")
             self.port._increment("skill_card_detail_effect_roi_reads")
-            self.port._add_timing("skill_card_detail_effect_roi_ocr", self.clock.perf_counter() - started)
+            self.port._add_timing(
+                "skill_card_detail_effect_roi_ocr",
+                self.clock.perf_counter() - started,
+            )
 
-    def _skill_card_title_anchored_enhanced_effect_roi_text(self, image: Any, card_id: int) -> str:
-        """Contrast the same attributed domain, never re-detect enhanced borders."""
+    def _skill_card_title_anchored_enhanced_effect_roi_text(
+        self,
+        image: Any,
+        card_id: int,
+    ) -> str:
+        """Contrast one title-bound effect panel on the already-captured frame."""
+
         import cv2
 
-        domain = self._domain_for_frame(image, card_id=card_id)
-        if domain.panel is None or domain.blocked:
-            raise ArenaReaderError("skill_card_detail_domain_unconfirmed", domain.reason)
+        self._assert_detail_recovery_binding(image, card_id)
         self.port._increment("skill_card_detail_enhanced_effect_roi_attempts")
         started = self.clock.perf_counter()
         try:
-            left, top, width, height = domain.panel
-            gray = cv2.cvtColor(image[top:top + height, left:left + width], cv2.COLOR_BGR2GRAY)
-            contrasted = cv2.createCLAHE(clipLimit=2, tileGridSize=(8, 8)).apply(gray)
-            enlarged = cv2.resize(contrasted, None, fx=2, fy=2, interpolation=cv2.INTER_LANCZOS4)
+            try:
+                title_pattern = self.port._skill_card_frame_title_pattern(image, card_id)
+            except ArenaCatalogError as error:
+                raise ArenaReaderError(
+                    "skill_card_detail_title_catalog_missing",
+                    str(error),
+                ) from error
+            matches, native_items = self.port._skill_card_title_anchor_evidence(
+                image,
+                title_pattern,
+            )
+            if len(matches) != 1:
+                self.port._increment("skill_card_detail_enhanced_effect_roi_title_ambiguous")
+                raise ArenaReaderError(
+                    "skill_card_detail_title_anchor_ambiguous",
+                    f"card {card_id} has {len(matches)} title anchors on the enhanced frame",
+                )
+            height, width = image.shape[:2]
+            left, top, roi_width, roi_height = self.port._title_anchored_effect_roi_without_background_parameters(
+                width,
+                height,
+                _box(matches[0]),
+                native_items,
+            )
+            crop = image[top : top + roi_height, left : left + roi_width]
+            if crop.size == 0:
+                raise ArenaReaderError(
+                    "skill_card_detail_effect_roi_invalid",
+                    f"enhanced title-bound effect ROI is empty for frame {width}x{height}",
+                )
+
+            # This is a catalog-agnostic recognition view: local contrast makes
+            # light effect labels legible without interpreting isolated digits.
+            # The active catalog's existing effect matchers merge and certify
+            # the result, so conflicting levels still fail closed.
+            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            contrasted = cv2.createCLAHE(
+                clipLimit=2.0,
+                tileGridSize=(8, 8),
+            ).apply(gray)
+            enlarged = cv2.resize(
+                contrasted,
+                None,
+                fx=2.0,
+                fy=2.0,
+                interpolation=cv2.INTER_LANCZOS4,
+            )
             enhanced = cv2.cvtColor(enlarged, cv2.COLOR_GRAY2BGR)
-            self.port._with_full_frame_ocr_kind("derived_roi", self.port._full_ocr_text, enhanced)
+            self.port._with_full_frame_ocr_kind(
+                "derived_roi", self.port._full_ocr_text, enhanced,
+                spatial_reading_order=False,
+            )
             observed = self.port._cached_full_frame_ocr_evidence(enhanced)
-            projected = None if observed is None or observed.image is not enhanced or not observed.hit or observed.kind != "derived_roi" else project_domain_items(observed.all_items, domain.panel)
-            if projected is None or not reobserved_unknowns(domain, projected):
-                raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "enhanced OCR has no complete bounded evidence")
-            return self.port._spatial_ocr_text(projected)
+            if observed is None or observed.image is not enhanced or not observed.hit or observed.kind != "derived_roi":
+                raise ArenaReaderError("skill_card_detail_effect_roi_empty", "enhanced ROI has no matching OCR evidence")
+            projected = project_domain_items(observed.all_items, (left, top, roi_width, roi_height))
+            if projected is None:
+                raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "enhanced OCR crosses its input crop")
+            self._assert_effect_numeric_atom_boundaries(projected)
+            return self._ordered_effect_atom_text(projected)
         finally:
-            self.port._add_timing("skill_card_detail_enhanced_effect_roi_ocr", self.clock.perf_counter() - started)
+            self.port._add_timing(
+                "skill_card_detail_enhanced_effect_roi_ocr",
+                self.clock.perf_counter() - started,
+            )
+
+    def _assert_detail_recovery_binding(self, image: Any, card_id: int) -> None:
+        frames = getattr(self.port, "_card_detail_images", None)
+        if frames is None:  # Legacy pure helper ports have no session state.
+            return
+        keys = [key for key, frame in frames.items() if frame is image]
+        if len(keys) != 1:
+            raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "recovery frame has no unique transaction")
+        expected = getattr(self.port, "_card_detail_open_ids", {}).get(keys[0])
+        if expected is not None and expected != card_id:
+            raise ArenaReaderError("skill_card_detail_id_changed", "recovery card differs from the opened detail")
+
+    def _assert_effect_numeric_atom_boundaries(self, items: Sequence[Any]) -> None:
+        """Reject a contiguous numeric suffix split by OCR, without pixels.
+
+        Native lexical boundaries protect remote game-page digits; they must
+        not turn two immediately adjacent fragments of one value into two
+        independent values. This narrow check does not infer any digit or
+        classify remote background text.
+        """
+        for item in items:
+            value = _text(item).strip()
+            if not _ADDED_NUMERIC_EFFECT_MARKERS.search(value) or re.search(r"[0-9]+$", value) is None:
+                continue
+            x, y, width, height = _box(item)
+            for other in items:
+                if other is item or re.fullmatch(r"[0-9]+", _text(other).strip()) is None:
+                    continue
+                a, b, w, h = _box(other)
+                scale = min(height, h)
+                overlap = min(y + height, b + h) - max(y, b)
+                if (scale > 0 and max(height, h) <= 1.7 * scale
+                        and overlap >= 0.5 * scale and 0 <= a - x - width <= 0.75 * scale):
+                    raise ArenaReaderError("skill_card_detail_ambiguous", "adjacent OCR atoms may split one numeric effect value")
+
+    def _repaired_full_effect_text(
+        self, full_items: Sequence[Any], local_items: Sequence[Any], repair: EffectBodyRecovery,
+        *, excluded: Sequence[Any] = (),
+    ) -> str:
+        """Preserve outer semantic evidence when replacing a failed local view.
+
+        Only exact, unique local atoms licensed by the existing error recovery
+        may change. Cropping must not erase a conflicting effect elsewhere.
+        """
+        signatures = [(_text(item), _box(item)) for item in full_items]
+        replacements = {(_text(local_items[index]), _box(local_items[index])): value
+                        for index, _, value in repair.replacements}
+        removed = {(_text(item), _box(item)) for item in excluded}
+        local_signatures = {(_text(item), _box(item)) for item in local_items}
+        local, outer = [], []
+        for item, signature in zip(full_items, signatures, strict=True):
+            unique = signatures.count(signature) == 1
+            if unique and signature in removed:
+                continue
+            (local if signature in local_signatures else outer).append(
+                {"text": replacements[signature], "box": _box(item)}
+                if unique and signature in replacements else item)
+        # Determine the reading region before ordering: a remote attribute
+        # label must not be inserted between a local effect and its operand.
+        # Outer atoms remain available to the same catalog conflict check.
+        return "\n".join(value for value in (self._ordered_effect_atom_text(local),
+                                              self._ordered_effect_atom_text(outer)) if value)
+
+    def _ordered_effect_atom_text(self, items: Sequence[Any]) -> str:
+        """Restore local reading order without concatenating numeric atoms.
+
+        This is restricted to failed detail views already bound to one title.
+        Keeping each atom on its own line lets the catalog retain its existing
+        digit-to-digit lexical boundary protection.
+        """
+        self._assert_effect_numeric_atom_boundaries(items)
+        return "\n".join(text for _, _, atoms in self.port._spatial_ocr_rows(items) for text, _ in atoms)
 
     def _merge_skill_card_effect_detail_views(
         self,

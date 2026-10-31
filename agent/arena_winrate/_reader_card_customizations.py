@@ -431,8 +431,11 @@ class CardCustomizationsReader:
                             }
                         )
                     self.port._badge_count_diagnostics[group_index] = tuple(count_diagnostics)
-                    self.port._card_rows[group_index] = baseline
-                    self.port._card_images[group_index] = frames[0]
+                    if not hasattr(self.port, "_card_page_source_frames"):
+                        self.port._card_rows[group_index] = baseline
+                        self.port._card_images[group_index] = frames[0]
+                    # Count evidence stays frozen even when intervening detail
+                    # transactions have advanced the current accepted page.
                     self.port._card_count_frames[group_index] = frames
                     return tuple(int(count) for count in inferred_counts)
                 if attempt == 0:
@@ -446,8 +449,9 @@ class CardCustomizationsReader:
                     f"diagnostics={tuple(count_diagnostics[index - 1] for index in unknown_slots)!r}",
                 )
             row = baseline
-            self.port._card_rows[group_index] = row
-            self.port._card_images[group_index] = frames[0]
+            if not hasattr(self.port, "_card_page_source_frames"):
+                self.port._card_rows[group_index] = row
+                self.port._card_images[group_index] = frames[0]
             self.port._card_count_frames[group_index] = frames
             return tuple(int(count) for count in counts)
         raise AssertionError("customization count retry loop exhausted without a terminal result")

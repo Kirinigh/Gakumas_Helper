@@ -40,6 +40,7 @@ class CardDetailState:
     tokens: dict[CardKey, int] = field(default_factory=dict)
     contact_counts: dict[CardKey, int] = field(default_factory=dict)
     source_boxes: dict[CardKey, CardBox] = field(default_factory=dict)
+    domain_sources: dict[CardKey, tuple[Any, ...]] = field(default_factory=dict)
     interaction_boxes: dict[CardKey, CardBox] = field(default_factory=dict)
     kinds: dict[CardKey, str] = field(default_factory=dict)
     ocr_started: dict[CardKey, tuple[int, int]] = field(default_factory=dict)
@@ -90,6 +91,7 @@ class CardDetailState:
         self.tokens.pop(key, None)
         self.contact_counts.pop(key, None)
         self.source_boxes.pop(key, None)
+        self.domain_sources.pop(key, None)
         self.interaction_boxes.pop(key, None)
         self.contact_released_at.pop(key, None)
         self.capture_started_at.pop(key, None)
@@ -104,6 +106,7 @@ class CardDetailState:
     def clear_member_observations(self) -> None:
         self.texts.clear()
         self.images.clear()
+        self.domain_sources.clear()
         self.contact_released_at.clear()
         self.capture_started_at.clear()
 
@@ -112,6 +115,7 @@ class CardDetailState:
         self.tokens.clear()
         self.contact_counts.clear()
         self.source_boxes.clear()
+        self.domain_sources.clear()
         self.interaction_boxes.clear()
         self.kinds.clear()
         self.ocr_started.clear()

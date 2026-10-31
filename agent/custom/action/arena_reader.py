@@ -558,6 +558,7 @@ class MaaArenaReaderBackend:
         self._card_candidate_groups: dict[tuple[int, int], tuple[int, ...]] = {}
         self._card_images: dict[int, Any] = {}
         self._card_count_frames: dict[int, tuple[Any, Any, Any]] = {}
+        self._card_page_source_frames: dict[int, tuple[Any, ...]] = {}
         self._card_identity_frames: dict[int, tuple[tuple[dict[str, Any], ...], ...]] = {}
         self._card_source_ocr_counts: dict[int, dict[str, int]] = {}
         # A capture is immutable evidence.  Full-frame OCR, authoritative title
@@ -656,6 +657,7 @@ class MaaArenaReaderBackend:
     _card_transaction_serial = card_detail_field("serial")
     _card_transaction_started = card_detail_field("started")
     _card_transaction_tokens = card_detail_field("tokens")
+    _card_detail_source_frames = card_detail_field("domain_sources")
     _card_transaction_contact_counts = card_detail_field("contact_counts")
     _card_transaction_source_boxes = card_detail_field("source_boxes")
     _card_transaction_interaction_boxes = card_detail_field("interaction_boxes")
@@ -1896,6 +1898,7 @@ class MaaArenaReaderBackend:
         self._card_candidate_groups.clear()
         self._card_images.clear()
         self._card_count_frames.clear()
+        self._card_page_source_frames.clear()
         self._card_identity_frames.clear()
         self._card_source_ocr_counts.clear()
         frame_evidence_state(self).clear_member_observations()

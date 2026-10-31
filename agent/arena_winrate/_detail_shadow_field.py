@@ -10,6 +10,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from ._detail_shadow_mirror import mirror_confirms_top_weak_ink
+
 Box = tuple[int, int, int, int]
 _MIN_DONORS = 12
 _RESIDUAL = 4
@@ -287,4 +289,6 @@ def shadow_field_confirms_weak_ink(
     if projected is None:
         return False
     observed = image[y + top:y + bottom, x + left:x + right].astype(np.float32)
-    return bool(np.all(np.abs(observed - projected)[target_mask] <= _RESIDUAL))
+    if np.all(np.abs(observed - projected)[target_mask] <= _RESIDUAL):
+        return True
+    return mirror_confirms_top_weak_ink(image, source, box, panel, core, weak, projected[target_mask])

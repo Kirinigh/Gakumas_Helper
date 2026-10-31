@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+import numpy as np
 from p_item_recognition import PItemReferenceError
 
 from .reader import ArenaReaderError
@@ -117,6 +118,7 @@ class SourceRestoreSession:
             )
 
         self.accepted_row = tuple(getattr(self.backend, "_card_rows", {}).get(self.group_index, ()))
+        self._prepare_page_source_refresh()
 
         expected_fixed_visual_groups = (
             self.backend._fixed_gallery_visual_groups_for_business_id(self.expected_card_id) if self.expected_card_id is not None else ()
@@ -268,7 +270,9 @@ class SourceRestoreSession:
             self.backend._card_rows[self.group_index] = self.row
             self.backend._card_images[self.group_index] = self.image
             other_group = 1 - self.group_index
-            if other_group in self.backend._card_rows:
+            if other_group in self.backend._card_rows and self.page_source_store is None:
+                # Geometry alone cannot refresh another group's page pixels.
+                # Keep its accepted row/image bound to its own real triplet.
                 try:
                     other_row = self.backend._validated_card_group_row(self.image, other_group)
                 except ArenaReaderError:
@@ -287,15 +291,20 @@ class SourceRestoreSession:
             )
             if self.card_slot is not None and self.reads == 1:
                 self.backend._increment("skill_card_source_restore_first_read")
+            self._publish_page_sources()
             return True
         except ArenaReaderError as error:
             self.reset_consecutive_evidence()
             self.last_error = str(error)
+        except Exception:
+            self.page_source_candidates.clear()
+            raise
         finally:
             self.backend._card_detection_observation = previous_detection
         return False
 
     def _raise_failure(self):
+        self.page_source_candidates.clear()
         self.restore_elapsed = self.clock.perf_counter() - self.started
         self.backend._add_timing(
             "skill_card_source_restore_wait",
@@ -324,6 +333,81 @@ class SourceRestoreSession:
         self.semantic_identity_frames.clear()
         self.aligned_content_frames.clear()
         self.source_guard_consecutive = 0
+        self.page_source_candidates.clear()
+
+    @staticmethod
+    def _valid_page_frames(frames, shape=None) -> bool:
+        return bool(
+            isinstance(frames, tuple) and len(frames) == 3
+            and len({id(frame) for frame in frames}) == 3
+            and all(isinstance(frame, np.ndarray) and frame.dtype == np.uint8
+                    and frame.ndim == 3 and frame.shape[2] == 3 for frame in frames)
+            and all(frame.shape == frames[0].shape for frame in frames)
+            and not any(np.shares_memory(frame, other) for index, frame in enumerate(frames)
+                        for other in frames[index + 1:])
+            and (shape is None or frames[0].shape == shape)
+        )
+
+    def _prepare_page_source_refresh(self) -> None:
+        """Separate current page pixels from frozen card/count evidence."""
+        self.page_source_candidates: list[np.ndarray] = []
+        self.page_source_store = getattr(self.backend, "_card_page_source_frames", None)
+        self.page_guard_store = getattr(self.backend, "_card_source_guard_frames", None)
+        self.page_source_seed = (
+            self.page_source_store.get(self.group_index) if isinstance(self.page_source_store, dict) else None
+        )
+        self.page_guard_seed = (
+            self.page_guard_store.get(self.group_index) if isinstance(self.page_guard_store, dict) else None
+        )
+        self.page_refresh_enabled = bool(
+            self.card_slot is not None and len(self.accepted_row) == 6
+            and self.source_guard_frames is self.page_guard_seed
+            and self._valid_page_frames(self.page_source_seed)
+            and self._valid_page_frames(self.page_guard_seed, self.page_source_seed[0].shape)
+        )
+
+    def _page_refresh_context_matches(self) -> bool:
+        if not self.page_refresh_enabled:
+            return False
+        matches = (
+            getattr(self.backend, "_card_page_source_frames", None) is self.page_source_store
+            and getattr(self.backend, "_card_source_guard_frames", None) is self.page_guard_store
+            and self.page_source_store.get(self.group_index) is self.page_source_seed
+            and self.page_guard_store.get(self.group_index) is self.page_guard_seed
+            and tuple(getattr(self.backend, "_card_rows", {}).get(self.group_index, ())) == self.accepted_row
+        )
+        if not matches:
+            self.page_refresh_enabled = False
+            self.page_source_candidates.clear()
+        return matches
+
+    def _record_page_source_frame(self) -> None:
+        if not self._page_refresh_context_matches():
+            return
+        frame = self.image
+        if (not isinstance(frame, np.ndarray) or frame.dtype != np.uint8
+                or frame.shape != self.page_source_seed[0].shape
+                or any(np.shares_memory(frame, source) for source in self.page_source_seed)):
+            self.page_source_candidates.clear()
+            return
+        if any(np.shares_memory(frame, source) for source in self.page_source_candidates):
+            return
+        self.page_source_candidates.append(frame)
+        del self.page_source_candidates[:-3]
+
+    def _publish_page_sources(self) -> None:
+        """Publish only after this group's existing guard and identity pass."""
+        if (not self._page_refresh_context_matches() or len(self.page_source_candidates) < 2
+                or self.page_source_candidates[-1] is not self.image):
+            return
+        frames = tuple(self.page_source_candidates[-3:])
+        if len(frames) == 2:
+            seed = next((source for source in reversed(self.page_source_seed)
+                         if all(source is not fresh for fresh in frames)), None)
+            frames = (seed, *frames)
+        if self._valid_page_frames(frames, self.page_source_seed[0].shape):
+            self.page_source_store[self.group_index] = frames
+            self.backend._increment("skill_card_page_source_refreshes")
 
     def _confirm_page_guard(self):
         if self.source_guard_frames is not None:
@@ -387,6 +471,7 @@ class SourceRestoreSession:
                 self.backend._increment("skill_card_source_restore_overlay_guard_mismatches")
                 return False
             self.source_guard_consecutive += 1
+            self._record_page_source_frame()
             if self.source_guard_consecutive < 2:
                 self.guard_confirmation_wait_from_capture = True
                 return False
@@ -492,6 +577,7 @@ class SourceRestoreSession:
                         self.semantic_stable_frames = 0
                         self.semantic_identity_frames.clear()
                         self.aligned_content_frames.clear()
+                        self.page_source_candidates.clear()
                     self.semantic_stable_frames += 1
                     self.semantic_identity_frames.append(identity)
                     del self.semantic_identity_frames[:-3]

@@ -18,7 +18,6 @@ class _FrameStep(Enum):
 from .catalog import ArenaCatalogError
 from ._detail_identity import build_detail_identity_proof, matches_detail_identity_transaction
 from ._reader_evidence import _TitleBoundEffectRoiText, _DetailIdentityObservation, _effect_roi_observation_count
-from ._skill_detail_domain import SkillDetailText
 
 
 class SkillDetailSession:
@@ -203,7 +202,7 @@ class SkillDetailSession:
         self.same_frame_effect_roi_context: tuple[str, str, int] | None = None
 
         while True:
-            if self.text or isinstance(self.text, SkillDetailText):
+            if self.text:
                 step = self._resolve_frame()
                 if step is _FrameStep.REPEAT:
                     continue
@@ -603,8 +602,6 @@ class SkillDetailSession:
 
     def _resolve_current_text(self):
         try:
-            if isinstance(self.text, SkillDetailText) and not self.text.domain.complete:
-                raise ArenaReaderError("skill_card_detail_ambiguous", self.text.domain.reason)
             self.resolved = self.backend._resolve_clicked_card_text(
                 self.candidate_ids,
                 self.text,

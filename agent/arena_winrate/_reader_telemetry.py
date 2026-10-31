@@ -196,6 +196,8 @@ class TelemetryReader:
                     probe_row_boxes=getattr(self.port, "_card_rows", {}).get(group, ()),
                     probe_candidates=list(getattr(self.port, "_card_candidate_groups", {}).get(key, ())),
                     probe_stage_plan=getattr(self.port, "_card_stage_plan", None),
+                    probe_domain_source_role=("transaction_page_frames"
+                                              if hasattr(self.port, "_card_detail_source_frames") else "card_count_frames"),
                     probe_frames=[],
                 )
 
@@ -237,7 +239,8 @@ class TelemetryReader:
         detail["probe_sources"] = sources
         detail["probe_domain_source_image"] = image
         detail["probe_domain_source_binding"] = {
-            "exact": True, "status": "exact_domain_binding", "source_role": "card_count_frames",
+            "exact": True, "status": "exact_domain_binding",
+            "source_role": detail.get("probe_domain_source_role", "card_count_frames"),
             "detail_key": list(key), "card_id": card_id, "transaction_token": token, "reco_id": evidence.reco_id,
         }
 
@@ -264,7 +267,7 @@ class TelemetryReader:
                 detail["probe_sources"] = recovered.sources
                 detail["probe_domain_source_image"] = recovered.image
                 detail["probe_domain_source_binding"] = {
-                    "exact": True, "status": "exact_domain_binding", "source_role": "card_count_frames",
+                    "exact": True, "status": "exact_domain_binding", "source_role": recovered.source_role,
                     "detail_key": list(recovered.key), "card_id": recovered.card_id,
                     "transaction_token": recovered.token, "reco_id": recovered.reco_id,
                 }

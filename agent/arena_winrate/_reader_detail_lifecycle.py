@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from typing import Any, Protocol
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
+import numpy as np
 from arena_winrate import (
     TeamTarget,
     ArenaReaderError,
@@ -65,6 +66,7 @@ class DetailLifecycleReaderPort(Protocol):
     _card_excluded_duplicate_flags: dict[int, tuple[bool, ...]]
     _card_identity_frames: dict[int, tuple[tuple[dict[str, Any], ...], ...]]
     _card_images: dict[int, Any]
+    _card_page_source_frames: dict[int, tuple[Any, ...]]
     _card_predictions: dict[CardKey, int]
     _card_restoration_signatures: dict[int, tuple[tuple[tuple[str, Any], ...], ...]]
     _card_rows: dict[int, tuple[CardBox, ...]]
@@ -217,6 +219,8 @@ class DetailLifecycleReader:
             closed = self.state.finish(key)
             if closed.started is not None:
                 closed_details.append(closed)
+        # A failed opening may own source frames before its title is accepted.
+        self.state.domain_sources.clear()
         for closed in closed_details:
             self.port._report_card_transaction_end(closed, failed=not superseded, superseded=superseded)
 
@@ -375,6 +379,45 @@ class DetailLifecycleReader:
                 self.port._detail_failure_frames = None
             raise
 
+    def _contact_page_sources(
+        self, group_index: int, card_slot: int, accepted_row: tuple[CardBox, ...],
+    ) -> tuple[Any, ...] | None:
+        """Bind this contact to the already accepted current page, without IO."""
+        if not hasattr(self.port, "_card_page_source_frames"):
+            # Legacy diagnostic backends retain their original source policy.
+            frames = getattr(self.port, "_card_count_frames", {}).get(group_index)
+            return frames if isinstance(frames, tuple) and len(frames) == 3 else None
+        pages = self.port._card_page_source_frames
+        frames = pages.get(group_index) if isinstance(pages, Mapping) else None
+        current = getattr(self.port, "_card_images", {}).get(group_index)
+        row = tuple(self.port._card_rows.get(group_index, ()))
+        valid = (
+            isinstance(frames, tuple) and len(frames) == 3
+            and len({id(frame) for frame in frames}) == 3
+            and len(row) == 6 and row == accepted_row and 1 <= card_slot <= 6
+            and all(isinstance(frame, np.ndarray) and frame.dtype == np.uint8
+                    and frame.ndim == 3 and frame.shape[2] == 3 for frame in frames)
+            and all(frame.shape == frames[0].shape for frame in frames)
+            and any(current is frame for frame in frames)
+        )
+        if valid:
+            height, width = frames[0].shape[:2]
+            valid = height > 0 and width > 0 and all(
+                len(box) == 4 and all(isinstance(value, (int, np.integer)) and not isinstance(value, bool)
+                                     for value in box)
+                and box[2] > 0 and box[3] > 0
+                and 0 <= box[0] <= box[0] + box[2] <= width
+                and 0 <= box[1] <= box[1] + box[3] <= height
+                for box in row
+            ) and not any(np.shares_memory(frames[i], frames[j])
+                          for i in range(3) for j in range(i))
+        if not valid:
+            raise ArenaReaderError(
+                "skill_card_detail_page_source_invalid",
+                f"group {group_index}/slot {card_slot} has no current accepted three-frame page source",
+            )
+        return frames
+
     def _open_skill_card_once(
         self,
         target: TeamTarget,
@@ -387,7 +430,7 @@ class DetailLifecycleReader:
         contact_start_index: int = 0,
     ) -> None:
         del target, stage_number, member_slot
-        row = self.port._card_rows.get(group_index, ())
+        row = tuple(self.port._card_rows.get(group_index, ()))
         if not 1 <= card_slot <= len(row):
             raise ArenaReaderError("skill_card_slot_missing", f"group {group_index}/slot {card_slot} is absent")
         duplicate_flags = self.port._card_excluded_duplicate_flags.get(group_index, ())
@@ -417,8 +460,14 @@ class DetailLifecycleReader:
         last_error = ""
         open_started = self.clock.perf_counter()
         detail_state = card_detail_state(self.port)
-        opening = detail_state.prepare_open(key, open_started, self.port._runtime_counts)
+        opening = None
         for attempt in range(contact_start_index, 2):
+            detail_state.domain_sources.pop(key, None)
+            sources = self._contact_page_sources(group_index, card_slot, row)
+            prepared = detail_state.prepare_open(key, open_started, self.port._runtime_counts)
+            opening = prepared if opening is None else opening._replace(token=prepared.token)
+            if sources is not None:
+                detail_state.domain_sources[key] = sources
             detail_state.record_contact(key, attempt + 1)
             click_box = primary_click_box if attempt == 0 else retry_click_box
             self.port._increment("skill_card_detail_clicks")

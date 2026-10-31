@@ -458,6 +458,10 @@ class CardLayoutReader:
                         self.port._card_rows[index] = rows_by_group[index][0]
                         self.port._card_images[index] = stable_frames[0]
                         self.port._card_count_frames[index] = stable_frames
+                        page_sources = getattr(self.port, "_card_page_source_frames", None)
+                        if page_sources is None:
+                            page_sources = self.port._card_page_source_frames = {}
+                        page_sources[index] = stable_frames
                         guard_store = getattr(
                             self.port,
                             "_card_source_guard_frames",

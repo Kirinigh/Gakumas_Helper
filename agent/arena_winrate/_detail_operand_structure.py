@@ -8,8 +8,10 @@ atoms can form, independently of their original OCR packaging and item order.
 from __future__ import annotations
 
 import re
+from typing import Any
 from collections.abc import Sequence
 
+from ._detail_inline_icon import has_inline_icon_gap
 from ._detail_text_layout import Box, Atom, _text_connected
 
 _OPEN = re.compile(r"(?:[+＋の]|消費|追加|値増加|コスト|スコア|コア|元気|体力|集中|やる気|好印象|好調|全力値)$")
@@ -93,7 +95,7 @@ def _ordered(left: Box, right: Box) -> bool:
 
 
 def has_unfinished_operands(
-    items: Sequence[Atom], panel: Box, title: Box, *, body_top: int | None = None,
+    items: Sequence[Atom], panel: Box, title: Box, *, body_top: int | None = None, image: Any = None,
 ) -> bool:
     """Return true if any bounded operand lacks an unambiguous typed closure.
 
@@ -264,7 +266,13 @@ def has_unfinished_operands(
                 other = neighbours[0]
                 next_text, next_box = atoms[other]
                 gap = next_box[0] - box[0] - box[2]
-                if _JAPANESE.match(next_text) and gap <= .75 * max(box[3], next_box[3]):
+                # Wider natural-language gaps still need same-frame icon
+                # evidence as well as a whole, uniquely closed typed field.
+                typed_successor = (gap > .75 * max(box[3], next_box[3])
+                                   and _START.match(next_text) is not None
+                                   and covered(other, 0, len(next_text))
+                                   and has_inline_icon_gap(image, box, next_box))
+                if _JAPANESE.match(next_text) and (gap <= .75 * max(box[3], next_box[3]) or typed_successor):
                     continue
         return True
     return False

@@ -319,7 +319,7 @@ def _unfinished_body_operand(
     # Use a structural view only: a proved bullet must not stand between a
     # wrapped label and its value. Keep every original atom in the domain.
     structural = [item for item in body if not _body_marker_is_decoration(item, body, image)]
-    return has_unfinished_operands(tuple((_text(item), _box(item)) for item in structural), panel, title)
+    return has_unfinished_operands(tuple((_text(item), _box(item)) for item in structural), panel, title, image=image)
 
 
 def _old_title_overlap_pixels(
@@ -506,9 +506,12 @@ def attribute_skill_detail(
         # the panel determines whether it reaches the body. The old rim still
         # needs the complete source/three-white-pixel proof below.
         verified_number = title_verified is True and _numeric_background_decoration(text)
+        # ASCII letters are labels, not numeric operands/operators. A clipped
+        # old label may still borrow the strict source-backed rim proof.
+        verified_label = title_verified is True and text.isascii() and text.isalpha()
         header_number = (verified_number and crossing_ink
                          and t + int(np.flatnonzero(crossing_rows)[-1]) < title_box[1] + title_box[3])
-        old_border = (crossing_ink and (not decoration or header_number or (verified_number and not incomplete))
+        old_border = (crossing_ink and (not decoration or verified_label or header_number or (verified_number and not incomplete))
                       and not _EFFECT.search(text)
                       and (not (incomplete and possible_operand) or header_number)
                       and _old_border_pixels(image, sources, box, panel, core))

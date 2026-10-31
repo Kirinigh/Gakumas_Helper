@@ -34,6 +34,7 @@ class _DomainUncertaintySnapshot(NamedTuple):
     unknown: tuple
     transaction_id: str
     member_read_id: str | None
+    source_role: str
 
 
 def _skill_domain_failure(position: Mapping[str, Any], outcome: str, error: str | None) -> bool:
@@ -278,6 +279,7 @@ class RecognitionProbe:
         diagnostic["probe_domain_uncertainty"] = _DomainUncertaintySnapshot(
             image, sources, dict(observation), key, token, card_id, evidence.reco_id,
             domain.reason, unknown, diagnostic["transaction_id"], diagnostic.get("member_read_id"),
+            diagnostic.get("probe_domain_source_role", "card_count_frames"),
         )
 
     @staticmethod
