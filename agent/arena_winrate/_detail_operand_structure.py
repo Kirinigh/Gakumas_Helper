@@ -17,8 +17,14 @@ _POSITIVE = r"[+＋][1-9][0-9]*"
 _UNSIGNED = r"(?:0|[1-9][0-9]*)"
 _NEGATIVE = r"[-−－][1-9][0-9]*"
 _INCREASE = r"(?:増加|增加)"
+_SCALAR_LABEL = "(?:スコア|元気|集中|やる気|好印象|好調|全力値)"
+_MULTIPLIER_LABEL = "(?:元気|集中|やる気|好印象|全力値)"
+_MULTIPLIER = _UNSIGNED + r"(?:\.[0-9]+)?倍"
+_DURATION_LABEL = "(?:絶好調|好調)"
+_DURATION = r"[1-9][0-9]*ターン"
 _LABELS = (
-    ("(?:絶好調|好調)", r"[1-9][0-9]*ターン"),
+    (_DURATION_LABEL, _DURATION),
+    (_MULTIPLIER_LABEL, _MULTIPLIER),
     ("スキルカード使用数追加", _POSITIVE),
     ("ターン追加", _POSITIVE),
     (f"スコア上昇回数{_INCREASE}", _POSITIVE),
@@ -26,7 +32,7 @@ _LABELS = (
     (f"(?:体力消費)?コスト値{_INCREASE}", _POSITIVE),
     ("(?:体力消費)?コスト値減少", _NEGATIVE),
     ("体力消費", _UNSIGNED),
-    ("(?:スコア|元気|集中|やる気|好印象|好調|全力値)", _POSITIVE),
+    (_SCALAR_LABEL, _POSITIVE),
 )
 _NEXT_FIELD = "(?:" + "|".join(label + r"[ \t]*" + value for label, value in _LABELS) + ")"
 _END = r"(?=$|[・·、（(]|[ \t]*(?=" + _NEXT_FIELD + "))"
@@ -36,6 +42,33 @@ _START = re.compile(r"スキルカード|ターン|体力|コスト|スコア|�
 _JAPANESE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 _PAYLOAD = re.compile(r"^[+＋\-−－0-9.%％]|^(?:pt|回)$", re.IGNORECASE)
 _MAX_ITEMS, _MAX_UNIT_ITEMS, _MAX_UNIT_CHARS = 128, 4, 128
+
+
+def _assignment_started(label: str, tail: str) -> bool:
+    """A stat name does not imply that its unsigned text is an addition.
+
+    Bare labels and written operators need closure. Unsigned values start a
+    check only for their identified role: fixed count/cost/duration, or an
+    explicit multiplier unit. Other complete descriptions belong to the
+    existing effect parser, not a new body-wide scalar validator here.
+    """
+    if not tail:
+        return True
+    if re.match(r"[+＋\-−－.%％]", tail):
+        return True
+    if not tail[0].isdigit():
+        return False
+    if label == _SCALAR_LABEL:
+        return False
+    unit_role = {_MULTIPLIER_LABEL: _MULTIPLIER, _DURATION_LABEL: _DURATION}.get(label)
+    if unit_role is not None:
+        value = re.match(unit_role, tail)
+        if value is None:
+            return False
+        remainder = tail[value.end():].lstrip(' \t')
+        return (re.match(unit_role + _END, tail) is not None
+                or re.match(r"[+＋\-−－0-9.%％]", remainder) is not None)
+    return True
 
 
 def _inside(outer: Box, inner: Box) -> bool:
@@ -142,7 +175,7 @@ def has_unfinished_operands(
                 found = label.match(prefix)
                 if found:
                     tail = prefix[found.end():].lstrip(" \t")
-                    if not tail or re.match(r"[+＋\-−－0-9.%％]", tail):
+                    if _assignment_started(label.pattern, tail):
                         attempted.add((start, offset, offset + found.end()))
             pending = [((start,), prefix, ((start, offset, len(text)),), False)]
             while pending:
