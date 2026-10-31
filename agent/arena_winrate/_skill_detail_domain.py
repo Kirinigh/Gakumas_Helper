@@ -14,11 +14,11 @@ from ._reader_visual import _box, _text, _spatial_ocr_rows
 from ._detail_shadow_field import shadow_field_projection, shadow_field_confirms_weak_ink
 from ._detail_title_region import _white_detail_panels, detail_title_in_header
 from ._detail_shadow_source import shadow_source_projection
+from ._detail_operand_structure import has_unfinished_operands
 from ._decoration_pixel_evidence import has_four_point_decoration_consensus
 
 Box = tuple[int, int, int, int]
 _EFFECT = re.compile(r"スコア|元気|集中|好印象|好調|やる気|全力|体力消費|ターン追加|スキルカード|消費|増加|減少|不可|ない|無効|以外|不|無|非|未|禁|除")
-_OPEN_OPERAND = re.compile(r"(?:[+の]|消費|追加|値増加|コスト|スコア|コア|元気|体力|集中|やる気|好印象|好調|全力値)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,59 +313,13 @@ def _body_marker_is_decoration(item: Any, body: Sequence[Any], image: np.ndarray
 def _unfinished_body_operand(
     items: Sequence[Any], panel: Box, title: Box, *, image: np.ndarray | None = None,
 ) -> bool:
-    """Keep open operands without treating an icon-split linker as a row end."""
+    """Check field/value structure without rewriting the attributed atoms."""
     body = [item for item in items if _contains(panel, _box(item))
             and _box(item)[1] >= title[1] + title[3]]
     # Use a structural view only: a proved bullet must not stand between a
     # wrapped label and its value. Keep every original atom in the domain.
     structural = [item for item in body if not _body_marker_is_decoration(item, body, image)]
-    opened = [item for item in structural if _OPEN_OPERAND.search(_text(item).strip())]
-    if not opened:
-        return False
-    rows = _spatial_ocr_rows(structural)
-    for item in opened:
-        text, box = _text(item).strip(), _box(item)
-        index = next((i for i, (_, _, parts) in enumerate(rows)
-                      if (text, box) in parts), None)
-        if text.endswith("の") and index is not None:
-            parts = rows[index][2]
-            part_index = parts.index((text, box))
-            if part_index + 1 < len(parts):
-                following_text, following_box = parts[part_index + 1]
-                gap = following_box[0] - box[0] - box[2]
-                if (0 <= gap <= max(box[3], following_box[3]) * .75
-                        and re.match(r"[\u3040-\u30ff\u3400-\u9fff]", following_text)):
-                    continue
-        # A field name can wrap at the text column's right edge. Its first
-        # word alone is not an open value when the next adjacent row returns
-        # to the title margin and completes a known label plus its own value.
-        # Inspect structure only; do not concatenate or rewrite OCR atoms.
-        if text == "スコア" and index is not None and index + 1 < len(rows):
-            _, line_box, parts = rows[index]
-            following, next_box, _ = rows[index + 1]
-            scale = max(box[3], next_box[3], title[3])
-            gap = next_box[1] - line_box[1] - line_box[3]
-            if (parts[-1] == (text, box)
-                    and 0 <= panel[0] + panel[2] - box[0] - box[2] <= scale
-                    and abs(next_box[0] - title[0]) <= .75 * scale
-                    and max(box[3], next_box[3]) <= 1.5 * min(box[3], next_box[3])
-                    and 0 <= gap <= .75 * scale
-                    and re.match(r"(?:値(?:増加|增加)|上昇回数(?:増加|增加))[+＋][1-9][0-9]*(?=$|[・·、（(])",
-                                 following.strip())):
-                continue
-        # This closes a known UI wrap, not arbitrary fragmented arithmetic.
-        # A written operator, negative value or another field stays open.
-        if not re.search(r"(?:スキルカード使用数|ターン)追加$", text):
-            return True
-        if index is not None and index + 1 < len(rows):
-            _, box, _ = rows[index]
-            following, next_box, _ = rows[index + 1]
-            gap = next_box[1] - box[1] - box[3]
-            if (re.fullmatch(r"[+＋][1-9][0-9]*", following.strip())
-                    and 0 <= gap <= max(box[3], next_box[3]) * .75):
-                continue
-        return True
-    return False
+    return has_unfinished_operands(tuple((_text(item), _box(item)) for item in structural), panel, title)
 
 
 def _old_title_overlap_pixels(

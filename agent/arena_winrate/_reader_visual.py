@@ -10,6 +10,7 @@ from typing import Any
 from collections.abc import Sequence
 
 from .reader import ArenaReaderError
+from ._detail_operand_structure import has_unfinished_operands
 
 CARD_CONTENT_STABILITY_MAX_MEAN_ABS_ERROR = 0.75
 
@@ -590,6 +591,16 @@ def _background_parameter_column_left(
         title_box,
     )
     roi_bottom = roi_top + roi_height
+
+    def retained_body_is_unfinished(boundary: int) -> bool:
+        # The same structural evidence as panel attribution. Right-column
+        # values are excluded before checking, so they cannot close a field
+        # on the left and then be discarded by this crop.
+        return has_unfinished_operands(
+            tuple((_text(item), _box(item)) for item in items),
+            (0, roi_top, boundary, roi_height), title_box, body_top=title_y,
+        )
+
     column_min_x = int(round(frame_width * 0.55))
     column_max_x = int(round(frame_width * 0.72))
     labels: list[tuple[str, tuple[int, int, int, int]]] = []
@@ -823,6 +834,8 @@ def _background_parameter_column_left(
         )
         if boundary <= title_right + max(4, int(round(frame_width * 0.02))):
             return None
+        if retained_body_is_unfinished(boundary):
+            return None
         # This weaker label route must not crop a visible right-side effect
         # token (including one crossing the proposed boundary). Only exact
         # stat labels and bare stat values may occupy that exposed strip.
@@ -836,18 +849,6 @@ def _background_parameter_column_left(
                 continue
             text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", _text(item)))
             if x + width <= boundary:
-                # A naked value in the apparent stat strip can still finish
-                # an OCR-split effect on the left ("スコア+" / "600", or
-                # "元気の" / "150%"). Its role is then ambiguous. Keep the
-                # wide ROI when the retained body has an unfinished numeric
-                # effect prefix, even if its digits were detected separately.
-                # The bound card title's own upgrade '+' is not effect text.
-                if item_box != title_box and re.search(
-                    r"(?:[+の]|消費|追加|値増加|スコア|コア|元気|体力|集中|"
-                    r"やる気|好印象|好調|全力値)$",
-                    text,
-                ):
-                    return None
                 continue
             if text not in {*attribute_order, "体力"} and not re.fullmatch(
                 r"[0-9]{1,6}|[0-9]{1,3}%", text
@@ -907,18 +908,15 @@ def _background_parameter_column_left(
         # This additional route may remove only the six independently proved
         # stat observations. A right-side effect, unknown value or unfinished
         # numeric prefix on the retained left side keeps the wide ROI intact.
+        if retained_body_is_unfinished(boundary):
+            return None
         for item in items:
             item_box = _box(item)
             x, y, width, height = item_box
             if width <= 0 or height <= 0 or y + height <= max(roi_top, title_y) or y >= roi_bottom:
                 continue
             if x + width <= boundary:
-                text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", _text(item)))
-                if item_box != title_box and re.search(
-                    r"(?:[+の]|消費|追加|値増加|スコア|コア|元気|体力|集中|"
-                    r"やる気|好印象|好調|全力値)$", text,
-                ):
-                    return None
+                continue
             elif item_box not in fused_proof_boxes:
                 return None
     return boundary
