@@ -804,6 +804,21 @@ class ArenaEntityCatalog:
             return None
         return recovered[0]
 
+    def prepare_clicked_p_item_body_reread(
+        self, atoms, *, title_index, source_frames=(), plan=None, slot_index=None, original_result,
+    ):
+        """Keep an alternate body view inside the original plan/slot scope."""
+        index = self._get_p_item_detail_text_index()
+        if index is None or type(title_index) is not int or not 0 <= title_index < len(atoms):
+            return None
+        scope = {} if slot_index is None else {
+            "eligible_ids": self.arena_p_item_candidate_ids(plan=plan, slot_index=slot_index),
+        }
+        return index.prepare_body_reread(
+            atoms, title_index=title_index, source_frames=source_frames,
+            plan=plan, original_result=original_result, **scope,
+        )
+
     def resolve_clicked_p_item_text(
         self,
         atoms: Sequence[Mapping[str, Any]],

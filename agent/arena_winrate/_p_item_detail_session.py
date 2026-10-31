@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum, auto
+from dataclasses import replace
 
 from .reader import ArenaReaderError
 from ._p_item_detail_evidence import PItemDetailEvidence
@@ -82,6 +83,7 @@ class PItemDetailSession:
         self.consecutive_source_reads = 0
         self.consecutive_non_source_reads = 0
         self.last_unique_match: int | None = None
+        self.last_unique_image = None
         self.consecutive_unique_matches = 0
         self.unique_match_used_effect = False
         self.retried = False
@@ -99,6 +101,8 @@ class PItemDetailSession:
         self.ordinary_title_fallback = None
         self.ordinary_fallback_blocked = False
         self.ordinary_fallback_family = None
+        self.body_reread_images = []
+        self.body_reread_blocked_ids = set()
         open_wait_started = self.clock.perf_counter()
         self._wait_for_detail()
         self.backend._add_timing(
@@ -257,6 +261,9 @@ class PItemDetailSession:
             elif len(self.matches) == 1:
                 self.consecutive_source_transition_reads = 0
                 current_match = self.matches[0]
+                if self.last_unique_match == current_match and self.image is self.last_unique_image:
+                    self.backend._sleep(0.12)
+                    continue
                 if self.last_unique_match == current_match:
                     self.consecutive_unique_matches += 1
                     self.unique_match_used_effect = self.unique_match_used_effect or self.effect_disambiguated
@@ -264,6 +271,7 @@ class PItemDetailSession:
                     self.consecutive_unique_matches = 1
                     self.unique_match_used_effect = self.effect_disambiguated
                 self.last_unique_match = current_match
+                self.last_unique_image = self.image
                 if self.consecutive_unique_matches < 2:
                     self.candidate_title_seen = True
                     self.detail_confirmed = True
@@ -412,6 +420,106 @@ class PItemDetailSession:
             "observation_budget_exhausted": True,
         }
         self.transaction_states.extend(("ORDINARY_TITLE_FALLBACK", "RESOLVED"))
+
+    def _track_body_reread_conflicts(self, result):
+        """No later alternate view may erase accepted native contradictions."""
+        diagnostic = result.diagnostics
+        family = diagnostic.get("plan_scoped_ids", ())
+        self.body_reread_blocked_ids.update(
+            item_id for item_id, entries in diagnostic.get("conflicts", {}).items() if entries
+        )
+        supported = {item_id for item_id, entries in diagnostic.get("positive_support", {}).items() if entries}
+        if result.status == "unique" or len(supported) == 1:
+            self.body_reread_blocked_ids.update(item_id for item_id in family if item_id not in supported)
+
+    def _try_body_reread(self, atoms, title_index, source_frames, native_result, resolver):
+        """One full-content crop per original frame, at most two per opening."""
+        prepare = getattr(self.backend.catalog, "prepare_clicked_p_item_body_reread", None)
+        if (native_result.status != "ambiguous" or not callable(prepare)
+                or not self.source_images or self.last_source_row_uncertain
+                or len(self.body_reread_images) >= 2
+                or any(self.image is frame for frame in self.body_reread_images)
+                or self.clock.monotonic() >= self.deadline):
+            return native_result
+        plan = prepare(atoms, title_index=title_index, source_frames=source_frames,
+                       plan=self.plan, original_result=native_result, **self.slot_scope)
+        if plan is None:
+            return native_result
+        import cv2
+
+        from ._reader_visual import _box, _text
+        from ._p_item_body_reread import fuse_body_reread, contradicted_body_ids
+
+        self.body_reread_blocked_ids.update(contradicted_body_ids(plan, atoms))
+        if plan.base_id in self.body_reread_blocked_ids:
+            self.ordinary_fallback_blocked = True
+
+        self.backend._check_cancelled()
+        height, width = self.image.shape[:2]
+        sx, sy = width / 720, height / 1280
+        x, y, w, h = plan.roi
+        left, top = max(0, int(x * sx)), max(0, int(y * sy))
+        right, bottom = min(width, int((x + w) * sx + 1)), min(height, int((y + h) * sy + 1))
+        if right <= left or bottom <= top:
+            return native_result
+        enlarged = cv2.resize(self.image[top:bottom, left:right], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        self.backend._check_cancelled()
+        if self.clock.monotonic() >= self.deadline:
+            return native_result
+        self.body_reread_images.append(self.image)
+        self.backend._increment("p_item_detail_body_roi_reads")
+        started = self.clock.perf_counter()
+        try:
+            detail = self.backend._ocr_detail(enlarged, r".+", roi=(0, 0, enlarged.shape[1], enlarged.shape[0]))
+        except (RuntimeError, OSError) as error:
+            self.backend._increment("p_item_detail_body_roi_errors")
+            if self.diagnostic is not None:
+                self.diagnostic.setdefault("p_item_body_rereads", []).append({
+                    "roi": plan.roi, "accepted": False, "error": str(error),
+                    "additional_ocr_calls": 1, "additional_screenshots": 0,
+                })
+            return native_result
+        finally:
+            self.backend._add_timing("p_item_detail_body_roi_ocr", self.clock.perf_counter() - started)
+        self.backend._check_cancelled()
+        items = tuple(detail.all_results or detail.filtered_results or ()) if detail and detail.hit else ()
+        reread_atoms = [
+            {"text": _text(item), "box": ((left + _box(item)[0] / 2) / sx,
+                                              (top + _box(item)[1] / 2) / sy,
+                                              _box(item)[2] / 2 / sx, _box(item)[3] / 2 / sy)}
+            for item in items
+        ]
+        titles = [i for i, atom in enumerate(reread_atoms)
+                  if self.evidence.normalize_title_row(atom["text"]).removesuffix("+")
+                  == self.evidence.normalize_title_row(self.last_title_text).removesuffix("+")]
+        recovered = None
+        if len(titles) == 1 and self.clock.monotonic() < self.deadline:
+            result = resolver(reread_atoms, title_index=titles[0], source_frames=source_frames,
+                              plan=self.plan, candidate_p_item_ids=self.candidate_ids,
+                              visual_tiebreak_p_item_ids=self.visual_tiebreak_ids, **self.slot_scope)
+            self._track_body_reread_conflicts(result)
+            self.body_reread_blocked_ids.update(contradicted_body_ids(plan, reread_atoms))
+            if plan.base_id in self.body_reread_blocked_ids:
+                self.ordinary_fallback_blocked = True
+            recovered = fuse_body_reread(plan, atoms, reread_atoms, result)
+            if recovered is not None and any(item_id in self.body_reread_blocked_ids for item_id in recovered.ids):
+                recovered = None
+        self.backend._check_cancelled()
+        if self.clock.monotonic() >= self.deadline:
+            recovered = None
+        if self.diagnostic is not None:
+            parent = next((frame for frame in self.diagnostic.get("probe_frames", ()) if frame["image"] is self.image), {})
+            self.diagnostic.setdefault("p_item_body_rereads", []).append({
+                "roi": plan.roi, "coordinate_size": (720, 1280), "scale": 2,
+                "parent_reco_id": parent.get("reco_id"), "reco_id": getattr(detail, "reco_id", None),
+                "atoms": reread_atoms, "accepted": recovered is not None,
+                "additional_ocr_calls": 1, "additional_screenshots": 0,
+                "alignment": recovered.diagnostics.get("body_reread") if recovered is not None else None,
+            })
+        if recovered is not None:
+            self.backend._increment("p_item_detail_body_roi_recoveries")
+            return recovered
+        return native_result
 
     def _observe_detail(self):
         self.isolated_title_family_proven = False
@@ -621,6 +729,17 @@ class PItemDetailSession:
                             detail_coordinate_size=(720, 1280),
                         )
                         self.backend._increment("p_item_detail_panel_reuses")
+                self._track_body_reread_conflicts(text_result)
+                text_result = self._try_body_reread(
+                    text_atoms, title_index,
+                    tuple(value[5] for value in self.evidence.source_observations) if self.source_images else (),
+                    text_result, text_resolver,
+                )
+                if text_result.status == "unique" and any(item_id in self.body_reread_blocked_ids for item_id in text_result.ids):
+                    text_result = replace(text_result, status="unknown", ids=(), reason="contradictory_detail_observations", diagnostics={
+                        **text_result.diagnostics,
+                        "opening_conflicted_ids": tuple(sorted(self.body_reread_blocked_ids)),
+                    })
                 self.backend._add_timing("p_item_detail_text", self.clock.perf_counter() - text_started)
                 self.backend._increment(f"p_item_detail_text_{text_result.status}")
                 self.last_text_result = text_result

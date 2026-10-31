@@ -175,6 +175,7 @@ def atom_text_view(atoms: list[dict], layout: dict) -> tuple[str, list[dict]]:
     parts, spans = [], []
     offset = 0
     previous = ""
+    previous_atom = None
     for row in layout["atoms"]:
         for index in row:
             text = normalize(atoms[index]["text"]).translate(str.maketrans({"值": "値", "增": "増", "·": "・"}))
@@ -189,13 +190,24 @@ def atom_text_view(atoms: list[dict], layout: dict) -> tuple[str, list[dict]]:
                 previous[-1].isdigit()
                 or (previous.endswith("%") and len(previous) > 1 and previous[-2].isdigit())
             )
-            if numeric_edge and text[0].isdigit():
+            # A lone signed value may genuinely wrap onto its own line.
+            # A leading digit beside another complete text row (e.g. the
+            # trial-count footer) cannot instead finish the previous effect.
+            # Keep numeric unit fragments attached to their own value.
+            separate_text_row_number = (
+                previous_atom is not None and index == row[0] and NUMBER.fullmatch(text)
+                and any(sum(char.isalpha() for char in atoms[other]["text"]) >= 2
+                        and normalize(atoms[other]["text"]) not in {"ターン", "回", "枚", "倍", "秒", "個"}
+                        for other in row[1:])
+            )
+            if (numeric_edge and text[0].isdigit()) or separate_text_row_number:
                 parts.append(BOUNDARY)
                 offset += 1
             parts.append(text)
             spans.append({"start": offset, "end": offset + len(text), "atom_index": index})
             offset += len(text)
             previous = text
+            previous_atom = atoms[index]
     return "".join(parts), spans
 
 def token_span_valid(text: str, start: int, end: int, spans: list[dict]) -> bool:
@@ -220,8 +232,52 @@ def source_field(text: str) -> tuple[tuple[str, ...], tuple[str, ...], str]:
         values.append(token.group())
         offset = token.end()
     literals.append(text[offset:])
-    pattern = OBSERVED_NUMBER.join(re.escape(part) for part in literals)
+    pattern = OBSERVED_NUMBER.join(_source_literal_pattern(part) for part in literals)
     return tuple(literals), tuple(values), pattern
+
+
+def _adjacent_operand_fragments(atoms: list[dict], layout: dict, result: PItemDetailTextResult) -> list[dict]:
+    """Keep close numeric OCR tails uncertain instead of consuming a prefix.
+
+    The atom separator protects 4 + 2 from becoming 42, but it does not prove
+    that the first atom is the complete operand. Only same-row, touching
+    numeric tails of an actually observed field participate; distant counters
+    and numbers on another row keep their original independent boundaries.
+    """
+    field_atoms = {index for field in result.diagnostics.get("observed_fields", ())
+                   for hit in field.get("observations", ()) for index in hit.get("atom_indices", ())}
+    fragments = []
+    for row in layout["atoms"]:
+        for left_index, right_index in zip(row, row[1:]):
+            left, right = atoms[left_index], atoms[right_index]
+            before, after = normalize(left["text"]), normalize(right["text"])
+            if (left_index not in field_atoms or not before
+                    or not (before[-1].isdigit() or before.endswith("%"))
+                    or re.fullmatch(r"[+\-0-9.,%]+", after) is None):
+                continue
+            lx, ly, lw, lh = left["box"]
+            rx, ry, _, rh = right["box"]
+            height = min(lh, rh)
+            gap = rx - lx - lw
+            if (height > 0 and -.25 * height <= gap <= .5 * height
+                    and abs(ly + lh / 2 - ry - rh / 2) <= .45 * height):
+                fragments.append({"field_atom_index": left_index, "tail_atom_index": right_index,
+                                  "observed_tail": right["text"], "gap": gap})
+    return fragments
+
+
+def _source_literal_pattern(literal: str) -> str:
+    """Accept the rendered cost icon only at its reference-defined label.
+
+    OCR may merge the heart into the following cost label. Match that known
+    text marker without editing atoms or operands; every reference value and
+    the original whole-body equality check keep their existing contracts.
+    Explicit icons already present in a reference remain literal.
+    """
+    escaped = re.escape(literal)
+    if "❤" in literal or "♥" in literal:
+        return escaped
+    return escaped.replace("コスト値", r"(?:[❤♥][\ufe0e\ufe0f]?)?コスト値")
 
 
 def _default_reference_path() -> Path:
@@ -333,6 +389,19 @@ class PItemDetailTextIndex:
         row = self._active[item_id]
         value = row.get("upgraded")
         return value if isinstance(value, bool) else normalize(str(row.get("name", ""))).endswith("+")
+
+    def prepare_body_reread(self, atoms, *, title_index, source_frames=(), plan=None, eligible_ids=None, original_result):
+        """A bounded alternate view uses this index's same bound references."""
+        from ._p_item_body_reread import build_body_reread_plan
+
+        family = self.family_ids_for_title(str(atoms[title_index]["text"]), plan=plan, eligible_ids=eligible_ids)
+        if not family or not set(family).issubset(self.available_ids):
+            return None
+        return build_body_reread_plan(
+            atoms, title_index=title_index, source_frames=source_frames,
+            family_references={item_id: self._references[item_id] for item_id in family},
+            original_result=original_result,
+        )
 
     def _resolve(
         self, title: str, text: str, spans: list[dict], *, plan: str | None,
@@ -788,6 +857,11 @@ class PItemDetailTextIndex:
         uncertain = {index for entry in layout.get("uncertainty", ()) for index in entry.get("atom_indices", ())}
         result = self._resolve(str(atom_rows[title_index]["text"]), text, spans, plan=plan, eligible_ids=eligible_ids, uncertain_atoms=uncertain,
                                layout_diagnostics={"panel_box": panel_box, "status": layout["status"], "reason": layout["reason"], "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": layout.get("uncertainty", ())})
+        fragments = _adjacent_operand_fragments(atom_rows, layout, result)
+        if fragments:
+            return PItemDetailTextResult("unknown", reason=result.reason if result.status == "unknown" else "numeric_operand_fragment_unresolved", diagnostics={
+                **result.diagnostics, "numeric_operand_fragments": fragments,
+            })
         if result.reason == "explicit_or_protected_field_conflict" and panel_box is not None:
             recovered = self._recover_delay_bullet(atom_rows, title_index, layout, result,
                                                     plan=plan, eligible_ids=eligible_ids)
@@ -802,30 +876,6 @@ class PItemDetailTextIndex:
             )
             if recovered is not None:
                 return recovered
-            if detail_image is not None and layout["status"] == "resolved":
-                from ._p_item_detail_decorations import recover_pixel_decoration
-
-                scoped = self.family_ids_for_title(str(atom_rows[title_index]["text"]), plan=plan, eligible_ids=eligible_ids)
-                if len(scoped) >= 2 and all(item_id in self._bodies for item_id in scoped):
-                    proof = recover_pixel_decoration(
-                        atom_rows, title_index, layout, detail_image,
-                        {item_id: self._references[item_id]["paragraphs"] for item_id in scoped},
-                        coordinate_size=detail_coordinate_size,
-                    )
-                    if proof is not None:
-                        recovered = self._resolve(
-                            str(atom_rows[title_index]["text"]), proof["text"], proof["spans"],
-                            plan=plan, eligible_ids=eligible_ids,
-                            layout_diagnostics=result.diagnostics.get("layout"),
-                        )
-                        if (recovered.status == "unique" and "complete_reference_positive" in
-                                recovered.diagnostics["positive_support"][recovered.ids[0]]):
-                            return PItemDetailTextResult("unique", recovered.ids, "pixel_proven_decoration_recovery", {
-                                **recovered.diagnostics,
-                                "decoration_recovery": {"edits": proof["edits"], "complete_reference_id": recovered.ids[0],
-                                                        "numeric_value_edits": 0, "additional_ocr_calls": 0,
-                                                        "same_frame_pixel_proof": True},
-                            })
         contextual_candidate = bool(
             result.status == "unique" and not normalize(str(atom_rows[title_index]["text"])).endswith("+")
             and "reference_difference" in result.diagnostics.get("positive_support", {}).get(result.ids[0], ())

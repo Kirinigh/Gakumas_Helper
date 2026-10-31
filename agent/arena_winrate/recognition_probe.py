@@ -19,7 +19,7 @@ from .evidence_retention import _FRAME_NAME, _plain_stat
 from ._detail_capture_evidence import _FullFrameOcrEvidence
 
 CAMPAIGN = "arena-feedback-20260920"
-EXPIRES_AT = "2026-11-01T00:00:00+08:00"
+EXPIRES_AT = "2026-11-08T00:00:00+08:00"
 
 
 class _DomainUncertaintySnapshot(NamedTuple):
@@ -40,6 +40,27 @@ class _DomainUncertaintySnapshot(NamedTuple):
 def _skill_domain_failure(position: Mapping[str, Any], outcome: str, error: str | None) -> bool:
     return (position.get("kind") == "skill_card" and outcome == "failed" and isinstance(error, str)
             and re.search(r"(?:^|:\s*)skill_card_detail_domain_unconfirmed(?::|$)", error) is not None)
+
+
+def _ordinary_p_item_fallback_proof(diagnostic: Mapping[str, Any]) -> dict | None:
+    """Recognize the producer's completed ordinary assumption, without inference."""
+    proof = diagnostic.get("p_item_ordinary_title_fallback")
+    if not isinstance(proof, Mapping):
+        return None
+    if not (
+        proof.get("assumed") is True
+        and type(proof.get("resolved_id")) is int and proof["resolved_id"] > 0
+        and isinstance(proof.get("title_text"), str) and proof["title_text"].strip()
+        and type(proof.get("confirmed_frames")) is int and proof["confirmed_frames"] >= 2
+        and proof.get("body_status") == "ambiguous"
+        and proof.get("body_reason") == "insufficient_difference_evidence"
+        and proof.get("observation_budget_exhausted") is True
+    ):
+        return None
+    return {name: proof[name] for name in (
+        "assumed", "resolved_id", "title_text", "confirmed_frames", "body_status",
+        "body_reason", "observation_budget_exhausted",
+    )}
 
 
 def release_probe_settings(package_root: Path | None = None) -> dict:
@@ -371,6 +392,13 @@ class RecognitionProbe:
         target = card_id if card_id in self.TARGETS else None
         # Non-target samples are controls, never automatically "unknown cards".
         category = ("p_item_return_control" if outcome == "completed" else "p_item_return_failed") if p_item else (str(target) if target else "control")
+        ordinary_fallback = _ordinary_p_item_fallback_proof(diagnostic) if p_item and outcome == "completed" else None
+        if ordinary_fallback is not None:
+            category = "p_item_return_ordinary_fallback"
+        elif p_item and outcome == "completed":
+            rereads = diagnostic.get("p_item_body_rereads")
+            if isinstance(rereads, list) and any(isinstance(row, Mapping) and row.get("accepted") is True for row in rereads):
+                category = "p_item_return_body_reread"
         if cost_evidence:
             category = "cost_evidence_inconclusive"
         elif recovered is not None:
@@ -380,6 +408,7 @@ class RecognitionProbe:
         )] + [card_id, outcome]
         if p_item:
             key.append(position.get("screen_slot"))
+            key.append(category)
         if recovered is not None:
             key.append(category)
         if not re.fullmatch(r"[0-9a-f]{32}", str(diagnostic.get("transaction_id", ""))):
@@ -479,6 +508,7 @@ class RecognitionProbe:
             "stage_plan": diagnostic.get("probe_stage_plan"),
             "body_text": diagnostic.get("probe_body_text"),
             "p_item_restore": diagnostic.get("p_item_restore"),
+            "p_item_body_rereads": diagnostic.get("p_item_body_rereads"),
             "cost_evidence": cost_evidence,
             "reader_probe_revision": "arena-feedback-20260923-cost-evidence-v4",
             "build": self.settings.get("build"),
@@ -491,6 +521,8 @@ class RecognitionProbe:
                 "reason": recovered.reason, "unattributed": recovered.unknown,
                 "not_a_false_rejection_label": True,
             }
+        if ordinary_fallback is not None:
+            evidence["p_item_ordinary_title_fallback"] = ordinary_fallback
         source_binding = diagnostic.get("probe_domain_source_binding")
         if isinstance(source_binding, Mapping):
             observation_file = next((f"{index:02d}.png" for index, (_, image, _) in enumerate(images[:10])
