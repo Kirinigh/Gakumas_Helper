@@ -99,8 +99,9 @@
     "post_wait_freezes": 200,
     "next": [
       "ChallengePrepareOwnScore",
-      "ChallengeSelector",
-      "[JumpBack]ClickCenter"
+      "ChallengeRunOut",
+      "ChallengeReadyPeriod",
+      "[JumpBack]ChallengeRecoverEntry"
     ]
   },
   "ChallengePrepareOwnScore": {
@@ -142,6 +143,7 @@
       "ChallengePrepareOwnScore",
       "ChallengeRunOut",
       "ChallengeReadyPeriod",
+      "[JumpBack]ChallengeEntryCommunication",
       "ChallengeHomeFlag",
       "[JumpBack]ChallengeEntryReturnHome",
       "[JumpBack]BackHome",
@@ -149,6 +151,14 @@
       "[JumpBack]CloseRoundButton",
       "[JumpBack]ChallengeRecoverEntry"
     ]
+  },
+  "ChallengeEntryCommunication": {
+    "recognition": {
+      "type": "OCR",
+      "param": {"expected": "^通信エラー$"}
+    },
+    "action": {"type": "DoNothing"},
+    "next": ["ChallengeRecoverEntry"]
   },
   "ChallengeSelector": {
     "recognition": {
@@ -165,7 +175,7 @@
       "ChallengeRunOut",
       "ChallengeReadyPeriod",
       "[JumpBack]ChallengeError",
-      "[JumpBack]ClickCenter"
+      "[JumpBack]ChallengeRecoverEntry"
     ]
   },
   "ChallengeChoose": {

@@ -567,6 +567,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
         self._entry_deadline = deadline
         returns = 0
         home_entry_sent = False
+        hub_entry_sent = False
         home_return_sent = False
         home_return_pending = False
         title_seen = False
@@ -653,6 +654,42 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                     last_page = state.value
                     succeeded = True
                     return
+                # The home contest tab opens the activity hub first. Reuse
+                # its existing middle-button recognition; the bottom tab is
+                # not itself proof that we have already entered the arena.
+                rating = matches(r"^レ[ー-]ト\s*Pt(?:\s*[0-9]+)?$")
+                hub = len(matches(r"^[PＰ]\s*ランキング$")) == len(rating) == 1
+                if hub:
+                    last_page = "activity_hub"
+                    if not hub_entry_sent:
+                        entry = self._recognize("ChallengeEnter", image)
+                        self._check_cancelled()
+                        if len(entry) == 1:
+                            # Use the existing node's actual middle ROI, not
+                            # the identical label on the bottom navigation.
+                            node = self.context.get_node_data("ChallengeEnter")
+                            roi = node.get("recognition", {}).get("param", {}).get("roi") if isinstance(node, dict) else None
+                            if isinstance(roi, (list, tuple)) and len(roi) == 4:
+                                left, top, width, height = roi
+                                rx, ry, rw, rh = rating[0].box
+                                bx, by, bw, bh = entry[0].box
+                                same_section = (
+                                    width > 0 and height > 0 and rw > 0 and rh > 0 and bw > 0 and bh > 0
+                                    and left <= rx and rx + rw <= left + width
+                                    and top <= ry and ry + rh <= top + height
+                                    and left <= bx and bx + bw <= left + width
+                                    and top <= by and by + bh <= top + height
+                                    and ry + rh <= by
+                                    and bx <= rx + rw / 2 <= bx + bw
+                                    and rx <= bx + bw / 2 <= rx + rw
+                                )
+                                if same_section:
+                                    self._check_cancelled()
+                                    hub_entry_sent = True
+                                    self._click(tuple(entry[0].box))
+                                    self._check_cancelled()
+                    self._sleep(0.25)
+                    continue
                 if home_return_pending:
                     last_page = "home_return_pending"
                     self._sleep(0.25)
@@ -720,6 +757,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                 "event": "arena_reader_recovery", "action": "entry_return",
                 "succeeded": succeeded, "last_page": last_page, "back_actions": returns,
                 "home_return_sent": home_return_sent,
+                "hub_entry_sent": hub_entry_sent,
                 "title_start_sent": title_start_sent, "startup_actions": dict(startup_actions),
                 "wall_seconds": round(time.monotonic() - started, 6),
                 "extra_counts": dict(self._runtime_counts),
