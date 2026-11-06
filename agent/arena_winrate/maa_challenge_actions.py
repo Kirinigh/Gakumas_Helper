@@ -30,6 +30,11 @@ from .challenge_flow import (
 
 logger = diagnostic_logger(user_logger)
 
+_START_TRANSITION_NODES = frozenset({
+    "ChallengeRetryAfterStart", "ChallengeRetryBeforeSkip",
+    "ArenaChallengeResumeBattle", "ChallengeResumeBattleRecovery",
+})
+
 
 def _show_saved_result(context, capture_id, store, result=None, *, result_path=None):
     state = arena_task_log.current(context)
@@ -130,6 +135,114 @@ def _communication_retry_box(rows):
     return error_retry_box(rows)
 
 
+def _pending_entry_page(rows, frame_size=(720, 1280)):
+    """Recognize navigation destinations, never infer a completed battle."""
+    height = frame_size[1]
+    matches = lambda pattern: tuple(
+        row for row in rows if re.fullmatch(pattern, str(getattr(row, "text", "")).strip())
+    )
+    home, contest = matches(r"ホーム"), matches(r"コンテスト")
+    if (len(home) == len(contest) == len(matches(r"活動費")) == len(matches(r"ミッション")) == 1
+            and home[0].box[1] > height * .85 and contest[0].box[1] > height * .85):
+        return "home"
+    if len(matches(r"[PＰ]\s*ランキング")) == len(matches(r"レ[ー-]ト\s*Pt(?:\s*[0-9]+)?")) == 1:
+        return "activity_hub"
+    return None
+
+
+def _connection_pending(rows):
+    return any(re.fullmatch(r"(?:CONNECTING|通信中)[.．…・·]*", re.sub(
+        r"\s+", "", str(getattr(row, "text", "")),
+    ), re.IGNORECASE) for row in rows)
+
+
+def _same_start_preview(rows):
+    texts = tuple(str(getattr(row, "text", "")).strip() for row in rows)
+    return (sum(text == "挑戦開始" for text in texts) == 1
+            and sum(re.fullmatch(r"ステージ\s*[123]", text) is not None for text in texts) == 3
+            and sum(text == "サポートボーナス" for text in texts) == 1)
+
+
+def _ready_battle_control(context, image):
+    for recognition in ("ChallengeReady", "ChallengeSkip"):
+        cancellation_for(context).check()
+        detail = context.run_recognition(recognition, image)
+        cancellation_for(context).check()
+        results = () if not detail or not detail.hit else tuple(detail.filtered_results or detail.all_results or ())
+        if len(results) == 1:
+            return True
+    return False
+
+
+def _continue_ready_battle(context, argv, image):
+    """Use the original battle controls; this continuation can never send Start."""
+    name = getattr(argv, "node_name", None)
+    if not name or not _ready_battle_control(context, image):
+        return False
+    next_node = "ChallengeResumeBattleSkip" if "Resume" in name else "ChallengeSkip"
+    if context.override_next(name, [next_node]) is False:
+        raise ArenaChallengeFlowError("could not continue the observed battle controls")
+    return True
+
+
+def _wait_started_connection(context, argv, store, pending, image, rows):
+    """A native recognition timeout hands off here, without ending a connection.
+
+    Only a positively observed connection starts this wait. Its unchanged
+    preview retains ownership; an empty OCR observation gets a bounded recheck.
+    It neither spends nor renews the result/winner budgets and sends no input.
+    """
+    if not pending.get("battle_started"):
+        return image, rows, False
+    capture_id = str(pending["capture_id"])
+    started = None
+    empty_observations = 0
+    while True:
+        cancellation_for(context).check()
+        current = store.load_pending()
+        if current is None or current.get("capture_id") != capture_id:
+            raise ArenaChallengeFlowError("connection observation no longer belongs to the pending battle")
+        # A retry dialog may leave the underlying battle controls visible.
+        if (_communication_retry_box(rows) is not None
+                or any("エラー" in str(getattr(row, "text", "")) for row in rows)):
+            return image, rows, False
+        if _continue_ready_battle(context, argv, image):
+            return image, rows, True
+        shape = getattr(image, "shape", (1280, 720))
+        if (_pending_entry_page(rows, (shape[1], shape[0]))
+                or battle_outcome_tap_box(rows, frame_size=(shape[1], shape[0])) is not None):
+            return image, rows, False
+        connecting = _connection_pending(rows)
+        if connecting or started is not None:
+            # An old CONNECTING label cannot override an arrived result/reward
+            # page. These are observations only, never result-leaving inputs.
+            for recognition in ("ArenaReaderOpponentCards", "ArenaChallengeFormalResultPage", "ChallengeFinish", "CloseButton"):
+                cancellation_for(context).check()
+                detail = context.run_recognition(recognition, image)
+                cancellation_for(context).check()
+                results = () if not detail or not detail.hit else tuple(detail.filtered_results or detail.all_results or ())
+                required = 3 if recognition == "ArenaReaderOpponentCards" else 1
+                if len(results) == required:
+                    return image, rows, False
+        if started is not None and not connecting and not rows:
+            empty_observations += 1
+            if empty_observations >= 3:
+                return image, rows, False
+        else:
+            empty_observations = 0
+        if not connecting and not (started is not None and (not rows or _same_start_preview(rows))):
+            return image, rows, False
+        if started is None:
+            started = time.monotonic()
+            user_logger.info("竞技场仍在连接中，正在等待游戏响应；可手动停止任务")
+        # Polling is paced; Stop remains responsive between screenshots/OCR.
+        for _ in range(10):
+            cancellation_for(context).check()
+            time.sleep(.1)
+        image = _capture(context)
+        rows = _full_ocr(context, image)
+
+
 def recognize_pending_outcome(context, image, store=None):
     """Observe the normal intermediate result page without input or budget writes."""
     cancellation_for(context).check()
@@ -180,6 +293,10 @@ _DEFAULT_ACTION_NEXT = {
     "ChallengeRetryBeforeFinish": ["ChallengeFinish"],
     "ChallengeRetryBeforeReturn": ["ChallengeVerifyRefresh"],
     "ChallengeRetryBeforeResumeReturn": ["ChallengeResumeVerify"],
+    "ChallengeResumeBattleRecovery": ["ChallengeResumeBattleReady", "ChallengeResumeBattleSkip", "ChallengeResumeBattleResult", "ChallengeResumeBattleOutcome"],
+    "ChallengeResumeBattleOutcome": ["ChallengeResumeBattleResult"],
+    "ChallengeResumeBattleResult": ["ChallengeResumeNext"],
+    "ArenaChallengeResumeBattle": ["ChallengeResumeBattleReady", "ChallengeResumeBattleSkip", "ChallengeResumeBattleResult", "ChallengeResumeBattleOutcome"],
 }
 
 
@@ -498,7 +615,7 @@ class ArenaChallengeRecordResultAction(CustomAction):
         return False
 
 
-def resume_pending_challenge(context: Context, argv=None, store=None) -> bool:
+def resume_pending_challenge(context: Context, argv=None, store=None, *, entry_recovery=None) -> bool:
     """Continue one pending result/return in the client, never start a battle."""
 
     store = ArenaChallengeRecordStore() if store is None else store
@@ -535,6 +652,29 @@ def resume_pending_challenge(context: Context, argv=None, store=None) -> bool:
             if candidate is None or candidate.get("recovery_source") == "outcome_label_one_character":
                 image = _capture(context)
                 rows = _full_ocr(context, image)
+                shape = getattr(image, "shape", (1280, 720))
+                if entry_recovery is not None and _pending_entry_page(rows, (shape[1], shape[0])):
+                    # Navigation only: its result-page branch returns ownership
+                    # here rather than calling this pending resolver recursively.
+                    entry_recovery()
+                    cancellation_for(context).check()
+                    image = _capture(context)
+                    rows = _full_ocr(context, image)
+                    shape = getattr(image, "shape", (1280, 720))
+                    if _pending_entry_page(rows, (shape[1], shape[0])):
+                        raise ArenaChallengeFlowError("pending navigation did not reach the arena or battle")
+                if pending.get("battle_started") and (
+                    _connection_pending(rows) or (
+                        any(str(getattr(row, "text", "")).strip() in {"対戦開始", "スキップ", "全対戦スキップ"} for row in rows)
+                        and _ready_battle_control(context, image)
+                    )
+                ):
+                    # This child graph contains no opponent selection or Start.
+                    # It closes only the already-owned battle and returns here.
+                    cancellation_for(context).check()
+                    task = context.run_task("ArenaChallengeResumeBattle")
+                    cancellation_for(context).check()
+                    return bool(task and task.status.succeeded and store.load_pending() is None)
                 exhausted = store._remaining_winner_seconds(pending, datetime.now(timezone.utc)) == 0
                 recovered = recover_skipped_challenge_result(
                     context, store=store, image=image, rows=rows, allow_result_page=exhausted,
@@ -602,7 +742,7 @@ class ArenaChallengeRetryCurrentBattleAction(CustomAction):
         super().__init__()
         self._record_store = ArenaChallengeRecordStore() if record_store is None else record_store
 
-    @report_action_failure("竞技场胜负页面未能继续，自动恢复未完成", user_logger)
+    @report_action_failure("竞技场当前对局未能继续，自动恢复未完成", user_logger)
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         try:
             restore_challenge_action_next(context, argv)
@@ -611,14 +751,21 @@ class ArenaChallengeRetryCurrentBattleAction(CustomAction):
             pending = self._record_store.load_pending()
             if pending is None:
                 raise ArenaChallengeFlowError("communication retry has no pending challenge")
-            if getattr(argv, "node_name", None) == "ChallengeOutcomeContinue":
+            if getattr(argv, "node_name", None) in {"ChallengeOutcomeContinue", "ChallengeResumeBattleOutcome"}:
                 _require_outcome_recognition_capture(argv, pending)
             capture_id = str(pending.get("capture_id", ""))
             unresolved = self._record_store.recorded_result_path(capture_id) is None
-            if getattr(argv, "node_name", None) == "ChallengeOutcomeContinue" and not unresolved:
+            if getattr(argv, "node_name", None) in {"ChallengeOutcomeContinue", "ChallengeResumeBattleOutcome"} and not unresolved:
                 raise ArenaChallengeFlowError("recorded battle cannot use the normal outcome continuation")
             image = _capture(context)
             rows = _full_ocr(context, image)
+            start_transition = getattr(argv, "node_name", None) in _START_TRANSITION_NODES
+            if start_transition:
+                image, rows, continued = _wait_started_connection(
+                    context, argv, self._record_store, pending, image, rows,
+                )
+                if continued:
+                    return True
             shape = getattr(image, "shape", (1280, 720))
             tap = battle_outcome_tap_box(rows, frame_size=(shape[1], shape[0]))
             box = _communication_retry_box(rows)
@@ -636,13 +783,19 @@ class ArenaChallengeRetryCurrentBattleAction(CustomAction):
                 if formal and formal.hit:
                     name = getattr(argv, "node_name", None)
                     if name:
-                        next_node = "ChallengeResultRecord" if unresolved else (
+                        next_node = ("ChallengeResumeBattleResult" if "ResumeBattle" in name else "ChallengeResultRecord") if unresolved else (
                             "ChallengeResumeNext" if "Resume" in name else "ChallengeNext"
                         )
                         if context.override_next(name, [next_node]) is False:
                             raise ArenaChallengeFlowError("could not continue the formal result page")
                     return True
                 raise ArenaChallengeFlowError("page has no unique supported communication dialog or outcome TAP")
+            if start_transition and box is not None:
+                # Connection recovery has its own single durable input budget.
+                # An old winner deadline must not suppress this retry or turn
+                # a still-loading battle into an expired result-page wait.
+                _retry_communication(context, self._record_store, capture_id, box)
+                return True
             if unresolved:
                 if self._record_store._remaining_winner_seconds(pending, datetime.now(timezone.utc)) == 0:
                     raise ArenaChallengeFlowError("result winner recovery budget exhausted")

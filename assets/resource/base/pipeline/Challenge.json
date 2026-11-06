@@ -514,6 +514,43 @@
     ],
     "on_error": ["ChallengeRetryBeforeReturn"]
   },
+  "ArenaChallengeResumeBattle": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
+    "next": ["ChallengeResumeBattleReady", "ChallengeResumeBattleSkip", "ChallengeResumeBattleResult", "ChallengeResumeBattleOutcome"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
+  "ChallengeResumeBattleReady": {
+    "recognition": {"type": "TemplateMatch", "param": {"roi": [220, 1110, 250, 100], "template": "challenge_ready.png"}},
+    "action": {"type": "DoNothing", "param": {}},
+    "next": ["ChallengeResumeBattleSkip"],
+    "on_error": ["ChallengeResumeBattleRecovery"]
+  },
+  "ChallengeResumeBattleSkip": {
+    "recognition": {"type": "TemplateMatch", "param": {"roi": [482, 1020, 207, 64], "template": "challenge_skip.png"}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeConfirmBattleAndSkip"}},
+    "timeout": 60000,
+    "next": ["ChallengeResumeBattleResult", "ChallengeResumeBattleSkip", "ChallengeResumeBattleOutcome"],
+    "on_error": ["ChallengeResumeBattleRecovery"]
+  },
+  "ChallengeResumeBattleResult": {
+    "recognition": {"type": "TemplateMatch", "param": {"roi": [0, 980, 720, 300], "template": "challenge_next.png"}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRecordResult"}},
+    "next": ["ChallengeResumeNext"],
+    "on_error": ["ChallengeResumeBattleRecovery"]
+  },
+  "ChallengeResumeBattleOutcome": {
+    "recognition": {"type": "Custom", "param": {"custom_recognition": "ArenaChallengeOutcomePage"}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
+    "next": ["ChallengeResumeBattleResult"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
+  "ChallengeResumeBattleRecovery": {
+    "recognition": {"type": "DirectHit", "param": {}},
+    "action": {"type": "Custom", "param": {"custom_action": "ArenaChallengeRetryCurrentBattle"}},
+    "next": ["ChallengeResumeBattleReady", "ChallengeResumeBattleSkip", "ChallengeResumeBattleResult", "ChallengeResumeBattleOutcome"],
+    "on_error": ["ChallengeWinRateStop"]
+  },
   "ArenaChallengeAwaitFormalResult": {
     "recognition": {"type": "DirectHit", "param": {}},
     "action": {"type": "DoNothing", "param": {}},

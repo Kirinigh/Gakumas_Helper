@@ -46,8 +46,12 @@ class SourceRestoreSession:
         title and complete semantic detail already resolved the expected ID,
         while the frozen page guard and six-slot geometry also match. The
         conflict is then reported explicitly instead of letting the weaker
-        gallery hint override the clicked detail. Pixel thresholds and all
-        failure bounds remain unchanged.
+        gallery hint override the clicked detail. If unrelated card artwork
+        alone changed, an active exact-detail transaction can retain the same
+        page guard outside its other accepted card slots. That reduced guard
+        must still reject this transaction's opened detail images and match
+        at least two frozen source frames. Pixel thresholds and all failure
+        bounds remain unchanged.
         """
 
         if self.card_slot is not None and not 1 <= self.card_slot <= 6:
@@ -210,6 +214,7 @@ class SourceRestoreSession:
         self.aligned_content_frames: list[dict[str, Any]] = []
 
         self.source_guard_consecutive = 0
+        self.non_target_guard_cache = None
 
         while self.clock.monotonic() < deadline:
             if self._observe_frame():
@@ -450,6 +455,9 @@ class SourceRestoreSession:
                     )
                     for source_signatures in source_guard_signatures
                 )
+                guard_matches_source = any(errors and max(errors) <= CARD_CONTENT_STABILITY_MAX_MEAN_ABS_ERROR for errors in guard_error_sets)
+                if not guard_matches_source:
+                    guard_matches_source = self._confirm_guard_outside_other_slots(guard_boxes)
             except (PItemReferenceError, ArenaReaderError) as error:
                 raise ArenaReaderError(
                     "skill_card_source_guard_invalid",
@@ -460,7 +468,6 @@ class SourceRestoreSession:
                     "skill_card_source_restore_overlay_guard",
                     self.clock.perf_counter() - guard_started,
                 )
-            guard_matches_source = any(errors and max(errors) <= CARD_CONTENT_STABILITY_MAX_MEAN_ABS_ERROR for errors in guard_error_sets)
             if not guard_matches_source:
                 self.reset_consecutive_evidence()
                 self.last_error = (
@@ -475,6 +482,78 @@ class SourceRestoreSession:
             if self.source_guard_consecutive < 2:
                 self.guard_confirmation_wait_from_capture = True
                 return False
+        return True
+
+    def _confirm_guard_outside_other_slots(self, guard_boxes) -> bool:
+        """Keep the page/overlay proof independent of unrelated card artwork.
+
+        Only an exact, still-active detail transaction can use this route. The
+        accepted row supplies five unrelated slot rectangles; it supplies no
+        title, body or enhancement evidence. Every other guard pixel remains
+        protected, including the clicked slot and member-page content. Before
+        using the reduced guard, prove it rejects the actual opened detail
+        images from this transaction. A persistent or obstructed panel must
+        therefore remain different even when its source card is visible.
+        """
+        key = (self.group_index, self.card_slot)
+        if (
+            self.card_slot is None or len(self.accepted_row) != 6
+            or not self._valid_page_frames(self.source_guard_frames, self.image.shape)
+            or tuple(getattr(self.backend, "_card_rows", {}).get(self.group_index, ())) != self.accepted_row
+            or not self.backend._detail_identity_proof_matches(
+                key, self.expected_card_id, self.accepted_row[self.card_slot - 1],
+            )
+        ):
+            return False
+        proof = self.backend._detail_identity_proofs[key]
+        detail_images = proof.detail_images
+        if not detail_images or any(
+            not isinstance(frame, np.ndarray) or frame.dtype != np.uint8
+            or frame.shape != self.image.shape for frame in detail_images
+        ):
+            return False
+        height, width = self.image.shape[:2]
+        if any(
+            w < 8 or h < 8 or x < 0 or y < 0 or x + w > width or y + h > height
+            for x, y, w, h in self.accepted_row
+        ):
+            return False
+        boxes = tuple(box for slot, box in enumerate(self.accepted_row, 1) if slot != self.card_slot)
+
+        def signatures_outside_slots(image):
+            retained = image.copy()
+            for x, y, w, h in boxes:
+                retained[y:y + h, x:x + w] = 0
+            return self.signatures(retained, guard_boxes)
+
+        if (
+            self.non_target_guard_cache is None
+            or self.non_target_guard_cache[0] is not proof
+            or self.non_target_guard_cache[1] != guard_boxes
+        ):
+            sources = tuple(signatures_outside_slots(frame) for frame in self.source_guard_frames)
+            opened = tuple(signatures_outside_slots(frame) for frame in detail_images)
+            detects_opened_detail = all(
+                all(
+                    (errors := self.signature_errors(source, detail))
+                    and max(errors) > CARD_CONTENT_STABILITY_MAX_MEAN_ABS_ERROR
+                    for source in sources
+                )
+                for detail in opened
+            )
+            self.non_target_guard_cache = (proof, guard_boxes, sources, detects_opened_detail)
+        _, _, sources, detects_opened_detail = self.non_target_guard_cache
+        if not detects_opened_detail:
+            return False
+        current = signatures_outside_slots(self.image)
+        matches = sum(
+            bool(errors) and max(errors) <= CARD_CONTENT_STABILITY_MAX_MEAN_ABS_ERROR
+            for source in sources
+            for errors in (self.signature_errors(source, current),)
+        )
+        if matches < 2:
+            return False
+        self.backend._increment("skill_card_source_restore_non_target_slot_guard_matches")
         return True
 
     def _confirm_slot_identity(self):

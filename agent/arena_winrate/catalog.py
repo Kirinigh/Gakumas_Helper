@@ -303,6 +303,45 @@ def _added_action_contract(definition: Mapping[str, Any]) -> tuple[str, int, str
     return None
 
 
+def _added_score_formula_contract(definition: Mapping[str, Any]) -> tuple[str, int] | None:
+    """Describe one pure formula addition with an exact integer UI percentage."""
+
+    if (
+        type(definition.get("max")) is not int
+        or definition["max"] != 1
+        or any(definition.get(key) not in (None, "")
+               for key in ("conditions", "cost", "effects", "limit"))
+        or definition.get("forceInitialHand") not in (None, "", False)
+    ):
+        return None
+    match = re.fullmatch(
+        r"score\+=(goodImpressionTurns|motivation|genki)\*([0-9]+)(?:\.([0-9]+))?;?",
+        _normalise_text(definition.get("actions")),
+    )
+    if match is None:
+        return None
+    fraction = (match[3] or "").rstrip("0")
+    if len(fraction) > 2:
+        return None
+    percent = int(match[2]) * 100 + int((fraction + "00")[:2])
+    return (match[1], percent) if percent > 0 else None
+
+
+def _added_score_formula_is_visible(compact: str, label: str, percent: int) -> bool:
+    """Validate each present formula row before using its positive evidence."""
+
+    marker = f"{label}の"
+    pattern = re.compile(rf"{re.escape(marker)}([0-9]+)%分スコア")
+    visible = False
+    for view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY):
+        if marker not in view:
+            continue
+        if view.count(marker) != 1 or pattern.findall(view) != [str(percent)]:
+            raise ArenaCatalogError("malformed added score formula effect")
+        visible = True
+    return visible
+
+
 def _all_integer_increments(value: object, field: str) -> tuple[int, ...]:
     return tuple(
         int(match.group(1))
@@ -3467,23 +3506,24 @@ class ArenaEntityCatalog:
         effect_roi_title_bound: bool,
         effect_roi_observation_count: int,
     ) -> bool:
-        """Certify an absent added score row in a completely covered short body.
+        """Certify an absent literal/formula score row in a covered scalar body.
 
-        Only a pure literal score addition and a scalar base action with an
+        Only a pure score addition and complete scalar base actions with an
         optional card-used scalar trigger are supported. Each independent
-        view must contain the whole ordered body and its one-use footer.
+        view must contain the whole ordered body and its catalog-defined footer.
         Initial growth changes the top-level action, never the trigger's
         amount. More complex action programs remain unsupported here.
         """
 
         contract = _added_action_contract(self._customizations[customization_id])
+        formula = _added_score_formula_contract(self._customizations[customization_id])
         if (
-            contract is None
-            or contract[0] != "score"
-            or contract[1] <= 0
-            or contract[2] != "literal_addition"
+            (formula is None and (
+                contract is None or contract[0] != "score" or contract[1] <= 0
+                or contract[2] != "literal_addition"
+            ))
             or any(_normalise_text(card.get(field)) for field in ("conditions", "effects"))
-            or card.get("limit") != 1
+            or (card.get("limit") != 1 if formula is None else card.get("limit") not in (None, "", 1))
         ):
             return False
         actions = re.fullmatch(
@@ -3491,36 +3531,66 @@ class ArenaEntityCatalog:
             r"(?:;at:cardUsed\[(active|mental)\]\{([A-Za-z]+)\+=([1-9][0-9]*);?\})?;?",
             _normalise_text(card.get("actions")),
         )
-        if actions is None:
+        if actions is not None:
+            field, raw_value, trigger, trigger_field, trigger_value = actions.groups()
+            initial = {field: int(raw_value)}
+        elif formula is not None and re.fullmatch(
+            r"[A-Za-z]+\+=[1-9][0-9]*(?:;[A-Za-z]+\+=[1-9][0-9]*)*;?",
+            _normalise_text(card.get("actions")),
+        ):
+            pairs = re.findall(r"([A-Za-z]+)\+=([0-9]+)", _normalise_text(card.get("actions")))
+            initial = {field: int(value) for field, value in pairs}
+            if len(initial) != len(pairs):
+                return False
+            trigger = trigger_field = trigger_value = None
+        else:
             return False
-        field, raw_value, trigger, trigger_field, trigger_value = actions.groups()
         if any(
             scalar is not None
             and (scalar == "score" or scalar not in _ADDED_NUMERIC_EFFECT_LABELS)
-            for scalar in (field, trigger_field)
+            for scalar in (*initial, trigger_field)
         ):
             return False
-        value = int(raw_value)
+        base_fields = tuple(initial)
         for identifier, level in resolved.items():
             if not level or self._pure_generic_cost_delta(int(identifier)) is not None:
                 continue
             definition = self._customizations[int(identifier)]
-            delta = _direct_prestage_target_this_increment(definition.get("effects"), field, level)
-            if delta is None or any(
+            addition = _added_action_contract(definition) if formula is not None else None
+            if (
+                addition is not None and addition[2] == "literal_addition"
+                and addition[0] in _ADDED_NUMERIC_EFFECT_LABELS
+                and addition[0] != "score" and addition[1] > 0
+                and addition[0] not in initial and level == 1
+            ):
+                initial[addition[0]] = addition[1]
+                continue
+            deltas = {
+                field: delta for field in base_fields
+                if (delta := _direct_prestage_target_this_increment(definition.get("effects"), field, level))
+                is not None
+            }
+            if len(deltas) != 1 or any(
                 definition.get(key) not in (None, "", False)
                 for key in ("actions", "conditions", "cost", "limit", "forceInitialHand")
             ):
                 return False
-            value += delta
+            field, delta = next(iter(deltas.items()))
+            initial[field] += delta
+
+        protected_formula_tail = re.compile(
+            r"[0-9%％+\-−‐‑‒–—－/／×*]|ターン|回|枚|倍|以上|以下|未満"
+        )
 
         def scalar_pattern(scalar: str, amount: int) -> str:
             prefix, suffix = _ADDED_NUMERIC_EFFECT_LABELS[scalar]
             return (
                 rf"{_numeric_effect_label_pattern(prefix)}{amount}"
                 rf"(?!\d|[.,．，。]\d){re.escape(suffix)}"
+                + (r"(?![%％+\-−‐‑‒–—－/／×*]|ターン|回|枚|倍|以上|以下|未満)" if formula is not None else "")
             )
 
-        body_patterns = [scalar_pattern(field, value)]
+        body_patterns = [scalar_pattern(field, value) for field, value in initial.items()]
         if trigger is not None:
             # Fixed voiced/unvoiced OCR confusion inside the complete active
             # trigger phrase; no general fuzzy match or missing-word recovery.
@@ -3529,10 +3599,13 @@ class ArenaEntityCatalog:
                 rf"以降[、,]?(?:A)?{trigger_label}スキルカード使用時[、,]?"
                 + scalar_pattern(trigger_field, int(trigger_value))
             )
-        body_patterns.append(
-            ("重複不可" if card.get("unique") else "(?:重複不可)?")
-            + r"試験・ステージ中1回(?!\d)"
-        )
+        if card.get("limit") == 1:
+            body_patterns.append(
+                ("重複不可" if card.get("unique") else "(?:重複不可)?")
+                + r"試験・ステージ中1回(?!\d)"
+            )
+        elif card.get("unique"):
+            body_patterns.append("重複不可")
         views = self._covered_optional_row_detail_views(
             card,
             combined_detail_text=combined_detail_text,
@@ -3545,27 +3618,53 @@ class ArenaEntityCatalog:
             return False
         expected_markers = Counter(
             _ADDED_NUMERIC_EFFECT_LABELS[scalar][0]
-            for scalar in (field, trigger_field)
+            for scalar in (*initial, trigger_field)
             if scalar is not None
         )
         for view in views:
             compact = _normalise_effect_text(view)
             # A damaged or partial score label is not evidence of absence.
-            if "コア" in compact or "スコ" in compact:
+            if (
+                "コア" in compact or "スコ" in compact
+                or formula is not None and re.search(r"(?:好印象|やる気|元気)の|%分", compact)
+            ):
                 return False
             if Counter(_ADDED_NUMERIC_EFFECT_MARKERS.findall(compact)) != expected_markers:
                 # Correct rows alongside conflicting/duplicate amounts do not
                 # certify a complete, unambiguous view. In particular a bad
                 # value outside a sibling's legal levels can escape its matcher.
                 return False
-            if compact.count("試験・ステージ中") != 1 or compact.count("以降") != int(trigger is not None):
+            if (
+                compact.count("試験・ステージ中") != int(card.get("limit") == 1)
+                or compact.count("以降") != int(trigger is not None)
+            ):
                 return False
             offset = 0
             for pattern in body_patterns:
                 match = re.search(pattern, compact[offset:])
                 if match is None:
                     return False
+                if formula is not None and offset and protected_formula_tail.search(
+                    compact[offset:offset + match.start()],
+                ):
+                    return False
                 offset += match.end()
+            if formula is not None:
+                # Check numeric continuations within the source OCR line,
+                # stopping at the next known body row. Background columns on
+                # other lines remain outside this field's numeric ownership.
+                for line in view.splitlines():
+                    atom = _normalise_effect_text(line)
+                    for pattern in body_patterns[:len(initial)]:
+                        for match in re.finditer(pattern, atom):
+                            tail = atom[match.end():]
+                            next_rows = (
+                                candidate.start() for next_pattern in body_patterns
+                                if (candidate := re.search(next_pattern, tail)) is not None
+                            )
+                            tail = tail[:min(next_rows, default=len(tail))]
+                            if protected_formula_tail.search(tail):
+                                return False
         return True
 
     def _covered_view_merge_zero_signature_is_visible(
@@ -5793,45 +5892,52 @@ class ArenaEntityCatalog:
             return match_direct_good_impression_multiplier
 
         added_good_impression_multiplier = re.fullmatch(
-            r"score\+=goodImpressionTurns\*([0-9]+(?:\.[0-9]+)?)",
+            r"score\+=goodImpressionTurns\*([0-9]+(?:\.[0-9]+)?);?",
             actions,
         )
         if added_good_impression_multiplier:
-            percent = int(
-                round(float(added_good_impression_multiplier.group(1)) * 100)
-            )
+            formula = _added_score_formula_contract(definition)
+            if formula is None:
+                return None
+            _, percent = formula
 
             def match_added_good_impression_multiplier(
                 compact: str,
                 count: int,
             ) -> bool:
-                visible = f"好印象の{percent}%分スコア" in compact
+                visible = _added_score_formula_is_visible(compact, "好印象", percent)
                 return visible is (count > 0)
 
             return match_added_good_impression_multiplier
 
         direct_motivation_multiplier = re.fullmatch(
-            r"score\+=motivation\*([0-9]+(?:\.[0-9]+)?)",
+            r"score\+=motivation\*([0-9]+(?:\.[0-9]+)?);?",
             actions,
         )
         if direct_motivation_multiplier:
-            percent = int(round(float(direct_motivation_multiplier.group(1)) * 100))
+            formula = _added_score_formula_contract(definition)
+            if formula is None:
+                return None
+            _, percent = formula
 
             def match_direct_motivation_multiplier(compact: str, count: int) -> bool:
-                visible = f"やる気の{percent}%分スコア" in compact
+                visible = _added_score_formula_is_visible(compact, "やる気", percent)
                 return visible is (count > 0)
 
             return match_direct_motivation_multiplier
 
         direct_genki_multiplier = re.fullmatch(
-            r"score\+=genki\*([0-9]+(?:\.[0-9]+)?)",
+            r"score\+=genki\*([0-9]+(?:\.[0-9]+)?);?",
             actions,
         )
         if direct_genki_multiplier:
-            percent = int(round(float(direct_genki_multiplier.group(1)) * 100))
+            formula = _added_score_formula_contract(definition)
+            if formula is None:
+                return None
+            _, percent = formula
 
             def match_direct_genki_multiplier(compact: str, count: int) -> bool:
-                visible = f"元気の{percent}%分スコア" in compact
+                visible = _added_score_formula_is_visible(compact, "元気", percent)
                 return visible is (count > 0)
 
             return match_direct_genki_multiplier

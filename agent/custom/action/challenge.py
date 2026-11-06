@@ -480,7 +480,10 @@ class ChallengeResetOwnScorePreparation(CustomAction):
                 arena_task_log.enable(context)
         except Exception:
             logger.exception("竞技场日志模式尚未解析；继续原待办恢复")
-        if not resume_pending_challenge(context, argv):
+        if not resume_pending_challenge(
+            context, argv,
+            entry_recovery=lambda: _ArenaEntryRecoveryBackend(context).recover_entry(resolve_pending_result=False),
+        ):
             return _stop_with_error(context, "上次竞技场对局尚未恢复，任务已中断")
         reset_failed_arena_component_checks()
         reset_prepared_own_score_cache(OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE))
@@ -561,7 +564,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
             return True
         return False
 
-    def recover_entry(self) -> None:
+    def recover_entry(self, *, resolve_pending_result: bool = True) -> None:
         started = time.monotonic()
         deadline = started + 8.0
         self._entry_deadline = deadline
@@ -594,6 +597,11 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                     break
                 if result_page:
                     last_page = "result"
+                    if not resolve_pending_result:
+                        # The outer pending owner saves/advances this result.
+                        # Navigation must not recursively resume that owner.
+                        succeeded = True
+                        return
                     store = ArenaChallengeRecordStore()
                     if store.load_pending() is None:
                         raise ArenaReaderError(
@@ -1459,7 +1467,9 @@ class ArenaChallengeConfirmBattleAndSkip(CustomAction):
                 "battle_entered": True,
                 "source": "ChallengeSkip",
             })
-            arena_task_log.battle_started(context, capture_id)
+            state = arena_task_log.current(context)
+            if state is None or pending.get("origin_run_id") == state.run_id:
+                arena_task_log.battle_started(context, capture_id)
         return _challenge_recognized_click(context, argv)
 
 
