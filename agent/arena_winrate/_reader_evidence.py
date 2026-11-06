@@ -1,6 +1,7 @@
 """Shared immutable OCR evidence types; no controller dependency."""
 
 from typing import Any, NamedTuple
+from dataclasses import dataclass
 
 _PItemPanelRow = tuple[
     str,
@@ -68,18 +69,39 @@ class _DetailIdentityProof(NamedTuple):
     detail_confirmation_reads: int
 
 
+class _EffectRoiSourceBinding(NamedTuple):
+    """Native text and frozen source objects from one active detail frame."""
+
+    key: tuple[int, int]
+    transaction_token: int
+    card_id: int
+    detail_image: Any
+    source_frames: tuple[Any, ...]
+    effect_roi: tuple[int, int, int, int]
+    native_items: tuple[Any, ...]
+    full_text: str
+
+
+@dataclass
+class _SourceBackgroundOcrBudget:
+    remaining: int = 2
+
+
 class _TitleBoundEffectRoiText(str):
     """Merged ROI text carrying how many non-empty OCR passes produced it."""
 
     observation_count: int
     recovered_full_text: str | None
+    source_binding: _EffectRoiSourceBinding | None
 
     def __new__(
         cls, value: str, observation_count: int, *, recovered_full_text: str | None = None,
+        source_binding: _EffectRoiSourceBinding | None = None,
     ) -> "_TitleBoundEffectRoiText":
         instance = str.__new__(cls, value)
         instance.observation_count = observation_count
         instance.recovered_full_text = recovered_full_text
+        instance.source_binding = source_binding
         return instance
 
 

@@ -130,7 +130,7 @@ _ADDED_NUMERIC_EFFECT_LABELS = {
     "score": ("スコア+", ""),
 }
 _NUMERIC_EFFECT_MARKERS = tuple(sorted(
-    ("固定元気+", *(value[0] for value in _ADDED_NUMERIC_EFFECT_LABELS.values())),
+    ("固定元気+", "熱意追加+", *(value[0] for value in _ADDED_NUMERIC_EFFECT_LABELS.values())),
     key=len, reverse=True,
 ))
 _ADDED_NUMERIC_EFFECT_MARKERS = re.compile(
@@ -626,6 +626,7 @@ class ArenaEntityCatalog:
 
     def _validate_added_numeric_effects(self, card_id: int, detail_text: str) -> None:
         """Reject corrupt present optional rows without redefining absent rows."""
+        self._validate_fixed_enthusiasm_effect(card_id, detail_text)
         self._validate_good_impression_buff_effect(card_id, detail_text)
         domains, _ = self._added_numeric_effect_domains(card_id)
         if not domains or not isinstance(detail_text, str):
@@ -659,6 +660,80 @@ class ArenaEntityCatalog:
                         f"marker {occurrence.group()!r}, payload {tail[:32]!r}, "
                         f"allowed_values={values!r}, suffix={suffix!r}"
                     )
+
+    def _validate_fixed_enthusiasm_effect(self, card_id: int, detail_text: str) -> None:
+        """Keep each visible fixed enthusiasm operand literal and unitless.
+
+        This is the invariant ``setEnthusiasmBonus(N)`` carrier only. The
+        separate duration-bearing DSL and missing OCR rows keep their existing
+        contracts; an intact row cannot hide another present corrupt value.
+        """
+        card = self._cards_by_id.get(card_id, {})
+        values = tuple(int(value) for value in re.findall(
+            r"setEnthusiasmBonus\(([0-9]+)\)", str(card.get("actions", "")),
+        ))
+        if not values or not isinstance(detail_text, str):
+            return
+        continuations = tuple(
+            _normalise_effect_text(anchor)
+            for anchor in self._detail_coverage_anchors(card, {})
+            if not anchor.startswith("熱意追加")
+        )
+
+        def starts_available_positive_carrier(suffix: str) -> bool:
+            # Reuse the existing target-growth carrier and matcher rather
+            # than demanding the baseline action's spelling/value. Narrow
+            # OCR may retain only that carrier's distinctive numeric label.
+            prefixes = {
+                "hand": ("手札の", "スコア値増加+"),
+                "held": ("保留", "スコア値増加+"),
+                "all": ("すべてのスキルカードの", "スコア値増加+", "コア値増加+"),
+            }
+            for identifier in self.available_customization_ids(card_id):
+                definition = self._customizations[identifier]
+                matcher = self._cached_effective_detail_matcher(card, identifier)
+                if matcher is None:
+                    continue
+                for level in range(1, int(definition["max"]) + 1):
+                    carrier = re.fullmatch(
+                        r"target:(hand|held|all)\{g\.score\+=([0-9]+);?\}",
+                        _normalise_text(_selected_level_patch(definition.get("actions"), level)),
+                    )
+                    if (
+                        carrier is not None and suffix.startswith(prefixes[carrier[1]])
+                        and matcher(suffix, level) and not matcher(suffix, 0)
+                    ):
+                        return True
+            return False
+
+        for view_index, view in enumerate(detail_text.split(_OCR_EFFECT_VIEW_BOUNDARY)):
+            # A separate footer or background atom is not a value suffix.
+            # Preserve existing label/sign-to-integer OCR splits, but never
+            # join two already present integers. Within a complete value row,
+            # only another DSL-derived invariant can follow the integer.
+            lines = iter(view.splitlines())
+            for line in lines:
+                compact = _normalise_effect_text(line)
+                while re.search(r"熱意追加\+?$", compact) is not None:
+                    following = next(lines, None)
+                    if following is None:
+                        break
+                    compact += _normalise_effect_text(following)
+                for occurrence in re.finditer("熱意追加", compact):
+                    tail = compact[occurrence.end():]
+                    number = _ADDED_NUMERIC_INTEGER.match(tail[1:]) if tail.startswith("+") else None
+                    suffix = tail[1 + number.end():] if number is not None else ""
+                    if (
+                        number is None
+                        or number.group() != str(int(number.group()))
+                        or int(number.group()) not in values
+                        or (suffix and not suffix.startswith(continuations)
+                            and not starts_available_positive_carrier(suffix))
+                    ):
+                        raise ArenaCatalogError(
+                            f"malformed fixed enthusiasm effect: card {card_id}, "
+                            f"view {view_index}, payload {tail[:32]!r}, allowed_values={values!r}"
+                        )
 
     def p_item_business_ids(self) -> tuple[int, ...]:
         """Return every P-item business ID declared by the active engine data."""
@@ -2799,6 +2874,10 @@ class ArenaEntityCatalog:
         compact: str,
     ) -> bool:
         """Accept an exact row or the UI's counted rendering of repeated rows."""
+
+        enthusiasm = re.fullmatch(r"熱意追加\+([0-9]+)", anchor)
+        if enthusiasm is not None:
+            return _contains_exact_integer_token(compact, "熱意追加+", int(enthusiasm.group(1)))
 
         scoped_texts = self._card_used_scalar_coverage_texts(card, resolved, anchor, compact)
         if scoped_texts is not None:

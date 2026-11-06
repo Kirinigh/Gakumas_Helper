@@ -1847,6 +1847,11 @@ class MaaArenaReaderBackend:
     def _skill_card_title_anchored_enhanced_effect_roi_text(self, image: Any, card_id: int) -> str:
         return self._component_detail_effect_ocr()._skill_card_title_anchored_enhanced_effect_roi_text(image, card_id)
 
+    def _recover_source_background_effect_roi(self, image, card_id, view, *, budget):
+        return self._component_detail_effect_ocr()._recover_source_background_effect_roi(
+            image, card_id, view, budget=budget,
+        )
+
     def _merge_skill_card_effect_detail_views(self, card_id: int, detail_texts: Sequence[str]) -> str:
         return self._component_detail_effect_ocr()._merge_skill_card_effect_detail_views(card_id, detail_texts)
 

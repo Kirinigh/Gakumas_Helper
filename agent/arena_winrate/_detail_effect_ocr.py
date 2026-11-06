@@ -12,10 +12,10 @@ from typing import Any, Protocol
 from collections.abc import Callable, Sequence
 
 from .reader import ClickedSkillCard
-from .catalog import _ADDED_NUMERIC_EFFECT_MARKERS, ArenaCatalogError, ArenaEntityCatalog
+from .catalog import _OCR_EFFECT_VIEW_BOUNDARY, _ADDED_NUMERIC_EFFECT_MARKERS, ArenaCatalogError, ArenaEntityCatalog
 from ._reader_errors import ArenaReaderError
 from ._reader_visual import _box, _text
-from ._reader_evidence import _TitleBoundEffectRoiText
+from ._reader_evidence import _EffectRoiSourceBinding, _TitleBoundEffectRoiText, _SourceBackgroundOcrBudget
 from .recognition_probe import RecognitionProbe
 from ._detail_text_layout import ErrorNumericLayoutRecovery, ErrorWrappedSignedRecovery
 from ._skill_detail_domain import SkillDetailDomain, project_domain_items, attribute_skill_detail
@@ -537,7 +537,9 @@ class DetailEffectOcr:
             if projected is None:
                 raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "derived OCR crosses its input crop")
             self._assert_effect_numeric_atom_boundaries(projected)
-            enlarged_text = self._ordered_effect_atom_text(projected)
+            enlarged_text = self._repair_derived_effect_text(
+                projected, title_pattern, (left, top, roi_width, roi_height),
+            )
             observations = tuple(value for value in (native_text, enlarged_text) if value.strip())
             texts = tuple(dict.fromkeys(observations))
             if not texts:
@@ -570,7 +572,12 @@ class DetailEffectOcr:
                 )
                 merged = self.port._merge_skill_card_effect_detail_views(card_id, (native_text, enlarged_text, full_text))
                 self.port._increment("skill_card_detail_wrapped_decoration_repairs")
-            return _TitleBoundEffectRoiText(merged, len(observations), recovered_full_text=full_text)
+            return _TitleBoundEffectRoiText(
+                merged, len(observations), recovered_full_text=full_text,
+                source_binding=self._effect_roi_source_binding(
+                    image, card_id, (left, top, roi_width, roi_height), native_items, full_text,
+                ),
+            )
         finally:
             self.port._increment("skill_card_detail_title_anchored_effect_roi_reads")
             self.port._increment("skill_card_detail_title_anchored_native_spatial_reads")
@@ -653,12 +660,133 @@ class DetailEffectOcr:
             if projected is None:
                 raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "enhanced OCR crosses its input crop")
             self._assert_effect_numeric_atom_boundaries(projected)
-            return self._ordered_effect_atom_text(projected)
+            return self._repair_derived_effect_text(
+                projected, title_pattern, (left, top, roi_width, roi_height),
+            )
         finally:
             self.port._add_timing(
                 "skill_card_detail_enhanced_effect_roi_ocr",
                 self.clock.perf_counter() - started,
             )
+
+    def _repair_derived_effect_text(self, items, title_pattern, roi):
+        titles = [item for item in items if re.search(title_pattern, _text(item))]
+        if len(titles) != 1:
+            return self._ordered_effect_atom_text(items)
+        repair = self.recover_skill_effect_body(
+            tuple((_text(item), _box(item)) for item in items), _box(titles[0]), roi,
+            self.port._spatial_ocr_rows(items),
+        )
+        if not repair.changed:
+            return self._ordered_effect_atom_text(items)
+        replacements = {index: value for index, _, value in repair.replacements}
+        repaired = tuple({"text": replacements.get(index, _text(item)), "box": _box(item)}
+                         for index, item in enumerate(items))
+        self._assert_effect_numeric_atom_boundaries(repaired)
+        return repair.text
+
+    def _effect_roi_source_binding(self, image, card_id, roi, native_items, full_text):
+        keys = [key for key, frame in getattr(self.port, "_card_detail_images", {}).items() if frame is image]
+        if len(keys) != 1:
+            return None
+        key = keys[0]
+        token = getattr(self.port, "_card_transaction_tokens", {}).get(key)
+        frozen = getattr(self.port, "_card_detail_source_frames", None)
+        sources = tuple(frozen.get(key, ())) if frozen is not None else ()
+        if (type(token) is not int or getattr(self.port, "_card_detail_open_ids", {}).get(key) != card_id
+                or len(sources) != 3 or len({id(frame) for frame in sources}) != 3
+                or any(frame is image for frame in sources)):
+            return None
+        return _EffectRoiSourceBinding(key, token, card_id, image, sources, roi, tuple(native_items), full_text)
+
+    def _effect_roi_source_binding_is_current(self, binding):
+        check = getattr(self.port, "_check_cancelled", None)
+        if check is not None:
+            check()
+        current = self._effect_roi_source_binding(
+            binding.detail_image, binding.card_id, binding.effect_roi, binding.native_items, binding.full_text,
+        )
+        return bool(current is not None and current.key == binding.key
+                    and current.transaction_token == binding.transaction_token
+                    and all(a is b for a, b in zip(current.source_frames, binding.source_frames, strict=True)))
+
+    def _recover_source_background_effect_roi(
+        self, image, card_id, view, *, budget: _SourceBackgroundOcrBudget,
+    ):
+        """Exclude proven old nonnumeric labels only after coverage failed.
+
+        The caller retains the original raw text and all numeric/conflicting
+        atoms. Source OCR never counts as another detail observation. At most
+        two missing source observations may be read in the entire session.
+        """
+        from ._effect_source_background import certified_source_background_lines
+
+        binding = getattr(view, "source_binding", None)
+        if (not isinstance(view, _TitleBoundEffectRoiText) or binding is None
+                or binding.detail_image is not image or binding.card_id != card_id
+                or view.recovered_full_text != binding.full_text
+                or not self._effect_roi_source_binding_is_current(binding)):
+            return None
+        atomic_views = tuple(part.strip() for part in view.split(_OCR_EFFECT_VIEW_BOUNDARY) if part.strip())
+        if binding.full_text.strip() not in atomic_views:
+            return None
+        # There is nothing to certify if every native atom is already local.
+        left, top, width, height = binding.effect_roi
+        outer_labels = [item for item in binding.native_items
+                        if not any(character.isnumeric() or character in "+＋-−－%％*/=<>" for character in _text(item))
+                        and (_box(item)[0] + _box(item)[2] <= left or _box(item)[0] >= left + width
+                             or _box(item)[1] + _box(item)[3] <= top or _box(item)[1] >= top + height)]
+        if not outer_labels:
+            return None
+        sources = []
+        for source in binding.source_frames:
+            if not self._effect_roi_source_binding_is_current(binding):
+                return None
+            evidence = self.port._cached_full_frame_ocr_evidence(source)
+            if evidence is None and budget.remaining > 0:
+                budget.remaining -= 1
+                self.port._increment("skill_card_detail_source_background_ocr_reads")
+                try:
+                    self.port._with_full_frame_ocr_kind("source_reference", self.port._full_ocr_text, source)
+                except ArenaReaderError:
+                    # Optional source attribution must not turn a failed
+                    # source OCR into a new terminal detail failure. Stop and
+                    # supersession exceptions are separate and propagate.
+                    if not self._effect_roi_source_binding_is_current(binding):
+                        return None
+                    self.port._increment("skill_card_detail_source_background_ocr_failures")
+                    return None
+                evidence = self.port._cached_full_frame_ocr_evidence(source)
+            if not self._effect_roi_source_binding_is_current(binding):
+                return None
+            sources.append(tuple({"text": _text(item), "box": _box(item)} for item in evidence.all_items)
+                           if isinstance(evidence, _FullFrameOcrEvidence) and evidence.image is source
+                           and evidence.hit and evidence.kind != "derived_roi" else ())
+        removed = certified_source_background_lines(
+            tuple({"text": _text(item), "box": _box(item)} for item in binding.native_items),
+            effect_roi=binding.effect_roi, full_text=binding.full_text, source_frames=tuple(sources),
+        )
+        if not removed:
+            return None
+        scoped_full = "\n".join(line for line in binding.full_text.splitlines() if line not in removed)
+        try:
+            merged = self.port._merge_skill_card_effect_detail_views(
+                card_id, tuple(scoped_full if part == binding.full_text.strip() else part for part in atomic_views),
+            )
+        except ArenaReaderError:
+            # Keep the original unmodified views and their existing recovery
+            # path if removing old labels cannot preserve semantic agreement.
+            return None
+        if not self._effect_roi_source_binding_is_current(binding):
+            return None
+        self.port._increment("skill_card_detail_source_background_recoveries")
+        self.logger.debug(json.dumps({"event": "arena_skill_detail_source_background_recovered",
+                                     "key": binding.key, "card_id": card_id,
+                                     "removed_old_labels": sorted(removed)}, ensure_ascii=False))
+        return _TitleBoundEffectRoiText(
+            merged, view.observation_count, recovered_full_text=scoped_full,
+            source_binding=binding._replace(full_text=scoped_full),
+        )
 
     def _assert_detail_recovery_binding(self, image: Any, card_id: int) -> None:
         frames = getattr(self.port, "_card_detail_images", None)

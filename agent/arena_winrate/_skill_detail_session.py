@@ -17,7 +17,12 @@ class _FrameStep(Enum):
 
 from .catalog import ArenaCatalogError
 from ._detail_identity import build_detail_identity_proof, matches_detail_identity_transaction
-from ._reader_evidence import _TitleBoundEffectRoiText, _DetailIdentityObservation, _effect_roi_observation_count
+from ._reader_evidence import (
+    _TitleBoundEffectRoiText,
+    _DetailIdentityObservation,
+    _SourceBackgroundOcrBudget,
+    _effect_roi_observation_count,
+)
 
 
 class SkillDetailSession:
@@ -60,6 +65,36 @@ class SkillDetailSession:
             replacement = self.roi_text.recovered_full_text
             if replacement is not None:
                 self.text = replacement
+
+    def _resolve_source_background_coverage(self, card_id, error):
+        recover = getattr(self.backend, "_recover_source_background_effect_roi", None)
+        if (recover is None or self.generic_cost_fallback_policy is None
+                or "covered optional-row zero proof" not in str(error)
+                or getattr(self, "same_frame_source_background_attempted", False)
+                or getattr(self.roi_text, "source_binding", None) is None):
+            return False
+        self.same_frame_source_background_attempted = True
+        recovered = recover(
+            self.detail_image, card_id, self.roi_text, budget=self.source_background_ocr_budget,
+        )
+        if recovered is None:
+            return False
+        self.roi_text = recovered
+        self._consume_effect_roi_full_text()
+        self.same_frame_effect_roi_context = (
+            self.text, self.roi_text, _effect_roi_observation_count(self.roi_text),
+        )
+        self.combined_text = self.backend._merge_skill_card_effect_detail_views(card_id, (self.text, self.roi_text))
+        self.resolved = self.backend._resolve_clicked_card_text(
+            self.candidate_ids, self.combined_text,
+            expected_customization_count=self.expected_customization_count,
+            allow_zero_without_badge_count=self.allow_zero_without_badge_count,
+            allow_auxiliary_badge_glyph=False,
+            generic_cost_fallback_policy=self.generic_cost_fallback_policy,
+            allow_generic_cost_fallback=self.auxiliary_badge_glyph_allowed,
+            generic_cost_coverage_context=self.same_frame_effect_roi_context, key=self.key,
+        )
+        return True
 
     def __init__(
         self,
@@ -194,6 +229,9 @@ class SkillDetailSession:
         self.same_frame_effect_roi_attempted = False
 
         self.same_frame_enhanced_effect_roi_attempted = False
+
+        self.same_frame_source_background_attempted = False
+        self.source_background_ocr_budget = _SourceBackgroundOcrBudget()
 
         self.generic_cost_fallback_policy = (
             None if self.target is None else "assume_unenhanced" if self.target.is_own_team else "assume_enhanced"
@@ -538,6 +576,7 @@ class SkillDetailSession:
                     self.backend._card_detail_texts[self.key] = self.text
             self.same_frame_effect_roi_attempted = False
             self.same_frame_enhanced_effect_roi_attempted = False
+            self.same_frame_source_background_attempted = False
             self.same_frame_effect_roi_context = None
 
     def _raise_failure(self):
@@ -669,6 +708,18 @@ class SkillDetailSession:
             except ArenaReaderError as combined_error:
                 if combined_error.code != "skill_card_detail_ambiguous":
                     raise
+                try:
+                    source_recovered = self._resolve_source_background_coverage(card_id, combined_error)
+                except ArenaReaderError as source_error:
+                    if source_error.code != "skill_card_detail_ambiguous":
+                        raise
+                    combined_error = source_error
+                else:
+                    if source_recovered:
+                        self.text = self.combined_text
+                        self.backend._card_detail_texts[self.key] = self.combined_text
+                        self.backend._increment("skill_card_detail_same_frame_effect_roi_recoveries")
+                        return _FrameStep.NEXT
                 enhanced_resolved: ClickedSkillCard | None = None
                 unresolved_error = combined_error
                 if not self.same_frame_enhanced_effect_roi_attempted:
@@ -693,6 +744,8 @@ class SkillDetailSession:
                                 (self.roi_text, enhanced_roi_text),
                             ),
                             roi_observation_count,
+                            recovered_full_text=getattr(self.roi_text, "recovered_full_text", None),
+                            source_binding=getattr(self.roi_text, "source_binding", None),
                         )
                         self.combined_text = self.backend._merge_skill_card_effect_detail_views(
                             card_id,
