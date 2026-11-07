@@ -1,31 +1,50 @@
 {
   "build": {
-    "tool_contract": "task095-temporary-placeholder-append-v1",
-    "mode": "GALLERY_ONLY_NO_TRAINING",
-    "base_manifest_sha256": "C38AE83E4F4972E7AB8AEDCAB8AAFC4EB36A344B5C038E671278A4A45FA4F390",
-    "base_gallery_sha256": "8AF588734E00E2195D9F60DE4089454C72B0A00885179CB0A35CC1405E2763B1",
-    "preserved_rows": 8536,
-    "appended_rows": 8,
-    "enabled_rows": 8536,
-    "inherited_validation": {
-      "manifest_path": "inherited-manifest.json",
-      "manifest_sha256": "C38AE83E4F4972E7AB8AEDCAB8AAFC4EB36A344B5C038E671278A4A45FA4F390",
-      "gallery_sha256": "8AF588734E00E2195D9F60DE4089454C72B0A00885179CB0A35CC1405E2763B1",
-      "row_count": 8536,
-      "scope": "enabled_original_rows_only",
-      "array_relation": "EXACT_PREFIX"
-    }
+    "base_dataset_manifest_sha256": "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25",
+    "base_dataset_lineage_manifest_sha256s": [
+      "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
+      "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
+      "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
+      "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
+      "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C",
+      "48160BE76DADEB23C2B326D29C862F704BC8F8DBB3E2EDC18DF2B7FA436D98B0",
+      "2FA9FC4ABF623F80BFCCC3FC5DDFE388ECE58BE749A0DF11C9565DCFF7F6EF23",
+      "DE434954D1AAF9DEEB8B104EC7FE4947B61C91A4294E168A76D141055D855AA7",
+      "2198A72B04313FB09DA9A4249AF7667763C59D875E165016DA1CB7FB594C3744",
+      "1793FFEEF31D8BE75DCC78276F3BBBFCF4FC4F4C72ED073F23F2DC07EE82BB2C",
+      "1232E508A38B98BEE6287CF4120C096E6CC67F71A1D9547018FC171A86758601",
+      "0564D51FD42A82D136F2EC2E1B0B0E6CB1D8DD6B06A917EBD3A63C0A702DC7D6",
+      "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8",
+      "24CA0E37E32545D652684155FB4DC3F005612F47FC127758136AD8F7614BBFF7",
+      "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25"
+    ],
+    "tool_contract": "task095-arena-full-ui-union-v1",
+    "mode": "GALLERY_ONLY",
+    "base_manifest_sha256": "A83D64107970531784ADCABED5D1A998A4E7C80BD990ADE895529AA0BA3A12B5",
+    "base_gallery_sha256": "C3926CC6DEC9BF4249D9C4FF9C3C5C268830D47F7388AD6CC6DEBC6CC8899BC2",
+    "preserved_rows": 4368,
+    "appended_rows": 4176,
+    "frozen_gallery_sha256": "674B3B995926EC36D3743E41E544ADF0DF52A9A3EC99CBDC1126DE3BB0B65FF9",
+    "reference_manifest_sha256s": [
+      "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
+      "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
+      "68666C7D9CBFEEC09978933896CA731272EC50ECEEBD7CB5307BD94723AE3E28",
+      "F27805F9762DFC44BE2F7C1733024B0BE41BD517AC55B53C5BAB11B80CBF6AA0",
+      "81EB160957A3545E0C080C9E7F5D3F01F46D4832AE8E76ACD9B806384249297C"
+    ],
+    "policy": "frozen full UI reference membership; base model unchanged; no per-ID exceptions",
+    "upgrade_marker_policy": "duplicate original markers; arena candidate callers disable upgrade resolution"
   },
   "component": "arena_custom_card_embedding",
   "gallery": {
-    "bytes": 10712852,
-    "class_table_bytes": 154133,
+    "bytes": 10727386,
+    "class_table_bytes": 154093,
     "class_table_path": "arena_card_embedding_classes.json",
-    "class_table_sha256": "BED25C03FC5DEDFB0F67442ABB4D555245785BC339DBA1D28DCF818BADD5C5BF",
+    "class_table_sha256": "A7C76383046A95ACFB104AFA84EC720322DA38EFFEF2AB7DA6EE29368F5D0FA4",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "arena_card_embedding_gallery.npz",
-    "sha256": "7D73619D62165F06A3F9898F9D7D722C8E0291C71261DFB169E36BF89E69737E"
+    "sha256": "1D829EDF024FB1854DBD59FC746209FFD0DA341B3E022920C0E2C4ACA102C86F"
   },
   "model": {
     "bytes": 441780,
@@ -35,8 +54,8 @@
     "sha256": "2D19B2BB64980094BC41725C6B586755D47AFA41D005877649BF26656A0F8404"
   },
   "production_handoff": {
-    "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-    "reason": "user authorized inactive catalog placeholders; no new recognition or real-sample acceptance claimed"
+    "status": "READY_WITH_REAL_SAMPLES_PENDING",
+    "reason": "2026-09-21 user explicitly authorized enablement before outstanding follow-up validation; not an acceptance pass"
   },
   "runtime": {
     "acceptance_threshold": null,
@@ -44,20 +63,9 @@
     "note": "Only the customized-card visual family is trained here. Exact normal/+ ID and customizationId require clicked-detail confirmation; null thresholds forbid runtime acceptance before arena calibration.",
     "state": "ARENA_CALIBRATION_REQUIRED",
     "upgrade_maximum_distance": 0.015,
-    "upgrade_minimum_margin": 0.015,
-    "temporary_reference_rule_version": "temporary-placeholder-reference-v1",
-    "temporary_placeholder_business_ids": [
-      915,
-      916,
-      917,
-      918,
-      919,
-      920,
-      921,
-      922
-    ]
+    "upgrade_minimum_margin": 0.015
   },
-  "schema_version": 2,
+  "schema_version": 1,
   "source": {
     "business_card_id_count": 922,
     "business_card_id_set_sha256": "F97BC8A055836A1BD12182E040C7A3F805274AFFD166418649727B7754294DD3",
@@ -985,136 +993,34 @@
       921,
       922
     ],
-    "dataset_id": "task095-skill-reference-ui-pc7051000076-primary20261029",
+    "dataset_id": "task095-skill-card-extension-pc-705100-0080-released922-ui-20261107",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25",
-    "dataset_revision": "pc7051000076-primary20261029",
-    "extension_business_card_id_count": 26,
+    "dataset_manifest_sha256": "E3C73345BCB4AE37673CADD9B9E4B7FEFE8A16AAAF8A6512EFA3F59E77F3526B",
+    "dataset_revision": "pc-705100-0080-released922-ui-20261107",
+    "extension_business_card_id_count": 8,
     "extension_business_card_ids": [
-      889,
-      890,
-      891,
-      892,
-      893,
-      894,
-      895,
-      896,
-      897,
-      898,
-      899,
-      900,
-      901,
-      902,
-      903,
-      904,
-      905,
-      906,
-      907,
-      908,
-      909,
-      910,
-      911,
-      912,
-      913,
-      914
+      915,
+      916,
+      917,
+      918,
+      919,
+      920,
+      921,
+      922
     ],
     "image_class_count": 8544,
-    "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES_WITH_EXCLUDED_TEMPORARY_PLACEHOLDERS",
+    "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES",
     "training_target": "encoder unchanged; gallery reference augmentation only",
-    "visual_identity_count": 473,
-    "inherited_source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES",
-    "business_card_id_min": 1,
-    "business_card_id_max": 922,
-    "temporary_placeholders": {
-      "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-      "source_kind": "USER_AUTHORIZED_NEUTRAL_PLACEHOLDER_ART",
-      "historical_provenance_scope": "inherited enabled rows only",
-      "catalog": {
-        "repository": "https://github.com/gakumas-tools/gakumas-tools",
-        "revision": "880be403add7894d49543cca7ba15e512c323285",
-        "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A"
-      },
-      "image_path": "temporary-card.png",
-      "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
-      "business_ids": [
-        915,
-        916,
-        917,
-        918,
-        919,
-        920,
-        921,
-        922
-      ],
-      "references": [
-        {
-          "business_id": 915,
-          "name": "なにかを続ける尊さ",
-          "upgraded": false,
-          "visual_group_id": "provisional:915",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 916,
-          "name": "なにかを続ける尊さ+",
-          "upgraded": true,
-          "visual_group_id": "provisional:915",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 917,
-          "name": "わずかずつの歩み",
-          "upgraded": false,
-          "visual_group_id": "provisional:917",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 918,
-          "name": "わずかずつの歩み+",
-          "upgraded": true,
-          "visual_group_id": "provisional:917",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 919,
-          "name": "ありのままのわたし",
-          "upgraded": false,
-          "visual_group_id": "provisional:919",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 920,
-          "name": "ありのままのわたし+",
-          "upgraded": true,
-          "visual_group_id": "provisional:919",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 921,
-          "name": "認めてくれるひと",
-          "upgraded": false,
-          "visual_group_id": "provisional:921",
-          "reference_enabled": false
-        },
-        {
-          "business_id": 922,
-          "name": "認めてくれるひと+",
-          "upgraded": true,
-          "visual_group_id": "provisional:921",
-          "reference_enabled": false
-        }
-      ],
-      "replacement_required": "replace placeholders with verified actual card art and matching source identities; rebuild and validate after release"
-    }
+    "visual_identity_count": 473
   },
   "validation": {
-    "state": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
-    "preserved_active_reference_rows": "ARRAY_PREFIX_IDENTICAL",
-    "placeholder_recognition_acceptance": "NOT_APPLICABLE_DISABLED",
+    "state": "USER_AUTHORIZED_ENABLE_VALIDATION_PENDING",
     "pending": [
-      "verified_card_art_and_identities",
-      "independent_live_recognition",
-      "full_read_latency"
-    ]
+      "real_unknown_truncated_wrong_slot_rejection",
+      "own_nine_full_read_p50_p95_102_percent",
+      "opponent_full_flow",
+      "current_297_and_553_failure_pairs"
+    ],
+    "frozen_diagnostic_report_sha256": "4B1591DDA6F1FDC516F9724828A8A0901753CC62E9937DCC027521F93EBF7B10"
   }
 }

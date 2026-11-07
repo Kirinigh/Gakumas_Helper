@@ -1632,6 +1632,109 @@ def _load_badge_gallery_contract(
     )
 
 
+def _validate_ready_masked_badge_inheritance(
+    root: Path,
+    manifest: Mapping[str, Any],
+    *,
+    union_manifest_path: Path,
+    union_gallery_path: Path,
+) -> tuple[Path, dict[str, Any]]:
+    """Prove an all-enabled schema-2 wrapper preserves its qualified base.
+
+    The wrapper binds the full-UI union; the inherited schema-1 report binds
+    the raw base. Neither binding can substitute for the other.
+    """
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            raise ReleaseBuildError(f"ready masked badge inheritance: {message}")
+
+    require(type(manifest.get("schema_version")) is int and manifest["schema_version"] == 2,
+            "schema must be 2")
+    build = manifest.get("build")
+    require(isinstance(build, Mapping), "build is missing")
+    inherited_root = _resolve_inside(root, "inherited")
+    inherited_path = _resolve_inside(inherited_root, "manifest.json")
+    require(inherited_path.is_file(), "inherited manifest is missing")
+    inherited = _load_object(inherited_path)
+    require(type(inherited.get("schema_version")) is int and inherited["schema_version"] == 1,
+            "inherited schema must be 1")
+    require(manifest.get("component") == inherited.get("component") == "task410_arena_card_reference",
+            "component identity differs")
+    require(manifest.get("production_handoff") == inherited.get("production_handoff"),
+            "handoff changed")
+    _validate_component_production_handoff("arena_badge_reference", inherited)
+    inner_gallery = inherited.get("gallery")
+    outer_gallery = manifest.get("gallery")
+    require(isinstance(inner_gallery, Mapping) and isinstance(outer_gallery, Mapping), "gallery metadata missing")
+    inner_path = _resolve_inside(inherited_root, str(inner_gallery.get("path", "")))
+    outer_path = _resolve_inside(root, str(outer_gallery.get("path", "")))
+    require(inner_path.is_file() and outer_path.is_file(), "gallery is missing")
+    inner_sha, outer_sha = sha256_file(inner_path).upper(), sha256_file(outer_path).upper()
+    require(inner_sha == str(inner_gallery.get("sha256", "")).upper()
+            and outer_sha == str(outer_gallery.get("sha256", "")).upper(), "gallery hash differs")
+    require(type(outer_gallery.get("bytes")) is int and outer_gallery["bytes"] == outer_path.stat().st_size,
+            "outer gallery size differs")
+    require({k: v for k, v in outer_gallery.items() if k not in {"bytes", "sha256"}}
+            == {k: v for k, v in inner_gallery.items() if k != "sha256"}, "gallery declaration changed")
+    keys = {"business_ids", "visual_group_ids", "reference_names", "top_coarse", "green_masks"}
+    try:
+        with np.load(inner_path, allow_pickle=False) as old, np.load(outer_path, allow_pickle=False) as new:
+            require(set(old.files) == keys and set(new.files) == keys | {"reference_enabled"},
+                    "array inventory differs")
+            count = len(old["business_ids"])
+            require(count > 0 and all(new[k].dtype == old[k].dtype and new[k].shape == old[k].shape
+                                      and new[k].tobytes() == old[k].tobytes() for k in keys),
+                    "inherited gallery arrays changed")
+            flags = new["reference_enabled"]
+            require(flags.dtype == np.bool_ and flags.shape == (count,) and bool(flags.all()),
+                    "all reference rows must be enabled")
+            ids = sorted({int(value) for value in old["business_ids"]})
+    except ReleaseBuildError:
+        raise
+    except (OSError, EOFError, KeyError, TypeError, ValueError, zipfile.BadZipFile) as error:
+        raise ReleaseBuildError("ready masked badge inheritance: invalid gallery") from error
+    inherited_sha = sha256_file(inherited_path).upper()
+    require(dict(build) == {
+        "tool_contract": "task095-temporary-placeholder-append-v1",
+        "mode": "GALLERY_ONLY_NO_TRAINING",
+        "base_manifest_sha256": inherited_sha,
+        "base_gallery_sha256": inner_sha,
+        "preserved_rows": count,
+        "appended_rows": 0,
+        "enabled_rows": count,
+        "inherited_validation": {
+            "manifest_path": "inherited/manifest.json",
+            "manifest_sha256": inherited_sha,
+            "gallery_sha256": inner_sha,
+            "row_count": count,
+            "scope": "enabled_original_rows_only",
+            "array_relation": "EXACT_PREFIX",
+        },
+    }, "build or inherited binding differs")
+    expected_runtime = dict(inherited.get("runtime", {}))
+    expected_runtime.update(temporary_reference_rule_version="temporary-placeholder-reference-v1",
+                            temporary_placeholder_business_ids=[])
+    require(manifest.get("runtime") == expected_runtime, "runtime or placeholder state changed")
+    source, original_source = manifest.get("source"), inherited.get("source")
+    require(isinstance(source, Mapping) and isinstance(original_source, Mapping), "source is missing")
+    summary_keys = {"business_card_ids", "business_card_id_min", "business_card_id_max",
+                    "business_card_id_count", "business_card_id_set_sha256"}
+    binding_keys = {"arena_component_manifest_sha256", "arena_gallery_sha256"}
+    require({k: v for k, v in source.items() if k not in summary_keys | binding_keys}
+            == {k: v for k, v in original_source.items() if k not in summary_keys | binding_keys},
+            "inherited source lineage changed")
+    require(ids and ids[0] > 0 and source.get("business_card_ids") == ids
+            and source.get("business_card_id_min") == ids[0] and source.get("business_card_id_max") == ids[-1]
+            and source.get("business_card_id_count") == len(ids)
+            and source.get("business_card_id_set_sha256") == hashlib.sha256(
+                json.dumps(ids, separators=(",", ":")).encode("ascii")
+            ).hexdigest().upper(), "business-ID summary differs")
+    require(str(source.get("arena_component_manifest_sha256", "")).upper() == sha256_file(union_manifest_path).upper()
+            and str(source.get("arena_gallery_sha256", "")).upper() == sha256_file(union_gallery_path).upper(),
+            "outer full-UI union binding differs")
+    return inherited_root, inherited
+
+
 def _validate_skill_card_source_summary(
     source: object,
     *,
@@ -2641,6 +2744,14 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         arena_reference_rows_by_id[business_id] = (
             arena_reference_rows_by_id.get(business_id, 0) + 1
         )
+    ready_badge_base = None
+    if not placeholder_bases and badge.get("schema_version") == 2:
+        ready_badge_base = _validate_ready_masked_badge_inheritance(
+            badge_root,
+            badge,
+            union_manifest_path=arena_card_root / "manifest.json",
+            union_gallery_path=_resolve_inside(arena_card_root, str(arena_card["gallery"]["path"])),
+        )
     (
         badge_ids,
         badge_groups,
@@ -2650,9 +2761,13 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         badge_live_reference_rows,
     ) = _load_badge_gallery_contract(
         _resolve_inside(badge_root, str(badge["gallery"]["path"])),
-        allow_inactive_placeholders=bool(placeholder_bases),
+        allow_inactive_placeholders=bool(placeholder_bases) or ready_badge_base is not None,
     )
-    evaluation_badge_root, evaluation_badge = placeholder_bases.get("arena_badge_reference", (badge_root, badge))
+    evaluation_badge_root, evaluation_badge = (
+        ready_badge_base
+        if ready_badge_base is not None
+        else placeholder_bases.get("arena_badge_reference", (badge_root, badge))
+    )
     (
         evaluation_badge_ids, evaluation_badge_groups, evaluation_badge_group_by_id,
         evaluation_badge_rows, evaluation_rows_by_id, evaluation_live_rows,

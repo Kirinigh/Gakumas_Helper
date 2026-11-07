@@ -1,0 +1,170 @@
+{
+  "authoritative_dataset": {
+    "dataset_id": "task075-authoritative-705100:0036",
+    "dataset_revision": "705100:0036",
+    "hard_negative_input": "AUTHORITATIVE_FIXED_RENDERED_ICON",
+    "manifest_sha256": "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
+    "source_domain": "OFFICIAL_RAW_CARD_ART"
+  },
+  "components": {
+    "base": {
+      "gallery_sha256": "9C09C0F6C93341AE957425C3BC39E0F210338B07602FFA5DD04538A4D3F8D038",
+      "manifest_sha256": "59CD120EB85DC336187379839D1FE9A3C3BE66DEDB7FD5C5FCAEB395BF99D1E9",
+      "reference_row_count": 3600
+    },
+    "candidate": {
+      "gallery_sha256": "7B6DCCA4CED0D9F06D3EEF1E2F08EB2BC539CCD9FF2D4C5366E504F11A9A1D64",
+      "manifest_sha256": "B238821D6E47A8A4E2B3DA8C2C2766063DE148290FFAF572C756977572BF07F2",
+      "reference_row_count": 3601
+    }
+  },
+  "confusion": {
+    "business_id_sparse": [
+      {
+        "count": 1,
+        "expected_business_id": 528,
+        "predicted_business_id": 528
+      },
+      {
+        "count": 2,
+        "expected_business_id": 529,
+        "predicted_business_id": 529
+      },
+      {
+        "count": 1,
+        "expected_business_id": 558,
+        "predicted_business_id": 558
+      },
+      {
+        "count": 15,
+        "expected_business_id": 559,
+        "predicted_business_id": 559
+      }
+    ],
+    "visual_group_sparse": [
+      {
+        "count": 16,
+        "expected_visual_group_id": "p_card-03-men-3_061",
+        "predicted_visual_group_id": "p_card-03-men-3_061"
+      },
+      {
+        "count": 3,
+        "expected_visual_group_id": "p_card-03-sup-3_126",
+        "predicted_visual_group_id": "p_card-03-sup-3_126"
+      }
+    ]
+  },
+  "gates": {
+    "append_only_five_array_prefix": {
+      "appended_prototype_count": 1,
+      "inherited_row_count": 3600,
+      "status": "PASS"
+    },
+    "authoritative_hard_negative_blind_test": {
+      "low_confidence_count": 0,
+      "metrics": {
+        "maximum_top_error": 8.359375,
+        "minimum_group_margin": 10.880208,
+        "minimum_top_error": 8.356771
+      },
+      "per_business_id_sample_count": {
+        "559": 14
+      },
+      "sample_count": 14,
+      "status": "PASS",
+      "target_flip_count": 0,
+      "unique_file_count": 2,
+      "wrong_business_id_count": 0,
+      "wrong_visual_group_count": 0
+    },
+    "baseline_wrong_identity_reproduced": {
+      "metrics": {
+        "maximum_top_error": 26.916667,
+        "minimum_group_margin": 0.611979,
+        "minimum_top_error": 26.916667
+      },
+      "sample_count": 1,
+      "status": "PASS"
+    },
+    "candidate_live_target": {
+      "low_confidence_count": 0,
+      "metrics": {
+        "maximum_top_error": 0.0,
+        "minimum_group_margin": 26.916667,
+        "minimum_top_error": 0.0
+      },
+      "sample_count": 1,
+      "status": "PASS",
+      "wrong_business_id_count": 0,
+      "wrong_visual_group_count": 0
+    },
+    "fixed_geometry_stress": {
+      "contract": "dx=-3..3;dy=-1..1;size_delta=0,2;exact_excluded",
+      "low_confidence_count": 0,
+      "metrics": {
+        "maximum_top_error": 16.458333,
+        "minimum_group_margin": 10.934896,
+        "minimum_top_error": 3.914062
+      },
+      "sample_count": 41,
+      "status": "PASS",
+      "wrong_business_id_count": 0,
+      "wrong_visual_group_count": 0
+    },
+    "identity_sets_unchanged": {
+      "business_id_count": 922,
+      "status": "PASS",
+      "visual_group_count": 473
+    },
+    "inherited_full_replay": {
+      "candidate_changed_baseline_business_id_count": 0,
+      "metrics": {
+        "maximum_top_error": 0.0,
+        "minimum_group_margin": 3.132812,
+        "minimum_top_error": 0.0
+      },
+      "preexisting_same_group_business_alias_count": 5,
+      "sample_count": 3600,
+      "status": "PASS",
+      "wrong_visual_group_count": 0
+    },
+    "new_cross_group_exact_collision": {
+      "collision_count": 0,
+      "status": "PASS"
+    },
+    "sibling_reference_rows": {
+      "row_counts": {
+        "528": 1,
+        "558": 1
+      },
+      "status": "PASS"
+    }
+  },
+  "independent_live_holdout": "PENDING",
+  "live_reference_batch": {
+    "dataset_id": "task095-live-card-domain-v1",
+    "dataset_revision": "r1",
+    "prototype_count": 1,
+    "raw_source_publication": "EXCLUDED"
+  },
+  "schema_version": 1,
+  "scope": {
+    "affected_visual_group_ids": [
+      "p_card-03-men-3_061",
+      "p_card-03-sup-3_126"
+    ],
+    "baseline_wrong_business_id": 559,
+    "baseline_wrong_visual_group_id": "p_card-03-men-3_061",
+    "hard_negative_business_ids": [
+      559
+    ],
+    "sibling_business_ids": [
+      528,
+      558
+    ],
+    "target_business_id": 529,
+    "target_visual_group_id": "p_card-03-sup-3_126"
+  },
+  "status": "PASS",
+  "tool_contract": "task095-card-badge-hard-negative-evaluation-v1"
+}

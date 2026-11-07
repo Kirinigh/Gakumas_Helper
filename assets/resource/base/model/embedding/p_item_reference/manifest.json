@@ -5,7 +5,7 @@
   },
   "evaluation": {
     "path": "production_handoff_evaluation.json",
-    "sha256": "7C687C679C3BEC759CCCD4C36216810DBF0685012CCF3EFA52EAC07AEE631D62",
+    "sha256": "B29BC28C180591E9BF92350F36089DBDAB5FE9F6B36C9B11D02245EE0A1C4BE9",
     "status": "PASS",
     "tool_contract": "task095-static-reference-production-promotion-v1"
   },
@@ -15,13 +15,13 @@
   },
   "recognizer": "p_item_rendered_reference_v1",
   "reference_gallery": {
-    "business_id_count": 446,
+    "business_id_count": 450,
     "color_order": "BGR",
     "image_shape": "original_png_dimensions",
     "image_shape_count": 19,
     "path": "p_item_rendered_reference_gallery.npz",
     "provisional_business_ids": [],
-    "sha256": "184A8B2259EA3E81D64202921798A51EA04AAF1E144F117A1B9C01418CDA5AB2"
+    "sha256": "132D6FA526323DAEDB1BB240E7F97620F6219BDA58FEDEFE63D2FCE791CDD4C9"
   },
   "runtime": {
     "ambiguous_action": "bounded_detail_or_fail_closed",
@@ -54,7 +54,7 @@
   },
   "schema_version": 1,
   "source": {
-    "business_id_count": 446,
+    "business_id_count": 450,
     "business_ids": [
       7,
       8,
@@ -501,20 +501,26 @@
       500,
       501,
       504,
-      505
+      505,
+      506,
+      507,
+      508,
+      509
     ],
-    "evidence_id": "published-ui-20261029",
+    "evidence_id": "published-ui-20261107",
     "extension_provenance": {
       "base_gallery": {
-        "added_business_ids": [],
-        "base_business_id_count": 446,
-        "inherited_business_id_count": 444,
-        "replaced_business_ids": [
-          504,
-          505
+        "added_business_ids": [
+          506,
+          507,
+          508,
+          509
         ],
-        "sha256": "1A2F43A0931EF82EBE061F8F57123D4443080576B706414CB5E792EBB7CB0CC9",
-        "target_business_id_count": 446
+        "base_business_id_count": 446,
+        "inherited_business_id_count": 446,
+        "replaced_business_ids": [],
+        "sha256": "184A8B2259EA3E81D64202921798A51EA04AAF1E144F117A1B9C01418CDA5AB2",
+        "target_business_id_count": 450
       },
       "catalog": {
         "arena_stage_business_ids": [
@@ -886,29 +892,43 @@
           500,
           501,
           504,
-          505
+          505,
+          506,
+          507,
+          508,
+          509
         ],
-        "excluded_current_rows": [],
+        "excluded_current_rows": [
+          {
+            "business_id": 510,
+            "mode": "produce",
+            "name": "過激め？チョイス",
+            "reason": "non-stage row is outside the arena-stage contract",
+            "source_type": "support"
+          }
+        ],
         "included_business_ids": [
-          504,
-          505
+          506,
+          507,
+          508,
+          509
         ],
-        "p_items_git_blob_sha1": "c2d33b4c241f154941df3330ef037a90b8e63302",
-        "p_items_sha256": "476E169D8B188A7D4672BF6545CA49A094E22E84954E13AE6B2FB60AE46CE000",
+        "p_items_git_blob_sha1": "ebe75bdc90b9c68eab8f88be7c2dd9a5b7103871",
+        "p_items_sha256": "4027A200665A37C9D1410668237FE6A4BAB5D9CC6515C9CA59CEC1CF70F3299D",
         "path": "packages/gakumas-data/json/p_items.json",
         "repository": "https://github.com/surisuririsu/gakumas-tools",
-        "revision": "880be403add7894d49543cca7ba15e512c323285",
+        "revision": "6426bc747a892d9e97263c3bf63b9a9c170bdf3b",
         "stage_scope_contract": "EntityBank selectable entities use modes=['stage']; coverage/generate-suite filters p.mode === 'stage'"
       },
       "published_ui_crops": {
         "catalog_production_deployment": {
-          "deployment_id": 7371809738,
-          "revision": "880be403add7894d49543cca7ba15e512c323285",
+          "deployment_id": 7615251345,
+          "revision": "6426bc747a892d9e97263c3bf63b9a9c170bdf3b",
           "status": "success"
         },
         "references": {
-          "504": {
-            "business_id": 504,
+          "506": {
+            "business_id": 506,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
               0,
@@ -920,27 +940,27 @@
               130,
               130
             ],
-            "frozen_at": "2026-10-29",
+            "frozen_at": "2026-11-07",
             "kind": "p_item",
-            "name": "ヒーローの輝き",
+            "name": "夢見る輝き",
             "original_dimensions": [
               130,
               130
             ],
-            "original_file": "504.png",
-            "original_sha256": "5D4FC0973B7F00076BF16A0162EF4BDCEF41FE7989A15273850C6762E5081423",
-            "original_size": 15183,
-            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/pItems/icons/504.png",
-            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/pItems/icons/504.png",
-            "png_sha256": "19F0AB9505CFACB37CB987BF08C39D18519D73205E3A097A42547526886A0518",
+            "original_file": "506.png",
+            "original_sha256": "695832770BC110CA7F541AF7283DFDD38BE75AA46573038CC30AFD661CD0A918",
+            "original_size": 13968,
+            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/506.png",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/506.png",
+            "png_sha256": "D6478660D13789BED776C0861C68C15BFFEEB0040AD66104FDFC689BDC688A40",
             "publisher": "gakumas-tools/gakumas-tools",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "7682E08F3E7A257A9B27358C28E57DEF553915117C035E3D0800E7B70FE37AFD",
-            "size": 14715,
+            "rgb_pixel_sha256": "E5977FE345AFCF603AB3291A62ED7F421EAAF3601756FD31A95B1D89E74A1E9A",
+            "size": 13397,
             "upgraded": false
           },
-          "505": {
-            "business_id": 505,
+          "507": {
+            "business_id": 507,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
               0,
@@ -952,23 +972,87 @@
               130,
               130
             ],
-            "frozen_at": "2026-10-29",
+            "frozen_at": "2026-11-07",
             "kind": "p_item",
-            "name": "ヒーローの輝き",
+            "name": "夢見る輝き",
             "original_dimensions": [
               130,
               130
             ],
-            "original_file": "505.png",
-            "original_sha256": "1E82734C12DDAFDB1DF14B262DE4E8327AC9F5A5E4A8EAEE5C2C35AC543B68BA",
-            "original_size": 15775,
-            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/pItems/icons/505.png",
-            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/748610e76670b88f2cc2579f034ce992050d13a3/packages/gakumas-images/images/pItems/icons/505.png",
-            "png_sha256": "EA49557ABB31CEFC53FE3718CC806AB3B166E5BF835C0D2BEE909B80A8B866AD",
+            "original_file": "507.png",
+            "original_sha256": "FFCE17E371F979B9E88F18A98BAAF4544B1695FC58CE91F0A4F99CB0B8502273",
+            "original_size": 14572,
+            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/507.png",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/507.png",
+            "png_sha256": "9B31BA2E9D11945F6267DFA9CBF059BC4BAFEDE03CE02E0737A390F91B83C874",
             "publisher": "gakumas-tools/gakumas-tools",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "BC8EE267372C1EB42AD2F8DC8C2957CF7447D30B47F44FD786BA6AAB2F2E6450",
-            "size": 15299,
+            "rgb_pixel_sha256": "2C80F9D6699377922AD5CB29F4EE4A733E29080340899240855A5E038D01C49D",
+            "size": 13973,
+            "upgraded": true
+          },
+          "508": {
+            "business_id": 508,
+            "capture_provenance": "UNKNOWN",
+            "crop_box": [
+              0,
+              0,
+              130,
+              130
+            ],
+            "dimensions": [
+              130,
+              130
+            ],
+            "frozen_at": "2026-11-07",
+            "kind": "p_item",
+            "name": "星々を統べる輝き",
+            "original_dimensions": [
+              130,
+              130
+            ],
+            "original_file": "508.png",
+            "original_sha256": "6DD2652552448BB89E10DDE460B4DB45F3193F2E2CE7C1722C5924A0A12A0DC7",
+            "original_size": 16957,
+            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/508.png",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/508.png",
+            "png_sha256": "133400EAB7EB09EAE9FDD4B89CBC4CD8ED2AA62C2B9D6AC6EB53C211E9CC23EB",
+            "publisher": "gakumas-tools/gakumas-tools",
+            "resampling": "PILLOW_BICUBIC",
+            "rgb_pixel_sha256": "B4BFA803BE09BE0891CB97923F3BB598F473C9AD04C1E32B3521ED4C0E2AF787",
+            "size": 16395,
+            "upgraded": false
+          },
+          "509": {
+            "business_id": 509,
+            "capture_provenance": "UNKNOWN",
+            "crop_box": [
+              0,
+              0,
+              130,
+              130
+            ],
+            "dimensions": [
+              130,
+              130
+            ],
+            "frozen_at": "2026-11-07",
+            "kind": "p_item",
+            "name": "星々を統べる輝き",
+            "original_dimensions": [
+              130,
+              130
+            ],
+            "original_file": "509.png",
+            "original_sha256": "3E95C28900539AD1EE909929929DAEA7DCD2CDA01FEAFB31071647E9C5CA7769",
+            "original_size": 17529,
+            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/509.png",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/509.png",
+            "png_sha256": "846E4283B84DD7C54F6A11A9927DC069EDA12F26711FEBA7BD3BB99384A3BC70",
+            "publisher": "gakumas-tools/gakumas-tools",
+            "resampling": "PILLOW_BICUBIC",
+            "rgb_pixel_sha256": "336D0A0A118C3D6E6601BE5FC9F50959C8B0FB6831AB958B85E4C75E1BA37F1C",
+            "size": 16976,
             "upgraded": true
           }
         },
@@ -977,19 +1061,33 @@
       "schema_version": 4,
       "validation": {
         "full_gallery_64px": {
-          "504": {
-            "margin": 0.02068328857421875,
-            "top1_business_id": 504,
-            "top1_similarity": 0.9999997615814209,
-            "top2_business_id": 505,
-            "top2_similarity": 0.9793164730072021
-          },
-          "505": {
-            "margin": 0.02068352699279785,
-            "top1_business_id": 505,
+          "506": {
+            "margin": 0.029552996158599854,
+            "top1_business_id": 506,
             "top1_similarity": 1.0,
-            "top2_business_id": 504,
-            "top2_similarity": 0.9793164730072021
+            "top2_business_id": 507,
+            "top2_similarity": 0.9704470038414001
+          },
+          "507": {
+            "margin": 0.029552876949310303,
+            "top1_business_id": 507,
+            "top1_similarity": 0.9999998807907104,
+            "top2_business_id": 506,
+            "top2_similarity": 0.9704470038414001
+          },
+          "508": {
+            "margin": 0.03804987668991089,
+            "top1_business_id": 508,
+            "top1_similarity": 1.0,
+            "top2_business_id": 509,
+            "top2_similarity": 0.9619501233100891
+          },
+          "509": {
+            "margin": 0.038047611713409424,
+            "top1_business_id": 509,
+            "top1_similarity": 0.9999977350234985,
+            "top2_business_id": 508,
+            "top2_similarity": 0.9619501233100891
           },
           "coarse_fine_guard": "fails_safe_to_full_gallery"
         },
@@ -997,12 +1095,14 @@
           "runtime_detail_authority": false,
           "status": "PENDING"
         },
-        "metadata_removed_business_id_count": 446,
-        "source_added_business_ids": [],
-        "source_replacement_changed_business_ids": [
-          504,
-          505
-        ]
+        "metadata_removed_business_id_count": 450,
+        "source_added_business_ids": [
+          506,
+          507,
+          508,
+          509
+        ],
+        "source_replacement_changed_business_ids": []
       }
     },
     "plan_ambiguous_business_ids": [
@@ -1015,15 +1115,15 @@
       "logic": 407,
       "sense": 406
     },
-    "revision": "base-gallery-sha256@1A2F43A0931EF82EBE061F8F57123D4443080576B706414CB5E792EBB7CB0CC9+gakumas-tools@880be403add7894d49543cca7ba15e512c323285+published-ui-crops-v1",
-    "sanitized_icons_sha256": "28406E9E53CE1C8457C2BDA379DFA9BD9C22338F7428F869419947617E2A9373",
-    "scope": "444 immutable payloads; two replaced 504/505 primary published game-capture UI references; live pending",
-    "source_icons_sha256": "046CB4325D859589DB31CD4181211546AB449F82975F7A6C33204BC9A36F5338"
+    "revision": "base-gallery-sha256@184A8B2259EA3E81D64202921798A51EA04AAF1E144F117A1B9C01418CDA5AB2+gakumas-tools@6426bc747a892d9e97263c3bf63b9a9c170bdf3b+published-ui-crops-v1",
+    "sanitized_icons_sha256": "DD6419A40D2643D6AF8CBF6CCAEE0978C4412FCC92421B01B2DC4BE8C86AC28D",
+    "scope": "446 immutable inherited PNGs plus four current native-bound published complete UI references; independent live calibration pending",
+    "source_icons_sha256": "3AA07A49BCBF7E8B937DE86FCAB390726CA0B283E7F55B7A7ED8E023D9212710"
   },
   "validation": {
-    "coarse_fine_720_calibration": "TWO_FULL_GALLERY_RANKINGS_PASS_REAL_JJC_PENDING",
+    "coarse_fine_720_calibration": "FOUR_FULL_GALLERY_RANKINGS_PASS_REAL_JJC_PENDING",
     "embedding_acceptance_calibration": "REJECTED_FOR_CURRENT_JJC_DOMAIN",
-    "jjc_reference_identity": "TWO_REPLACED_PUBLISHED_UI_IDENTITIES_BOUND_REAL_JJC_PENDING",
+    "jjc_reference_identity": "FOUR_PUBLISHED_UI_IDENTITIES_BOUND_REAL_JJC_PENDING",
     "upgraded_marker_calibration": "PUBLISHED_UI_NORMAL_PLUS_COMPLETE_REFERENCES_REAL_JJC_PENDING"
   }
 }

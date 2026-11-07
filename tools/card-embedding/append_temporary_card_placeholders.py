@@ -218,7 +218,8 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
     # Preserve the exact validated parent, including full-UI dataset lineage and
     # historical evaluations. Those conclusions apply only to the enabled rows.
     inherited_manifest = output / "inherited-manifest.json"
-    shutil.copyfile(root / "manifest.json", inherited_manifest)
+    if retained_proof is not None:
+        shutil.copyfile(root / "manifest.json", inherited_manifest)
     image_path = output / "temporary-card.png"
     if retained_proof is not None:
         shutil.copyfile(retained_proof["image"], image_path)
@@ -269,7 +270,7 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
     else:
         source_metadata["reference_file_count"] = len(extended["business_ids"])
         manifest["gallery"].update(business_card_id_count=len(all_ids), visual_group_count=len(set(map(str, extended["visual_group_ids"]))))
-        if peer_arena_root is not None:
+        if peer_arena_root is not None and retained_proof is not None:
             peer_manifest_path = Path(peer_arena_root) / "manifest.json"
             peer_manifest = read(peer_manifest_path)
             source_metadata.update(
@@ -286,15 +287,16 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
         "preserved_rows": len(next(iter(arrays.values()))),
         "appended_rows": len(rows),
         "enabled_rows": int(extended["reference_enabled"].sum()),
-        "inherited_validation": {
+    }
+    if retained_proof is not None:
+        manifest["build"]["inherited_validation"] = {
             "manifest_path": inherited_manifest.name,
             "manifest_sha256": sha(inherited_manifest),
             "gallery_sha256": original["gallery"]["sha256"],
             "row_count": len(next(iter(arrays.values()))),
             "scope": "enabled_original_rows_only",
             "array_relation": "EXACT_PREFIX",
-        },
-    }
+        }
     if retained_proof is not None:
         manifest["build"]["retained_disabled_reference_proof"] = retained_proof["evidence"]
     manifest["validation"] = {

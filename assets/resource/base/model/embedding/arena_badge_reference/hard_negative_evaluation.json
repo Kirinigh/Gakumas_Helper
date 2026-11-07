@@ -8,14 +8,14 @@
   },
   "components": {
     "base": {
-      "gallery_sha256": "A40F9C1335E355D4A10363F5D5E28BF9FA019E83D8D3BF6C2FA46EC0DB3CD728",
-      "manifest_sha256": "09A2FE43CC8722DF4C338DF4AFE3FF6B7CEC3D2182886BA335ACB22A8DD0D88D",
-      "reference_row_count": 3592
+      "gallery_sha256": "9C09C0F6C93341AE957425C3BC39E0F210338B07602FFA5DD04538A4D3F8D038",
+      "manifest_sha256": "59CD120EB85DC336187379839D1FE9A3C3BE66DEDB7FD5C5FCAEB395BF99D1E9",
+      "reference_row_count": 3600
     },
     "candidate": {
-      "gallery_sha256": "D81546A678A0651A1007B0DD16A118D4D64081E32F856CC8EB6EA0DFB50D2825",
-      "manifest_sha256": "C23E866B2ECD76F4909E8BC3318F4D0E0E90A04C7A1F56A9E18401FF6B12C668",
-      "reference_row_count": 3593
+      "gallery_sha256": "7B6DCCA4CED0D9F06D3EEF1E2F08EB2BC539CCD9FF2D4C5366E504F11A9A1D64",
+      "manifest_sha256": "B238821D6E47A8A4E2B3DA8C2C2766063DE148290FFAF572C756977572BF07F2",
+      "reference_row_count": 3601
     }
   },
   "confusion": {
@@ -57,7 +57,7 @@
   "gates": {
     "append_only_five_array_prefix": {
       "appended_prototype_count": 1,
-      "inherited_row_count": 3592,
+      "inherited_row_count": 3600,
       "status": "PASS"
     },
     "authoritative_hard_negative_blind_test": {
@@ -112,9 +112,9 @@
       "wrong_visual_group_count": 0
     },
     "identity_sets_unchanged": {
-      "business_id_count": 914,
+      "business_id_count": 922,
       "status": "PASS",
-      "visual_group_count": 469
+      "visual_group_count": 473
     },
     "inherited_full_replay": {
       "candidate_changed_baseline_business_id_count": 0,
@@ -124,7 +124,7 @@
         "minimum_top_error": 0.0
       },
       "preexisting_same_group_business_alias_count": 5,
-      "sample_count": 3592,
+      "sample_count": 3600,
       "status": "PASS",
       "wrong_visual_group_count": 0
     },
