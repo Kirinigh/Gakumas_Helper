@@ -99,6 +99,7 @@ def build(catalog_path, master_path, dataset_paths, component_roots, *, revision
     catalog = indexed(read(catalog_path), lambda r: r["id"])
     require(all(type(i) is int and i > 0 for i in catalog), "invalid business ID")
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools.card_catalog_identity import apply_title_corrections
     from tools.joint_identity_source import load
     master = indexed(load(master_path), lambda r: (r["id"], r["upgradeCount"]))
     mappings, datasets = {}, []
@@ -111,6 +112,7 @@ def build(catalog_path, master_path, dataset_paths, component_roots, *, revision
             bid = row["business_id"]
             require(bid not in mappings, f"duplicate crosswalk ID: {bid}")
             mappings[bid] = row
+        apply_title_corrections(mappings, mapping.get("catalog_name_corrections", []))
         datasets.append({"dataset_id": manifest["dataset_id"], "manifest_sha256": digest(path)})
     require(set(mappings) == set(catalog), "catalog/crosswalk coverage mismatch")
     final_source = read(dataset_paths[-1])["sources"]

@@ -28,6 +28,9 @@ from dataclasses import dataclass
 import PIL
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.card_catalog_identity import compare_identity, apply_title_corrections  # noqa: E402
+
 SOURCE_DOMAIN = "OFFICIAL_RAW_CARD_ART"
 CATALOG_REPOSITORY = "https://github.com/surisuririsu/gakumas-tools"
 CATALOG_LICENSE = "BSD-3-Clause"
@@ -439,24 +442,35 @@ def _load_base_crosswalk_lineage(
         if tuple(sorted(rows_by_id)) != layer_ids:
             raise ExtensionDatasetError(f"base crosswalk layer {index} disagrees with its scope")
         overlap = set(result).intersection(rows_by_id)
-        if overlap:
-            raise ExtensionDatasetError(f"base dataset lineage is not append-only; repeated IDs={sorted(overlap)[:20]}")
+        for business_id in sorted(overlap):
+            changed = [field for field in IDENTITY_FIELDS if result[business_id][field] != rows_by_id[business_id][field]]
+            if changed:
+                raise ExtensionDatasetError(f"accepted dataset overlay identity changed for {business_id}: {changed}")
         result.update(rows_by_id)
+        try:
+            apply_title_corrections(result, mapping.get("catalog_name_corrections", []))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ExtensionDatasetError(f"base catalog title correction: {error}") from error
     return result
 
 
 def _compare_base_identity(
     base_rows: dict[int, dict[str, Any]],
     current: dict[int, CardMapping],
-) -> None:
+) -> list[dict[str, Any]]:
+    corrections = []
     for business_id, baseline in base_rows.items():
         mapping = current.get(business_id)
         if mapping is None:
             raise ExtensionDatasetError(f"accepted business ID disappeared from catalog: {business_id}")
         candidate = mapping.crosswalk_row()
-        changed = [field for field in IDENTITY_FIELDS if baseline.get(field) != candidate[field]]
-        if changed:
-            raise ExtensionDatasetError(f"accepted business ID {business_id} identity fields changed: {changed}")
+        try:
+            correction = compare_identity(baseline, candidate)
+        except ValueError as error:
+            raise ExtensionDatasetError(f"accepted business ID {business_id} {error}") from error
+        if correction is not None:
+            corrections.append(correction)
+    return corrections
 
 
 def _class_name(mapping: CardMapping, variant: str) -> str:
@@ -668,6 +682,8 @@ def build_extension_dataset(
     catalog_revision: str,
     fixed_icon_provenance_path: Path | None = None,
     published_ui_original_root: Path | None = None,
+    disabled_reference_proof_root: Path | None = None,
+    catalog_repository: str = CATALOG_REPOSITORY,
 ) -> ExtensionDatasetResult:
     """Build a deterministic extension dataset using frozen local inputs only."""
 
@@ -675,6 +691,8 @@ def build_extension_dataset(
         raise ExtensionDatasetError("dataset revision must be a non-empty single line")
     if re.fullmatch(r"[0-9a-fA-F]{40}", catalog_revision) is None:
         raise ExtensionDatasetError("catalog revision must be one immutable 40-hex Git commit")
+    if re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", catalog_repository) is None:
+        raise ExtensionDatasetError("catalog repository must be explicit GitHub provenance")
     if (fixed_icon_provenance_path is None) != (published_ui_original_root is None):
         raise ExtensionDatasetError("fixed-icon provenance and published-UI original root must be supplied together")
     catalog_revision = catalog_revision.lower()
@@ -706,21 +724,40 @@ def build_extension_dataset(
         raise ExtensionDatasetError(f"accepted business IDs disappeared: {missing[:20]}")
     extension_ids = tuple(value for value in catalog_ids if value not in base_id_set)
     expected_extension_ids = tuple(range(max(base_ids) + 1, max(catalog_ids) + 1))
+    gap_proof = None
     if not extension_ids or extension_ids != expected_extension_ids:
-        raise ExtensionDatasetError(
-            "catalog delta is not a non-empty contiguous append-only extension; "
-            f"actual={list(extension_ids)}, expected={list(expected_extension_ids)}"
-        )
+        if disabled_reference_proof_root is None or not extension_ids or min(extension_ids) <= max(base_ids):
+            raise ExtensionDatasetError(
+                "catalog delta is not a non-empty contiguous append-only extension; "
+                f"actual={list(extension_ids)}, expected={list(expected_extension_ids)}"
+            )
+        gap_ids = set(expected_extension_ids) - set(extension_ids)
+        if not gap_ids or set(extension_ids) & gap_ids:
+            raise ExtensionDatasetError("disabled proof requires an exact non-empty gap")
+        module_root = str(Path(__file__).resolve().parent)
+        if module_root not in sys.path:
+            sys.path.insert(0, module_root)
+        from disabled_reference_proof import validate_gap_proof
+
+        try:
+            gap_proof = validate_gap_proof(
+                disabled_reference_proof_root,
+                base_ids=base_ids,
+                gap_ids=gap_ids,
+                base_gallery_manifest_path=base_gallery_manifest_path,
+            )
+        except (ValueError, KeyError, OSError) as error:
+            raise ExtensionDatasetError(f"disabled reference gap proof: {error}") from error
 
     official_manifest = _load_object(official_manifest_path, label="official game manifest")
     official_assets = _official_assets(official_manifest)
     mappings = build_crosswalk(catalog, _load_pcard(pcard_path), official_assets)
     current_by_id = {mapping.business_id: mapping for mapping in mappings}
-    _compare_base_identity(base_rows, current_by_id)
+    catalog_name_corrections = _compare_base_identity(base_rows, current_by_id)
     extension_mappings = tuple(current_by_id[value] for value in extension_ids)
 
     fixed_icon_source = {
-        "repository": CATALOG_REPOSITORY,
+        "repository": catalog_repository,
         "commit": catalog_revision,
         "license": CATALOG_LICENSE,
     }
@@ -797,7 +834,7 @@ def build_extension_dataset(
             "sources": {
                 **input_hashes,
                 "catalog": {
-                    "repository": CATALOG_REPOSITORY,
+                "repository": catalog_repository,
                     "commit": catalog_revision,
                     "license": CATALOG_LICENSE,
                 },
@@ -821,6 +858,7 @@ def build_extension_dataset(
                 "one_to_one_count": len(extension_ids),
                 "base_business_id_count": len(base_ids),
                 "name_aliases": NAME_ALIASES,
+                "catalog_name_corrections": catalog_name_corrections,
             },
             "art": {
                 "root": "art",
@@ -848,6 +886,8 @@ def build_extension_dataset(
             },
             "gk_img_training_source": "REJECTED",
         }
+        if gap_proof is not None:
+            manifest["sources"]["disabled_reference_gap_proof"] = gap_proof
         _write_json(temporary / "dataset_manifest.json", manifest)
         os.replace(temporary, output_dir)
     except Exception:
@@ -874,6 +914,7 @@ def main() -> int:
     parser.add_argument("--fixed-icon-root", type=Path, required=True)
     parser.add_argument("--fixed-icon-provenance", type=Path)
     parser.add_argument("--published-ui-original-root", type=Path)
+    parser.add_argument("--disabled-reference-proof-root", type=Path)
     parser.add_argument("--base-gallery-manifest", type=Path, required=True)
     parser.add_argument(
         "--base-dataset-manifest",
@@ -883,6 +924,7 @@ def main() -> int:
     )
     parser.add_argument("--dataset-revision", required=True)
     parser.add_argument("--catalog-revision", required=True)
+    parser.add_argument("--catalog-repository", default=CATALOG_REPOSITORY)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -900,6 +942,8 @@ def main() -> int:
             catalog_revision=args.catalog_revision,
             fixed_icon_provenance_path=args.fixed_icon_provenance,
             published_ui_original_root=args.published_ui_original_root,
+            disabled_reference_proof_root=args.disabled_reference_proof_root,
+            catalog_repository=args.catalog_repository,
         )
     except ExtensionDatasetError as error:
         parser.error(str(error))

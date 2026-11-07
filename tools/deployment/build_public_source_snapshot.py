@@ -82,6 +82,7 @@ FILE_ALLOWLIST = (
     "tools/p_item_derived_qualification.py",
     "tools/published_ui_reference.py",
     "tools/joint_identity_source.py",
+    "tools/card_catalog_identity.py",
     "tools/sync_cards.py",
     "tools/sync_lang.py",
     "tools/sync_support_cards.py",

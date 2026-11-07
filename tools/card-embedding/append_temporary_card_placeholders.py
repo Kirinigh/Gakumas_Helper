@@ -61,12 +61,13 @@ def inside(root, value):
     return resolved
 
 
-def catalog_rows(path):
+def catalog_rows(path, *, allow_sparse=False):
     rows = read(path)
     require(isinstance(rows, list) and rows, "catalog must be a nonempty list")
     ids = [r.get("id") for r in rows]
     require(all(type(i) is int and i > 0 for i in ids), "invalid catalog ID")
-    require(ids == list(range(1, len(rows) + 1)), "catalog IDs must be contiguous and ordered")
+    require(ids == sorted(set(ids)), "catalog IDs must be unique and ordered")
+    require(allow_sparse or ids == list(range(1, len(rows) + 1)), "catalog IDs must be contiguous and ordered")
     for row in rows:
         require(isinstance(row.get("name"), str) and row["name"], "invalid catalog name")
         require(type(row.get("upgraded")) is bool, "invalid catalog upgrade state")
@@ -173,20 +174,56 @@ def append_arrays(arrays, rows, groups, image, *, vector=None):
     return result
 
 
-def candidate_component(source, output, rows, groups, image, image_sha, catalog_source, *, embedder_factory=OnnxCardEmbedder):
+def append_retained_disabled(arrays, proof):
+    """Keep old references by identity and reuse the exact disabled row payloads."""
+    old = proof["arrays"]
+    require(set(old) - {"reference_enabled"} == set(arrays), "retained placeholder array contract differs")
+    key = "class_names" if "embeddings" in arrays else "reference_names"
+    current_names = list(map(str, arrays[key]))
+    indices = {name: i for i, name in enumerate(current_names)}
+    require(len(indices) == len(current_names), "new active reference names are duplicated")
+    old_names = list(map(str, old[key][proof["flags"]]))
+    require(all(name in indices for name in old_names), "retained proof active reference disappeared")
+    positions = [indices[name] for name in old_names]
+    require(positions == sorted(positions), "retained active reference order changed")
+    for field in arrays:
+        require(np.array_equal(arrays[field][positions], old[field][proof["flags"]]), f"retained active {field} changed")
+    result = {}
+    for field, value in arrays.items():
+        extra = old[field][~proof["flags"]]
+        appended = extra.astype(value.dtype, copy=False)
+        require(np.array_equal(appended, extra), f"retained {field} cannot preserve its values")
+        result[field] = np.concatenate((value, appended), axis=0)
+    result["reference_enabled"] = np.concatenate((np.ones(len(current_names), np.bool_), np.zeros(len(proof["disabled_ids"]), np.bool_)))
+    return result
+
+
+def candidate_component(source, output, rows, groups, image, image_sha, catalog_source, *, embedder_factory=OnnxCardEmbedder, peer_arena_root=None, retained_proof=None):
     root, original, arrays = source
     manifest = deepcopy(original)
     newline = "\r\n" if b"\r\n" in (root / "manifest.json").read_bytes() else "\n"
     embedding = "embeddings" in arrays
+    if retained_proof is not None:
+        require(original.get("component") == retained_proof["manifest"].get("component"), "retained parent component role differs")
+    if embedding and retained_proof is not None:
+        require(original["model"]["sha256"] == retained_proof["manifest"]["model"]["sha256"], "retained parent fixed encoder differs")
     vector = None
-    if embedding:
+    if embedding and retained_proof is None:
         embedder = embedder_factory(inside(root, original["model"]["path"]), expected_model_sha256=original["model"]["sha256"], source_color_order="RGB")
         # Reuse the runtime encoder preprocessing for this neutral rendered image.
         vector = embedder.embed(np.asarray(image), (0, 0, image.width, image.height))
-    extended = append_arrays(arrays, rows, groups, image, vector=vector)
+    extended = (append_retained_disabled(arrays, retained_proof) if retained_proof is not None
+                else append_arrays(arrays, rows, groups, image, vector=vector))
     output.mkdir()
+    # Preserve the exact validated parent, including full-UI dataset lineage and
+    # historical evaluations. Those conclusions apply only to the enabled rows.
+    inherited_manifest = output / "inherited-manifest.json"
+    shutil.copyfile(root / "manifest.json", inherited_manifest)
     image_path = output / "temporary-card.png"
-    image.save(image_path, format="PNG", compress_level=9)
+    if retained_proof is not None:
+        shutil.copyfile(retained_proof["image"], image_path)
+    else:
+        image.save(image_path, format="PNG", compress_level=9)
     require(sha(image_path) == image_sha, "placeholder image serialization changed")
     gallery = inside(output, manifest["gallery"]["path"])
     gallery.parent.mkdir(parents=True, exist_ok=True)
@@ -232,6 +269,13 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
     else:
         source_metadata["reference_file_count"] = len(extended["business_ids"])
         manifest["gallery"].update(business_card_id_count=len(all_ids), visual_group_count=len(set(map(str, extended["visual_group_ids"]))))
+        if peer_arena_root is not None:
+            peer_manifest_path = Path(peer_arena_root) / "manifest.json"
+            peer_manifest = read(peer_manifest_path)
+            source_metadata.update(
+                arena_component_manifest_sha256=sha(peer_manifest_path),
+                arena_gallery_sha256=peer_manifest["gallery"]["sha256"],
+            )
     for field in ("promotion", "evaluation"):
         manifest.pop(field, None)
     manifest["build"] = {
@@ -242,7 +286,17 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
         "preserved_rows": len(next(iter(arrays.values()))),
         "appended_rows": len(rows),
         "enabled_rows": int(extended["reference_enabled"].sum()),
+        "inherited_validation": {
+            "manifest_path": inherited_manifest.name,
+            "manifest_sha256": sha(inherited_manifest),
+            "gallery_sha256": original["gallery"]["sha256"],
+            "row_count": len(next(iter(arrays.values()))),
+            "scope": "enabled_original_rows_only",
+            "array_relation": "EXACT_PREFIX",
+        },
     }
+    if retained_proof is not None:
+        manifest["build"]["retained_disabled_reference_proof"] = retained_proof["evidence"]
     manifest["validation"] = {
         "state": STATUS,
         "preserved_active_reference_rows": "ARRAY_PREFIX_IDENTICAL",
@@ -262,8 +316,12 @@ def labels(card):
     return {"plan": card["plan"], "rarity": rarity, "kind": kind}
 
 
-def classification(old, rows, groups, components, catalog_source, image_sha, *, decoded=None, decoded_sha=None):
+def classification(old, rows, groups, components, catalog_source, image_sha, *, decoded=None, decoded_sha=None, retained_index=None):
     result = deepcopy(old)
+    old_by_id = {row["business_id"]: row for row in old["cards"]}
+    require(len(old_by_id) == len(old["cards"]), "old classification IDs are duplicated")
+    new_ids = [row["id"] for row in rows]
+    require(len(new_ids) == len(set(new_ids)) and not set(new_ids) & set(old_by_id), "placeholder classification IDs overlap")
     official_by_name = {}
     for row in decoded or []:
         if row.get("upgradeCount") in {0, 1} and "identity_source" not in row:
@@ -271,6 +329,10 @@ def classification(old, rows, groups, components, catalog_source, image_sha, *, 
             require(key not in official_by_name, "ambiguous decoded official identity")
             official_by_name[key] = row
     for card in rows:
+        if retained_index is not None:
+            retained = {row["business_id"]: row for row in retained_index["cards"]}
+            result["cards"].append(deepcopy(retained[card["id"]]))
+            continue
         official = official_by_name.get((card["name"].rstrip("+＋"), int(card["upgraded"])))
         facets = labels(card)
         if official:
@@ -299,17 +361,22 @@ def classification(old, rows, groups, components, catalog_source, image_sha, *, 
                 },
             },
         })
+    result["cards"].sort(key=lambda row: row["business_id"])
     result["revision"] = "task095-temporary-placeholder-" + str(len(result["cards"])) + "-v1"
     result["status"] = STATUS
-    result.setdefault("sources", {})["temporary_placeholder_catalog"] = catalog_source
+    result.setdefault("sources", {})["temporary_placeholder_catalog"] = (
+        deepcopy(retained_index["sources"]["temporary_placeholder_catalog"])
+        if retained_index is not None else catalog_source
+    )
     result["indexes"] = {facet: {value: [r["business_id"] for r in result["cards"] if r[facet] == value] for value in values} for facet, values in result["facets"].items()}
     result["counts"] = {facet: {value: len(ids) for value, ids in groups.items()} for facet, groups in result["indexes"].items()}
     result["gallery_coverage"] = components
-    require(result["cards"][:len(old["cards"])] == old["cards"], "old classification records changed")
+    result_by_id = {row["business_id"]: row for row in result["cards"]}
+    require(all(result_by_id[bid] == row for bid, row in old_by_id.items()), "old classification records changed")
     return result
 
 
-def build(*, catalog, accepted_catalog, classification_path, base_root, arena_root, badge_root, output, catalog_revision, decoded_master=None, embedder_factory=OnnxCardEmbedder):
+def build(*, catalog, accepted_catalog, classification_path, base_root, arena_root, badge_root, output, catalog_revision, decoded_master=None, embedder_factory=OnnxCardEmbedder, retained_placeholder_roots=None, retained_classification_path=None, catalog_repository="https://github.com/gakumas-tools/gakumas-tools"):
     require(re.fullmatch(r"[0-9a-f]{40}", catalog_revision), "catalog revision must be a frozen commit")
     catalog, accepted_catalog, classification_path = map(Path, (catalog, accepted_catalog, classification_path))
     output = Path(output).resolve()
@@ -317,13 +384,65 @@ def build(*, catalog, accepted_catalog, classification_path, base_root, arena_ro
     inputs = [catalog, accepted_catalog, classification_path, Path(base_root), Path(arena_root), Path(badge_root)]
     if decoded_master:
         inputs.append(Path(decoded_master))
+    if retained_placeholder_roots is not None:
+        inputs.extend(map(Path, retained_placeholder_roots))
+    if retained_classification_path is not None:
+        inputs.append(Path(retained_classification_path))
     require(all(not path.resolve().is_relative_to(output) and not output.is_relative_to(path.resolve()) for path in inputs), "output overlaps an input")
-    current, accepted = catalog_rows(catalog), catalog_rows(accepted_catalog)
-    require(current[:len(accepted)] == accepted, "accepted catalog history changed")
-    new = current[len(accepted):]
+    proofs = None
+    require(retained_placeholder_roots is not None or retained_classification_path is None, "retained classification requires parent component proofs")
+    if retained_placeholder_roots is not None:
+        require(len(retained_placeholder_roots) == 3, "three retained placeholder parents are required")
+        module_root = str(Path(__file__).resolve().parent)
+        if module_root not in sys.path:
+            sys.path.insert(0, module_root)
+        from disabled_reference_proof import load_disabled_reference_proof
+
+        proofs = [load_disabled_reference_proof(root) for root in retained_placeholder_roots]
+        require(all(proof["disabled_ids"] == proofs[0]["disabled_ids"] for proof in proofs), "retained parents disagree on disabled IDs")
+    current, accepted = catalog_rows(catalog), catalog_rows(accepted_catalog, allow_sparse=proofs is not None)
+    if proofs is None:
+        require(current[:len(accepted)] == accepted, "accepted catalog history changed")
+        new = current[len(accepted):]
+    else:
+        by_id = {row["id"]: row for row in current}
+        require(all(by_id.get(row["id"]) == row for row in accepted), "accepted catalog history changed")
+        accepted_set = {row["id"] for row in accepted}
+        new = [row for row in current if row["id"] not in accepted_set]
+        require([row["id"] for row in new] == list(proofs[0]["disabled_ids"]), "retained placeholder delta differs from parent proof")
+        for proof in proofs:
+            old_active = set(proof["evidence"]["enabled_business_ids"])
+            require(old_active < accepted_set, "retained parent has no newly accepted identity")
+            added = accepted_set - old_active
+            require(min(added) > max(proof["ids"]), "new accepted identities must follow the retained parent scope")
+            for row in new:
+                reference = proof["references"][row["id"]]
+                require((row["name"], row["upgraded"]) == (reference["name"], reference["upgraded"]), "retained placeholder catalog identity changed")
     groups = new_families(new)
+    if proofs is not None:
+        require(all(groups[bid] == proof["references"][bid]["visual_group_id"] for proof in proofs for bid in groups), "retained placeholder family changed")
     old = read(classification_path)
-    accepted_ids = list(range(1, len(accepted) + 1))
+    retained_index = None
+    if proofs is not None:
+        require(retained_classification_path is not None, "retained classification is required with parent proofs")
+        retained_index = read(retained_classification_path)
+        retained_cards = {row["business_id"]: row for row in retained_index["cards"]}
+        require(len(retained_cards) == len(retained_index["cards"]) and set(retained_cards) == set(map(int, proofs[0]["ids"])), "retained classification parent coverage differs")
+        coverage = {row["component"]: row for row in retained_index["gallery_coverage"]}
+        require(len(coverage) == len(retained_index["gallery_coverage"]) == 3 and set(coverage) == {"skill-base", "skill-arena", "badge-reference"}, "retained classification component coverage differs")
+        current_cards = {row["business_id"]: row for row in old["cards"]}
+        for name, proof in zip(("skill-base", "skill-arena", "badge-reference"), proofs, strict=True):
+            require(coverage[name]["manifest_sha256"] == proof["evidence"]["manifest_sha256"] and coverage[name]["gallery_sha256"] == proof["evidence"]["gallery_sha256"], "retained classification is not bound to the supplied parent components")
+            require(all(current_cards.get(bid) == retained_cards[bid] for bid in proof["evidence"]["enabled_business_ids"]), "accepted classification history differs from retained parent")
+            for card in new:
+                row = retained_cards[card["id"]]
+                temporary = row["source"]["temporary_placeholder"]
+                require((row["name"], row["upgraded"]) == (card["name"], card["upgraded"]) and all(row[k] == v for k, v in labels(card).items()), "retained classification identity/facets differ")
+                require(temporary["status"] == STATUS and temporary["rule_version"] == RULE and temporary["reference_enabled"] is False, "retained classification disabled declaration differs")
+                require(temporary["provisional_family_id"] == proof["references"][card["id"]]["visual_group_id"] and temporary["image_sha256"] == sha(proof["image"]), "retained classification placeholder reference differs")
+                require(temporary["catalog"] == proof["manifest"]["source"]["temporary_placeholders"]["catalog"], "retained classification placeholder provenance differs")
+        require(retained_index["sources"]["temporary_placeholder_catalog"] == proofs[0]["manifest"]["source"]["temporary_placeholders"]["catalog"], "retained classification catalog differs")
+    accepted_ids = [row["id"] for row in accepted]
     require([r["business_id"] for r in old["cards"]] == accepted_ids, "accepted classification coverage mismatch")
     require(old["sources"]["catalog_sha256"] == sha(accepted_catalog), "accepted catalog/classification binding mismatch")
     for index_row, catalog_row in zip(old["cards"], accepted, strict=True):
@@ -333,18 +452,35 @@ def build(*, catalog, accepted_catalog, classification_path, base_root, arena_ro
     require(len({str(source[0]) for source in sources}) == 3, "duplicate input component roots")
     decoded = read(decoded_master) if decoded_master else None
     require(decoded is None or isinstance(decoded, list), "decoded master must be a frozen row list")
-    catalog_source = {"repository": "https://github.com/gakumas-tools/gakumas-tools", "revision": catalog_revision, "sha256": sha(catalog)}
+    require(re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", catalog_repository), "catalog repository must be explicit GitHub provenance")
+    catalog_source = {"repository": catalog_repository, "revision": catalog_revision, "sha256": sha(catalog)}
     image = placeholder_image()
     output.mkdir(parents=True)
     image_path = output / "temporary-card.png"
-    image.save(image_path, format="PNG", compress_level=9)
+    if proofs is None:
+        image.save(image_path, format="PNG", compress_level=9)
+    else:
+        require(all(sha(proof["image"]) == sha(proofs[0]["image"]) for proof in proofs), "retained parents use different placeholder images")
+        shutil.copyfile(proofs[0]["image"], image_path)
     components = []
     for name, source in zip(("skill-base", "skill-arena", "badge-reference"), sources, strict=True):
         candidate_root = output / name
-        manifest, arrays = candidate_component(source, candidate_root, new, groups, image, sha(image_path), catalog_source, embedder_factory=embedder_factory)
+        placeholder_catalog = (proofs[len(components)]["manifest"]["source"]["temporary_placeholders"]["catalog"]
+                               if proofs is not None else catalog_source)
+        manifest, arrays = candidate_component(
+            source, candidate_root, new, groups, image, sha(image_path),
+            placeholder_catalog,
+            embedder_factory=embedder_factory,
+            peer_arena_root=output / "skill-arena" if name == "badge-reference" else None,
+            retained_proof=proofs[len(components)] if proofs is not None else None,
+        )
+        if proofs is not None:
+            manifest["build"]["retained_classification_sha256"] = sha(retained_classification_path)
+            manifest["build"]["current_catalog_source"] = catalog_source
+            write(candidate_root / "manifest.json", manifest, newline="\r\n" if b"\r\n" in (candidate_root / "manifest.json").read_bytes() else "\n")
         ids = arrays["card_ids"] if "card_ids" in arrays else arrays["business_ids"]
         components.append({"component": name, "manifest_sha256": sha(candidate_root / "manifest.json"), "gallery_sha256": manifest["gallery"]["sha256"], "row_count": len(ids), "business_id_count": len(current), "enabled_business_id_count": len(accepted), "temporary_placeholder_business_id_count": len(new), "join_key": "business_id"})
-    result = classification(old, new, groups, components, catalog_source, sha(image_path), decoded=decoded, decoded_sha=sha(decoded_master) if decoded_master else None)
+    result = classification(old, new, groups, components, catalog_source, sha(image_path), decoded=decoded, decoded_sha=sha(decoded_master) if decoded_master else None, retained_index=retained_index)
     write(output / "skill_card_classification.json", result)
     return result
 
@@ -355,6 +491,9 @@ def main():
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--catalog-revision", required=True)
     parser.add_argument("--decoded-master", type=Path)
+    parser.add_argument("--retained-placeholder-roots", action="append", type=Path)
+    parser.add_argument("--retained-classification-path", type=Path)
+    parser.add_argument("--catalog-repository", default="https://github.com/gakumas-tools/gakumas-tools")
     args = parser.parse_args()
     result = build(**vars(args))
     print(json.dumps({"status": result["status"], "card_count": len(result["cards"]), "output": str(args.output)}, ensure_ascii=False))
