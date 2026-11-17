@@ -159,6 +159,50 @@ def _has_centered_empty_slot_dash(crop: np.ndarray) -> bool:
     )
 
 
+def _has_translucent_empty_slot_dash(crop: np.ndarray, metrics: MemberSlotMetrics) -> bool:
+    """Require a filled central light dash on a low-texture translucent slot."""
+    if (
+        metrics.inner_gray_mean > 140.0
+        or metrics.gray_stddev > EMPTY_PLACEHOLDER_MAX_GRAY_STDDEV
+        or metrics.edge_density > EMPTY_PLACEHOLDER_MAX_EDGE_DENSITY
+    ):
+        return False
+    height, width = crop.shape[:2]
+    dy, dx = max(1, int(height * 0.1)), max(1, int(width * 0.1))
+    inner = crop[dy:-dy, dx:-dx, :3].astype(np.float32)
+    ih, iw = inner.shape[:2]
+    foreground = (inner.min(axis=2) >= 175) & (np.ptp(inner, axis=2) <= 36)
+    central = np.zeros((ih, iw), dtype=bool)
+    central[int(ih * 0.36):int(ih * 0.64), int(iw * 0.2):int(iw * 0.8)] = True
+    foreground &= central
+    ys, xs = np.nonzero(foreground)
+    if not len(xs):
+        return False
+    left, right, top, bottom = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
+    bar_width, bar_height = right - left, bottom - top
+    if not (
+        0.18 * iw <= bar_width <= 0.45 * iw
+        and 0.035 * ih <= bar_height <= 0.13 * ih
+        and bar_width >= 2.5 * bar_height
+        and abs((left + right) / 2 - iw / 2) <= 0.08 * iw
+        and abs((top + bottom) / 2 - ih / 2) <= 0.08 * ih
+        and foreground.sum() >= 0.9 * bar_width * bar_height
+    ):
+        return False
+    # A light patch in a portrait must not qualify merely by its location.
+    # Require a uniform bar separated from its immediate background in all
+    # color channels, as well as the whole-slot texture guard above.
+    ring = np.zeros((ih, iw), dtype=bool)
+    ring[max(0, top - bar_height):min(ih, bottom + bar_height),
+         max(0, left - bar_height):min(iw, right + bar_height)] = True
+    ring[top:bottom, left:right] = False
+    return bool(
+        ring.any()
+        and np.all(inner[foreground].std(axis=0) <= 12)
+        and np.all(np.median(inner[foreground], axis=0) - np.median(inner[ring], axis=0) >= 20)
+    )
+
+
 def classify_member_slot(crop: np.ndarray) -> tuple[MemberSlotState, MemberSlotMetrics]:
     """Require a known blank or portrait; weak non-black slots remain ambiguous."""
 
@@ -173,6 +217,8 @@ def classify_member_slot(crop: np.ndarray) -> tuple[MemberSlotState, MemberSlotM
         and metrics.gray_stddev <= EMPTY_PLACEHOLDER_MAX_GRAY_STDDEV
         and metrics.edge_density <= EMPTY_PLACEHOLDER_MAX_EDGE_DENSITY
     ):
+        return MemberSlotState.EMPTY, metrics
+    if _has_translucent_empty_slot_dash(crop, metrics):
         return MemberSlotState.EMPTY, metrics
     if (
         metrics.gray_stddev >= MEMBER_SLOT_MIN_GRAY_STDDEV
