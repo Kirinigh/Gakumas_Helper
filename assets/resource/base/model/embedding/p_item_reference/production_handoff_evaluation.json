@@ -1,41 +1,43 @@
 {
   "artifact": {
     "path": "p_item_rendered_reference_gallery.npz",
-    "sha256": "132D6FA526323DAEDB1BB240E7F97620F6219BDA58FEDEFE63D2FCE791CDD4C9"
+    "sha256": "4C5FD5DF071B965612D69AB3CF07FE70D71CB15CB54F5AE1D984D6C91C17DE6A"
   },
-  "candidate_manifest_sha256": "E1D6BD26FBB44A1F81A820252C5E2FE5697AC4969379E1A5CA756A4EE3002060",
+  "candidate_manifest_sha256": "8B3FB5A0971AF100920580F9688C8E595A42F8D841B4439A3EF66BBC22ED868C",
   "component": "p_item_reference",
   "privacy": "PUBLIC_SAFE_AGGREGATE_ONLY",
   "promotion_evidence": {
-    "base_gallery_sha256": "184A8B2259EA3E81D64202921798A51EA04AAF1E144F117A1B9C01418CDA5AB2",
-    "catalog_git_blob_sha1": "EBE75BDC90B9C68EAB8F88BE7C2DD9A5B7103871",
-    "catalog_sha256": "4027A200665A37C9D1410668237FE6A4BAB5D9CC6515C9CA59CEC1CF70F3299D",
-    "production_source_evidence_sha256": "A274A04C43F185E3FE67BB765157BC7734D61B6CD713C0160C15422D524BF9FB",
-    "published_ui_reference_count": 4,
-    "source_icon_count": 450,
-    "source_icons_sha256": "3AA07A49BCBF7E8B937DE86FCAB390726CA0B283E7F55B7A7ED8E023D9212710",
-    "source_pixel_match_count": 450
+    "base_gallery_sha256": "132D6FA526323DAEDB1BB240E7F97620F6219BDA58FEDEFE63D2FCE791CDD4C9",
+    "catalog_git_blob_sha1": "0C2285D57CE5B429841C4BECDB5C2ADB4A70F3CD",
+    "catalog_sha256": "F790B6AFCA8859094FB1BF1E253C49A576E13211FFEE899F8C14610ABA83A210",
+    "production_source_evidence_sha256": "BD82FD05904AB242C0F631CCDB2568DEEE8837B14B5E3DB341DF09D5720F5F9E",
+    "published_ui_reference_count": 6,
+    "source_icon_count": 456,
+    "source_icons_sha256": "81AEC216B977FA45CC457B1F5090105276A4CD20A64DA8C9509FDCA90EDA68C7",
+    "source_pixel_match_count": 456
   },
   "schema_version": 1,
   "status": "PASS",
   "tool_contract": "task095-static-reference-production-promotion-v1",
   "validation": {
     "array_count": 3,
-    "base_gallery_sha256": "184A8B2259EA3E81D64202921798A51EA04AAF1E144F117A1B9C01418CDA5AB2",
-    "business_id_count": 450,
+    "base_gallery_sha256": "132D6FA526323DAEDB1BB240E7F97620F6219BDA58FEDEFE63D2FCE791CDD4C9",
+    "business_id_count": 456,
     "changed_business_ids": [
-      506,
-      507,
-      508,
-      509
+      512,
+      513,
+      514,
+      515,
+      518,
+      519
     ],
-    "decoded_png_count": 450,
+    "decoded_png_count": 456,
     "independent_live_holdout": "PENDING",
-    "metadata_free_png_count": 450,
+    "metadata_free_png_count": 456,
     "self_ranking": {
-      "minimum_top1_margin": 0.029553,
-      "passed": 4,
-      "sample_count": 4
+      "minimum_top1_margin": 0.024255,
+      "passed": 6,
+      "sample_count": 6
     }
   }
 }

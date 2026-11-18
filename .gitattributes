@@ -7,6 +7,7 @@ assets/resource/base/model/embedding/arena_card/*.npz -text
 assets/resource/base/model/embedding/arena_card/*.json -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/arena_badge_reference/*.npz -text
 assets/resource/base/model/embedding/arena_badge_reference/*.json -text whitespace=cr-at-eol
+assets/resource/base/model/embedding/arena_badge_reference/inherited/** -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/arena_card_cost_reference/*.npz -text
 assets/resource/base/model/embedding/arena_card_cost_reference/*.json -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/p_item_reference/*.npz -text
@@ -22,3 +23,4 @@ assets/resource/base/model/classify/card_embedding/preserved_base/** -text white
 assets/resource/base/model/embedding/arena_card/preserved_base/** -text whitespace=cr-at-eol
 assets/resource/base/model/embedding/arena_badge_reference/preserved_base/** -text whitespace=cr-at-eol
 assets/resource/base/model/detect/arena_cards_*.onnx -text
+assets/data/p_item_detail_text.json -text whitespace=cr-at-eol

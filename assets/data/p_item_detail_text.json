@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "task410-p-item-text-v9",
+  "revision": "task410-p-item-text-v10",
   "source": {
     "repository": "https://github.com/vertesan/gakumasu-diff",
     "revision": "5b8969e363ae60cd1d9bf64560783b4b445f7da6",
@@ -153,8 +153,8 @@
       }
     ],
     "compilation": {
-      "source_revision": "vertesan/gakumasu-diff@0cd122bb7ed5e6011c66d95041798b5cc12a5483",
-      "catalog_revision": "6426bc747a892d9e97263c3bf63b9a9c170bdf3b",
+      "source_revision": "vertesan/gakumasu-diff@edc305aac3ac0204806c96164ce36fb795ba81e1",
+      "catalog_revision": "fc4f18a3f0c391cc69c0048e91537facba1f1f0c",
       "generator_revision": "task410-p-item-text-compiler-v1"
     },
     "binding_updates": [
@@ -252,6 +252,130 @@
           "native_identity_unchanged": true
         }
       ]
+    },
+    "reviewed_binding_refresh_v10": {
+      "previous_revision": "task410-p-item-text-v9",
+      "previous_sha256": "3CE5A7B5AE725D99FFD2FC294137F324F6C5057416AFCBD9C1ED754B01B0F493",
+      "id": 123,
+      "previous_effects": "at:startOfTurn { if:turnsRemaining==1 { score+=5+3*cardsUsed }; limit:1 }",
+      "current_effects": "at:startOfTurn { if:turnsRemaining==1 { score+=5+3*cardsUsed; fixedStamina-=1 }; limit:1 }",
+      "review": "Current catalog adds fixedStamina-=1 already present as a cost in the native body; latest native template spells it 固定体力消費1. No binding exception or runtime threshold change.",
+      "native_template_refreshed_ids": [
+        21,
+        22,
+        35,
+        36,
+        57,
+        58,
+        98,
+        99,
+        106,
+        112,
+        113,
+        122,
+        123,
+        126,
+        128,
+        129,
+        139,
+        140,
+        145,
+        146,
+        152,
+        153,
+        154,
+        155,
+        158,
+        159,
+        177,
+        179,
+        180,
+        188,
+        189,
+        190,
+        191,
+        192,
+        193,
+        202,
+        203,
+        204,
+        205,
+        206,
+        207,
+        208,
+        210,
+        211,
+        215,
+        216,
+        217,
+        226,
+        231,
+        234,
+        237,
+        238,
+        242,
+        243,
+        244,
+        246,
+        249,
+        253,
+        254,
+        257,
+        263,
+        264,
+        265,
+        280,
+        289,
+        300,
+        304,
+        315,
+        323,
+        337,
+        343,
+        346,
+        347,
+        356,
+        357,
+        368,
+        384,
+        385,
+        386,
+        387,
+        399,
+        400,
+        411,
+        422,
+        423,
+        424,
+        442,
+        443,
+        445,
+        465,
+        480,
+        481,
+        485,
+        486,
+        500,
+        501,
+        506,
+        508
+      ],
+      "native_template_substitutions": {
+        "体力消費1": "固定体力消費1",
+        "体力消費2": "固定体力消費2",
+        "体力消費3": "固定体力消費3",
+        "体力消費4": "固定体力消費4",
+        "体力消費5": "固定体力消費5",
+        "最大体力の15%分体力消費": "最大体力の15%分固定体力消費",
+        "最大体力の80%分体力消費": "最大体力の80%分固定体力消費",
+        "やる気減少1": "やる気消費1",
+        "好印象減少2": "好印象消費2",
+        "集中減少1": "集中消費1",
+        "好調減少1": "好調消費1",
+        "全力値減少2": "全力値低下2",
+        "好印象減少6": "好印象消費6"
+      },
+      "old_275_complete_rows_exact": true
     }
   },
   "rows": [
@@ -564,50 +688,6 @@
       }
     },
     {
-      "id": 21,
-      "source_id": "pitem_00-1-006-0",
-      "name": "超絶あんみんマスク",
-      "paragraphs": [
-        "最終ターンのターン開始時、",
-        "元気の50%分スコア上昇",
-        "体力消費1"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=genki*0.5; fixedStamina-=1 } }",
-        "id": 21,
-        "mode": "stage",
-        "name": "超絶あんみんマスク",
-        "pIdolId": 8,
-        "plan": "logic",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 22,
-      "source_id": "pitem_00-1-006-1",
-      "name": "超絶あんみんマスク+",
-      "paragraphs": [
-        "最終ターンのターン開始時、",
-        "元気の70%分スコア上昇",
-        "体力消費1"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=genki*0.7; fixedStamina-=1 } }",
-        "id": 22,
-        "mode": "stage",
-        "name": "超絶あんみんマスク+",
-        "pIdolId": 8,
-        "plan": "logic",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
       "id": 23,
       "source_id": "pitem_00-1-005-0",
       "name": "いつものメイクポーチ",
@@ -866,52 +946,6 @@
         "mode": "stage",
         "name": "思い出ロボ+",
         "pIdolId": 14,
-        "plan": "logic",
-        "rarity": "SR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 35,
-      "source_id": "pitem_00-2-017-0",
-      "name": "しょげないハンカチ",
-      "paragraphs": [
-        "アクティブスキルカード使用後、",
-        "元気の60%分スコア上昇",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed[active] { score+=genki*0.6; fixedStamina-=2; limit:2 }",
-        "id": 35,
-        "mode": "stage",
-        "name": "しょげないハンカチ",
-        "pIdolId": 15,
-        "plan": "logic",
-        "rarity": "SR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 36,
-      "source_id": "pitem_00-2-017-1",
-      "name": "しょげないハンカチ+",
-      "paragraphs": [
-        "アクティブスキルカード使用後、",
-        "元気の70%分スコア上昇",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed[active] { score+=genki*0.7; fixedStamina-=2; limit:2 }",
-        "id": 36,
-        "mode": "stage",
-        "name": "しょげないハンカチ+",
-        "pIdolId": 15,
         "plan": "logic",
         "rarity": "SR",
         "sourceType": "pIdol",
@@ -1364,50 +1398,6 @@
         "name": "ゲーセンの戦利品+",
         "pIdolId": 25,
         "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 57,
-      "source_id": "pitem_00-3-022-0",
-      "name": "みちくさ研究ノート",
-      "paragraphs": [
-        "残り2ターン以内のターン開始時、",
-        "元気の50%分スコア上昇",
-        "体力消費1"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=genki*0.5; fixedStamina-=1 } }",
-        "id": 57,
-        "mode": "stage",
-        "name": "みちくさ研究ノート",
-        "pIdolId": 26,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 58,
-      "source_id": "pitem_00-3-022-1",
-      "name": "みちくさ研究ノート+",
-      "paragraphs": [
-        "残り2ターン以内のターン開始時、",
-        "元気の65%分スコア上昇",
-        "体力消費1"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=genki*0.65; fixedStamina-=1 } }",
-        "id": 58,
-        "mode": "stage",
-        "name": "みちくさ研究ノート+",
-        "pIdolId": 26,
-        "plan": "logic",
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
@@ -1992,52 +1982,6 @@
       }
     },
     {
-      "id": 98,
-      "source_id": "pitem_02-3-033-0",
-      "name": "カエル印の扇風機",
-      "paragraphs": [
-        "アクティブスキルカード使用後、やる気が12以上の場合、",
-        "やる気の270%分スコア上昇",
-        "体力消費2",
-        "（試験・ステージ内4回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed[active] { if:motivation>=12 { score+=motivation*2.7; fixedStamina-=2 }; limit:4 }",
-        "id": 98,
-        "mode": "stage",
-        "name": "カエル印の扇風機",
-        "pIdolId": 35,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 99,
-      "source_id": "pitem_02-3-033-1",
-      "name": "カエル印の扇風機+",
-      "paragraphs": [
-        "アクティブスキルカード使用後、やる気が12以上の場合、",
-        "やる気の340%分スコア上昇",
-        "体力消費2",
-        "（試験・ステージ内4回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed[active] { if:motivation>=12 { score+=motivation*3.4; fixedStamina-=2 }; limit:4 }",
-        "id": 99,
-        "mode": "stage",
-        "name": "カエル印の扇風機+",
-        "pIdolId": 35,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
       "id": 100,
       "source_id": "pitem_02-3-055-0",
       "name": "負けず嫌いの勲章",
@@ -2153,29 +2097,6 @@
       }
     },
     {
-      "id": 106,
-      "source_id": "pitem_01-3-056-0",
-      "name": "オーバーパワーボール",
-      "paragraphs": [
-        "ボーカルターンなら、ターン開始時、",
-        "集中+4",
-        "体力消費2",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:isVocalTurn { concentration+=4; fixedStamina-=2 }; limit:1 }",
-        "id": 106,
-        "mode": "stage",
-        "name": "オーバーパワーボール",
-        "pIdolId": "",
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "support",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 108,
       "source_id": "pitem_02-3-040-0",
       "name": "敗れ知らずのポイ",
@@ -2257,53 +2178,6 @@
         "name": "瓶の中のきらめき+",
         "pIdolId": 39,
         "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 112,
-      "source_id": "pitem_02-3-037-0",
-      "name": "ぱちぱち線香花火",
-      "paragraphs": [
-        "3ターンごとに、好印象が6以上の場合、",
-        "好印象の100%分元気増加",
-        "やる気+2",
-        "体力消費1",
-        "（試験・ステージ内4回）"
-      ],
-      "active": {
-        "effects": "at:everyTurn { if:turnsElapsed%3==2 & goodImpressionTurns>=6 { genki+=goodImpressionTurns; motivation+=2; fixedStamina-=1 }; limit:4 }",
-        "id": 112,
-        "mode": "stage",
-        "name": "ぱちぱち線香花火",
-        "pIdolId": 40,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 113,
-      "source_id": "pitem_02-3-037-1",
-      "name": "ぱちぱち線香花火+",
-      "paragraphs": [
-        "3ターンごとに、好印象が6以上の場合、",
-        "好印象の100%分元気増加",
-        "やる気+3",
-        "体力消費1"
-      ],
-      "active": {
-        "effects": "at:everyTurn { if:turnsElapsed%3==2 & goodImpressionTurns>=6 { genki+=goodImpressionTurns; motivation+=3; fixedStamina-=1 } }",
-        "id": 113,
-        "mode": "stage",
-        "name": "ぱちぱち線香花火+",
-        "pIdolId": 40,
-        "plan": "logic",
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
@@ -2467,75 +2341,6 @@
       }
     },
     {
-      "id": 122,
-      "source_id": "pitem_01-3-039-0",
-      "name": "ときめきのいっぱい",
-      "paragraphs": [
-        "最終ターンのターン開始時、",
-        "スコア+3（試験・ステージ中に使用したスキルカード1枚につき、スコア上昇量+3）",
-        "体力消費2",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=3+3*cardsUsed; fixedStamina-=2 }; limit:1 }",
-        "id": 122,
-        "mode": "stage",
-        "name": "ときめきのいっぱい",
-        "pIdolId": 44,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 123,
-      "source_id": "pitem_01-3-039-1",
-      "name": "ときめきのいっぱい+",
-      "paragraphs": [
-        "最終ターンのターン開始時、",
-        "スコア+5（試験・ステージ中に使用したスキルカード1枚につき、スコア上昇量+3）",
-        "体力消費1",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=5+3*cardsUsed }; limit:1 }",
-        "id": 123,
-        "mode": "stage",
-        "name": "ときめきのいっぱい+",
-        "pIdolId": 44,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 126,
-      "source_id": "pitem_01-1-017-0",
-      "name": "初心の証・リーリヤ",
-      "paragraphs": [
-        "ターン終了時、好調が6ターン以上の場合、",
-        "好調2ターン",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:endOfTurn { if:goodConditionTurns>=6 { goodConditionTurns+=2; fixedStamina-=1 }; limit:2 }",
-        "id": 126,
-        "mode": "stage",
-        "name": "初心の証・リーリヤ",
-        "pIdolId": 45,
-        "plan": "sense",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 127,
       "source_id": "pitem_01-1-017-1",
       "name": "初心の証・リーリヤ+",
@@ -2550,52 +2355,6 @@
         "mode": "stage",
         "name": "初心の証・リーリヤ+",
         "pIdolId": 45,
-        "plan": "sense",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 128,
-      "source_id": "pitem_01-1-018-0",
-      "name": "初心の証・千奈",
-      "paragraphs": [
-        "最終ターンのターン開始時、",
-        "スコア+2（試験・ステージ中に使用したスキルカード1枚につき、スコア上昇量+1）",
-        "体力消費1",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=2+cardsUsed; fixedStamina-=1 }; limit:1 }",
-        "id": 128,
-        "mode": "stage",
-        "name": "初心の証・千奈",
-        "pIdolId": 46,
-        "plan": "sense",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 129,
-      "source_id": "pitem_01-1-018-1",
-      "name": "初心の証・千奈+",
-      "paragraphs": [
-        "最終ターンのターン開始時、",
-        "スコア+6（試験・ステージ中に使用したスキルカード1枚につき、スコア上昇量+1）",
-        "体力消費1",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=6+cardsUsed; fixedStamina-=1 }; limit:1 }",
-        "id": 129,
-        "mode": "stage",
-        "name": "初心の証・千奈+",
-        "pIdolId": 46,
         "plan": "sense",
         "rarity": "R",
         "sourceType": "pIdol",
@@ -2762,52 +2521,6 @@
       }
     },
     {
-      "id": 139,
-      "source_id": "pitem_02-3-042-0",
-      "name": "スタイリッシュモード",
-      "paragraphs": [
-        "ターン開始時、やる気が3以上の場合、",
-        "好印象+3",
-        "やる気減少1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:motivation>=3 { goodImpressionTurns+=3; motivation-=1 }; limit:3 }",
-        "id": 139,
-        "mode": "stage",
-        "name": "スタイリッシュモード",
-        "pIdolId": 50,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 140,
-      "source_id": "pitem_02-3-042-1",
-      "name": "スタイリッシュモード+",
-      "paragraphs": [
-        "ターン開始時、やる気が3以上の場合、",
-        "好印象+3",
-        "やる気減少1",
-        "（試験・ステージ内4回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:motivation>=3 { goodImpressionTurns+=3; motivation-=1 }; limit:4 }",
-        "id": 140,
-        "mode": "stage",
-        "name": "スタイリッシュモード+",
-        "pIdolId": 50,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
       "id": 141,
       "source_id": "pitem_00-3-059-0",
       "name": "とろけた時間",
@@ -2867,54 +2580,6 @@
         "name": "う～ら～め～し～や～+",
         "pIdolId": 51,
         "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 145,
-      "source_id": "pitem_02-3-043-0",
-      "name": "ぶきっちょコウモリ",
-      "paragraphs": [
-        "3ターンごとに、好印象が3以上の場合、",
-        "元気の90%分スコア上昇",
-        "やる気の160%分スコア上昇",
-        "好印象減少2",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:everyTurn { if:turnsElapsed%3==2 & goodImpressionTurns>=3 { score+=genki*0.9; score+=motivation*1.6; goodImpressionTurns-=2 }; limit:3 }",
-        "id": 145,
-        "mode": "stage",
-        "name": "ぶきっちょコウモリ",
-        "pIdolId": 52,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 146,
-      "source_id": "pitem_02-3-043-1",
-      "name": "ぶきっちょコウモリ+",
-      "paragraphs": [
-        "3ターンごとに、好印象が3以上の場合、",
-        "元気の100%分スコア上昇",
-        "やる気の230%分スコア上昇",
-        "好印象減少2",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:everyTurn { if:turnsElapsed%3==2 & goodImpressionTurns>=3 { score+=genki; score+=motivation*2.3; goodImpressionTurns-=2 }; limit:3 }",
-        "id": 146,
-        "mode": "stage",
-        "name": "ぶきっちょコウモリ+",
-        "pIdolId": 52,
-        "plan": "logic",
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
@@ -3014,98 +2679,6 @@
       }
     },
     {
-      "id": 152,
-      "source_id": "pitem_02-1-016-0",
-      "name": "初恋の証・麻央",
-      "paragraphs": [
-        "ターン開始時、やる気が3以上の場合、",
-        "好印象+3",
-        "やる気減少1",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:motivation>=3 { goodImpressionTurns+=3; motivation-=1 }; limit:1 }",
-        "id": 152,
-        "mode": "stage",
-        "name": "初恋の証・麻央",
-        "pIdolId": 54,
-        "plan": "logic",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 153,
-      "source_id": "pitem_02-1-016-1",
-      "name": "初恋の証・麻央+",
-      "paragraphs": [
-        "ターン開始時、やる気が3以上の場合、",
-        "好印象+3",
-        "やる気減少1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:motivation>=3 { goodImpressionTurns+=3; motivation-=1 }; limit:2 }",
-        "id": 153,
-        "mode": "stage",
-        "name": "初恋の証・麻央+",
-        "pIdolId": 54,
-        "plan": "logic",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 154,
-      "source_id": "pitem_02-1-019-0",
-      "name": "初恋の証・清夏",
-      "paragraphs": [
-        "スキルカード使用後、やる気が8以上の場合、",
-        "やる気の150%分スコア上昇",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:motivation>=8 { score+=motivation*1.5; fixedStamina-=1 }; limit:2 }",
-        "id": 154,
-        "mode": "stage",
-        "name": "初恋の証・清夏",
-        "pIdolId": 55,
-        "plan": "logic",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 155,
-      "source_id": "pitem_02-1-019-1",
-      "name": "初恋の証・清夏+",
-      "paragraphs": [
-        "スキルカード使用後、やる気が8以上の場合、",
-        "やる気の210%分スコア上昇",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:motivation>=8 { score+=motivation*2.1; fixedStamina-=1 }; limit:2 }",
-        "id": 155,
-        "mode": "stage",
-        "name": "初恋の証・清夏+",
-        "pIdolId": 55,
-        "plan": "logic",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
       "id": 156,
       "source_id": "pitem_01-1-020-0",
       "name": "初恋の証・広",
@@ -3148,54 +2721,6 @@
         "pIdolId": 56,
         "plan": "sense",
         "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 158,
-      "source_id": "pitem_02-3-045-0",
-      "name": "これでばっちり",
-      "paragraphs": [
-        "体力回復効果のスキルカード使用後、",
-        "元気の50%分好印象増加させ、元気を0にする",
-        "好印象の200%分スコア上昇",
-        "体力消費5",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:cardHasEffect(fixedStamina) { goodImpressionTurns+=genki*0.5; genki=0; score+=goodImpressionTurns*2; fixedStamina-=5 }; limit:1 }",
-        "id": 158,
-        "mode": "stage",
-        "name": "これでばっちり",
-        "pIdolId": 57,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 159,
-      "source_id": "pitem_02-3-045-1",
-      "name": "これでばっちり+",
-      "paragraphs": [
-        "体力回復効果のスキルカード使用後、",
-        "元気の70%分好印象増加させ、元気を0にする",
-        "好印象の200%分スコア上昇",
-        "体力消費5",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:cardHasEffect(fixedStamina) { goodImpressionTurns+=genki*0.7; genki=0; score+=goodImpressionTurns*2; fixedStamina-=5 }; limit:1 }",
-        "id": 159,
-        "mode": "stage",
-        "name": "これでばっちり+",
-        "pIdolId": 57,
-        "plan": "logic",
-        "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
         "welfare": false
@@ -3475,29 +3000,6 @@
       }
     },
     {
-      "id": 177,
-      "source_id": "pitem_01-3-049-0",
-      "name": "めりくりライオン",
-      "paragraphs": [
-        "残り2ターン以内のターン開始時、",
-        "好調の70%分スコア上昇",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=goodConditionTurns*0.7; fixedStamina-=1 }; limit:2 }",
-        "id": 177,
-        "mode": "stage",
-        "name": "めりくりライオン",
-        "pIdolId": 63,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 178,
       "source_id": "pitem_01-3-049-1",
       "name": "めりくりライオン+",
@@ -3516,53 +3018,6 @@
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 179,
-      "source_id": "pitem_01-2-036-0",
-      "name": "イケてるセーター",
-      "paragraphs": [
-        "ダンスターンなら、ターン開始時、集中が1以上の場合、",
-        "好調3ターン",
-        "集中減少1",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:isDanceTurn & concentration>=1 { goodConditionTurns+=3; concentration-=1 }; limit:1 }",
-        "id": 179,
-        "mode": "stage",
-        "name": "イケてるセーター",
-        "pIdolId": "",
-        "plan": "sense",
-        "rarity": "SR",
-        "sourceType": "support",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 180,
-      "source_id": "pitem_02-3-050-0",
-      "name": "海の向こうまで",
-      "paragraphs": [
-        "ターン開始後、やる気が5以上の場合、",
-        "やる気1.3倍",
-        "スキルカードを引く",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterStartOfTurn { if:motivation>=5 { motivation*=1.3; drawCard; fixedStamina-=1 }; limit:3; group:1 }",
-        "id": 180,
-        "mode": "stage",
-        "name": "海の向こうまで",
-        "pIdolId": 64,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
         "welfare": false
       }
     },
@@ -3680,320 +3135,6 @@
       }
     },
     {
-      "id": 188,
-      "source_id": "pitem_01-3-069-0",
-      "name": "向き合う覚悟",
-      "paragraphs": [
-        "軽い足取り使用後、",
-        "好調1ターン",
-        "スキルカード使用数追加+1",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==24 { goodConditionTurns+=1; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
-        "id": 188,
-        "mode": "stage",
-        "name": "向き合う覚悟",
-        "pIdolId": 66,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 189,
-      "source_id": "pitem_01-3-069-1",
-      "name": "向き合う覚悟+",
-      "paragraphs": [
-        "軽い足取り使用後、",
-        "好調2ターン",
-        "スキルカード使用数追加+1",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==24 { goodConditionTurns+=2; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
-        "id": 189,
-        "mode": "stage",
-        "name": "向き合う覚悟+",
-        "pIdolId": 66,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 190,
-      "source_id": "pitem_01-3-070-0",
-      "name": "太陽まで届ける歌声",
-      "paragraphs": [
-        "勢い任せ使用後、",
-        "集中+1",
-        "スキルカード使用数追加+1",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==32 { concentration+=1; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
-        "id": 190,
-        "mode": "stage",
-        "name": "太陽まで届ける歌声",
-        "pIdolId": 67,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 191,
-      "source_id": "pitem_01-3-070-1",
-      "name": "太陽まで届ける歌声+",
-      "paragraphs": [
-        "勢い任せ使用後、",
-        "集中+2",
-        "スキルカード使用数追加+1",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==32 { concentration+=2; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
-        "id": 191,
-        "mode": "stage",
-        "name": "太陽まで届ける歌声+",
-        "pIdolId": 67,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 192,
-      "source_id": "pitem_02-3-071-0",
-      "name": "あたしだけの一番星",
-      "paragraphs": [
-        "思い出し笑い使用後、",
-        "好印象+2",
-        "スキルカード使用数追加+1",
-        "体力消費2",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==64 { goodImpressionTurns+=2; cardUsesRemaining+=1; fixedStamina-=2 }; limit:3 }",
-        "id": 192,
-        "mode": "stage",
-        "name": "あたしだけの一番星",
-        "pIdolId": 68,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 193,
-      "source_id": "pitem_02-3-071-1",
-      "name": "あたしだけの一番星+",
-      "paragraphs": [
-        "思い出し笑い使用後、",
-        "好印象+3",
-        "スキルカード使用数追加+1",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==64 { goodImpressionTurns+=3; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
-        "id": 193,
-        "mode": "stage",
-        "name": "あたしだけの一番星+",
-        "pIdolId": 68,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 202,
-      "source_id": "pitem_03-3-072-0",
-      "name": "ボクの一部",
-      "paragraphs": [
-        "スターライト使用時、温存の場合、",
-        "スキルカードを引く",
-        "消費体力減少1ターン",
-        "スターライトのスコア値増加+10",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:usedCardBaseId==382 & isPreservation { drawCard; halfCostTurns+=1; fixedStamina-=1; target:382 { g.score+=10 } }; limit:3 }",
-        "id": 202,
-        "mode": "stage",
-        "name": "ボクの一部",
-        "pIdolId": 69,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 203,
-      "source_id": "pitem_03-3-072-1",
-      "name": "ボクの一部+",
-      "paragraphs": [
-        "スターライト使用時、温存の場合、",
-        "スキルカードを2枚引く",
-        "消費体力減少1ターン",
-        "スターライトのスコア値増加+10",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:usedCardBaseId==382 & isPreservation { drawCard(2); halfCostTurns+=1; fixedStamina-=1; target:382 { g.score+=10 } }; limit:3 }",
-        "id": 203,
-        "mode": "stage",
-        "name": "ボクの一部+",
-        "pIdolId": 69,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 204,
-      "source_id": "pitem_01-3-079-0",
-      "name": "いつかの小さな星",
-      "paragraphs": [
-        "ファンサ使用後、",
-        "ターン追加+1",
-        "絶好調2ターン",
-        "体力消費3",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==30 { turnsRemaining+=1; perfectConditionTurns+=2; fixedStamina-=3 }; limit:2 }",
-        "id": 204,
-        "mode": "stage",
-        "name": "いつかの小さな星",
-        "pIdolId": 70,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 205,
-      "source_id": "pitem_01-3-079-1",
-      "name": "いつかの小さな星+",
-      "paragraphs": [
-        "ファンサ使用後、",
-        "ターン追加+1",
-        "絶好調3ターン",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==30 { turnsRemaining+=1; perfectConditionTurns+=3; fixedStamina-=2 }; limit:2 }",
-        "id": 205,
-        "mode": "stage",
-        "name": "いつかの小さな星+",
-        "pIdolId": 70,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 206,
-      "source_id": "pitem_03-3-077-0",
-      "name": "きみが見つけた私",
-      "paragraphs": [
-        "嬉しい誤算使用後、",
-        "スコア上昇量増加60%（2ターン）",
-        "全力値+10",
-        "体力消費1",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==394 { setScoreBuff(0.6,2); fullPowerCharge+=10; fixedStamina-=1 }; limit:1 }",
-        "id": 206,
-        "mode": "stage",
-        "name": "きみが見つけた私",
-        "pIdolId": 71,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 207,
-      "source_id": "pitem_03-3-077-1",
-      "name": "きみが見つけた私+",
-      "paragraphs": [
-        "嬉しい誤算使用後、",
-        "スコア上昇量増加60%（2ターン）",
-        "全力値+15",
-        "体力消費1",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==394 { setScoreBuff(0.6,2); fullPowerCharge+=15; fixedStamina-=1 }; limit:1 }",
-        "id": 207,
-        "mode": "stage",
-        "name": "きみが見つけた私+",
-        "pIdolId": 71,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 208,
-      "source_id": "pitem_02-3-074-0",
-      "name": "描いた夢へのあゆみ",
-      "paragraphs": [
-        "ゆるふわおしゃべり使用時、",
-        "ターン追加+1",
-        "元気1.5倍",
-        "体力消費2",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:usedCardBaseId==40 { turnsRemaining+=1; genki*=1.5; fixedStamina-=2 }; limit:1 }",
-        "id": 208,
-        "mode": "stage",
-        "name": "描いた夢へのあゆみ",
-        "pIdolId": 72,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 209,
       "source_id": "pitem_02-3-074-1",
       "name": "描いた夢へのあゆみ+",
@@ -4009,54 +3150,6 @@
         "mode": "stage",
         "name": "描いた夢へのあゆみ+",
         "pIdolId": 72,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 210,
-      "source_id": "pitem_02-3-076-0",
-      "name": "選びとった熱",
-      "paragraphs": [
-        "えいえいおー使用時、体力が50%以上の場合、",
-        "やる気+2",
-        "スキルカード使用数追加+1",
-        "最大体力の15%分体力消費",
-        "（試験・ステージ内5回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:usedCardBaseId==60 & stamina>=maxStamina*0.5 { motivation+=2; cardUsesRemaining+=1; fixedStamina-=maxStamina*0.15 }; limit:5 }",
-        "id": 210,
-        "mode": "stage",
-        "name": "選びとった熱",
-        "pIdolId": 73,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 211,
-      "source_id": "pitem_02-3-076-1",
-      "name": "選びとった熱+",
-      "paragraphs": [
-        "えいえいおー使用時、体力が50%以上の場合、",
-        "やる気+3",
-        "スキルカード使用数追加+1",
-        "最大体力の15%分体力消費",
-        "（試験・ステージ内5回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:usedCardBaseId==60 & stamina>=maxStamina*0.5 { motivation+=3; cardUsesRemaining+=1; fixedStamina-=maxStamina*0.15 }; limit:5 }",
-        "id": 211,
-        "mode": "stage",
-        "name": "選びとった熱+",
-        "pIdolId": 73,
         "plan": "logic",
         "rarity": "SSR",
         "sourceType": "pIdol",
@@ -4109,78 +3202,6 @@
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 215,
-      "source_id": "pitem_01-3-073-0",
-      "name": "いつか見た夢",
-      "paragraphs": [
-        "準備運動使用後、",
-        "集中+1",
-        "体力消費3",
-        "以降の3ターンの間、ターン開始時、集中+3",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==28 { concentration+=1; fixedStamina-=3; at:startOfTurn { concentration+=3; limit:3 } } limit:2 }",
-        "id": 215,
-        "mode": "stage",
-        "name": "いつか見た夢",
-        "pIdolId": 75,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 216,
-      "source_id": "pitem_01-3-073-1",
-      "name": "いつか見た夢+",
-      "paragraphs": [
-        "準備運動使用後、",
-        "集中+1",
-        "体力消費1",
-        "以降の3ターンの間、ターン開始時、集中+3",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==28 { concentration+=1; fixedStamina-=1; at:startOfTurn { concentration+=3; limit:3 } } limit:2 }",
-        "id": 216,
-        "mode": "stage",
-        "name": "いつか見た夢+",
-        "pIdolId": 75,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 217,
-      "source_id": "pitem_02-3-075-0",
-      "name": "翼",
-      "paragraphs": [
-        "リスタート使用後、元気が7以上の場合、",
-        "好印象1.5倍",
-        "次のターン、除外にあるまた、飛べるを手札に移動 ",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:usedCardBaseId==58 & genki>=7 { goodImpressionTurns*=1.5; fixedStamina-=2; at:turn { moveRandomToHand[baseId(490) & removed]; limit:1 } } limit:2 }",
-        "id": 217,
-        "mode": "stage",
-        "name": "翼",
-        "pIdolId": 76,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
         "welfare": false
       }
     },
@@ -4298,29 +3319,6 @@
       }
     },
     {
-      "id": 226,
-      "source_id": "pitem_02-3-107-0",
-      "name": "相手への深い愛",
-      "paragraphs": [
-        "アクティブスキルカード使用時、やる気が8以上の場合、",
-        "元気+2（やる気効果を2.2倍適用）",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed[active] { if:motivation>=8 { motivationMultiplier=2.2; genki+=2; fixedStamina-=2 }; limit:2 }",
-        "id": 226,
-        "mode": "stage",
-        "name": "相手への深い愛",
-        "pIdolId": 79,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 227,
       "source_id": "pitem_02-3-107-1",
       "name": "相手への深い愛+",
@@ -4410,30 +3408,6 @@
       }
     },
     {
-      "id": 231,
-      "source_id": "pitem_02-3-110-0",
-      "name": "春のおとずれ",
-      "paragraphs": [
-        "スキルカードコストで強化状態を消費した時、好印象が3以上の場合、",
-        "好印象+2",
-        "やる気+1",
-        "体力消費1",
-        "（試験・ステージ内4回）"
-      ],
-      "active": {
-        "effects": "at:buffCostConsumed { if:goodImpressionTurns>=3 { goodImpressionTurns+=2; motivation+=1; fixedStamina-=1 }; limit:4 }",
-        "id": 231,
-        "mode": "stage",
-        "name": "春のおとずれ",
-        "pIdolId": 81,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 232,
       "source_id": "pitem_02-3-110-1",
       "name": "春のおとずれ+",
@@ -4457,30 +3431,6 @@
       }
     },
     {
-      "id": 234,
-      "source_id": "pitem_03-3-111-0",
-      "name": "まあるい春色",
-      "paragraphs": [
-        "全力になった時、強気になった回数が1回以上の場合、",
-        "全力効果のアクティブスキルカードのスコア値増加+11",
-        "次のターン、温存2段階目に変更 ",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:stanceChanged { if:isFullPower & strengthTimes>=1 { target:effect(fullPowerCharge) & active { g.score+=11 }; fixedStamina-=2; at:turn { setStance(preservation2); limit:1 } } limit:2 }",
-        "id": 234,
-        "mode": "stage",
-        "name": "まあるい春色",
-        "pIdolId": 82,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 235,
       "source_id": "pitem_03-3-111-1",
       "name": "まあるい春色+",
@@ -4496,52 +3446,6 @@
         "mode": "stage",
         "name": "まあるい春色+",
         "pIdolId": 82,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 237,
-      "source_id": "pitem_03-3-109-0",
-      "name": "小さな銀河",
-      "paragraphs": [
-        "メンタルスキルカード使用時、強気2段階目の場合、",
-        "メンタルスキルカードの元気値増加+4",
-        "体力消費2",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed[mental] { if:stance==strength2 { target:mental { g.genki+=4 }; fixedStamina-=2 } limit:3 }",
-        "id": 237,
-        "mode": "stage",
-        "name": "小さな銀河",
-        "pIdolId": 83,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 238,
-      "source_id": "pitem_03-3-109-1",
-      "name": "小さな銀河+",
-      "paragraphs": [
-        "メンタルスキルカード使用時、強気2段階目の場合、",
-        "メンタルスキルカードの元気値増加+4",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed[mental] { if:stance==strength2 { target:mental { g.genki+=4 }; fixedStamina-=1 } limit:3 }",
-        "id": 238,
-        "mode": "stage",
-        "name": "小さな銀河+",
-        "pIdolId": 83,
         "plan": "anomaly",
         "rarity": "SSR",
         "sourceType": "pIdol",
@@ -4616,99 +3520,6 @@
       }
     },
     {
-      "id": 242,
-      "source_id": "pitem_01-3-115-0",
-      "name": "「Pっち」",
-      "paragraphs": [
-        "集中が8以上の場合、スキルカードを2回使用するごとに、",
-        "好調3ターン",
-        "集中減少1"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:concentration>=8 { effectCounter+=1; if:effectCounter%2==1 { goodConditionTurns+=3; concentration-=1 } } }",
-        "id": 242,
-        "mode": "stage",
-        "name": "「Pっち」",
-        "pIdolId": 85,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 243,
-      "source_id": "pitem_01-3-115-1",
-      "name": "「Pっち」+",
-      "paragraphs": [
-        "集中が3以上の場合、スキルカードを2回使用するごとに、",
-        "好調3ターン",
-        "集中減少1"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:concentration>=3 { effectCounter+=1; if:effectCounter%2==1 { goodConditionTurns+=3; concentration-=1 } } }",
-        "id": 243,
-        "mode": "stage",
-        "name": "「Pっち」+",
-        "pIdolId": 85,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 244,
-      "source_id": "pitem_01-3-123-0",
-      "name": "夢へのスタートライン",
-      "paragraphs": [
-        "ダンスターンなら、ターン開始時、好調が3ターン以上の場合、",
-        "好調3ターン",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:isDanceTurn & goodConditionTurns>=3 { goodConditionTurns+=3; fixedStamina-=1 }; limit:2 }",
-        "id": 244,
-        "mode": "stage",
-        "name": "夢へのスタートライン",
-        "pIdolId": "",
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "support",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 246,
-      "source_id": "pitem_03-3-114-0",
-      "name": "運命の出逢い",
-      "paragraphs": [
-        "ターン開始後、全力の場合、",
-        "元気+10",
-        "全力値+3",
-        "手札のスコア値増加+10",
-        "次のターン、温存に変更 ",
-        "体力消費3",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:afterStartOfTurn { if:isFullPower { genki+=10; fullPowerCharge+=3; fixedStamina-=3; target:hand { g.score+=10 }; at:turn { setStance(preservation); limit:1 } } limit:1 }",
-        "id": 246,
-        "mode": "stage",
-        "name": "運命の出逢い",
-        "pIdolId": 86,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 247,
       "source_id": "pitem_03-3-114-1",
       "name": "運命の出逢い+",
@@ -4734,30 +3545,6 @@
       }
     },
     {
-      "id": 249,
-      "source_id": "pitem_02-3-117-0",
-      "name": "一番星の挑戦状",
-      "paragraphs": [
-        "スキルカード使用後、好印象が6以上の場合、",
-        "好印象+2",
-        "やる気+2",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:goodImpressionTurns>=6 { goodImpressionTurns+=2; motivation+=2; fixedStamina-=1 }; limit:3 }",
-        "id": 249,
-        "mode": "stage",
-        "name": "一番星の挑戦状",
-        "pIdolId": 87,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 250,
       "source_id": "pitem_02-3-117-1",
       "name": "一番星の挑戦状+",
@@ -4773,54 +3560,6 @@
         "mode": "stage",
         "name": "一番星の挑戦状+",
         "pIdolId": 87,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 253,
-      "source_id": "pitem_02-3-130-0",
-      "name": "雨上がりの花",
-      "paragraphs": [
-        "ターン開始時、",
-        "やる気+9",
-        "体力消費4",
-        "3ターン後、不安5ターン ",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { motivation+=9; fixedStamina-=4; at:turn { uneaseTurns+=5; limit:1; delay:2 } limit:1 }",
-        "id": 253,
-        "mode": "stage",
-        "name": "雨上がりの花",
-        "pIdolId": 88,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 254,
-      "source_id": "pitem_02-3-130-1",
-      "name": "雨上がりの花+",
-      "paragraphs": [
-        "ターン開始時、",
-        "やる気+10",
-        "体力消費3",
-        "3ターン後、不安5ターン ",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { motivation+=10; fixedStamina-=3; at:turn { uneaseTurns+=5; limit:1; delay:2 } limit:1 }",
-        "id": 254,
-        "mode": "stage",
-        "name": "雨上がりの花+",
-        "pIdolId": 88,
         "plan": "logic",
         "rarity": "SSR",
         "sourceType": "pIdol",
@@ -4877,29 +3616,6 @@
       }
     },
     {
-      "id": 257,
-      "source_id": "pitem_03-3-132-0",
-      "name": "雨上がりの虹",
-      "paragraphs": [
-        "メンタルスキルカード使用後、温存2段階目の場合、",
-        "熱意追加+4",
-        "体力消費1",
-        "（試験・ステージ内4回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed[mental] { if:stance==preservation2 { setEnthusiasmBonus(4); fixedStamina-=1 }; limit:4 }",
-        "id": 257,
-        "mode": "stage",
-        "name": "雨上がりの虹",
-        "pIdolId": 90,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 258,
       "source_id": "pitem_03-3-132-1",
       "name": "雨上がりの虹+",
@@ -4918,76 +3634,6 @@
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 263,
-      "source_id": "pitem_03-2-090-0",
-      "name": "そよ風に揺れる髪飾り",
-      "paragraphs": [
-        "アクティブスキルカード使用後、",
-        "温存に変更",
-        "強気効果のスキルカードのスコア値増加+3",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed[active] { setStance(preservation); fixedStamina-=2; target:effect(strength) { g.score+=3 } limit:2 }",
-        "id": 263,
-        "mode": "stage",
-        "name": "そよ風に揺れる髪飾り",
-        "pIdolId": 92,
-        "plan": "anomaly",
-        "rarity": "SR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 264,
-      "source_id": "pitem_03-2-090-1",
-      "name": "そよ風に揺れる髪飾り+",
-      "paragraphs": [
-        "アクティブスキルカード使用後、",
-        "温存に変更",
-        "強気効果のスキルカードのスコア値増加+3",
-        "体力消費2",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed[active] { setStance(preservation); fixedStamina-=2; target:effect(strength) { g.score+=3 } limit:3 }",
-        "id": 264,
-        "mode": "stage",
-        "name": "そよ風に揺れる髪飾り+",
-        "pIdolId": 92,
-        "plan": "anomaly",
-        "rarity": "SR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 265,
-      "source_id": "pitem_03-3-133-0",
-      "name": "いつもの持ち物",
-      "paragraphs": [
-        "温存効果のスキルカード使用後、全力の場合、",
-        "累積全力値の140%分スコア上昇",
-        "体力消費1"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:cardHasEffect(preservation) & isFullPower { score+=cumulativeFullPowerCharge*1.4; fixedStamina-=1 } }",
-        "id": 265,
-        "mode": "stage",
-        "name": "いつもの持ち物",
-        "pIdolId": 93,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
         "welfare": false
       }
     },
@@ -5032,29 +3678,6 @@
         "sourceType": "support",
         "upgraded": false,
         "welfare": true
-      }
-    },
-    {
-      "id": 280,
-      "source_id": "pitem_03-3-155-0",
-      "name": "伝説のidol装備",
-      "paragraphs": [
-        "直接効果で強気になった時、元気が50以上の場合、",
-        "元気の440%分スコア上昇させ、元気を0にする",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:stanceChanged { if:isDirectEffect & isStrength & genki>=50 { score+=genki*4.4; genki=0; fixedStamina-=2 }; limit:2 }",
-        "id": 280,
-        "mode": "stage",
-        "name": "伝説のidol装備",
-        "pIdolId": 94,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
       }
     },
     {
@@ -5207,28 +3830,6 @@
         "plan": "anomaly",
         "rarity": "SSR",
         "sourceType": "support",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 289,
-      "source_id": "pitem_02-3-156-0",
-      "name": "シルヴェスタ出撃！",
-      "paragraphs": [
-        "2ターンごとのターン終了時、除外にあるスキルカードが8枚以下の場合、",
-        "好印象強化+70%（3ターン）",
-        "体力消費1"
-      ],
-      "active": {
-        "effects": "at:endOfTurn { if:turnsElapsed%2==1 & countCards[removed]<=8 { setGoodImpressionTurnsEffectBuff(0.7,3); fixedStamina-=1 } }",
-        "id": 289,
-        "mode": "stage",
-        "name": "シルヴェスタ出撃！",
-        "pIdolId": 96,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
         "upgraded": false,
         "welfare": false
       }
@@ -5396,29 +3997,6 @@
       }
     },
     {
-      "id": 300,
-      "source_id": "pitem_02-1-024-0",
-      "name": "初陣の証・星南",
-      "paragraphs": [
-        "アクティブスキルカード使用時、やる気が5以上の場合、",
-        "元気+1（やる気効果を1.4倍適用）",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed[active] { if:motivation>=5 { motivationMultiplier=1.4; genki+=1; fixedStamina-=1 }; limit:2 }",
-        "id": 300,
-        "mode": "stage",
-        "name": "初陣の証・星南",
-        "pIdolId": 99,
-        "plan": "logic",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 301,
       "source_id": "pitem_02-1-024-1",
       "name": "初陣の証・星南+",
@@ -5483,29 +4061,6 @@
         "rarity": "R",
         "sourceType": "pIdol",
         "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 304,
-      "source_id": "pitem_01-1-022-0",
-      "name": "初陣の証・佑芽",
-      "paragraphs": [
-        "残り2ターン以内のターン開始時、",
-        "好調の30%分スコア上昇",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=goodConditionTurns*0.3; fixedStamina-=1 }; limit:2 }",
-        "id": 304,
-        "mode": "stage",
-        "name": "初陣の証・佑芽",
-        "pIdolId": 101,
-        "plan": "sense",
-        "rarity": "R",
-        "sourceType": "pIdol",
-        "upgraded": false,
         "welfare": false
       }
     },
@@ -5688,29 +4243,6 @@
       }
     },
     {
-      "id": 315,
-      "source_id": "pitem_03-3-162-0",
-      "name": "夢見る星",
-      "paragraphs": [
-        "全力の場合、ターン内にスキルカードを3回使用するごとに、",
-        "全力値増加量増加+50%（1ターン）",
-        "体力消費1",
-        "次のターン、温存2段階目に変更 "
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:isFullPower & turnCardsUsed%3==2 { setFullPowerChargeBuff(0.5,1); fixedStamina-=1 }; group:1 }; at:cardUsed { if:isFullPower & turnCardsUsed%3==2 { at:turn { setStance(preservation2); limit:1 } }; group:11 }",
-        "id": 315,
-        "mode": "stage",
-        "name": "夢見る星",
-        "pIdolId": 105,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 316,
       "source_id": "pitem_03-3-162-1",
       "name": "夢見る星+",
@@ -5802,30 +4334,6 @@
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 323,
-      "source_id": "pitem_02-3-167-0",
-      "name": "ミラクルヘッド",
-      "paragraphs": [
-        "ターン開始時、",
-        "やる気増加量増加+50%（3ターン）",
-        "次のターン、元気+2 ",
-        "体力消費2",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { setMotivationBuff(0.5,3); fixedStamina-=2; limit:1 }; at:turn { if:turnsElapsed==1 { genki+=2 }; limit:1 }",
-        "id": 323,
-        "mode": "stage",
-        "name": "ミラクルヘッド",
-        "pIdolId": 107,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
         "welfare": false
       }
     },
@@ -6037,30 +4545,6 @@
       }
     },
     {
-      "id": 337,
-      "source_id": "pitem_01-3-171-0",
-      "name": "フレフレあたし！",
-      "paragraphs": [
-        "アクティブスキルカード使用後、絶好調状態の場合、",
-        "スキルカード使用数追加+1",
-        "スキルカードを引く",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed[active] { if:perfectConditionTurns>=1 { cardUsesRemaining+=1; drawCard; fixedStamina-=1 }; limit:2 }",
-        "id": 337,
-        "mode": "stage",
-        "name": "フレフレあたし！",
-        "pIdolId": 111,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 338,
       "source_id": "pitem_01-3-171-1",
       "name": "フレフレあたし！+",
@@ -6130,30 +4614,6 @@
       }
     },
     {
-      "id": 343,
-      "source_id": "pitem_02-3-172-0",
-      "name": "高くジャンプ！",
-      "paragraphs": [
-        "ターン内にスキルカードを2回使用するごとに、",
-        "元気+5",
-        "好印象増加量増加+50%（1ターン）",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:turnCardsUsed%2==1 { genki+=5; setGoodImpressionTurnsBuff(0.5,1); fixedStamina-=1 }; limit:2 }",
-        "id": 343,
-        "mode": "stage",
-        "name": "高くジャンプ！",
-        "pIdolId": 113,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 344,
       "source_id": "pitem_02-3-172-1",
       "name": "高くジャンプ！+",
@@ -6170,54 +4630,6 @@
         "name": "高くジャンプ！+",
         "pIdolId": 113,
         "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 346,
-      "source_id": "pitem_01-3-174-0",
-      "name": "届けたい想い",
-      "paragraphs": [
-        "残り3ターン以内のターン開始後、",
-        "ランダムな山札か捨札にあるスキルカード（SSR）を手札に移動",
-        "好調の20%分集中増加",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterStartOfTurn { if:turnsRemaining<=3 { moveRandomToHand[SSR & (deck | discarded)]; concentration+=goodConditionTurns*0.2; fixedStamina-=1 }; limit:3 }",
-        "id": 346,
-        "mode": "stage",
-        "name": "届けたい想い",
-        "pIdolId": 114,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 347,
-      "source_id": "pitem_01-3-174-1",
-      "name": "届けたい想い+",
-      "paragraphs": [
-        "残り3ターン以内のターン開始後、",
-        "ランダムな山札か捨札にあるスキルカード（SSR）を手札に移動",
-        "好調の30%分集中増加",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterStartOfTurn { if:turnsRemaining<=3 { moveRandomToHand[SSR & (deck | discarded)]; concentration+=goodConditionTurns*0.3; fixedStamina-=1 }; limit:3 }",
-        "id": 347,
-        "mode": "stage",
-        "name": "届けたい想い+",
-        "pIdolId": 114,
-        "plan": "sense",
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
@@ -6311,54 +4723,6 @@
         "pIdolId": 117,
         "plan": "logic",
         "rarity": "SR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 356,
-      "source_id": "pitem_02-3-164-0",
-      "name": "ふさわしい、私",
-      "paragraphs": [
-        "直接効果でやる気が増加後、元気が7以上の場合、",
-        "やる気+4",
-        "元気+1",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:motivationIncreased { if:isDirectEffect & genki>=7 { motivation+=4; genki+=1; fixedStamina-=2 }; limit:2 }",
-        "id": 356,
-        "mode": "stage",
-        "name": "ふさわしい、私",
-        "pIdolId": 118,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 357,
-      "source_id": "pitem_02-3-164-1",
-      "name": "ふさわしい、私+",
-      "paragraphs": [
-        "直接効果でやる気が増加後、元気が7以上の場合、",
-        "やる気+6",
-        "元気+1",
-        "体力消費2",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:motivationIncreased { if:isDirectEffect & genki>=7 { motivation+=6; genki+=1; fixedStamina-=2 }; limit:2 }",
-        "id": 357,
-        "mode": "stage",
-        "name": "ふさわしい、私+",
-        "pIdolId": 118,
-        "plan": "logic",
-        "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
         "welfare": false
@@ -6527,31 +4891,6 @@
       }
     },
     {
-      "id": 368,
-      "source_id": "pitem_01-3-290-0",
-      "name": "あの頃憧れたヒーロー",
-      "paragraphs": [
-        "演出計画使用時、",
-        "スキルカード使用数追加+1",
-        "除外にあるダークヒーローの誕生を手札に移動",
-        "好調7ターン",
-        "体力消費3",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:usedCardBaseId==106 { cardUsesRemaining+=1; moveRandomToHand[removed & 640]; goodConditionTurns+=7; fixedStamina-=3 }; limit:1 }",
-        "id": 368,
-        "mode": "stage",
-        "name": "あの頃憧れたヒーロー",
-        "pIdolId": 121,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 369,
       "source_id": "pitem_01-3-290-1",
       "name": "あの頃憧れたヒーロー+",
@@ -6686,102 +5025,6 @@
         "name": "憧れのはじまり+",
         "pIdolId": 123,
         "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 384,
-      "source_id": "pitem_01-3-294-0",
-      "name": "ひろがる未来へ",
-      "paragraphs": [
-        "スキルカードコストで強化状態を消費した時、好調が3ターン以上の場合、",
-        "集中+2",
-        "次のターン、スキルカードを引く ",
-        "好調減少1"
-      ],
-      "active": {
-        "effects": "at:buffCostConsumed { if:goodConditionTurns>=3 { concentration+=2; goodConditionTurns-=1; at:turn { drawCard; limit:1 } } }",
-        "id": 384,
-        "mode": "stage",
-        "name": "ひろがる未来へ",
-        "pIdolId": 124,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 385,
-      "source_id": "pitem_01-3-294-1",
-      "name": "ひろがる未来へ+",
-      "paragraphs": [
-        "スキルカードコストで強化状態を消費した時、好調が3ターン以上の場合、",
-        "集中+2",
-        "次のターン、スキルカードを2枚引く ",
-        "好調減少1"
-      ],
-      "active": {
-        "effects": "at:buffCostConsumed { if:goodConditionTurns>=3 { concentration+=2; goodConditionTurns-=1; at:turn { drawCard(2); limit:1 } } }",
-        "id": 385,
-        "mode": "stage",
-        "name": "ひろがる未来へ+",
-        "pIdolId": 124,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 386,
-      "source_id": "pitem_02-3-293-0",
-      "name": "みちなるシグナル",
-      "paragraphs": [
-        "試験・ステージ開始時、",
-        "元気+7",
-        "やる気+4",
-        "最大体力の80%分体力消費",
-        "以降、スキルカードコストで強化状態を消費した時、最大体力の20%分体力回復・好印象強化+10%",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfStage { genki+=7; motivation+=4; fixedStamina-=maxStamina*0.8; limit:1 }; at:buffCostConsumed { fixedStamina+=maxStamina*0.2; setGoodImpressionTurnsEffectBuff(0.1) }",
-        "id": 386,
-        "mode": "stage",
-        "name": "みちなるシグナル",
-        "pIdolId": 125,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 387,
-      "source_id": "pitem_02-3-293-1",
-      "name": "みちなるシグナル+",
-      "paragraphs": [
-        "試験・ステージ開始時、",
-        "元気+8",
-        "やる気+5",
-        "最大体力の80%分体力消費",
-        "以降、スキルカードコストで強化状態を消費した時、最大体力の20%分体力回復・好印象強化+10%",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfStage { genki+=8; motivation+=5; fixedStamina-=maxStamina*0.8; limit:1 }; at:buffCostConsumed { fixedStamina+=maxStamina*0.2; setGoodImpressionTurnsEffectBuff(0.1) }",
-        "id": 387,
-        "mode": "stage",
-        "name": "みちなるシグナル+",
-        "pIdolId": 125,
-        "plan": "logic",
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
@@ -6938,54 +5181,6 @@
         "name": "箱庭のバラ+",
         "pIdolId": 128,
         "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 399,
-      "source_id": "pitem_03-3-298-0",
-      "name": "ユートピアへの誘い",
-      "paragraphs": [
-        "直接効果で強気になった時、全力値が5以上の場合、",
-        "元気+4",
-        "アクティブスキルカードのスコア値増加+3",
-        "全力値減少2",
-        "次のターン、スキルカードを引く "
-      ],
-      "active": {
-        "effects": "at:stanceChanged { if:isDirectEffect & isStrength & fullPowerCharge>=5 { genki+=4; fullPowerCharge-=2; target:active { g.score+=3 }; at:turn { drawCard; limit:1 } } }",
-        "id": 399,
-        "mode": "stage",
-        "name": "ユートピアへの誘い",
-        "pIdolId": 129,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 400,
-      "source_id": "pitem_03-3-298-1",
-      "name": "ユートピアへの誘い+",
-      "paragraphs": [
-        "直接効果で強気になった時、全力値が5以上の場合、",
-        "元気+6",
-        "アクティブスキルカードのスコア値増加+3",
-        "全力値減少2",
-        "次のターン、スキルカードを引く "
-      ],
-      "active": {
-        "effects": "at:stanceChanged { if:isDirectEffect & isStrength & fullPowerCharge>=5 { genki+=6; fullPowerCharge-=2; target:active { g.score+=3 }; at:turn { drawCard; limit:1 } } }",
-        "id": 400,
-        "mode": "stage",
-        "name": "ユートピアへの誘い+",
-        "pIdolId": 129,
-        "plan": "anomaly",
         "rarity": "SSR",
         "sourceType": "pIdol",
         "upgraded": true,
@@ -7196,30 +5391,6 @@
       }
     },
     {
-      "id": 411,
-      "source_id": "pitem_03-3-301-0",
-      "name": "あたしたちの約束",
-      "paragraphs": [
-        "ターン終了時、この試験・ステージ中の累計全力値が13以上の場合、",
-        "いつもあなたの隣でのスコア上昇回数増加+1",
-        "体力消費1",
-        "次のターン、いつもあなたの隣でを手札に移動 ",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:endOfTurn { if:cumulativeFullPowerCharge>=13 { target:797 { g.scoreTimes+=1 }; fixedStamina-=1; at:turn { moveRandomToHand[baseId(797)]; limit:1 } }; limit:2 }",
-        "id": 411,
-        "mode": "stage",
-        "name": "あたしたちの約束",
-        "pIdolId": 135,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 412,
       "source_id": "pitem_03-3-301-1",
       "name": "あたしたちの約束+",
@@ -7400,79 +5571,6 @@
       }
     },
     {
-      "id": 422,
-      "source_id": "pitem_02-3-311-0",
-      "name": "太陽を超える輝き",
-      "paragraphs": [
-        "最終ターンのターン開始時、",
-        "試験・ステージ中に消費した元気の75%分元気増加",
-        "スキルカードを2枚引く",
-        "体力消費3",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { genki+=consumedGenki*0.75; drawCard(2); fixedStamina-=3 }; limit:1 }",
-        "id": 422,
-        "mode": "stage",
-        "name": "太陽を超える輝き",
-        "pIdolId": 138,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 423,
-      "source_id": "pitem_02-3-311-1",
-      "name": "太陽を超える輝き+",
-      "paragraphs": [
-        "最終ターンのターン開始時、",
-        "試験・ステージ中に消費した元気の75%分元気増加",
-        "スキルカードを2枚引く",
-        "体力消費1",
-        "（試験・ステージ内1回）"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { genki+=consumedGenki*0.75; drawCard(2); fixedStamina-=1 }; limit:1 }",
-        "id": 423,
-        "mode": "stage",
-        "name": "太陽を超える輝き+",
-        "pIdolId": 138,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 424,
-      "source_id": "pitem_01-3-312-0",
-      "name": "憧れ続けた輝き",
-      "paragraphs": [
-        "好調が8ターン以上の場合、好調効果のスキルカードを4回使用するごとに、",
-        "絶好調1ターン",
-        "スキルカード使用数追加+1",
-        "スキルカードを引く",
-        "体力消費1",
-        "（試験・ステージ内5回）"
-      ],
-      "active": {
-        "effects": "at:cardUsed { if:goodConditionTurns>=8 & cardHasEffect(goodConditionTurns) { effectCounter+=1; if:effectCounter%4==3 { perfectConditionTurns+=1; cardUsesRemaining+=1; drawCard; fixedStamina-=1; limit:5 } } }",
-        "id": 424,
-        "mode": "stage",
-        "name": "憧れ続けた輝き",
-        "pIdolId": 139,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 425,
       "source_id": "pitem_01-3-312-1",
       "name": "憧れ続けた輝き+",
@@ -7516,78 +5614,6 @@
         "plan": "sense",
         "rarity": "SSR",
         "sourceType": "support",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 442,
-      "source_id": "pitem_01-3-313-0",
-      "name": "すべてを賭けた輝き",
-      "paragraphs": [
-        "アイドル固有スキルカード使用後、体力が80%以上の場合、",
-        "消費体力削減1",
-        "スキルカード使用数追加+1",
-        "体力消費2",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:cardSourceType==pIdol & stamina>=maxStamina*0.8 { costReduction+=1; cardUsesRemaining+=1; fixedStamina-=2 }; limit:3 }",
-        "id": 442,
-        "mode": "stage",
-        "name": "すべてを賭けた輝き",
-        "pIdolId": 140,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 443,
-      "source_id": "pitem_01-3-313-1",
-      "name": "すべてを賭けた輝き+",
-      "paragraphs": [
-        "アイドル固有スキルカード使用後、体力が80%以上の場合、",
-        "消費体力削減1",
-        "元気+1",
-        "スキルカード使用数追加+1",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed { if:cardSourceType==pIdol & stamina>=maxStamina*0.8 { costReduction+=1; genki+=1; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
-        "id": 443,
-        "mode": "stage",
-        "name": "すべてを賭けた輝き+",
-        "pIdolId": 140,
-        "plan": "sense",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
-      "id": 445,
-      "source_id": "pitem_02-3-314-0",
-      "name": "強い意志の輝き",
-      "paragraphs": [
-        "直接効果でやる気が5回増加時、",
-        "元気+10（やる気効果を2倍適用）",
-        "体力消費1",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:motivationIncreased { if:isDirectEffect { effectCounter+=1; if:effectCounter%5==4 { motivationMultiplier=2; genki+=10; fixedStamina-=1; limit:2 } } }",
-        "id": 445,
-        "mode": "stage",
-        "name": "強い意志の輝き",
-        "pIdolId": 141,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
         "upgraded": false,
         "welfare": false
       }
@@ -7936,30 +5962,6 @@
       }
     },
     {
-      "id": 465,
-      "source_id": "pitem_03-3-320-0",
-      "name": "不屈の輝き",
-      "paragraphs": [
-        "手を伸ばした先に使用後、温存になった回数が2回以上の場合、",
-        "手を伸ばした先にのスコア値増加+100",
-        "次のターン、スキルカードを引く ",
-        "体力消費3",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "effects": "at:afterCardUsed[baseId(849)] { if:preservationTimes>=2 { target:849 { g.score+=100 }; at:turn { drawCard; limit:1 }; fixedStamina-=3 }; limit:2 }",
-        "id": 465,
-        "mode": "stage",
-        "name": "不屈の輝き",
-        "pIdolId": 148,
-        "plan": "anomaly",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
       "id": 466,
       "source_id": "pitem_03-3-320-1",
       "name": "不屈の輝き+",
@@ -8190,50 +6192,6 @@
       }
     },
     {
-      "id": 480,
-      "source_id": "pitem_02-3-343-0",
-      "name": "可能性の標",
-      "paragraphs": [
-        "残り2ターン以内のターン開始時、",
-        "元気の65%分スコア上昇",
-        "体力消費2"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=genki*0.65; fixedStamina-=2 } }",
-        "id": 480,
-        "mode": "stage",
-        "name": "可能性の標",
-        "pIdolId": 153,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": false,
-        "welfare": false
-      }
-    },
-    {
-      "id": 481,
-      "source_id": "pitem_02-3-343-1",
-      "name": "可能性の標+",
-      "paragraphs": [
-        "残り2ターン以内のターン開始時、",
-        "元気の80%分スコア上昇",
-        "体力消費2"
-      ],
-      "active": {
-        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=genki*0.8; fixedStamina-=2 } }",
-        "id": 481,
-        "mode": "stage",
-        "name": "可能性の標+",
-        "pIdolId": 153,
-        "plan": "logic",
-        "rarity": "SSR",
-        "sourceType": "pIdol",
-        "upgraded": true,
-        "welfare": false
-      }
-    },
-    {
       "id": 482,
       "source_id": "pitem_01-3-342-0",
       "name": "勇気の標",
@@ -8325,55 +6283,6 @@
         "pIdolId": 156,
         "welfare": false,
         "effects": "at:startOfTurn { setFullPowerChargeBuff(0.4,1); setStance(preservation); genki+=2; doubleBuffCostTurns+=1 }"
-      }
-    },
-    {
-      "id": 485,
-      "source_id": "pitem_02-3-321-0",
-      "name": "頂点の輝き",
-      "paragraphs": [
-        "最終ターンのターン開始後、",
-        "好印象+5",
-        "ターン追加+1",
-        "好印象減少6",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "id": 485,
-        "name": "頂点の輝き",
-        "rarity": "SSR",
-        "upgraded": false,
-        "plan": "logic",
-        "mode": "stage",
-        "sourceType": "pIdol",
-        "pIdolId": 155,
-        "welfare": false,
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { goodImpressionTurns+=5; turnsRemaining+=1; goodImpressionTurns-=6 }; limit:2 }"
-      }
-    },
-    {
-      "id": 486,
-      "source_id": "pitem_02-3-321-1",
-      "name": "頂点の輝き+",
-      "paragraphs": [
-        "最終ターンのターン開始後、",
-        "好印象+5",
-        "ターン追加+1",
-        "体力回復1",
-        "好印象減少6",
-        "（試験・ステージ内2回）"
-      ],
-      "active": {
-        "id": 486,
-        "name": "頂点の輝き+",
-        "rarity": "SSR",
-        "upgraded": true,
-        "plan": "logic",
-        "mode": "stage",
-        "sourceType": "pIdol",
-        "pIdolId": 155,
-        "welfare": false,
-        "effects": "at:startOfTurn { if:turnsRemaining==1 { goodImpressionTurns+=5; turnsRemaining+=1; fixedStamina+=1; goodImpressionTurns-=6 }; limit:2 }"
       }
     },
     {
@@ -8513,56 +6422,6 @@
       }
     },
     {
-      "id": 500,
-      "source_id": "pitem_01-3-349-0",
-      "name": "世界を魅了する姿",
-      "paragraphs": [
-        "残り4ターン以内のターン開始後、",
-        "元気+1",
-        "除外にある獲物はあなた1枚を手札に移動",
-        "体力消費1",
-        "強化状態コスト増加1ターン",
-        "（試験・ステージ内4回）"
-      ],
-      "active": {
-        "id": 500,
-        "name": "世界を魅了する姿",
-        "rarity": "SSR",
-        "upgraded": false,
-        "plan": "sense",
-        "mode": "stage",
-        "sourceType": "pIdol",
-        "pIdolId": 160,
-        "welfare": false,
-        "effects": "at:afterStartOfTurn { if:turnsRemaining<=4 { genki+=1; moveRandomToHand[removed & baseId(909)]; fixedStamina-=1; doubleBuffCostTurns+=1 }; limit:4 }"
-      }
-    },
-    {
-      "id": 501,
-      "source_id": "pitem_01-3-349-1",
-      "name": "世界を魅了する姿+",
-      "paragraphs": [
-        "残り5ターン以内のターン開始後、",
-        "元気+2",
-        "除外にある獲物はあなた1枚を手札に移動",
-        "体力消費1",
-        "強化状態コスト増加1ターン",
-        "（試験・ステージ内5回）"
-      ],
-      "active": {
-        "id": 501,
-        "name": "世界を魅了する姿+",
-        "rarity": "SSR",
-        "upgraded": true,
-        "plan": "sense",
-        "mode": "stage",
-        "sourceType": "pIdol",
-        "pIdolId": 160,
-        "welfare": false,
-        "effects": "at:afterStartOfTurn { if:turnsRemaining<=5 { genki+=2; moveRandomToHand[removed & baseId(909)]; fixedStamina-=1; doubleBuffCostTurns+=1 }; limit:5 }"
-      }
-    },
-    {
       "id": 504,
       "source_id": "pitem_03-3-337-0",
       "name": "ヒーローの輝き",
@@ -8698,29 +6557,6 @@
       }
     },
     {
-      "id": 506,
-      "source_id": "pitem_03-3-334-0",
-      "name": "夢見る輝き",
-      "paragraphs": [
-        "わずかずつの歩み使用後、",
-        "除外にあるわずかずつの歩み1枚を山札の一番上に移動",
-        "体力消費1",
-        "（試験・ステージ内3回）"
-      ],
-      "active": {
-        "id": 506,
-        "name": "夢見る輝き",
-        "rarity": "SSR",
-        "upgraded": false,
-        "plan": "anomaly",
-        "mode": "stage",
-        "sourceType": "pIdol",
-        "pIdolId": 162,
-        "welfare": false,
-        "effects": "at:afterCardUsed { if:usedCardBaseId==917 { moveRandomToTopOfDeck[removed & baseId(917)]; fixedStamina-=1 }; limit:3 }"
-      }
-    },
-    {
       "id": 507,
       "source_id": "pitem_03-3-334-1",
       "name": "夢見る輝き+",
@@ -8744,29 +6580,6 @@
       }
     },
     {
-      "id": 508,
-      "source_id": "pitem_02-3-336-0",
-      "name": "星々を統べる輝き",
-      "paragraphs": [
-        "直接効果で好印象が4回増加時、",
-        "好印象追加発動+1（2ターン）",
-        "好印象強化+10%（2ターン）",
-        "体力消費1"
-      ],
-      "active": {
-        "id": 508,
-        "name": "星々を統べる輝き",
-        "rarity": "SSR",
-        "upgraded": false,
-        "plan": "logic",
-        "mode": "stage",
-        "sourceType": "pIdol",
-        "pIdolId": 163,
-        "welfare": false,
-        "effects": "at:goodImpressionTurnsIncreased { if:isDirectEffect { effectCounter+=1; if:effectCounter%4==3 { setGoodImpressionTurnsTimesBuff(1,2); setGoodImpressionTurnsEffectBuff(0.1,2); fixedStamina-=1 } } }"
-      }
-    },
-    {
       "id": 509,
       "source_id": "pitem_02-3-336-1",
       "name": "星々を統べる輝き+",
@@ -8786,6 +6599,2454 @@
         "pIdolId": 163,
         "welfare": false,
         "effects": "at:goodImpressionTurnsIncreased { if:isDirectEffect { effectCounter+=1; if:effectCounter%4==3 { setGoodImpressionTurnsTimesBuff(1,2); setGoodImpressionTurnsEffectBuff(0.1,2) } } }"
+      }
+    },
+    {
+      "id": 21,
+      "source_id": "pitem_00-1-006-0",
+      "name": "超絶あんみんマスク",
+      "paragraphs": [
+        "最終ターンのターン開始時、",
+        "元気の50%分スコア上昇",
+        "固定体力消費1"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=genki*0.5; fixedStamina-=1 } }",
+        "id": 21,
+        "mode": "stage",
+        "name": "超絶あんみんマスク",
+        "pIdolId": 8,
+        "plan": "logic",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 22,
+      "source_id": "pitem_00-1-006-1",
+      "name": "超絶あんみんマスク+",
+      "paragraphs": [
+        "最終ターンのターン開始時、",
+        "元気の70%分スコア上昇",
+        "固定体力消費1"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=genki*0.7; fixedStamina-=1 } }",
+        "id": 22,
+        "mode": "stage",
+        "name": "超絶あんみんマスク+",
+        "pIdolId": 8,
+        "plan": "logic",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 35,
+      "source_id": "pitem_00-2-017-0",
+      "name": "しょげないハンカチ",
+      "paragraphs": [
+        "アクティブスキルカード使用後、",
+        "元気の60%分スコア上昇",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed[active] { score+=genki*0.6; fixedStamina-=2; limit:2 }",
+        "id": 35,
+        "mode": "stage",
+        "name": "しょげないハンカチ",
+        "pIdolId": 15,
+        "plan": "logic",
+        "rarity": "SR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 36,
+      "source_id": "pitem_00-2-017-1",
+      "name": "しょげないハンカチ+",
+      "paragraphs": [
+        "アクティブスキルカード使用後、",
+        "元気の70%分スコア上昇",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed[active] { score+=genki*0.7; fixedStamina-=2; limit:2 }",
+        "id": 36,
+        "mode": "stage",
+        "name": "しょげないハンカチ+",
+        "pIdolId": 15,
+        "plan": "logic",
+        "rarity": "SR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 57,
+      "source_id": "pitem_00-3-022-0",
+      "name": "みちくさ研究ノート",
+      "paragraphs": [
+        "残り2ターン以内のターン開始時、",
+        "元気の50%分スコア上昇",
+        "固定体力消費1"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=genki*0.5; fixedStamina-=1 } }",
+        "id": 57,
+        "mode": "stage",
+        "name": "みちくさ研究ノート",
+        "pIdolId": 26,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 58,
+      "source_id": "pitem_00-3-022-1",
+      "name": "みちくさ研究ノート+",
+      "paragraphs": [
+        "残り2ターン以内のターン開始時、",
+        "元気の65%分スコア上昇",
+        "固定体力消費1"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=genki*0.65; fixedStamina-=1 } }",
+        "id": 58,
+        "mode": "stage",
+        "name": "みちくさ研究ノート+",
+        "pIdolId": 26,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 98,
+      "source_id": "pitem_02-3-033-0",
+      "name": "カエル印の扇風機",
+      "paragraphs": [
+        "アクティブスキルカード使用後、やる気が12以上の場合、",
+        "やる気の270%分スコア上昇",
+        "固定体力消費2",
+        "（試験・ステージ内4回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed[active] { if:motivation>=12 { score+=motivation*2.7; fixedStamina-=2 }; limit:4 }",
+        "id": 98,
+        "mode": "stage",
+        "name": "カエル印の扇風機",
+        "pIdolId": 35,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 99,
+      "source_id": "pitem_02-3-033-1",
+      "name": "カエル印の扇風機+",
+      "paragraphs": [
+        "アクティブスキルカード使用後、やる気が12以上の場合、",
+        "やる気の340%分スコア上昇",
+        "固定体力消費2",
+        "（試験・ステージ内4回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed[active] { if:motivation>=12 { score+=motivation*3.4; fixedStamina-=2 }; limit:4 }",
+        "id": 99,
+        "mode": "stage",
+        "name": "カエル印の扇風機+",
+        "pIdolId": 35,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 106,
+      "source_id": "pitem_01-3-056-0",
+      "name": "オーバーパワーボール",
+      "paragraphs": [
+        "ボーカルターンなら、ターン開始時、",
+        "集中+4",
+        "固定体力消費2",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:isVocalTurn { concentration+=4; fixedStamina-=2 }; limit:1 }",
+        "id": 106,
+        "mode": "stage",
+        "name": "オーバーパワーボール",
+        "pIdolId": "",
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "support",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 112,
+      "source_id": "pitem_02-3-037-0",
+      "name": "ぱちぱち線香花火",
+      "paragraphs": [
+        "3ターンごとに、好印象が6以上の場合、",
+        "好印象の100%分元気増加",
+        "やる気+2",
+        "固定体力消費1",
+        "（試験・ステージ内4回）"
+      ],
+      "active": {
+        "effects": "at:everyTurn { if:turnsElapsed%3==2 & goodImpressionTurns>=6 { genki+=goodImpressionTurns; motivation+=2; fixedStamina-=1 }; limit:4 }",
+        "id": 112,
+        "mode": "stage",
+        "name": "ぱちぱち線香花火",
+        "pIdolId": 40,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 113,
+      "source_id": "pitem_02-3-037-1",
+      "name": "ぱちぱち線香花火+",
+      "paragraphs": [
+        "3ターンごとに、好印象が6以上の場合、",
+        "好印象の100%分元気増加",
+        "やる気+3",
+        "固定体力消費1"
+      ],
+      "active": {
+        "effects": "at:everyTurn { if:turnsElapsed%3==2 & goodImpressionTurns>=6 { genki+=goodImpressionTurns; motivation+=3; fixedStamina-=1 } }",
+        "id": 113,
+        "mode": "stage",
+        "name": "ぱちぱち線香花火+",
+        "pIdolId": 40,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 122,
+      "source_id": "pitem_01-3-039-0",
+      "name": "ときめきのいっぱい",
+      "paragraphs": [
+        "最終ターンのターン開始時、",
+        "スコア+3（試験・ステージ中に使用したスキルカード1枚につき、スコア上昇量+3）",
+        "固定体力消費2",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=3+3*cardsUsed; fixedStamina-=2 }; limit:1 }",
+        "id": 122,
+        "mode": "stage",
+        "name": "ときめきのいっぱい",
+        "pIdolId": 44,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 123,
+      "source_id": "pitem_01-3-039-1",
+      "name": "ときめきのいっぱい+",
+      "paragraphs": [
+        "最終ターンのターン開始時、",
+        "スコア+5（試験・ステージ中に使用したスキルカード1枚につき、スコア上昇量+3）",
+        "固定体力消費1",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=5+3*cardsUsed; fixedStamina-=1 }; limit:1 }",
+        "id": 123,
+        "mode": "stage",
+        "name": "ときめきのいっぱい+",
+        "pIdolId": 44,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 126,
+      "source_id": "pitem_01-1-017-0",
+      "name": "初心の証・リーリヤ",
+      "paragraphs": [
+        "ターン終了時、好調が6ターン以上の場合、",
+        "好調2ターン",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:endOfTurn { if:goodConditionTurns>=6 { goodConditionTurns+=2; fixedStamina-=1 }; limit:2 }",
+        "id": 126,
+        "mode": "stage",
+        "name": "初心の証・リーリヤ",
+        "pIdolId": 45,
+        "plan": "sense",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 128,
+      "source_id": "pitem_01-1-018-0",
+      "name": "初心の証・千奈",
+      "paragraphs": [
+        "最終ターンのターン開始時、",
+        "スコア+2（試験・ステージ中に使用したスキルカード1枚につき、スコア上昇量+1）",
+        "固定体力消費1",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=2+cardsUsed; fixedStamina-=1 }; limit:1 }",
+        "id": 128,
+        "mode": "stage",
+        "name": "初心の証・千奈",
+        "pIdolId": 46,
+        "plan": "sense",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 129,
+      "source_id": "pitem_01-1-018-1",
+      "name": "初心の証・千奈+",
+      "paragraphs": [
+        "最終ターンのターン開始時、",
+        "スコア+6（試験・ステージ中に使用したスキルカード1枚につき、スコア上昇量+1）",
+        "固定体力消費1",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { score+=6+cardsUsed; fixedStamina-=1 }; limit:1 }",
+        "id": 129,
+        "mode": "stage",
+        "name": "初心の証・千奈+",
+        "pIdolId": 46,
+        "plan": "sense",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 139,
+      "source_id": "pitem_02-3-042-0",
+      "name": "スタイリッシュモード",
+      "paragraphs": [
+        "ターン開始時、やる気が3以上の場合、",
+        "好印象+3",
+        "やる気消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:motivation>=3 { goodImpressionTurns+=3; motivation-=1 }; limit:3 }",
+        "id": 139,
+        "mode": "stage",
+        "name": "スタイリッシュモード",
+        "pIdolId": 50,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 140,
+      "source_id": "pitem_02-3-042-1",
+      "name": "スタイリッシュモード+",
+      "paragraphs": [
+        "ターン開始時、やる気が3以上の場合、",
+        "好印象+3",
+        "やる気消費1",
+        "（試験・ステージ内4回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:motivation>=3 { goodImpressionTurns+=3; motivation-=1 }; limit:4 }",
+        "id": 140,
+        "mode": "stage",
+        "name": "スタイリッシュモード+",
+        "pIdolId": 50,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 145,
+      "source_id": "pitem_02-3-043-0",
+      "name": "ぶきっちょコウモリ",
+      "paragraphs": [
+        "3ターンごとに、好印象が3以上の場合、",
+        "元気の90%分スコア上昇",
+        "やる気の160%分スコア上昇",
+        "好印象消費2",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:everyTurn { if:turnsElapsed%3==2 & goodImpressionTurns>=3 { score+=genki*0.9; score+=motivation*1.6; goodImpressionTurns-=2 }; limit:3 }",
+        "id": 145,
+        "mode": "stage",
+        "name": "ぶきっちょコウモリ",
+        "pIdolId": 52,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 146,
+      "source_id": "pitem_02-3-043-1",
+      "name": "ぶきっちょコウモリ+",
+      "paragraphs": [
+        "3ターンごとに、好印象が3以上の場合、",
+        "元気の100%分スコア上昇",
+        "やる気の230%分スコア上昇",
+        "好印象消費2",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:everyTurn { if:turnsElapsed%3==2 & goodImpressionTurns>=3 { score+=genki; score+=motivation*2.3; goodImpressionTurns-=2 }; limit:3 }",
+        "id": 146,
+        "mode": "stage",
+        "name": "ぶきっちょコウモリ+",
+        "pIdolId": 52,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 152,
+      "source_id": "pitem_02-1-016-0",
+      "name": "初恋の証・麻央",
+      "paragraphs": [
+        "ターン開始時、やる気が3以上の場合、",
+        "好印象+3",
+        "やる気消費1",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:motivation>=3 { goodImpressionTurns+=3; motivation-=1 }; limit:1 }",
+        "id": 152,
+        "mode": "stage",
+        "name": "初恋の証・麻央",
+        "pIdolId": 54,
+        "plan": "logic",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 153,
+      "source_id": "pitem_02-1-016-1",
+      "name": "初恋の証・麻央+",
+      "paragraphs": [
+        "ターン開始時、やる気が3以上の場合、",
+        "好印象+3",
+        "やる気消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:motivation>=3 { goodImpressionTurns+=3; motivation-=1 }; limit:2 }",
+        "id": 153,
+        "mode": "stage",
+        "name": "初恋の証・麻央+",
+        "pIdolId": 54,
+        "plan": "logic",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 154,
+      "source_id": "pitem_02-1-019-0",
+      "name": "初恋の証・清夏",
+      "paragraphs": [
+        "スキルカード使用後、やる気が8以上の場合、",
+        "やる気の150%分スコア上昇",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:motivation>=8 { score+=motivation*1.5; fixedStamina-=1 }; limit:2 }",
+        "id": 154,
+        "mode": "stage",
+        "name": "初恋の証・清夏",
+        "pIdolId": 55,
+        "plan": "logic",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 155,
+      "source_id": "pitem_02-1-019-1",
+      "name": "初恋の証・清夏+",
+      "paragraphs": [
+        "スキルカード使用後、やる気が8以上の場合、",
+        "やる気の210%分スコア上昇",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:motivation>=8 { score+=motivation*2.1; fixedStamina-=1 }; limit:2 }",
+        "id": 155,
+        "mode": "stage",
+        "name": "初恋の証・清夏+",
+        "pIdolId": 55,
+        "plan": "logic",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 158,
+      "source_id": "pitem_02-3-045-0",
+      "name": "これでばっちり",
+      "paragraphs": [
+        "体力回復効果のスキルカード使用後、",
+        "元気の50%分好印象増加させ、元気を0にする",
+        "好印象の200%分スコア上昇",
+        "固定体力消費5",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:cardHasEffect(fixedStamina) { goodImpressionTurns+=genki*0.5; genki=0; score+=goodImpressionTurns*2; fixedStamina-=5 }; limit:1 }",
+        "id": 158,
+        "mode": "stage",
+        "name": "これでばっちり",
+        "pIdolId": 57,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 159,
+      "source_id": "pitem_02-3-045-1",
+      "name": "これでばっちり+",
+      "paragraphs": [
+        "体力回復効果のスキルカード使用後、",
+        "元気の70%分好印象増加させ、元気を0にする",
+        "好印象の200%分スコア上昇",
+        "固定体力消費5",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:cardHasEffect(fixedStamina) { goodImpressionTurns+=genki*0.7; genki=0; score+=goodImpressionTurns*2; fixedStamina-=5 }; limit:1 }",
+        "id": 159,
+        "mode": "stage",
+        "name": "これでばっちり+",
+        "pIdolId": 57,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 177,
+      "source_id": "pitem_01-3-049-0",
+      "name": "めりくりライオン",
+      "paragraphs": [
+        "残り2ターン以内のターン開始時、",
+        "好調の70%分スコア上昇",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=goodConditionTurns*0.7; fixedStamina-=1 }; limit:2 }",
+        "id": 177,
+        "mode": "stage",
+        "name": "めりくりライオン",
+        "pIdolId": 63,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 179,
+      "source_id": "pitem_01-2-036-0",
+      "name": "イケてるセーター",
+      "paragraphs": [
+        "ダンスターンなら、ターン開始時、集中が1以上の場合、",
+        "好調3ターン",
+        "集中消費1",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:isDanceTurn & concentration>=1 { goodConditionTurns+=3; concentration-=1 }; limit:1 }",
+        "id": 179,
+        "mode": "stage",
+        "name": "イケてるセーター",
+        "pIdolId": "",
+        "plan": "sense",
+        "rarity": "SR",
+        "sourceType": "support",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 180,
+      "source_id": "pitem_02-3-050-0",
+      "name": "海の向こうまで",
+      "paragraphs": [
+        "ターン開始後、やる気が5以上の場合、",
+        "やる気1.3倍",
+        "スキルカードを引く",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfTurn { if:motivation>=5 { motivation*=1.3; drawCard; fixedStamina-=1 }; limit:3; group:1 }",
+        "id": 180,
+        "mode": "stage",
+        "name": "海の向こうまで",
+        "pIdolId": 64,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 188,
+      "source_id": "pitem_01-3-069-0",
+      "name": "向き合う覚悟",
+      "paragraphs": [
+        "軽い足取り使用後、",
+        "好調1ターン",
+        "スキルカード使用数追加+1",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==24 { goodConditionTurns+=1; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
+        "id": 188,
+        "mode": "stage",
+        "name": "向き合う覚悟",
+        "pIdolId": 66,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 189,
+      "source_id": "pitem_01-3-069-1",
+      "name": "向き合う覚悟+",
+      "paragraphs": [
+        "軽い足取り使用後、",
+        "好調2ターン",
+        "スキルカード使用数追加+1",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==24 { goodConditionTurns+=2; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
+        "id": 189,
+        "mode": "stage",
+        "name": "向き合う覚悟+",
+        "pIdolId": 66,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 190,
+      "source_id": "pitem_01-3-070-0",
+      "name": "太陽まで届ける歌声",
+      "paragraphs": [
+        "勢い任せ使用後、",
+        "集中+1",
+        "スキルカード使用数追加+1",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==32 { concentration+=1; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
+        "id": 190,
+        "mode": "stage",
+        "name": "太陽まで届ける歌声",
+        "pIdolId": 67,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 191,
+      "source_id": "pitem_01-3-070-1",
+      "name": "太陽まで届ける歌声+",
+      "paragraphs": [
+        "勢い任せ使用後、",
+        "集中+2",
+        "スキルカード使用数追加+1",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==32 { concentration+=2; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
+        "id": 191,
+        "mode": "stage",
+        "name": "太陽まで届ける歌声+",
+        "pIdolId": 67,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 192,
+      "source_id": "pitem_02-3-071-0",
+      "name": "あたしだけの一番星",
+      "paragraphs": [
+        "思い出し笑い使用後、",
+        "好印象+2",
+        "スキルカード使用数追加+1",
+        "固定体力消費2",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==64 { goodImpressionTurns+=2; cardUsesRemaining+=1; fixedStamina-=2 }; limit:3 }",
+        "id": 192,
+        "mode": "stage",
+        "name": "あたしだけの一番星",
+        "pIdolId": 68,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 193,
+      "source_id": "pitem_02-3-071-1",
+      "name": "あたしだけの一番星+",
+      "paragraphs": [
+        "思い出し笑い使用後、",
+        "好印象+3",
+        "スキルカード使用数追加+1",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==64 { goodImpressionTurns+=3; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
+        "id": 193,
+        "mode": "stage",
+        "name": "あたしだけの一番星+",
+        "pIdolId": 68,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 202,
+      "source_id": "pitem_03-3-072-0",
+      "name": "ボクの一部",
+      "paragraphs": [
+        "スターライト使用時、温存の場合、",
+        "スキルカードを引く",
+        "消費体力減少1ターン",
+        "スターライトのスコア値増加+10",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:usedCardBaseId==382 & isPreservation { drawCard; halfCostTurns+=1; fixedStamina-=1; target:382 { g.score+=10 } }; limit:3 }",
+        "id": 202,
+        "mode": "stage",
+        "name": "ボクの一部",
+        "pIdolId": 69,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 203,
+      "source_id": "pitem_03-3-072-1",
+      "name": "ボクの一部+",
+      "paragraphs": [
+        "スターライト使用時、温存の場合、",
+        "スキルカードを2枚引く",
+        "消費体力減少1ターン",
+        "スターライトのスコア値増加+10",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:usedCardBaseId==382 & isPreservation { drawCard(2); halfCostTurns+=1; fixedStamina-=1; target:382 { g.score+=10 } }; limit:3 }",
+        "id": 203,
+        "mode": "stage",
+        "name": "ボクの一部+",
+        "pIdolId": 69,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 204,
+      "source_id": "pitem_01-3-079-0",
+      "name": "いつかの小さな星",
+      "paragraphs": [
+        "ファンサ使用後、",
+        "ターン追加+1",
+        "絶好調2ターン",
+        "固定体力消費3",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==30 { turnsRemaining+=1; perfectConditionTurns+=2; fixedStamina-=3 }; limit:2 }",
+        "id": 204,
+        "mode": "stage",
+        "name": "いつかの小さな星",
+        "pIdolId": 70,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 205,
+      "source_id": "pitem_01-3-079-1",
+      "name": "いつかの小さな星+",
+      "paragraphs": [
+        "ファンサ使用後、",
+        "ターン追加+1",
+        "絶好調3ターン",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==30 { turnsRemaining+=1; perfectConditionTurns+=3; fixedStamina-=2 }; limit:2 }",
+        "id": 205,
+        "mode": "stage",
+        "name": "いつかの小さな星+",
+        "pIdolId": 70,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 206,
+      "source_id": "pitem_03-3-077-0",
+      "name": "きみが見つけた私",
+      "paragraphs": [
+        "嬉しい誤算使用後、",
+        "スコア上昇量増加60%（2ターン）",
+        "全力値+10",
+        "固定体力消費1",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==394 { setScoreBuff(0.6,2); fullPowerCharge+=10; fixedStamina-=1 }; limit:1 }",
+        "id": 206,
+        "mode": "stage",
+        "name": "きみが見つけた私",
+        "pIdolId": 71,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 207,
+      "source_id": "pitem_03-3-077-1",
+      "name": "きみが見つけた私+",
+      "paragraphs": [
+        "嬉しい誤算使用後、",
+        "スコア上昇量増加60%（2ターン）",
+        "全力値+15",
+        "固定体力消費1",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==394 { setScoreBuff(0.6,2); fullPowerCharge+=15; fixedStamina-=1 }; limit:1 }",
+        "id": 207,
+        "mode": "stage",
+        "name": "きみが見つけた私+",
+        "pIdolId": 71,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 208,
+      "source_id": "pitem_02-3-074-0",
+      "name": "描いた夢へのあゆみ",
+      "paragraphs": [
+        "ゆるふわおしゃべり使用時、",
+        "ターン追加+1",
+        "元気1.5倍",
+        "固定体力消費2",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:usedCardBaseId==40 { turnsRemaining+=1; genki*=1.5; fixedStamina-=2 }; limit:1 }",
+        "id": 208,
+        "mode": "stage",
+        "name": "描いた夢へのあゆみ",
+        "pIdolId": 72,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 210,
+      "source_id": "pitem_02-3-076-0",
+      "name": "選びとった熱",
+      "paragraphs": [
+        "えいえいおー使用時、体力が50%以上の場合、",
+        "やる気+2",
+        "スキルカード使用数追加+1",
+        "最大体力の15%分固定体力消費",
+        "（試験・ステージ内5回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:usedCardBaseId==60 & stamina>=maxStamina*0.5 { motivation+=2; cardUsesRemaining+=1; fixedStamina-=maxStamina*0.15 }; limit:5 }",
+        "id": 210,
+        "mode": "stage",
+        "name": "選びとった熱",
+        "pIdolId": 73,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 211,
+      "source_id": "pitem_02-3-076-1",
+      "name": "選びとった熱+",
+      "paragraphs": [
+        "えいえいおー使用時、体力が50%以上の場合、",
+        "やる気+3",
+        "スキルカード使用数追加+1",
+        "最大体力の15%分固定体力消費",
+        "（試験・ステージ内5回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:usedCardBaseId==60 & stamina>=maxStamina*0.5 { motivation+=3; cardUsesRemaining+=1; fixedStamina-=maxStamina*0.15 }; limit:5 }",
+        "id": 211,
+        "mode": "stage",
+        "name": "選びとった熱+",
+        "pIdolId": 73,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 215,
+      "source_id": "pitem_01-3-073-0",
+      "name": "いつか見た夢",
+      "paragraphs": [
+        "準備運動使用後、",
+        "集中+1",
+        "固定体力消費3",
+        "以降の3ターンの間、ターン開始時、集中+3",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==28 { concentration+=1; fixedStamina-=3; at:startOfTurn { concentration+=3; limit:3 } } limit:2 }",
+        "id": 215,
+        "mode": "stage",
+        "name": "いつか見た夢",
+        "pIdolId": 75,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 216,
+      "source_id": "pitem_01-3-073-1",
+      "name": "いつか見た夢+",
+      "paragraphs": [
+        "準備運動使用後、",
+        "集中+1",
+        "固定体力消費1",
+        "以降の3ターンの間、ターン開始時、集中+3",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==28 { concentration+=1; fixedStamina-=1; at:startOfTurn { concentration+=3; limit:3 } } limit:2 }",
+        "id": 216,
+        "mode": "stage",
+        "name": "いつか見た夢+",
+        "pIdolId": 75,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 217,
+      "source_id": "pitem_02-3-075-0",
+      "name": "翼",
+      "paragraphs": [
+        "リスタート使用後、元気が7以上の場合、",
+        "好印象1.5倍",
+        "次のターン、除外にあるまた、飛べるを手札に移動 ",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==58 & genki>=7 { goodImpressionTurns*=1.5; fixedStamina-=2; at:turn { moveRandomToHand[baseId(490) & removed]; limit:1 } } limit:2 }",
+        "id": 217,
+        "mode": "stage",
+        "name": "翼",
+        "pIdolId": 76,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 226,
+      "source_id": "pitem_02-3-107-0",
+      "name": "相手への深い愛",
+      "paragraphs": [
+        "アクティブスキルカード使用時、やる気が8以上の場合、",
+        "元気+2（やる気効果を2.2倍適用）",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed[active] { if:motivation>=8 { motivationMultiplier=2.2; genki+=2; fixedStamina-=2 }; limit:2 }",
+        "id": 226,
+        "mode": "stage",
+        "name": "相手への深い愛",
+        "pIdolId": 79,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 231,
+      "source_id": "pitem_02-3-110-0",
+      "name": "春のおとずれ",
+      "paragraphs": [
+        "スキルカードコストで強化状態を消費した時、好印象が3以上の場合、",
+        "好印象+2",
+        "やる気+1",
+        "固定体力消費1",
+        "（試験・ステージ内4回）"
+      ],
+      "active": {
+        "effects": "at:buffCostConsumed { if:goodImpressionTurns>=3 { goodImpressionTurns+=2; motivation+=1; fixedStamina-=1 }; limit:4 }",
+        "id": 231,
+        "mode": "stage",
+        "name": "春のおとずれ",
+        "pIdolId": 81,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 234,
+      "source_id": "pitem_03-3-111-0",
+      "name": "まあるい春色",
+      "paragraphs": [
+        "全力になった時、強気になった回数が1回以上の場合、",
+        "全力効果のアクティブスキルカードのスコア値増加+11",
+        "次のターン、温存2段階目に変更 ",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:stanceChanged { if:isFullPower & strengthTimes>=1 { target:effect(fullPowerCharge) & active { g.score+=11 }; fixedStamina-=2; at:turn { setStance(preservation2); limit:1 } } limit:2 }",
+        "id": 234,
+        "mode": "stage",
+        "name": "まあるい春色",
+        "pIdolId": 82,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 237,
+      "source_id": "pitem_03-3-109-0",
+      "name": "小さな銀河",
+      "paragraphs": [
+        "メンタルスキルカード使用時、強気2段階目の場合、",
+        "メンタルスキルカードの元気値増加+4",
+        "固定体力消費2",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed[mental] { if:stance==strength2 { target:mental { g.genki+=4 }; fixedStamina-=2 } limit:3 }",
+        "id": 237,
+        "mode": "stage",
+        "name": "小さな銀河",
+        "pIdolId": 83,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 238,
+      "source_id": "pitem_03-3-109-1",
+      "name": "小さな銀河+",
+      "paragraphs": [
+        "メンタルスキルカード使用時、強気2段階目の場合、",
+        "メンタルスキルカードの元気値増加+4",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed[mental] { if:stance==strength2 { target:mental { g.genki+=4 }; fixedStamina-=1 } limit:3 }",
+        "id": 238,
+        "mode": "stage",
+        "name": "小さな銀河+",
+        "pIdolId": 83,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 242,
+      "source_id": "pitem_01-3-115-0",
+      "name": "「Pっち」",
+      "paragraphs": [
+        "集中が8以上の場合、スキルカードを2回使用するごとに、",
+        "好調3ターン",
+        "集中消費1"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:concentration>=8 { effectCounter+=1; if:effectCounter%2==1 { goodConditionTurns+=3; concentration-=1 } } }",
+        "id": 242,
+        "mode": "stage",
+        "name": "「Pっち」",
+        "pIdolId": 85,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 243,
+      "source_id": "pitem_01-3-115-1",
+      "name": "「Pっち」+",
+      "paragraphs": [
+        "集中が3以上の場合、スキルカードを2回使用するごとに、",
+        "好調3ターン",
+        "集中消費1"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:concentration>=3 { effectCounter+=1; if:effectCounter%2==1 { goodConditionTurns+=3; concentration-=1 } } }",
+        "id": 243,
+        "mode": "stage",
+        "name": "「Pっち」+",
+        "pIdolId": 85,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 244,
+      "source_id": "pitem_01-3-123-0",
+      "name": "夢へのスタートライン",
+      "paragraphs": [
+        "ダンスターンなら、ターン開始時、好調が3ターン以上の場合、",
+        "好調3ターン",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:isDanceTurn & goodConditionTurns>=3 { goodConditionTurns+=3; fixedStamina-=1 }; limit:2 }",
+        "id": 244,
+        "mode": "stage",
+        "name": "夢へのスタートライン",
+        "pIdolId": "",
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "support",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 246,
+      "source_id": "pitem_03-3-114-0",
+      "name": "運命の出逢い",
+      "paragraphs": [
+        "ターン開始後、全力の場合、",
+        "元気+10",
+        "全力値+3",
+        "手札のスコア値増加+10",
+        "次のターン、温存に変更 ",
+        "固定体力消費3",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfTurn { if:isFullPower { genki+=10; fullPowerCharge+=3; fixedStamina-=3; target:hand { g.score+=10 }; at:turn { setStance(preservation); limit:1 } } limit:1 }",
+        "id": 246,
+        "mode": "stage",
+        "name": "運命の出逢い",
+        "pIdolId": 86,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 249,
+      "source_id": "pitem_02-3-117-0",
+      "name": "一番星の挑戦状",
+      "paragraphs": [
+        "スキルカード使用後、好印象が6以上の場合、",
+        "好印象+2",
+        "やる気+2",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:goodImpressionTurns>=6 { goodImpressionTurns+=2; motivation+=2; fixedStamina-=1 }; limit:3 }",
+        "id": 249,
+        "mode": "stage",
+        "name": "一番星の挑戦状",
+        "pIdolId": 87,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 253,
+      "source_id": "pitem_02-3-130-0",
+      "name": "雨上がりの花",
+      "paragraphs": [
+        "ターン開始時、",
+        "やる気+9",
+        "固定体力消費4",
+        "3ターン後、不安5ターン ",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { motivation+=9; fixedStamina-=4; at:turn { uneaseTurns+=5; limit:1; delay:2 } limit:1 }",
+        "id": 253,
+        "mode": "stage",
+        "name": "雨上がりの花",
+        "pIdolId": 88,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 254,
+      "source_id": "pitem_02-3-130-1",
+      "name": "雨上がりの花+",
+      "paragraphs": [
+        "ターン開始時、",
+        "やる気+10",
+        "固定体力消費3",
+        "3ターン後、不安5ターン ",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { motivation+=10; fixedStamina-=3; at:turn { uneaseTurns+=5; limit:1; delay:2 } limit:1 }",
+        "id": 254,
+        "mode": "stage",
+        "name": "雨上がりの花+",
+        "pIdolId": 88,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 257,
+      "source_id": "pitem_03-3-132-0",
+      "name": "雨上がりの虹",
+      "paragraphs": [
+        "メンタルスキルカード使用後、温存2段階目の場合、",
+        "熱意追加+4",
+        "固定体力消費1",
+        "（試験・ステージ内4回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed[mental] { if:stance==preservation2 { setEnthusiasmBonus(4); fixedStamina-=1 }; limit:4 }",
+        "id": 257,
+        "mode": "stage",
+        "name": "雨上がりの虹",
+        "pIdolId": 90,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 263,
+      "source_id": "pitem_03-2-090-0",
+      "name": "そよ風に揺れる髪飾り",
+      "paragraphs": [
+        "アクティブスキルカード使用後、",
+        "温存に変更",
+        "強気効果のスキルカードのスコア値増加+3",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed[active] { setStance(preservation); fixedStamina-=2; target:effect(strength) { g.score+=3 } limit:2 }",
+        "id": 263,
+        "mode": "stage",
+        "name": "そよ風に揺れる髪飾り",
+        "pIdolId": 92,
+        "plan": "anomaly",
+        "rarity": "SR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 264,
+      "source_id": "pitem_03-2-090-1",
+      "name": "そよ風に揺れる髪飾り+",
+      "paragraphs": [
+        "アクティブスキルカード使用後、",
+        "温存に変更",
+        "強気効果のスキルカードのスコア値増加+3",
+        "固定体力消費2",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed[active] { setStance(preservation); fixedStamina-=2; target:effect(strength) { g.score+=3 } limit:3 }",
+        "id": 264,
+        "mode": "stage",
+        "name": "そよ風に揺れる髪飾り+",
+        "pIdolId": 92,
+        "plan": "anomaly",
+        "rarity": "SR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 265,
+      "source_id": "pitem_03-3-133-0",
+      "name": "いつもの持ち物",
+      "paragraphs": [
+        "温存効果のスキルカード使用後、全力の場合、",
+        "累積全力値の140%分スコア上昇",
+        "固定体力消費1"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:cardHasEffect(preservation) & isFullPower { score+=cumulativeFullPowerCharge*1.4; fixedStamina-=1 } }",
+        "id": 265,
+        "mode": "stage",
+        "name": "いつもの持ち物",
+        "pIdolId": 93,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 280,
+      "source_id": "pitem_03-3-155-0",
+      "name": "伝説のidol装備",
+      "paragraphs": [
+        "直接効果で強気になった時、元気が50以上の場合、",
+        "元気の440%分スコア上昇させ、元気を0にする",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:stanceChanged { if:isDirectEffect & isStrength & genki>=50 { score+=genki*4.4; genki=0; fixedStamina-=2 }; limit:2 }",
+        "id": 280,
+        "mode": "stage",
+        "name": "伝説のidol装備",
+        "pIdolId": 94,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 289,
+      "source_id": "pitem_02-3-156-0",
+      "name": "シルヴェスタ出撃！",
+      "paragraphs": [
+        "2ターンごとのターン終了時、除外にあるスキルカードが8枚以下の場合、",
+        "好印象強化+70%（3ターン）",
+        "固定体力消費1"
+      ],
+      "active": {
+        "effects": "at:endOfTurn { if:turnsElapsed%2==1 & countCards[removed]<=8 { setGoodImpressionTurnsEffectBuff(0.7,3); fixedStamina-=1 } }",
+        "id": 289,
+        "mode": "stage",
+        "name": "シルヴェスタ出撃！",
+        "pIdolId": 96,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 300,
+      "source_id": "pitem_02-1-024-0",
+      "name": "初陣の証・星南",
+      "paragraphs": [
+        "アクティブスキルカード使用時、やる気が5以上の場合、",
+        "元気+1（やる気効果を1.4倍適用）",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed[active] { if:motivation>=5 { motivationMultiplier=1.4; genki+=1; fixedStamina-=1 }; limit:2 }",
+        "id": 300,
+        "mode": "stage",
+        "name": "初陣の証・星南",
+        "pIdolId": 99,
+        "plan": "logic",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 304,
+      "source_id": "pitem_01-1-022-0",
+      "name": "初陣の証・佑芽",
+      "paragraphs": [
+        "残り2ターン以内のターン開始時、",
+        "好調の30%分スコア上昇",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=goodConditionTurns*0.3; fixedStamina-=1 }; limit:2 }",
+        "id": 304,
+        "mode": "stage",
+        "name": "初陣の証・佑芽",
+        "pIdolId": 101,
+        "plan": "sense",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 315,
+      "source_id": "pitem_03-3-162-0",
+      "name": "夢見る星",
+      "paragraphs": [
+        "全力の場合、ターン内にスキルカードを3回使用するごとに、",
+        "全力値増加量増加+50%（1ターン）",
+        "固定体力消費1",
+        "次のターン、温存2段階目に変更 "
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:isFullPower & turnCardsUsed%3==2 { setFullPowerChargeBuff(0.5,1); fixedStamina-=1 }; group:1 }; at:cardUsed { if:isFullPower & turnCardsUsed%3==2 { at:turn { setStance(preservation2); limit:1 } }; group:11 }",
+        "id": 315,
+        "mode": "stage",
+        "name": "夢見る星",
+        "pIdolId": 105,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 323,
+      "source_id": "pitem_02-3-167-0",
+      "name": "ミラクルヘッド",
+      "paragraphs": [
+        "ターン開始時、",
+        "やる気増加量増加+50%（3ターン）",
+        "次のターン、元気+2 ",
+        "固定体力消費2",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { setMotivationBuff(0.5,3); fixedStamina-=2; limit:1 }; at:turn { if:turnsElapsed==1 { genki+=2 }; limit:1 }",
+        "id": 323,
+        "mode": "stage",
+        "name": "ミラクルヘッド",
+        "pIdolId": 107,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 337,
+      "source_id": "pitem_01-3-171-0",
+      "name": "フレフレあたし！",
+      "paragraphs": [
+        "アクティブスキルカード使用後、絶好調状態の場合、",
+        "スキルカード使用数追加+1",
+        "スキルカードを引く",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed[active] { if:perfectConditionTurns>=1 { cardUsesRemaining+=1; drawCard; fixedStamina-=1 }; limit:2 }",
+        "id": 337,
+        "mode": "stage",
+        "name": "フレフレあたし！",
+        "pIdolId": 111,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 343,
+      "source_id": "pitem_02-3-172-0",
+      "name": "高くジャンプ！",
+      "paragraphs": [
+        "ターン内にスキルカードを2回使用するごとに、",
+        "元気+5",
+        "好印象増加量増加+50%（1ターン）",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:turnCardsUsed%2==1 { genki+=5; setGoodImpressionTurnsBuff(0.5,1); fixedStamina-=1 }; limit:2 }",
+        "id": 343,
+        "mode": "stage",
+        "name": "高くジャンプ！",
+        "pIdolId": 113,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 346,
+      "source_id": "pitem_01-3-174-0",
+      "name": "届けたい想い",
+      "paragraphs": [
+        "残り3ターン以内のターン開始後、",
+        "ランダムな山札か捨札にあるスキルカード（SSR）を手札に移動",
+        "好調の20%分集中増加",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfTurn { if:turnsRemaining<=3 { moveRandomToHand[SSR & (deck | discarded)]; concentration+=goodConditionTurns*0.2; fixedStamina-=1 }; limit:3 }",
+        "id": 346,
+        "mode": "stage",
+        "name": "届けたい想い",
+        "pIdolId": 114,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 347,
+      "source_id": "pitem_01-3-174-1",
+      "name": "届けたい想い+",
+      "paragraphs": [
+        "残り3ターン以内のターン開始後、",
+        "ランダムな山札か捨札にあるスキルカード（SSR）を手札に移動",
+        "好調の30%分集中増加",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfTurn { if:turnsRemaining<=3 { moveRandomToHand[SSR & (deck | discarded)]; concentration+=goodConditionTurns*0.3; fixedStamina-=1 }; limit:3 }",
+        "id": 347,
+        "mode": "stage",
+        "name": "届けたい想い+",
+        "pIdolId": 114,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 356,
+      "source_id": "pitem_02-3-164-0",
+      "name": "ふさわしい、私",
+      "paragraphs": [
+        "直接効果でやる気が増加後、元気が7以上の場合、",
+        "やる気+4",
+        "元気+1",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:motivationIncreased { if:isDirectEffect & genki>=7 { motivation+=4; genki+=1; fixedStamina-=2 }; limit:2 }",
+        "id": 356,
+        "mode": "stage",
+        "name": "ふさわしい、私",
+        "pIdolId": 118,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 357,
+      "source_id": "pitem_02-3-164-1",
+      "name": "ふさわしい、私+",
+      "paragraphs": [
+        "直接効果でやる気が増加後、元気が7以上の場合、",
+        "やる気+6",
+        "元気+1",
+        "固定体力消費2",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:motivationIncreased { if:isDirectEffect & genki>=7 { motivation+=6; genki+=1; fixedStamina-=2 }; limit:2 }",
+        "id": 357,
+        "mode": "stage",
+        "name": "ふさわしい、私+",
+        "pIdolId": 118,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 368,
+      "source_id": "pitem_01-3-290-0",
+      "name": "あの頃憧れたヒーロー",
+      "paragraphs": [
+        "演出計画使用時、",
+        "スキルカード使用数追加+1",
+        "除外にあるダークヒーローの誕生を手札に移動",
+        "好調7ターン",
+        "固定体力消費3",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:usedCardBaseId==106 { cardUsesRemaining+=1; moveRandomToHand[removed & 640]; goodConditionTurns+=7; fixedStamina-=3 }; limit:1 }",
+        "id": 368,
+        "mode": "stage",
+        "name": "あの頃憧れたヒーロー",
+        "pIdolId": 121,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 384,
+      "source_id": "pitem_01-3-294-0",
+      "name": "ひろがる未来へ",
+      "paragraphs": [
+        "スキルカードコストで強化状態を消費した時、好調が3ターン以上の場合、",
+        "集中+2",
+        "次のターン、スキルカードを引く ",
+        "好調消費1"
+      ],
+      "active": {
+        "effects": "at:buffCostConsumed { if:goodConditionTurns>=3 { concentration+=2; goodConditionTurns-=1; at:turn { drawCard; limit:1 } } }",
+        "id": 384,
+        "mode": "stage",
+        "name": "ひろがる未来へ",
+        "pIdolId": 124,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 385,
+      "source_id": "pitem_01-3-294-1",
+      "name": "ひろがる未来へ+",
+      "paragraphs": [
+        "スキルカードコストで強化状態を消費した時、好調が3ターン以上の場合、",
+        "集中+2",
+        "次のターン、スキルカードを2枚引く ",
+        "好調消費1"
+      ],
+      "active": {
+        "effects": "at:buffCostConsumed { if:goodConditionTurns>=3 { concentration+=2; goodConditionTurns-=1; at:turn { drawCard(2); limit:1 } } }",
+        "id": 385,
+        "mode": "stage",
+        "name": "ひろがる未来へ+",
+        "pIdolId": 124,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 386,
+      "source_id": "pitem_02-3-293-0",
+      "name": "みちなるシグナル",
+      "paragraphs": [
+        "試験・ステージ開始時、",
+        "元気+7",
+        "やる気+4",
+        "最大体力の80%分固定体力消費",
+        "以降、スキルカードコストで強化状態を消費した時、最大体力の20%分体力回復・好印象強化+10%",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfStage { genki+=7; motivation+=4; fixedStamina-=maxStamina*0.8; limit:1 }; at:buffCostConsumed { fixedStamina+=maxStamina*0.2; setGoodImpressionTurnsEffectBuff(0.1) }",
+        "id": 386,
+        "mode": "stage",
+        "name": "みちなるシグナル",
+        "pIdolId": 125,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 387,
+      "source_id": "pitem_02-3-293-1",
+      "name": "みちなるシグナル+",
+      "paragraphs": [
+        "試験・ステージ開始時、",
+        "元気+8",
+        "やる気+5",
+        "最大体力の80%分固定体力消費",
+        "以降、スキルカードコストで強化状態を消費した時、最大体力の20%分体力回復・好印象強化+10%",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfStage { genki+=8; motivation+=5; fixedStamina-=maxStamina*0.8; limit:1 }; at:buffCostConsumed { fixedStamina+=maxStamina*0.2; setGoodImpressionTurnsEffectBuff(0.1) }",
+        "id": 387,
+        "mode": "stage",
+        "name": "みちなるシグナル+",
+        "pIdolId": 125,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 399,
+      "source_id": "pitem_03-3-298-0",
+      "name": "ユートピアへの誘い",
+      "paragraphs": [
+        "直接効果で強気になった時、全力値が5以上の場合、",
+        "元気+4",
+        "アクティブスキルカードのスコア値増加+3",
+        "全力値低下2",
+        "次のターン、スキルカードを引く "
+      ],
+      "active": {
+        "effects": "at:stanceChanged { if:isDirectEffect & isStrength & fullPowerCharge>=5 { genki+=4; fullPowerCharge-=2; target:active { g.score+=3 }; at:turn { drawCard; limit:1 } } }",
+        "id": 399,
+        "mode": "stage",
+        "name": "ユートピアへの誘い",
+        "pIdolId": 129,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 400,
+      "source_id": "pitem_03-3-298-1",
+      "name": "ユートピアへの誘い+",
+      "paragraphs": [
+        "直接効果で強気になった時、全力値が5以上の場合、",
+        "元気+6",
+        "アクティブスキルカードのスコア値増加+3",
+        "全力値低下2",
+        "次のターン、スキルカードを引く "
+      ],
+      "active": {
+        "effects": "at:stanceChanged { if:isDirectEffect & isStrength & fullPowerCharge>=5 { genki+=6; fullPowerCharge-=2; target:active { g.score+=3 }; at:turn { drawCard; limit:1 } } }",
+        "id": 400,
+        "mode": "stage",
+        "name": "ユートピアへの誘い+",
+        "pIdolId": 129,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 411,
+      "source_id": "pitem_03-3-301-0",
+      "name": "あたしたちの約束",
+      "paragraphs": [
+        "ターン終了時、この試験・ステージ中の累計全力値が13以上の場合、",
+        "いつもあなたの隣でのスコア上昇回数増加+1",
+        "固定体力消費1",
+        "次のターン、いつもあなたの隣でを手札に移動 ",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:endOfTurn { if:cumulativeFullPowerCharge>=13 { target:797 { g.scoreTimes+=1 }; fixedStamina-=1; at:turn { moveRandomToHand[baseId(797)]; limit:1 } }; limit:2 }",
+        "id": 411,
+        "mode": "stage",
+        "name": "あたしたちの約束",
+        "pIdolId": 135,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 422,
+      "source_id": "pitem_02-3-311-0",
+      "name": "太陽を超える輝き",
+      "paragraphs": [
+        "最終ターンのターン開始時、",
+        "試験・ステージ中に消費した元気の75%分元気増加",
+        "スキルカードを2枚引く",
+        "固定体力消費3",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { genki+=consumedGenki*0.75; drawCard(2); fixedStamina-=3 }; limit:1 }",
+        "id": 422,
+        "mode": "stage",
+        "name": "太陽を超える輝き",
+        "pIdolId": 138,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 423,
+      "source_id": "pitem_02-3-311-1",
+      "name": "太陽を超える輝き+",
+      "paragraphs": [
+        "最終ターンのターン開始時、",
+        "試験・ステージ中に消費した元気の75%分元気増加",
+        "スキルカードを2枚引く",
+        "固定体力消費1",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { genki+=consumedGenki*0.75; drawCard(2); fixedStamina-=1 }; limit:1 }",
+        "id": 423,
+        "mode": "stage",
+        "name": "太陽を超える輝き+",
+        "pIdolId": 138,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 424,
+      "source_id": "pitem_01-3-312-0",
+      "name": "憧れ続けた輝き",
+      "paragraphs": [
+        "好調が8ターン以上の場合、好調効果のスキルカードを4回使用するごとに、",
+        "絶好調1ターン",
+        "スキルカード使用数追加+1",
+        "スキルカードを引く",
+        "固定体力消費1",
+        "（試験・ステージ内5回）"
+      ],
+      "active": {
+        "effects": "at:cardUsed { if:goodConditionTurns>=8 & cardHasEffect(goodConditionTurns) { effectCounter+=1; if:effectCounter%4==3 { perfectConditionTurns+=1; cardUsesRemaining+=1; drawCard; fixedStamina-=1; limit:5 } } }",
+        "id": 424,
+        "mode": "stage",
+        "name": "憧れ続けた輝き",
+        "pIdolId": 139,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 442,
+      "source_id": "pitem_01-3-313-0",
+      "name": "すべてを賭けた輝き",
+      "paragraphs": [
+        "アイドル固有スキルカード使用後、体力が80%以上の場合、",
+        "消費体力削減1",
+        "スキルカード使用数追加+1",
+        "固定体力消費2",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:cardSourceType==pIdol & stamina>=maxStamina*0.8 { costReduction+=1; cardUsesRemaining+=1; fixedStamina-=2 }; limit:3 }",
+        "id": 442,
+        "mode": "stage",
+        "name": "すべてを賭けた輝き",
+        "pIdolId": 140,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 443,
+      "source_id": "pitem_01-3-313-1",
+      "name": "すべてを賭けた輝き+",
+      "paragraphs": [
+        "アイドル固有スキルカード使用後、体力が80%以上の場合、",
+        "消費体力削減1",
+        "元気+1",
+        "スキルカード使用数追加+1",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:cardSourceType==pIdol & stamina>=maxStamina*0.8 { costReduction+=1; genki+=1; cardUsesRemaining+=1; fixedStamina-=1 }; limit:3 }",
+        "id": 443,
+        "mode": "stage",
+        "name": "すべてを賭けた輝き+",
+        "pIdolId": 140,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 445,
+      "source_id": "pitem_02-3-314-0",
+      "name": "強い意志の輝き",
+      "paragraphs": [
+        "直接効果でやる気が5回増加時、",
+        "元気+10（やる気効果を2倍適用）",
+        "固定体力消費1",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:motivationIncreased { if:isDirectEffect { effectCounter+=1; if:effectCounter%5==4 { motivationMultiplier=2; genki+=10; fixedStamina-=1; limit:2 } } }",
+        "id": 445,
+        "mode": "stage",
+        "name": "強い意志の輝き",
+        "pIdolId": 141,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 465,
+      "source_id": "pitem_03-3-320-0",
+      "name": "不屈の輝き",
+      "paragraphs": [
+        "手を伸ばした先に使用後、温存になった回数が2回以上の場合、",
+        "手を伸ばした先にのスコア値増加+100",
+        "次のターン、スキルカードを引く ",
+        "固定体力消費3",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed[baseId(849)] { if:preservationTimes>=2 { target:849 { g.score+=100 }; at:turn { drawCard; limit:1 }; fixedStamina-=3 }; limit:2 }",
+        "id": 465,
+        "mode": "stage",
+        "name": "不屈の輝き",
+        "pIdolId": 148,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 480,
+      "source_id": "pitem_02-3-343-0",
+      "name": "可能性の標",
+      "paragraphs": [
+        "残り2ターン以内のターン開始時、",
+        "元気の65%分スコア上昇",
+        "固定体力消費2"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=genki*0.65; fixedStamina-=2 } }",
+        "id": 480,
+        "mode": "stage",
+        "name": "可能性の標",
+        "pIdolId": 153,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 481,
+      "source_id": "pitem_02-3-343-1",
+      "name": "可能性の標+",
+      "paragraphs": [
+        "残り2ターン以内のターン開始時、",
+        "元気の80%分スコア上昇",
+        "固定体力消費2"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining<=2 { score+=genki*0.8; fixedStamina-=2 } }",
+        "id": 481,
+        "mode": "stage",
+        "name": "可能性の標+",
+        "pIdolId": 153,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 485,
+      "source_id": "pitem_02-3-321-0",
+      "name": "頂点の輝き",
+      "paragraphs": [
+        "最終ターンのターン開始後、",
+        "好印象+5",
+        "ターン追加+1",
+        "好印象消費6",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { goodImpressionTurns+=5; turnsRemaining+=1; goodImpressionTurns-=6 }; limit:2 }",
+        "id": 485,
+        "mode": "stage",
+        "name": "頂点の輝き",
+        "pIdolId": 155,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 486,
+      "source_id": "pitem_02-3-321-1",
+      "name": "頂点の輝き+",
+      "paragraphs": [
+        "最終ターンのターン開始後、",
+        "好印象+5",
+        "ターン追加+1",
+        "体力回復1",
+        "好印象消費6",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:startOfTurn { if:turnsRemaining==1 { goodImpressionTurns+=5; turnsRemaining+=1; fixedStamina+=1; goodImpressionTurns-=6 }; limit:2 }",
+        "id": 486,
+        "mode": "stage",
+        "name": "頂点の輝き+",
+        "pIdolId": 155,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 500,
+      "source_id": "pitem_01-3-349-0",
+      "name": "世界を魅了する姿",
+      "paragraphs": [
+        "残り4ターン以内のターン開始後、",
+        "元気+1",
+        "除外にある獲物はあなた1枚を手札に移動",
+        "固定体力消費1",
+        "強化状態コスト増加1ターン",
+        "（試験・ステージ内4回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfTurn { if:turnsRemaining<=4 { genki+=1; moveRandomToHand[removed & baseId(909)]; fixedStamina-=1; doubleBuffCostTurns+=1 }; limit:4 }",
+        "id": 500,
+        "mode": "stage",
+        "name": "世界を魅了する姿",
+        "pIdolId": 160,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 501,
+      "source_id": "pitem_01-3-349-1",
+      "name": "世界を魅了する姿+",
+      "paragraphs": [
+        "残り5ターン以内のターン開始後、",
+        "元気+2",
+        "除外にある獲物はあなた1枚を手札に移動",
+        "固定体力消費1",
+        "強化状態コスト増加1ターン",
+        "（試験・ステージ内5回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfTurn { if:turnsRemaining<=5 { genki+=2; moveRandomToHand[removed & baseId(909)]; fixedStamina-=1; doubleBuffCostTurns+=1 }; limit:5 }",
+        "id": 501,
+        "mode": "stage",
+        "name": "世界を魅了する姿+",
+        "pIdolId": 160,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 506,
+      "source_id": "pitem_03-3-334-0",
+      "name": "夢見る輝き",
+      "paragraphs": [
+        "わずかずつの歩み使用後、",
+        "除外にあるわずかずつの歩み1枚を山札の一番上に移動",
+        "固定体力消費1",
+        "（試験・ステージ内3回）"
+      ],
+      "active": {
+        "effects": "at:afterCardUsed { if:usedCardBaseId==917 { moveRandomToTopOfDeck[removed & baseId(917)]; fixedStamina-=1 }; limit:3 }",
+        "id": 506,
+        "mode": "stage",
+        "name": "夢見る輝き",
+        "pIdolId": 162,
+        "plan": "anomaly",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 508,
+      "source_id": "pitem_02-3-336-0",
+      "name": "星々を統べる輝き",
+      "paragraphs": [
+        "直接効果で好印象が4回増加時、",
+        "好印象追加発動+1（2ターン）",
+        "好印象強化+10%（2ターン）",
+        "固定体力消費1"
+      ],
+      "active": {
+        "effects": "at:goodImpressionTurnsIncreased { if:isDirectEffect { effectCounter+=1; if:effectCounter%4==3 { setGoodImpressionTurnsTimesBuff(1,2); setGoodImpressionTurnsEffectBuff(0.1,2); fixedStamina-=1 } } }",
+        "id": 508,
+        "mode": "stage",
+        "name": "星々を統べる輝き",
+        "pIdolId": 163,
+        "plan": "logic",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 512,
+      "source_id": "pitem_01-3-393-0",
+      "name": "なにかが変わる予感",
+      "paragraphs": [
+        "試験・ステージ開始後、",
+        "メタモルフォーゼ（支度）",
+        "集中+1",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfStage { setMetamorphosis; concentration+=1; limit:1 }",
+        "id": 512,
+        "mode": "stage",
+        "name": "なにかが変わる予感",
+        "pIdolId": 164,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 513,
+      "source_id": "pitem_01-3-393-1",
+      "name": "なにかが変わる予感+",
+      "paragraphs": [
+        "試験・ステージ開始後、",
+        "メタモルフォーゼ（支度）",
+        "集中+1",
+        "好調1ターン",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfStage { setMetamorphosis; concentration+=1; goodConditionTurns+=1; limit:1 }",
+        "id": 513,
+        "mode": "stage",
+        "name": "なにかが変わる予感+",
+        "pIdolId": 164,
+        "plan": "sense",
+        "rarity": "SSR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 514,
+      "source_id": "pitem_01-2-171-0",
+      "name": "お返しの髪飾り",
+      "paragraphs": [
+        "残り2ターン以内のターン終了時、",
+        "スコア+3",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:endOfTurn { if:turnsRemaining<=2 { score+=3 }; limit:2 }",
+        "id": 514,
+        "mode": "stage",
+        "name": "お返しの髪飾り",
+        "pIdolId": 165,
+        "plan": "sense",
+        "rarity": "SR",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 515,
+      "source_id": "pitem_01-2-171-1",
+      "name": "お返しの髪飾り+",
+      "paragraphs": [
+        "残り2ターン以内のターン終了時、",
+        "スコア+5",
+        "（試験・ステージ内2回）"
+      ],
+      "active": {
+        "effects": "at:endOfTurn { if:turnsRemaining<=2 { score+=5 }; limit:2 }",
+        "id": 515,
+        "mode": "stage",
+        "name": "お返しの髪飾り+",
+        "pIdolId": 165,
+        "plan": "sense",
+        "rarity": "SR",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
+      }
+    },
+    {
+      "id": 518,
+      "source_id": "pitem_01-1-100-0",
+      "name": "従者の必需品",
+      "paragraphs": [
+        "試験・ステージ開始後、",
+        "集中+2",
+        "スコア上昇量減少10%（2ターン）",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfStage { concentration+=2; setScoreDebuff(0.1,2); limit:1 }",
+        "id": 518,
+        "mode": "stage",
+        "name": "従者の必需品",
+        "pIdolId": 166,
+        "plan": "sense",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": false,
+        "welfare": false
+      }
+    },
+    {
+      "id": 519,
+      "source_id": "pitem_01-1-100-1",
+      "name": "従者の必需品+",
+      "paragraphs": [
+        "試験・ステージ開始後、",
+        "集中+3",
+        "スコア上昇量減少10%（2ターン）",
+        "（試験・ステージ内1回）"
+      ],
+      "active": {
+        "effects": "at:afterStartOfStage { concentration+=3; setScoreDebuff(0.1,2); limit:1 }",
+        "id": 519,
+        "mode": "stage",
+        "name": "従者の必需品+",
+        "pIdolId": 166,
+        "plan": "sense",
+        "rarity": "R",
+        "sourceType": "pIdol",
+        "upgraded": true,
+        "welfare": false
       }
     }
   ]

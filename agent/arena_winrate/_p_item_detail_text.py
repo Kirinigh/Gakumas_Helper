@@ -275,6 +275,9 @@ def _source_literal_pattern(literal: str) -> str:
     Explicit icons already present in a reference remain literal.
     """
     escaped = re.escape(literal)
+    # The current native template explicitly prefixes this fixed cost label.
+    # Legacy OCR may omit only that prefix; operands and token bounds stay exact.
+    escaped = escaped.replace("固定体力消費", r"(?:固定)?体力消費")
     if "❤" in literal or "♥" in literal:
         return escaped
     return escaped.replace("コスト値", r"(?:[❤♥][\ufe0e\ufe0f]?)?コスト値")

@@ -5,7 +5,7 @@
   },
   "evaluation": {
     "path": "production_handoff_evaluation.json",
-    "sha256": "B29BC28C180591E9BF92350F36089DBDAB5FE9F6B36C9B11D02245EE0A1C4BE9",
+    "sha256": "6178D2AFA8802BD37E9748E88AAD56976DFF735F2F0F49DC2EFCAB7BDF69679A",
     "status": "PASS",
     "tool_contract": "task095-static-reference-production-promotion-v1"
   },
@@ -15,13 +15,13 @@
   },
   "recognizer": "p_item_rendered_reference_v1",
   "reference_gallery": {
-    "business_id_count": 450,
+    "business_id_count": 456,
     "color_order": "BGR",
     "image_shape": "original_png_dimensions",
     "image_shape_count": 19,
     "path": "p_item_rendered_reference_gallery.npz",
     "provisional_business_ids": [],
-    "sha256": "132D6FA526323DAEDB1BB240E7F97620F6219BDA58FEDEFE63D2FCE791CDD4C9"
+    "sha256": "4C5FD5DF071B965612D69AB3CF07FE70D71CB15CB54F5AE1D984D6C91C17DE6A"
   },
   "runtime": {
     "ambiguous_action": "bounded_detail_or_fail_closed",
@@ -54,7 +54,7 @@
   },
   "schema_version": 1,
   "source": {
-    "business_id_count": 450,
+    "business_id_count": 456,
     "business_ids": [
       7,
       8,
@@ -505,22 +505,30 @@
       506,
       507,
       508,
-      509
+      509,
+      512,
+      513,
+      514,
+      515,
+      518,
+      519
     ],
-    "evidence_id": "published-ui-20261107",
+    "evidence_id": "published-ui-20261117",
     "extension_provenance": {
       "base_gallery": {
         "added_business_ids": [
-          506,
-          507,
-          508,
-          509
+          512,
+          513,
+          514,
+          515,
+          518,
+          519
         ],
-        "base_business_id_count": 446,
-        "inherited_business_id_count": 446,
+        "base_business_id_count": 450,
+        "inherited_business_id_count": 450,
         "replaced_business_ids": [],
-        "sha256": "184A8B2259EA3E81D64202921798A51EA04AAF1E144F117A1B9C01418CDA5AB2",
-        "target_business_id_count": 450
+        "sha256": "132D6FA526323DAEDB1BB240E7F97620F6219BDA58FEDEFE63D2FCE791CDD4C9",
+        "target_business_id_count": 456
       },
       "catalog": {
         "arena_stage_business_ids": [
@@ -896,7 +904,13 @@
           506,
           507,
           508,
-          509
+          509,
+          512,
+          513,
+          514,
+          515,
+          518,
+          519
         ],
         "excluded_current_rows": [
           {
@@ -905,30 +919,53 @@
             "name": "過激め？チョイス",
             "reason": "non-stage row is outside the arena-stage contract",
             "source_type": "support"
+          },
+          {
+            "business_id": 511,
+            "mode": "produce",
+            "name": "仲良しアルバム",
+            "reason": "non-stage row is outside the arena-stage contract",
+            "source_type": "support"
+          },
+          {
+            "business_id": 516,
+            "mode": "produce",
+            "name": "お嬢様おでかけセット",
+            "reason": "non-stage row is outside the arena-stage contract",
+            "source_type": "support"
+          },
+          {
+            "business_id": 517,
+            "mode": "produce",
+            "name": "お掃除の成果",
+            "reason": "non-stage row is outside the arena-stage contract",
+            "source_type": "support"
           }
         ],
         "included_business_ids": [
-          506,
-          507,
-          508,
-          509
+          512,
+          513,
+          514,
+          515,
+          518,
+          519
         ],
-        "p_items_git_blob_sha1": "ebe75bdc90b9c68eab8f88be7c2dd9a5b7103871",
-        "p_items_sha256": "4027A200665A37C9D1410668237FE6A4BAB5D9CC6515C9CA59CEC1CF70F3299D",
+        "p_items_git_blob_sha1": "0c2285d57ce5b429841c4becdb5c2adb4a70f3cd",
+        "p_items_sha256": "F790B6AFCA8859094FB1BF1E253C49A576E13211FFEE899F8C14610ABA83A210",
         "path": "packages/gakumas-data/json/p_items.json",
         "repository": "https://github.com/surisuririsu/gakumas-tools",
-        "revision": "6426bc747a892d9e97263c3bf63b9a9c170bdf3b",
+        "revision": "fc4f18a3f0c391cc69c0048e91537facba1f1f0c",
         "stage_scope_contract": "EntityBank selectable entities use modes=['stage']; coverage/generate-suite filters p.mode === 'stage'"
       },
       "published_ui_crops": {
         "catalog_production_deployment": {
-          "deployment_id": 7615251345,
-          "revision": "6426bc747a892d9e97263c3bf63b9a9c170bdf3b",
+          "deployment_id": 7856999769,
+          "revision": "fc4f18a3f0c391cc69c0048e91537facba1f1f0c",
           "status": "success"
         },
         "references": {
-          "506": {
-            "business_id": 506,
+          "512": {
+            "business_id": 512,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
               0,
@@ -940,27 +977,27 @@
               130,
               130
             ],
-            "frozen_at": "2026-11-07",
+            "frozen_at": "2026-11-17",
             "kind": "p_item",
-            "name": "夢見る輝き",
+            "name": "なにかが変わる予感",
             "original_dimensions": [
               130,
               130
             ],
-            "original_file": "506.png",
-            "original_sha256": "695832770BC110CA7F541AF7283DFDD38BE75AA46573038CC30AFD661CD0A918",
-            "original_size": 13968,
-            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/506.png",
-            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/506.png",
-            "png_sha256": "D6478660D13789BED776C0861C68C15BFFEEB0040AD66104FDFC689BDC688A40",
+            "original_file": "512.png",
+            "original_sha256": "EB953F32141D3BCF9B159F514A9D1CE736D70DD61EA90B0CD2B055891E38EE48",
+            "original_size": 20788,
+            "original_url": "https://api.github.com/repos/gakumas-tools/gakumas-tools/git/blobs/281e49752c962d075bc94ba5c5c98e8ec5c56674",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/pItems/icons/512.png",
+            "png_sha256": "8FB4FAB8528D1A3DC88D599A97E97AC45BDE487017402011DB85EE7CF523F3FD",
             "publisher": "gakumas-tools/gakumas-tools",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "E5977FE345AFCF603AB3291A62ED7F421EAAF3601756FD31A95B1D89E74A1E9A",
-            "size": 13397,
+            "rgb_pixel_sha256": "4D257BC13A02F5231A61BA0D3A2E4A5DDACC8E467F95D05D6AF18360497DF0A4",
+            "size": 20462,
             "upgraded": false
           },
-          "507": {
-            "business_id": 507,
+          "513": {
+            "business_id": 513,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
               0,
@@ -972,27 +1009,27 @@
               130,
               130
             ],
-            "frozen_at": "2026-11-07",
+            "frozen_at": "2026-11-17",
             "kind": "p_item",
-            "name": "夢見る輝き",
+            "name": "なにかが変わる予感",
             "original_dimensions": [
               130,
               130
             ],
-            "original_file": "507.png",
-            "original_sha256": "FFCE17E371F979B9E88F18A98BAAF4544B1695FC58CE91F0A4F99CB0B8502273",
-            "original_size": 14572,
-            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/507.png",
-            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/507.png",
-            "png_sha256": "9B31BA2E9D11945F6267DFA9CBF059BC4BAFEDE03CE02E0737A390F91B83C874",
+            "original_file": "513.png",
+            "original_sha256": "94A6A1B45D0144C41E0B19A45BE5170296BFE4AD1CC2A55F1B79CACC06FA2364",
+            "original_size": 21447,
+            "original_url": "https://api.github.com/repos/gakumas-tools/gakumas-tools/git/blobs/d694cae39815e8e82d858a4b337d45b84db44647",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/pItems/icons/513.png",
+            "png_sha256": "BD01E615EB8C55A7231FBF73BE5CD1600D93C384FA50653DB4639B073FD02078",
             "publisher": "gakumas-tools/gakumas-tools",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "2C80F9D6699377922AD5CB29F4EE4A733E29080340899240855A5E038D01C49D",
-            "size": 13973,
+            "rgb_pixel_sha256": "0EDD26E3EEDDC8011A35E384C01F6839277E49B3039333DD20F25BC9BDF3C700",
+            "size": 21144,
             "upgraded": true
           },
-          "508": {
-            "business_id": 508,
+          "514": {
+            "business_id": 514,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
               0,
@@ -1004,27 +1041,27 @@
               130,
               130
             ],
-            "frozen_at": "2026-11-07",
+            "frozen_at": "2026-11-17",
             "kind": "p_item",
-            "name": "星々を統べる輝き",
+            "name": "お返しの髪飾り",
             "original_dimensions": [
               130,
               130
             ],
-            "original_file": "508.png",
-            "original_sha256": "6DD2652552448BB89E10DDE460B4DB45F3193F2E2CE7C1722C5924A0A12A0DC7",
-            "original_size": 16957,
-            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/508.png",
-            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/508.png",
-            "png_sha256": "133400EAB7EB09EAE9FDD4B89CBC4CD8ED2AA62C2B9D6AC6EB53C211E9CC23EB",
+            "original_file": "514.png",
+            "original_sha256": "394F1EDDBF2118A34B1C7B79C46C165FEF59F6344803950B3C32B832BC031B57",
+            "original_size": 17357,
+            "original_url": "https://api.github.com/repos/gakumas-tools/gakumas-tools/git/blobs/3d04f5f315f262764775f083cfdf66dc569600a6",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/pItems/icons/514.png",
+            "png_sha256": "6EFFB1300186955F5C1E41CFC1F5B11CB21A817D7E86C9A3C6F3F3FC74935AA7",
             "publisher": "gakumas-tools/gakumas-tools",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "B4BFA803BE09BE0891CB97923F3BB598F473C9AD04C1E32B3521ED4C0E2AF787",
-            "size": 16395,
+            "rgb_pixel_sha256": "1281FE3007B4856E51C2FD1863E2548B84042AB2E1302704A90E94DF250CA944",
+            "size": 17085,
             "upgraded": false
           },
-          "509": {
-            "business_id": 509,
+          "515": {
+            "business_id": 515,
             "capture_provenance": "UNKNOWN",
             "crop_box": [
               0,
@@ -1036,23 +1073,87 @@
               130,
               130
             ],
-            "frozen_at": "2026-11-07",
+            "frozen_at": "2026-11-17",
             "kind": "p_item",
-            "name": "星々を統べる輝き",
+            "name": "お返しの髪飾り",
             "original_dimensions": [
               130,
               130
             ],
-            "original_file": "509.png",
-            "original_sha256": "3E95C28900539AD1EE909929929DAEA7DCD2CDA01FEAFB31071647E9C5CA7769",
-            "original_size": 17529,
-            "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/509.png",
-            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/pItems/icons/509.png",
-            "png_sha256": "846E4283B84DD7C54F6A11A9927DC069EDA12F26711FEBA7BD3BB99384A3BC70",
+            "original_file": "515.png",
+            "original_sha256": "C5FB758785C43C1772DDD573FB110D3001C53B157A1A423F0223083ACEDA6863",
+            "original_size": 17974,
+            "original_url": "https://api.github.com/repos/gakumas-tools/gakumas-tools/git/blobs/1d0c134a2e9cce5e9f0a59c5c541acdb60c48a7a",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/pItems/icons/515.png",
+            "png_sha256": "1D61FF9E2BD875174350236E0731143FA6903BAF9E46C6E75E7A90F73360F180",
             "publisher": "gakumas-tools/gakumas-tools",
             "resampling": "PILLOW_BICUBIC",
-            "rgb_pixel_sha256": "336D0A0A118C3D6E6601BE5FC9F50959C8B0FB6831AB958B85E4C75E1BA37F1C",
-            "size": 16976,
+            "rgb_pixel_sha256": "2ADD062EB0085B10FDA65EE8445DF4CD08731605DF8338F2CDAC074241EFF2F9",
+            "size": 17720,
+            "upgraded": true
+          },
+          "518": {
+            "business_id": 518,
+            "capture_provenance": "UNKNOWN",
+            "crop_box": [
+              0,
+              0,
+              130,
+              130
+            ],
+            "dimensions": [
+              130,
+              130
+            ],
+            "frozen_at": "2026-11-17",
+            "kind": "p_item",
+            "name": "従者の必需品",
+            "original_dimensions": [
+              130,
+              130
+            ],
+            "original_file": "518.png",
+            "original_sha256": "6DE176797569F59542F45E3AC53B5443209392817914D75C9AAA064FEF9058E0",
+            "original_size": 19894,
+            "original_url": "https://api.github.com/repos/gakumas-tools/gakumas-tools/git/blobs/a3aa375e705b1928795ee03766067e7b333702dd",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/pItems/icons/518.png",
+            "png_sha256": "CF02CC760659D0E9FC1B68EC4443637ED46DB2EFDA6043DE37AFBEC8B4C9F218",
+            "publisher": "gakumas-tools/gakumas-tools",
+            "resampling": "PILLOW_BICUBIC",
+            "rgb_pixel_sha256": "AE44897484F7E2AE11EB2C451EDCEFDD8A2A9E31D6212E18BCDBCC61111CE82B",
+            "size": 19598,
+            "upgraded": false
+          },
+          "519": {
+            "business_id": 519,
+            "capture_provenance": "UNKNOWN",
+            "crop_box": [
+              0,
+              0,
+              130,
+              130
+            ],
+            "dimensions": [
+              130,
+              130
+            ],
+            "frozen_at": "2026-11-17",
+            "kind": "p_item",
+            "name": "従者の必需品",
+            "original_dimensions": [
+              130,
+              130
+            ],
+            "original_file": "519.png",
+            "original_sha256": "6F382948E5B095370050F967D19AF6E9D5F43A0F464990E00F167E24FDFA677D",
+            "original_size": 20530,
+            "original_url": "https://api.github.com/repos/gakumas-tools/gakumas-tools/git/blobs/ce7b6acc5b2fdc308fc66a1d31bc49bf2e15f8d5",
+            "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/pItems/icons/519.png",
+            "png_sha256": "542B2EC21CB8FDE03DB3225549769E403B2920FB954172B0360158E97BFA7A5B",
+            "publisher": "gakumas-tools/gakumas-tools",
+            "resampling": "PILLOW_BICUBIC",
+            "rgb_pixel_sha256": "5D4614961F651DFDC0A0DBAF035F67CEEB2800759E2FAC02F7E7C91A257B52EE",
+            "size": 20276,
             "upgraded": true
           }
         },
@@ -1061,33 +1162,47 @@
       "schema_version": 4,
       "validation": {
         "full_gallery_64px": {
-          "506": {
-            "margin": 0.029552996158599854,
-            "top1_business_id": 506,
+          "512": {
+            "margin": 0.024255752563476562,
+            "top1_business_id": 512,
             "top1_similarity": 1.0,
-            "top2_business_id": 507,
-            "top2_similarity": 0.9704470038414001
+            "top2_business_id": 513,
+            "top2_similarity": 0.9757442474365234
           },
-          "507": {
-            "margin": 0.029552876949310303,
-            "top1_business_id": 507,
-            "top1_similarity": 0.9999998807907104,
-            "top2_business_id": 506,
-            "top2_similarity": 0.9704470038414001
+          "513": {
+            "margin": 0.024255454540252686,
+            "top1_business_id": 513,
+            "top1_similarity": 0.9999997019767761,
+            "top2_business_id": 512,
+            "top2_similarity": 0.9757442474365234
           },
-          "508": {
-            "margin": 0.03804987668991089,
-            "top1_business_id": 508,
+          "514": {
+            "margin": 0.025242984294891357,
+            "top1_business_id": 514,
             "top1_similarity": 1.0,
-            "top2_business_id": 509,
-            "top2_similarity": 0.9619501233100891
+            "top2_business_id": 515,
+            "top2_similarity": 0.9747570157051086
           },
-          "509": {
-            "margin": 0.038047611713409424,
-            "top1_business_id": 509,
-            "top1_similarity": 0.9999977350234985,
-            "top2_business_id": 508,
-            "top2_similarity": 0.9619501233100891
+          "515": {
+            "margin": 0.02524268627166748,
+            "top1_business_id": 515,
+            "top1_similarity": 0.9999997019767761,
+            "top2_business_id": 514,
+            "top2_similarity": 0.9747570157051086
+          },
+          "518": {
+            "margin": 0.027525782585144043,
+            "top1_business_id": 518,
+            "top1_similarity": 1.0,
+            "top2_business_id": 519,
+            "top2_similarity": 0.972474217414856
+          },
+          "519": {
+            "margin": 0.02752518653869629,
+            "top1_business_id": 519,
+            "top1_similarity": 0.9999994039535522,
+            "top2_business_id": 518,
+            "top2_similarity": 0.972474217414856
           },
           "coarse_fine_guard": "fails_safe_to_full_gallery"
         },
@@ -1095,12 +1210,14 @@
           "runtime_detail_authority": false,
           "status": "PENDING"
         },
-        "metadata_removed_business_id_count": 450,
+        "metadata_removed_business_id_count": 456,
         "source_added_business_ids": [
-          506,
-          507,
-          508,
-          509
+          512,
+          513,
+          514,
+          515,
+          518,
+          519
         ],
         "source_replacement_changed_business_ids": []
       }
@@ -1115,15 +1232,15 @@
       "logic": 407,
       "sense": 406
     },
-    "revision": "base-gallery-sha256@184A8B2259EA3E81D64202921798A51EA04AAF1E144F117A1B9C01418CDA5AB2+gakumas-tools@6426bc747a892d9e97263c3bf63b9a9c170bdf3b+published-ui-crops-v1",
-    "sanitized_icons_sha256": "DD6419A40D2643D6AF8CBF6CCAEE0978C4412FCC92421B01B2DC4BE8C86AC28D",
-    "scope": "446 immutable inherited PNGs plus four current native-bound published complete UI references; independent live calibration pending",
-    "source_icons_sha256": "3AA07A49BCBF7E8B937DE86FCAB390726CA0B283E7F55B7A7ED8E023D9212710"
+    "revision": "base-gallery-sha256@132D6FA526323DAEDB1BB240E7F97620F6219BDA58FEDEFE63D2FCE791CDD4C9+gakumas-tools@fc4f18a3f0c391cc69c0048e91537facba1f1f0c+published-ui-crops-v1",
+    "sanitized_icons_sha256": "CC6A0CC6B7DFC32C311D1978BF62E30835CCD7F399DAAD8CC39CF5DABB140DCB",
+    "scope": "450 immutable inherited PNGs plus six current native-bound published complete UI references; independent live calibration pending",
+    "source_icons_sha256": "81AEC216B977FA45CC457B1F5090105276A4CD20A64DA8C9509FDCA90EDA68C7"
   },
   "validation": {
-    "coarse_fine_720_calibration": "FOUR_FULL_GALLERY_RANKINGS_PASS_REAL_JJC_PENDING",
+    "coarse_fine_720_calibration": "SIX_FULL_GALLERY_RANKINGS_PASS_REAL_JJC_PENDING",
     "embedding_acceptance_calibration": "REJECTED_FOR_CURRENT_JJC_DOMAIN",
-    "jjc_reference_identity": "FOUR_PUBLISHED_UI_IDENTITIES_BOUND_REAL_JJC_PENDING",
+    "jjc_reference_identity": "SIX_PUBLISHED_UI_IDENTITIES_BOUND_REAL_JJC_PENDING",
     "upgraded_marker_calibration": "PUBLISHED_UI_NORMAL_PLUS_COMPLETE_REFERENCES_REAL_JJC_PENDING"
   }
 }

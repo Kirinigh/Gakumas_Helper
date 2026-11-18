@@ -1,6 +1,6 @@
 {
   "build": {
-    "base_dataset_manifest_sha256": "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25",
+    "base_dataset_manifest_sha256": "E3C73345BCB4AE37673CADD9B9E4B7FEFE8A16AAAF8A6512EFA3F59E77F3526B",
     "base_dataset_lineage_manifest_sha256s": [
       "98418ECC67AF1DA574766C5CB060AEECDB9692A798CCC453A733D9061492BBF1",
       "06148F80D44FCEA0F053047AB546E6CCBDB51BD1809D2C1A8B8ADAA4291F0667",
@@ -16,13 +16,14 @@
       "0564D51FD42A82D136F2EC2E1B0B0E6CB1D8DD6B06A917EBD3A63C0A702DC7D6",
       "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8",
       "24CA0E37E32545D652684155FB4DC3F005612F47FC127758136AD8F7614BBFF7",
-      "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25"
+      "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25",
+      "E3C73345BCB4AE37673CADD9B9E4B7FEFE8A16AAAF8A6512EFA3F59E77F3526B"
     ],
     "tool_contract": "task095-arena-full-ui-union-v1",
     "mode": "GALLERY_ONLY",
-    "base_manifest_sha256": "A83D64107970531784ADCABED5D1A998A4E7C80BD990ADE895529AA0BA3A12B5",
-    "base_gallery_sha256": "C3926CC6DEC9BF4249D9C4FF9C3C5C268830D47F7388AD6CC6DEBC6CC8899BC2",
-    "preserved_rows": 4368,
+    "base_manifest_sha256": "DAEE7A98F85594B39FF51DE64CAEED98985FD175E8D424AF95AE8F41FB96631F",
+    "base_gallery_sha256": "CFB3A5EC6CE4A8C46E7A307D657A5E535A96794CB0EAD33482F901A19D074196",
+    "preserved_rows": 4374,
     "appended_rows": 4176,
     "frozen_gallery_sha256": "674B3B995926EC36D3743E41E544ADF0DF52A9A3EC99CBDC1126DE3BB0B65FF9",
     "reference_manifest_sha256s": [
@@ -37,14 +38,14 @@
   },
   "component": "arena_custom_card_embedding",
   "gallery": {
-    "bytes": 10727386,
-    "class_table_bytes": 154093,
+    "bytes": 10736054,
+    "class_table_bytes": 154153,
     "class_table_path": "arena_card_embedding_classes.json",
-    "class_table_sha256": "A7C76383046A95ACFB104AFA84EC720322DA38EFFEF2AB7DA6EE29368F5D0FA4",
+    "class_table_sha256": "A5E619F2EA8C348E3F59FCB54813B91C4B33C0063C58ED5044293C903FF66701",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "arena_card_embedding_gallery.npz",
-    "sha256": "1D829EDF024FB1854DBD59FC746209FFD0DA341B3E022920C0E2C4ACA102C86F"
+    "sha256": "DF2E7C4D6D4601EAC0FBB6D1189888B5FF978FC93567AF0A9E800E7D4B22A69B"
   },
   "model": {
     "bytes": 441780,
@@ -67,8 +68,8 @@
   },
   "schema_version": 1,
   "source": {
-    "business_card_id_count": 922,
-    "business_card_id_set_sha256": "F97BC8A055836A1BD12182E040C7A3F805274AFFD166418649727B7754294DD3",
+    "business_card_id_count": 928,
+    "business_card_id_set_sha256": "44C066C19FD90EDE98F7908CC7C90E48068C3B1CC4C10B51B10584F4FBA63505",
     "business_card_ids": [
       1,
       2,
@@ -991,27 +992,31 @@
       919,
       920,
       921,
-      922
+      922,
+      923,
+      924,
+      925,
+      926,
+      927,
+      928
     ],
-    "dataset_id": "task095-skill-card-extension-pc-705100-0080-released922-ui-20261107",
+    "dataset_id": "task095-skill-card-extension-pc-705100-0089-released928-ui-20261117",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "E3C73345BCB4AE37673CADD9B9E4B7FEFE8A16AAAF8A6512EFA3F59E77F3526B",
-    "dataset_revision": "pc-705100-0080-released922-ui-20261107",
-    "extension_business_card_id_count": 8,
+    "dataset_manifest_sha256": "72762BF61E609526C71CA7C012F53B7312E57582F0443D3F1E14A4B4C3D329DC",
+    "dataset_revision": "pc-705100-0089-released928-ui-20261117",
+    "extension_business_card_id_count": 6,
     "extension_business_card_ids": [
-      915,
-      916,
-      917,
-      918,
-      919,
-      920,
-      921,
-      922
+      923,
+      924,
+      925,
+      926,
+      927,
+      928
     ],
-    "image_class_count": 8544,
+    "image_class_count": 8550,
     "source_domain": "OFFICIAL_RAW_CARD_ART_WITH_FROZEN_FULL_UI_REFERENCES",
     "training_target": "encoder unchanged; gallery reference augmentation only",
-    "visual_identity_count": 473
+    "visual_identity_count": 476
   },
   "validation": {
     "state": "USER_AUTHORIZED_ENABLE_VALIDATION_PENDING",

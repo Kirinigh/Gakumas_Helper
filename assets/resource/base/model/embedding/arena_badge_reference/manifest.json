@@ -2,31 +2,31 @@
   "build": {
     "tool_contract": "task095-temporary-placeholder-append-v1",
     "mode": "GALLERY_ONLY_NO_TRAINING",
-    "base_manifest_sha256": "487A676D708092FF9D3B0D81BC325AFC89A974CFFE003F11ED9E44318C1A1AF2",
-    "base_gallery_sha256": "7B6DCCA4CED0D9F06D3EEF1E2F08EB2BC539CCD9FF2D4C5366E504F11A9A1D64",
-    "preserved_rows": 3601,
+    "base_manifest_sha256": "17983BA071C88883F039A19D3F66FD29BDC4550145174FA94AB8D82DC29D1283",
+    "base_gallery_sha256": "4638CB6E6C17E255F8E96CDB64F02BA8F33A59B968C98A55B934B2C6533A2738",
+    "preserved_rows": 3607,
     "appended_rows": 0,
-    "enabled_rows": 3601,
+    "enabled_rows": 3607,
     "inherited_validation": {
       "manifest_path": "inherited/manifest.json",
-      "manifest_sha256": "487A676D708092FF9D3B0D81BC325AFC89A974CFFE003F11ED9E44318C1A1AF2",
-      "gallery_sha256": "7B6DCCA4CED0D9F06D3EEF1E2F08EB2BC539CCD9FF2D4C5366E504F11A9A1D64",
-      "row_count": 3601,
+      "manifest_sha256": "17983BA071C88883F039A19D3F66FD29BDC4550145174FA94AB8D82DC29D1283",
+      "gallery_sha256": "4638CB6E6C17E255F8E96CDB64F02BA8F33A59B968C98A55B934B2C6533A2738",
+      "row_count": 3607,
       "scope": "enabled_original_rows_only",
       "array_relation": "EXACT_PREFIX"
     }
   },
   "component": "task410_arena_card_reference",
   "gallery": {
-    "business_card_id_count": 922,
+    "business_card_id_count": 928,
     "normalization_size": [
       96,
       96
     ],
     "path": "badge_reference_gallery.npz",
-    "sha256": "5EA864039C97DD4E41E1757F5374301F94EE7495DEA939D395B806E4D0DC5E86",
-    "visual_group_count": 473,
-    "bytes": 1489789
+    "sha256": "D74C8FD2A41FBCD0F0E84F8026F1CE714A784DADC10DE8F2F7949BA9367E390F",
+    "visual_group_count": 476,
+    "bytes": 1493648
   },
   "production_handoff": {
     "reason": "private-live target, inherited rows, geometry stress, and authoritative hard negatives passed offline; independent live holdout remains PENDING",
@@ -45,20 +45,20 @@
   "source": {
     "added_reference_file_count": 1,
     "arena_component": "arena_custom_card_embedding",
-    "arena_component_manifest_sha256": "123B55741EDB03B94D9386792A79E2DE2144769E925A6CBE2BCA2EDCA6093C55",
-    "arena_gallery_sha256": "1D829EDF024FB1854DBD59FC746209FFD0DA341B3E022920C0E2C4ACA102C86F",
-    "base_manifest_sha256": "59CD120EB85DC336187379839D1FE9A3C3BE66DEDB7FD5C5FCAEB395BF99D1E9",
-    "base_reference_file_count": 3600,
+    "arena_component_manifest_sha256": "42ADC841D463F1DDC94EAC0B1DAA033B54FA8C55CCD1FE953CF75DB8689CC924",
+    "arena_gallery_sha256": "DF2E7C4D6D4601EAC0FBB6D1189888B5FF978FC93567AF0A9E800E7D4B22A69B",
+    "base_manifest_sha256": "A3ECEB5162C18B9FAF5648C933F08628EF6E741936F006A0897F46E890C11C99",
+    "base_reference_file_count": 3606,
     "catalog_license": "BSD-3-Clause",
     "catalog_repository": "https://github.com/gakumas-tools/gakumas-tools",
-    "catalog_revision": "6426bc747a892d9e97263c3bf63b9a9c170bdf3b",
-    "extension_dataset_id": "task095-skill-card-extension-pc-705100-0080-released922-ui-20261107",
-    "extension_dataset_manifest_sha256": "E3C73345BCB4AE37673CADD9B9E4B7FEFE8A16AAAF8A6512EFA3F59E77F3526B",
-    "fixed_icon_provenance_sha256": "EDC6C3E6284CDBF22A50E344EC9F80F7EF14EA1575AAC2D29B47900652FCCB80",
+    "catalog_revision": "fc4f18a3f0c391cc69c0048e91537facba1f1f0c",
+    "extension_dataset_id": "task095-skill-card-extension-pc-705100-0089-released928-ui-20261117",
+    "extension_dataset_manifest_sha256": "72762BF61E609526C71CA7C012F53B7312E57582F0443D3F1E14A4B4C3D329DC",
+    "fixed_icon_provenance_sha256": "AA76B8C83D7F6A549CCFA2B438AF1C1107A1F346D43080F04E0C1D5DA5AECFF1",
     "fixed_icons": {
       "references": {
-        "915": {
-          "business_id": 915,
+        "923": {
+          "business_id": 923,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
@@ -70,27 +70,27 @@
             130,
             130
           ],
-          "frozen_at": "2026-11-07",
+          "frozen_at": "2026-11-17",
           "kind": "skill_card",
-          "name": "なにかを続ける尊さ",
+          "name": "柔らかな光の中で",
           "original_dimensions": [
             130,
             130
           ],
-          "original_file": "new-primary-skill-915-icons.png",
-          "original_sha256": "C8C812E6284540AB002B4C176810D5640AC82E83B3295B2DA30D56384C8E669B",
-          "original_size": 28963,
-          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/915.png",
-          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/915.png",
-          "png_sha256": "3F459008A8E098AAF4584719E021C1B9CA0EE233AACFC96B8C1ABC2583B87A0A",
+          "original_file": "new-primary-skill-923-icons.png",
+          "original_sha256": "434BF4F70BC0ECD7A4E5F03BD69378656136556429E89DB0567F574F53E48B7A",
+          "original_size": 31800,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/923.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/923.png",
+          "png_sha256": "A1A58CB848C19669D4D792C80FA49C4A5A7412AE30CC11FCB92EB1DC589AF05F",
           "publisher": "gakumas-tools/gakumas-tools",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "5682AF5EC17A74E18AF482938648E34074E5FC4D9A5B837838F404B73C089BB9",
-          "size": 28272,
+          "rgb_pixel_sha256": "0A85A31B66203297366BB458B693E24003C243660B88764CC3CBFCBFDF173FDD",
+          "size": 31640,
           "upgraded": false
         },
-        "916": {
-          "business_id": 916,
+        "924": {
+          "business_id": 924,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
@@ -102,27 +102,27 @@
             130,
             130
           ],
-          "frozen_at": "2026-11-07",
+          "frozen_at": "2026-11-17",
           "kind": "skill_card",
-          "name": "なにかを続ける尊さ",
+          "name": "柔らかな光の中で",
           "original_dimensions": [
             130,
             130
           ],
-          "original_file": "new-primary-skill-916-icons.png",
-          "original_sha256": "D9FA1221C868D5439A44C9EC131C46837E6DF34F5678E54740BF41B4B4CFEC50",
-          "original_size": 29245,
-          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/916.png",
-          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/916.png",
-          "png_sha256": "0FF13E6EC59141E89B4BC36B609DD04C727E02FBBF02221D69674BF2E67FC907",
+          "original_file": "new-primary-skill-924-icons.png",
+          "original_sha256": "0C88198B229541494F18F4439B7DEFFC9FEFB88AB37724820D16AFFEA24C5F52",
+          "original_size": 32421,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/924.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/924.png",
+          "png_sha256": "12378F86A0EF555DF5783E61A1E4C7882F79E5CB389E72FCB628E7166307B30C",
           "publisher": "gakumas-tools/gakumas-tools",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "075922E4D39F1A8EDC98A6892FA2B68CDE845BBA32976045BD8D1061D48DD57E",
-          "size": 28537,
+          "rgb_pixel_sha256": "CBDFF85221B2641336C7FA8D5B4CDE07CCD2B5F4ABD8E88CE78CA22168191771",
+          "size": 32275,
           "upgraded": true
         },
-        "917": {
-          "business_id": 917,
+        "925": {
+          "business_id": 925,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
@@ -134,27 +134,27 @@
             130,
             130
           ],
-          "frozen_at": "2026-11-07",
+          "frozen_at": "2026-11-17",
           "kind": "skill_card",
-          "name": "わずかずつの歩み",
+          "name": "忠義を胸に",
           "original_dimensions": [
             130,
             130
           ],
-          "original_file": "new-primary-skill-917-icons.png",
-          "original_sha256": "111EAAE607BC32E0A7DB0FA49C8B9A04E911042B6F1B896773DC4C71268DE456",
-          "original_size": 29082,
-          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/917.png",
-          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/917.png",
-          "png_sha256": "420A993CDE6109C848D6BD4B91573D261C7313DC92D03885CC2DC95FD249CF9E",
+          "original_file": "new-primary-skill-925-icons.png",
+          "original_sha256": "E4A82825D941A73D18E1ACEE685D99E8DCD7BBDCC5C6A7CCC7BBB201C4AC470D",
+          "original_size": 29789,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/925.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/925.png",
+          "png_sha256": "8C43C9BFD02FF8CF67F71D26ADCEED3CA98199849D07E0A458C371D4257EAC04",
           "publisher": "gakumas-tools/gakumas-tools",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "BEB295DA2046CE415B3FC4188588AE0FEE69ED6A03DB0BE4E4EC7D1F18D4EE55",
-          "size": 28418,
+          "rgb_pixel_sha256": "AEF64E3F20B275E21A8AFC431E989941F33CD269F6DE16B42B5545C35A0BC9C2",
+          "size": 29607,
           "upgraded": false
         },
-        "918": {
-          "business_id": 918,
+        "926": {
+          "business_id": 926,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
@@ -166,27 +166,27 @@
             130,
             130
           ],
-          "frozen_at": "2026-11-07",
+          "frozen_at": "2026-11-17",
           "kind": "skill_card",
-          "name": "わずかずつの歩み",
+          "name": "忠義を胸に",
           "original_dimensions": [
             130,
             130
           ],
-          "original_file": "new-primary-skill-918-icons.png",
-          "original_sha256": "C30029BCEF5CFC025A9AA45FCF4803DE978BE9BC21E777F72A99500B97ED9686",
-          "original_size": 29836,
-          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/918.png",
-          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/918.png",
-          "png_sha256": "4E6A5DF8E19D176EBC7DEF00BB66EE9992B92D9318D68109788A0B2EC117595F",
+          "original_file": "new-primary-skill-926-icons.png",
+          "original_sha256": "CDC7E12A8D9D2F1E6A339EE7865896E13C09952009D8F7537EB2ACF0E911F717",
+          "original_size": 30006,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/926.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/926.png",
+          "png_sha256": "0CBC0B777F543A8F3CA859A80C58B4C3BB99F069D8AB8590A68F51859912BF02",
           "publisher": "gakumas-tools/gakumas-tools",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "F716BFAD628E15B23784BEC1C99803ACE2EDF61E533064BF21631F7373ACC425",
-          "size": 29189,
+          "rgb_pixel_sha256": "2C0D0792301EF4A48C4690597A8D360EFFE740AD3F9D3B3AC0611485CBB43462",
+          "size": 29819,
           "upgraded": true
         },
-        "919": {
-          "business_id": 919,
+        "927": {
+          "business_id": 927,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
@@ -198,27 +198,27 @@
             130,
             130
           ],
-          "frozen_at": "2026-11-07",
+          "frozen_at": "2026-11-17",
           "kind": "skill_card",
-          "name": "ありのままのわたし",
+          "name": "一途な従者",
           "original_dimensions": [
             130,
             130
           ],
-          "original_file": "new-primary-skill-919-icons.png",
-          "original_sha256": "A092EB868841CD37AAF16720861B33520550F4B171BF2D694A9940D59891351A",
-          "original_size": 30497,
-          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/919.png",
-          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/919.png",
-          "png_sha256": "9A978677C50585A512E3373EDC3BE65703B38313280C85866A36F32C27A9672F",
+          "original_file": "new-primary-skill-927-icons.png",
+          "original_sha256": "F4131963A1D06B7159808BDE229E61E0924A66BFF5F7C2BC81231BF277BB1DCF",
+          "original_size": 24059,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/927.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/927.png",
+          "png_sha256": "674D2AFF83004877BE2F543AFC2F67D4985C8C3BA721F1A03B433F0D820D6A9C",
           "publisher": "gakumas-tools/gakumas-tools",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "711553707142939430CA31A27A7C1A966378014524550129D7984A32F8AE1531",
-          "size": 29825,
+          "rgb_pixel_sha256": "664E44DA60CC1F910B3740F097F89693DD803F04D5B415CC0FA585F4D428815B",
+          "size": 23628,
           "upgraded": false
         },
-        "920": {
-          "business_id": 920,
+        "928": {
+          "business_id": 928,
           "capture_provenance": "UNKNOWN",
           "crop_box": [
             0,
@@ -230,87 +230,23 @@
             130,
             130
           ],
-          "frozen_at": "2026-11-07",
+          "frozen_at": "2026-11-17",
           "kind": "skill_card",
-          "name": "ありのままのわたし",
+          "name": "一途な従者",
           "original_dimensions": [
             130,
             130
           ],
-          "original_file": "new-primary-skill-920-icons.png",
-          "original_sha256": "539BCB21B810EA06C1C5FC28F8A96F0C1DA2613447DA89CA79C79537ED14A59F",
-          "original_size": 30741,
-          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/920.png",
-          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/920.png",
-          "png_sha256": "8A923CF843C9AA53186AB24AED26E7ECE8577601540EBC8F801FBE0FE9703FB9",
+          "original_file": "new-primary-skill-928-icons.png",
+          "original_sha256": "9B54B2BF12AA244EEF8A65E7AC9C9D9AE0DA24CEEF8E83A5EDAB4AAE61F23EAC",
+          "original_size": 24922,
+          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/928.png",
+          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/fc4f18a3f0c391cc69c0048e91537facba1f1f0c/packages/gakumas-images/images/skillCards/icons/928.png",
+          "png_sha256": "C065EA52F640EA2083FC3B846055481C61E631E790D406770F62E88F39110F32",
           "publisher": "gakumas-tools/gakumas-tools",
           "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "802BDE729FEE865AD0CCF4C74E28E85F37354B3AE090AF61305CD3C84132DED3",
-          "size": 30085,
-          "upgraded": true
-        },
-        "921": {
-          "business_id": 921,
-          "capture_provenance": "UNKNOWN",
-          "crop_box": [
-            0,
-            0,
-            130,
-            130
-          ],
-          "dimensions": [
-            130,
-            130
-          ],
-          "frozen_at": "2026-11-07",
-          "kind": "skill_card",
-          "name": "認めてくれるひと",
-          "original_dimensions": [
-            130,
-            130
-          ],
-          "original_file": "new-primary-skill-921-icons.png",
-          "original_sha256": "014B9549B085D8CE1A46B03D652575F16539BF9A69BD9E04F4C9E780DD0845B1",
-          "original_size": 31829,
-          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/921.png",
-          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/921.png",
-          "png_sha256": "78A2803E8D7AA25179C659761385443BF1E827DA32EE1B24D6D8A59F2EBA351B",
-          "publisher": "gakumas-tools/gakumas-tools",
-          "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "AB4BE643D582BDF621BBD92F96A9578D8D357E6A9C4F52455A48FB50360183AE",
-          "size": 31373,
-          "upgraded": false
-        },
-        "922": {
-          "business_id": 922,
-          "capture_provenance": "UNKNOWN",
-          "crop_box": [
-            0,
-            0,
-            130,
-            130
-          ],
-          "dimensions": [
-            130,
-            130
-          ],
-          "frozen_at": "2026-11-07",
-          "kind": "skill_card",
-          "name": "認めてくれるひと",
-          "original_dimensions": [
-            130,
-            130
-          ],
-          "original_file": "new-primary-skill-922-icons.png",
-          "original_sha256": "0A4ECE5F61AD919075116BFF12285063E724E734B81B58F9DBE1DFC0AB75D9CA",
-          "original_size": 32104,
-          "original_url": "https://raw.githubusercontent.com/gakumas-tools/gakumas-tools/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/922.png",
-          "page_url": "https://github.com/gakumas-tools/gakumas-tools/blob/6426bc747a892d9e97263c3bf63b9a9c170bdf3b/packages/gakumas-images/images/skillCards/icons/922.png",
-          "png_sha256": "90BCB6A60BAE2B7F4DCFC8B4D81670C7CCDDF3FDFBC100E3EF56654768417571",
-          "publisher": "gakumas-tools/gakumas-tools",
-          "resampling": "PILLOW_BICUBIC",
-          "rgb_pixel_sha256": "DD7F9B2036503C822F83B957E809A6FAFAF57463575BEB5E921B8E558DE53059",
-          "size": 31660,
+          "rgb_pixel_sha256": "39B55C6964E2D393B5F277633DA9BDF27B1594DCCD4FB73CEA249E633AF2AC99",
+          "size": 24500,
           "upgraded": true
         }
       },
@@ -340,11 +276,11 @@
         ]
       }
     ],
-    "reference_file_count": 3601,
+    "reference_file_count": 3607,
     "reference_set_digest_contract": "sha256(base_reference_set_sha256 || public_dataset_id || NUL || public_dataset_revision || NUL || ordered(public_reference_name || NUL || business_id || NUL || visual_group_id || NUL || top_coarse_bytes || reused_green_mask_bytes))",
-    "reference_set_sha256": "E1F4E75D2AF584A4174C743D1294809CF7D7C275FA5947F542DEBADD00CB01EE",
+    "reference_set_sha256": "43EBBF4503531FE0354B636744987713781AC40C352727B9DEC40D4E96D893A6",
     "replaced_reference_file_count": 0,
-    "retained_reference_file_count": 3600,
+    "retained_reference_file_count": 3606,
     "business_card_ids": [
       1,
       2,
@@ -1267,11 +1203,17 @@
       919,
       920,
       921,
-      922
+      922,
+      923,
+      924,
+      925,
+      926,
+      927,
+      928
     ],
-    "business_card_id_count": 922,
+    "business_card_id_count": 928,
     "business_card_id_min": 1,
-    "business_card_id_max": 922,
-    "business_card_id_set_sha256": "F97BC8A055836A1BD12182E040C7A3F805274AFFD166418649727B7754294DD3"
+    "business_card_id_max": 928,
+    "business_card_id_set_sha256": "44C066C19FD90EDE98F7908CC7C90E48068C3B1CC4C10B51B10584F4FBA63505"
   }
 }

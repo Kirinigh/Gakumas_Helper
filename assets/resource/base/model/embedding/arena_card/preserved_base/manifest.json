@@ -15,10 +15,11 @@
       "0564D51FD42A82D136F2EC2E1B0B0E6CB1D8DD6B06A917EBD3A63C0A702DC7D6",
       "5FE65161CF7A866A5E5C2D46E29A33E1DCEBC8BEB7904175698B0755AEF26BB8",
       "24CA0E37E32545D652684155FB4DC3F005612F47FC127758136AD8F7614BBFF7",
-      "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25"
+      "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25",
+      "E3C73345BCB4AE37673CADD9B9E4B7FEFE8A16AAAF8A6512EFA3F59E77F3526B"
     ],
-    "base_dataset_manifest_sha256": "FC5A23F6C675D07AA9BEE9BB6FE3DEB50ECE0421692EEF6FA5412542F4201C25",
-    "base_gallery_sha256": "3743D878CAD513382A0B5C63DB30B81870490CEA77338F1DC68779CCB2BC63BC",
+    "base_dataset_manifest_sha256": "E3C73345BCB4AE37673CADD9B9E4B7FEFE8A16AAAF8A6512EFA3F59E77F3526B",
+    "base_gallery_sha256": "C3926CC6DEC9BF4249D9C4FF9C3C5C268830D47F7388AD6CC6DEBC6CC8899BC2",
     "cache_key_fields": [
       "model_sha256",
       "preprocess_contract",
@@ -32,22 +33,22 @@
     "pillow_version": "12.3.0",
     "preprocess_contract": "task075-raw-art-focus-96-lanczos-64-bilinear-rgb-v1",
     "python_version": "3.12.7",
-    "regenerated_embedding_row_count": 8,
-    "reused_embedding_row_count": 4360,
+    "regenerated_embedding_row_count": 6,
+    "reused_embedding_row_count": 4368,
     "reused_extension_embedding_class_names": [],
     "tool_contract": "task095-card-embedding-gallery-v1",
     "zlib_runtime_version": "1.3.1"
   },
   "component": "arena_custom_card_embedding",
   "gallery": {
-    "bytes": 5011386,
-    "class_table_bytes": 61700,
+    "bytes": 5020566,
+    "class_table_bytes": 61760,
     "class_table_path": "arena_card_embedding_classes.json",
-    "class_table_sha256": "15C6632E92169768EEA3C6EED1F5D5E2721662735AB4D28436F524C888BE2FA1",
+    "class_table_sha256": "E69FB4105674562A81463349C328D8E64F806D940BA079F7226769F36A8C40C7",
     "distance": "cosine_similarity",
     "embedding_dim": 128,
     "path": "arena_card_embedding_gallery.npz",
-    "sha256": "C3926CC6DEC9BF4249D9C4FF9C3C5C268830D47F7388AD6CC6DEBC6CC8899BC2"
+    "sha256": "CFB3A5EC6CE4A8C46E7A307D657A5E535A96794CB0EAD33482F901A19D074196"
   },
   "model": {
     "bytes": 441780,
@@ -62,14 +63,14 @@
   },
   "promotion": {
     "artifact_bindings": {
-      "class_table_sha256": "15C6632E92169768EEA3C6EED1F5D5E2721662735AB4D28436F524C888BE2FA1",
-      "gallery_sha256": "C3926CC6DEC9BF4249D9C4FF9C3C5C268830D47F7388AD6CC6DEBC6CC8899BC2",
-      "manifest_sha256": "2A9B34E738FA1768F09EF8474DEA2771A8821924D811DBC6AC011DF5530388D2",
+      "class_table_sha256": "E69FB4105674562A81463349C328D8E64F806D940BA079F7226769F36A8C40C7",
+      "gallery_sha256": "CFB3A5EC6CE4A8C46E7A307D657A5E535A96794CB0EAD33482F901A19D074196",
+      "manifest_sha256": "4389AD77B2F3DF2BFE0332C2E793BA2FD6A69E4A625CF5ADC280E9F836E30F67",
       "model_sha256": "2D19B2BB64980094BC41725C6B586755D47AFA41D005877649BF26656A0F8404"
     },
     "fixed_rendered_policy": "DIAGNOSTIC_ONLY",
-    "offline_evaluation_sha256": "62BD5941660DDD67F60D1B62836DAB8DB3A7A9EFCD696E788B9BCB86CBCCF45D",
-    "pending_manifest_sha256": "2A9B34E738FA1768F09EF8474DEA2771A8821924D811DBC6AC011DF5530388D2",
+    "offline_evaluation_sha256": "E4580F4DCF533893607875EAA3DDAD7C57AAB309646205DF010ED22F64F2EAC4",
+    "pending_manifest_sha256": "4389AD77B2F3DF2BFE0332C2E793BA2FD6A69E4A625CF5ADC280E9F836E30F67",
     "tool_contract": "task095-card-embedding-gallery-promotion-v1"
   },
   "runtime": {
@@ -82,8 +83,8 @@
   },
   "schema_version": 1,
   "source": {
-    "business_card_id_count": 922,
-    "business_card_id_set_sha256": "F97BC8A055836A1BD12182E040C7A3F805274AFFD166418649727B7754294DD3",
+    "business_card_id_count": 928,
+    "business_card_id_set_sha256": "44C066C19FD90EDE98F7908CC7C90E48068C3B1CC4C10B51B10584F4FBA63505",
     "business_card_ids": [
       1,
       2,
@@ -1006,96 +1007,96 @@
       919,
       920,
       921,
-      922
+      922,
+      923,
+      924,
+      925,
+      926,
+      927,
+      928
     ],
-    "dataset_id": "task095-skill-card-extension-pc-705100-0080-released922-ui-20261107",
+    "dataset_id": "task095-skill-card-extension-pc-705100-0089-released928-ui-20261117",
     "dataset_manifest_mode": "EXTENSION",
-    "dataset_manifest_sha256": "E3C73345BCB4AE37673CADD9B9E4B7FEFE8A16AAAF8A6512EFA3F59E77F3526B",
-    "dataset_revision": "pc-705100-0080-released922-ui-20261107",
-    "extension_business_card_id_count": 8,
+    "dataset_manifest_sha256": "72762BF61E609526C71CA7C012F53B7312E57582F0443D3F1E14A4B4C3D329DC",
+    "dataset_revision": "pc-705100-0089-released928-ui-20261117",
+    "extension_business_card_id_count": 6,
     "extension_business_card_ids": [
-      915,
-      916,
-      917,
-      918,
-      919,
-      920,
-      921,
-      922
+      923,
+      924,
+      925,
+      926,
+      927,
+      928
     ],
-    "image_class_count": 4368,
+    "image_class_count": 4374,
     "source_domain": "OFFICIAL_RAW_CARD_ART",
     "training_target": "official raw card art only",
-    "visual_identity_count": 473
+    "visual_identity_count": 476
   },
   "validation": {
     "gates": {
       "candidate": {
-        "class_table_sha256": "15C6632E92169768EEA3C6EED1F5D5E2721662735AB4D28436F524C888BE2FA1",
-        "gallery_sha256": "C3926CC6DEC9BF4249D9C4FF9C3C5C268830D47F7388AD6CC6DEBC6CC8899BC2",
-        "manifest_sha256": "2A9B34E738FA1768F09EF8474DEA2771A8821924D811DBC6AC011DF5530388D2",
+        "class_table_sha256": "E69FB4105674562A81463349C328D8E64F806D940BA079F7226769F36A8C40C7",
+        "gallery_sha256": "CFB3A5EC6CE4A8C46E7A307D657A5E535A96794CB0EAD33482F901A19D074196",
+        "manifest_sha256": "4389AD77B2F3DF2BFE0332C2E793BA2FD6A69E4A625CF5ADC280E9F836E30F67",
         "model_sha256": "2D19B2BB64980094BC41725C6B586755D47AFA41D005877649BF26656A0F8404"
       },
       "extension": {
         "business_ids": [
-          915,
-          916,
-          917,
-          918,
-          919,
-          920,
-          921,
-          922
+          923,
+          924,
+          925,
+          926,
+          927,
+          928
         ],
-        "query_count": 8,
-        "visual_group_count": 4
+        "query_count": 6,
+        "visual_group_count": 3
       },
       "fixed_rendered_diagnostic": {
         "acceptance_role": "DIAGNOSTIC_ONLY",
         "historical_full": {
-          "exact_id_correct": 3415,
-          "query_count": 4360,
-          "upgrade_correct": 3945,
-          "upgrade_query_count": 4152,
-          "visual_top1_correct": 3415,
-          "visual_top5_correct": 4064
+          "exact_id_correct": 3423,
+          "query_count": 4368,
+          "upgrade_correct": 3953,
+          "upgrade_query_count": 4160,
+          "visual_top1_correct": 3423,
+          "visual_top5_correct": 4072
         },
         "historical_tail": {
           "business_ids": [
-            907,
-            908,
-            909,
-            910,
-            911,
-            912,
-            913,
-            914
+            917,
+            918,
+            919,
+            920,
+            921,
+            922
           ],
-          "exact_id_correct": 30,
-          "query_count": 32,
-          "upgrade_correct": 31,
-          "upgrade_query_count": 32,
-          "visual_top1_correct": 30,
-          "visual_top5_correct": 32
+          "exact_id_correct": 6,
+          "query_count": 6,
+          "upgrade_correct": 6,
+          "upgrade_query_count": 6,
+          "visual_top1_correct": 6,
+          "visual_top5_correct": 6
         },
         "new": {
-          "exact_id_correct": 8,
+          "exact_id_correct": 6,
           "queries": [
             {
-              "business_id": 915,
+              "business_id": 923,
               "exact_id_correct": true,
-              "expected_group": "p_card-03-ido-3_206",
+              "expected_group": "p_card-01-ido-3_292",
               "predicted_upgraded": false,
-              "resolved_business_id": 915,
-              "top1_group": "p_card-03-ido-3_206",
-              "top1_margin": 0.13919490575790405,
-              "top1_similarity": 0.8472279906272888,
+              "resolved_business_id": 923,
+              "top1_group": "p_card-01-ido-3_292",
+              "top1_margin": 0.1668006181716919,
+              "top1_similarity": 0.8543071150779724,
               "top5_groups": [
-                "p_card-03-ido-3_206",
-                "p_card-03-sup-3_252",
-                "p_card-03-ido-3_116",
-                "p_card-02-ido-3_096",
-                "p_card-03-act-3_055"
+                "p_card-01-ido-3_292",
+                "p_card-01-sup-2_097",
+                "p_card-02-ido-3_114",
+                "p_card-00-sup-3_027",
+                "p_card-02-ido-2_024"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1103,20 +1104,20 @@
               "visual_top5_correct": true
             },
             {
-              "business_id": 916,
+              "business_id": 924,
               "exact_id_correct": true,
-              "expected_group": "p_card-03-ido-3_206",
+              "expected_group": "p_card-01-ido-3_292",
               "predicted_upgraded": true,
-              "resolved_business_id": 916,
-              "top1_group": "p_card-03-ido-3_206",
-              "top1_margin": 0.13580763339996338,
-              "top1_similarity": 0.7921267747879028,
+              "resolved_business_id": 924,
+              "top1_group": "p_card-01-ido-3_292",
+              "top1_margin": 0.15182483196258545,
+              "top1_similarity": 0.8509721755981445,
               "top5_groups": [
-                "p_card-03-ido-3_206",
-                "p_card-03-ido-3_116",
-                "p_card-02-ido-3_021",
-                "p_card-02-sup-3_181",
-                "p_card-03-sup-3_252"
+                "p_card-01-ido-3_292",
+                "p_card-00-sup-3_027",
+                "p_card-02-ido-3_114",
+                "p_card-01-ido-3_070",
+                "p_card-02-sup-3_023"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1124,20 +1125,20 @@
               "visual_top5_correct": true
             },
             {
-              "business_id": 917,
+              "business_id": 925,
               "exact_id_correct": true,
-              "expected_group": "p_card-03-ido-3_219",
+              "expected_group": "p_card-01-ido-2_170",
               "predicted_upgraded": false,
-              "resolved_business_id": 917,
-              "top1_group": "p_card-03-ido-3_219",
-              "top1_margin": 0.24244290590286255,
-              "top1_similarity": 0.8694304823875427,
+              "resolved_business_id": 925,
+              "top1_group": "p_card-01-ido-2_170",
+              "top1_margin": 0.06335890293121338,
+              "top1_similarity": 0.7157690525054932,
               "top5_groups": [
-                "p_card-03-ido-3_219",
-                "p_card-01-ido-3_150",
-                "p_card-01-ido-3_168",
-                "april-fools-asari",
-                "p_card-03-act-100_018"
+                "p_card-01-ido-2_170",
+                "p_card-01-ido-3_202",
+                "p_card-01-act-2_061",
+                "p_card-01-act-3_010",
+                "p_card-03-ido-3_122"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1145,20 +1146,20 @@
               "visual_top5_correct": true
             },
             {
-              "business_id": 918,
+              "business_id": 926,
               "exact_id_correct": true,
-              "expected_group": "p_card-03-ido-3_219",
+              "expected_group": "p_card-01-ido-2_170",
               "predicted_upgraded": true,
-              "resolved_business_id": 918,
-              "top1_group": "p_card-03-ido-3_219",
-              "top1_margin": 0.21721631288528442,
-              "top1_similarity": 0.8573211431503296,
+              "resolved_business_id": 926,
+              "top1_group": "p_card-01-ido-2_170",
+              "top1_margin": 0.03938943147659302,
+              "top1_similarity": 0.6831350326538086,
               "top5_groups": [
-                "p_card-03-ido-3_219",
-                "p_card-01-ido-3_150",
-                "p_card-01-ido-3_168",
-                "april-fools-asari",
-                "p_card-02-ido-3_143"
+                "p_card-01-ido-2_170",
+                "p_card-01-ido-3_202",
+                "p_card-01-act-2_061",
+                "p_card-01-act-3_010",
+                "p_card-03-ido-3_122"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1166,20 +1167,20 @@
               "visual_top5_correct": true
             },
             {
-              "business_id": 919,
+              "business_id": 927,
               "exact_id_correct": true,
-              "expected_group": "p_card-02-ido-3_208",
+              "expected_group": "p_card-01-ido-1_138",
               "predicted_upgraded": false,
-              "resolved_business_id": 919,
-              "top1_group": "p_card-02-ido-3_208",
-              "top1_margin": 0.06532883644104004,
-              "top1_similarity": 0.750109076499939,
+              "resolved_business_id": 927,
+              "top1_group": "p_card-01-ido-1_138",
+              "top1_margin": 0.0944526195526123,
+              "top1_similarity": 0.8911572694778442,
               "top5_groups": [
-                "p_card-02-ido-3_208",
-                "p_card-02-act-3_050",
-                "p_card-02-ido-3_211",
-                "p_card-02-act-100_010",
-                "p_card-02-act-100_009"
+                "p_card-01-ido-1_138",
+                "p_card-02-ido-1_057",
+                "p_card-02-ido-1_016",
+                "p_card-01-act-2_002",
+                "p_card-02-ido-1_018"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1187,62 +1188,20 @@
               "visual_top5_correct": true
             },
             {
-              "business_id": 920,
+              "business_id": 928,
               "exact_id_correct": true,
-              "expected_group": "p_card-02-ido-3_208",
+              "expected_group": "p_card-01-ido-1_138",
               "predicted_upgraded": true,
-              "resolved_business_id": 920,
-              "top1_group": "p_card-02-ido-3_208",
-              "top1_margin": 0.04896271228790283,
-              "top1_similarity": 0.7032492160797119,
+              "resolved_business_id": 928,
+              "top1_group": "p_card-01-ido-1_138",
+              "top1_margin": 0.03683733940124512,
+              "top1_similarity": 0.7896458506584167,
               "top5_groups": [
-                "p_card-02-ido-3_208",
-                "p_card-02-act-3_050",
-                "p_card-02-ido-3_211",
-                "p_card-02-act-100_009",
-                "p_card-02-act-100_010"
-              ],
-              "upgrade_applicable": true,
-              "upgrade_correct": true,
-              "visual_top1_correct": true,
-              "visual_top5_correct": true
-            },
-            {
-              "business_id": 921,
-              "exact_id_correct": true,
-              "expected_group": "p_card-02-ido-3_221",
-              "predicted_upgraded": false,
-              "resolved_business_id": 921,
-              "top1_group": "p_card-02-ido-3_221",
-              "top1_margin": 0.138744056224823,
-              "top1_similarity": 0.8223313093185425,
-              "top5_groups": [
-                "p_card-02-ido-3_221",
-                "p_card-01-act-3_185",
-                "p_card-03-act-3_054",
-                "p_card-02-ido-3_130",
-                "p_card-03-ido-3_131"
-              ],
-              "upgrade_applicable": true,
-              "upgrade_correct": true,
-              "visual_top1_correct": true,
-              "visual_top5_correct": true
-            },
-            {
-              "business_id": 922,
-              "exact_id_correct": true,
-              "expected_group": "p_card-02-ido-3_221",
-              "predicted_upgraded": true,
-              "resolved_business_id": 922,
-              "top1_group": "p_card-02-ido-3_221",
-              "top1_margin": 0.12823355197906494,
-              "top1_similarity": 0.7836034297943115,
-              "top5_groups": [
-                "p_card-02-ido-3_221",
-                "p_card-03-men-100_016",
-                "p_card-03-act-3_054",
-                "p_card-01-act-3_185",
-                "p_card-03-ido-3_131"
+                "p_card-01-ido-1_138",
+                "p_card-03-act-2_118",
+                "p_card-02-ido-1_057",
+                "p_card-02-ido-1_016",
+                "p_card-01-act-2_002"
               ],
               "upgrade_applicable": true,
               "upgrade_correct": true,
@@ -1250,46 +1209,44 @@
               "visual_top5_correct": true
             }
           ],
-          "query_count": 8,
-          "upgrade_correct": 8,
-          "upgrade_query_count": 8,
-          "visual_top1_correct": 8,
-          "visual_top5_correct": 8
+          "query_count": 6,
+          "upgrade_correct": 6,
+          "upgrade_query_count": 6,
+          "visual_top1_correct": 6,
+          "visual_top5_correct": 6
         },
         "note": "card-art acceptance uses official raw-art augmentation and frozen DMM ROI evidence; fixed renders remain diagnostic and upgrade-marker sources"
       },
       "inheritance": {
         "array_count": 6,
-        "row_count": 4360,
+        "row_count": 4368,
         "status": "BITWISE_EQUAL"
       },
       "new_visual_group_separation": {
-        "minimum_margin": 0.20221710205078125,
+        "minimum_margin": 0.18719053268432617,
         "required_minimum_margin": 0.01,
         "status": "PASS"
       },
       "raw_art": {
-        "query_count": 4,
+        "query_count": 3,
         "status": "PASS",
-        "top1_correct": 4,
-        "top5_correct": 4
+        "top1_correct": 3,
+        "top5_correct": 3
       },
       "real_dmm_samples": {
         "business_ids": [
-          915,
-          916,
-          917,
-          918,
-          919,
-          920,
-          921,
-          922
+          923,
+          924,
+          925,
+          926,
+          927,
+          928
         ],
         "status": "PENDING"
       }
     },
     "note": "authoritative offline gates passed; real DMM samples remain explicitly pending",
-    "offline_evaluation_sha256": "62BD5941660DDD67F60D1B62836DAB8DB3A7A9EFCD696E788B9BCB86CBCCF45D",
+    "offline_evaluation_sha256": "E4580F4DCF533893607875EAA3DDAD7C57AAB309646205DF010ED22F64F2EAC4",
     "state": "READY_WITH_REAL_SAMPLES_PENDING"
   }
 }

@@ -1,25 +1,25 @@
 {
   "schema_version": 1,
-  "revision": "task095-batch18-p-item-classification-510-native-ui-append-v1",
+  "revision": "task095-batch20-p-item-classification-519-native-ui-append-v1",
   "status": "OFFLINE_VALIDATED",
   "classification_rule": "p_item_plan_and_four_kinds_v1",
   "runtime_filtering_enabled": false,
   "sources": {
     "catalog": {
-      "repository": "https://github.com/surisuririsu/gakumas-tools",
+      "repository": "https://github.com/gakumas-tools/gakumas-tools",
       "path": "packages/gakumas-data/json/p_items.json",
-      "revision": "6426bc747a892d9e97263c3bf63b9a9c170bdf3b",
-      "p_items_sha256": "4027A200665A37C9D1410668237FE6A4BAB5D9CC6515C9CA59CEC1CF70F3299D"
+      "revision": "fc4f18a3f0c391cc69c0048e91537facba1f1f0c",
+      "p_items_sha256": "F790B6AFCA8859094FB1BF1E253C49A576E13211FFEE899F8C14610ABA83A210"
     },
     "official_master": {
       "file": "ProduceItem.yaml",
-      "original_git_blob": "24e6e7c04d946c6fe9718c5233ae74090f06d37c",
-      "original_yaml_sha256": "B8649D03CCC43B67E2045DE8991926EFBBA02ADF1ACE95466465B18EFD6BC051",
-      "representation": "Complete parsed native JSON; SHA above binds this parser input, not original YAML bytes",
-      "revision": "0cd122bb7ed5e6011c66d95041798b5cc12a5483",
-      "sha256": "9C5450BEF29794FFD9BDDFEDEF936734A45EE5184246ECA1098201B80FB0C625"
+      "original_git_blob": "4768afc3f3a326fe35442344359cee08a833e537",
+      "original_yaml_sha256": "B20597AE6D8F4B82B295A06551F951D97D103CD0F41314466675E85EB7C441A8",
+      "representation": "Complete parsed native JSON; SHA binds parser input, not original YAML bytes",
+      "revision": "edc305aac3ac0204806c96164ce36fb795ba81e1",
+      "sha256": "DD9689EA83C82C21A8B573D9766E9B30C5AF90474464D730C49B188362CD3B55"
     },
-    "catalog_evidence_sha256": "A4526B9DA085982175246E34813A6F7EAB6A3700E171237DF4E18DBB56BA3825",
+    "catalog_evidence_sha256": "2283800936E49F54FCD317861028575C52025BD933D4A1AAC5EE35B814A96332",
     "visual_dataset_manifest_sha256": "EAC98A86F5FF40F122675E374B3B764FFE95CBB44584198F2E7C1EC5F2D7795D",
     "visual_crosswalk_sha256": "487AD54AD0929BEFA59AD09E32CEA30D227EFE9CC6AB7F72107CBF5293A3DB49"
   },
@@ -18763,6 +18763,339 @@
         }
       },
       "paired_business_id": null
+    },
+    {
+      "business_id": 511,
+      "name": "仲良しアルバム",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": true,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-3-362-0",
+          "assetId": "img_general_pitem_3-362",
+          "name": "仲良しアルバム",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-3-0122",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
+    },
+    {
+      "business_id": 512,
+      "name": "なにかが変わる予感",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 164,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-3-393-0",
+          "assetId": "img_general_pitem_3-393",
+          "name": "なにかが変わる予感",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": true,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "i_card-hkne-3-000",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 513
+    },
+    {
+      "business_id": 513,
+      "name": "なにかが変わる予感+",
+      "upgraded": true,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 164,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-3-393-1",
+          "assetId": "img_general_pitem_3-393",
+          "name": "なにかが変わる予感+",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": true,
+          "isUpgraded": true,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "i_card-hkne-3-000",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 512
+    },
+    {
+      "business_id": 514,
+      "name": "お返しの髪飾り",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 165,
+        "catalog_rarity": "SR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-2-171-0",
+          "assetId": "img_general_pitem_2-171",
+          "name": "お返しの髪飾り",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": true,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Sr",
+          "originIdolCardId": "i_card-hkne-2-000",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 515
+    },
+    {
+      "business_id": 515,
+      "name": "お返しの髪飾り+",
+      "upgraded": true,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 165,
+        "catalog_rarity": "SR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-2-171-1",
+          "assetId": "img_general_pitem_2-171",
+          "name": "お返しの髪飾り+",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": true,
+          "isUpgraded": true,
+          "rarity": "ProduceItemRarity_Sr",
+          "originIdolCardId": "i_card-hkne-2-000",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 514
+    },
+    {
+      "business_id": 516,
+      "name": "お嬢様おでかけセット",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-3-356-0",
+          "assetId": "img_general_pitem_3-356",
+          "name": "お嬢様おでかけセット",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Ssr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-3-0115",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
+    },
+    {
+      "business_id": 517,
+      "name": "お掃除の成果",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "support_non_inheritable",
+      "reference_available": false,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "produce",
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SR",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source_and_official_exam_flag",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-2-137-0",
+          "assetId": "img_general_pitem_2-137",
+          "name": "お掃除の成果",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": false,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_Sr",
+          "originIdolCardId": "",
+          "originSupportCardId": "s_card-2-0084",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": null
+    },
+    {
+      "business_id": 518,
+      "name": "従者の必需品",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 166,
+        "catalog_rarity": "R",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-1-100-0",
+          "assetId": "img_general_pitem_1-100",
+          "name": "従者の必需品",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": true,
+          "isUpgraded": false,
+          "rarity": "ProduceItemRarity_R",
+          "originIdolCardId": "i_card-hkne-1-000",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 519
+    },
+    {
+      "business_id": 519,
+      "name": "従者の必需品+",
+      "upgraded": true,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": true,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 166,
+        "catalog_rarity": "R",
+        "catalog_welfare": false,
+        "plan_basis": "official_plan",
+        "kind_basis": "catalog_source",
+        "official_mapping": "unique_normalized_name",
+        "official": {
+          "id": "pitem_01-1-100-1",
+          "assetId": "img_general_pitem_1-100",
+          "name": "従者の必需品+",
+          "planType": "ProducePlanType_Plan1",
+          "isExamEffect": true,
+          "isUpgraded": true,
+          "rarity": "ProduceItemRarity_R",
+          "originIdolCardId": "i_card-hkne-1-000",
+          "originSupportCardId": "",
+          "libraryHidden": false,
+          "isChallenge": false,
+          "isHighScoreRush": false,
+          "isResearch": false,
+          "isEasy": false,
+          "isLimited": false
+        }
+      },
+      "paired_business_id": 518
     }
   ],
   "indexes": {
@@ -18980,7 +19313,16 @@
         500,
         501,
         502,
-        503
+        503,
+        511,
+        512,
+        513,
+        514,
+        515,
+        516,
+        517,
+        518,
+        519
       ],
       "logic": [
         5,
@@ -19610,7 +19952,13 @@
         506,
         507,
         508,
-        509
+        509,
+        512,
+        513,
+        514,
+        515,
+        518,
+        519
       ],
       "support_inheritable": [
         71,
@@ -19753,7 +20101,10 @@
         499,
         502,
         503,
-        510
+        510,
+        511,
+        516,
+        517
       ],
       "other": [
         1,
@@ -19810,14 +20161,14 @@
   "counts": {
     "plan": {
       "free": 50,
-      "sense": 161,
+      "sense": 170,
       "logic": 178,
       "anomaly": 121
     },
     "kind": {
-      "p_idol": 323,
+      "p_idol": 329,
       "support_inheritable": 50,
-      "support_non_inheritable": 89,
+      "support_non_inheritable": 92,
       "other": 48
     }
   },
@@ -19835,9 +20186,9 @@
   "gallery_coverage": {
     "component": "p_item_reference",
     "join_key": "business_id",
-    "business_id_count": 450,
-    "manifest_sha256": "4724128D46BAD98BC44842FED661062C91D1EF40A38042D57C6CF2CBC1EFC661",
-    "gallery_sha256": "132D6FA526323DAEDB1BB240E7F97620F6219BDA58FEDEFE63D2FCE791CDD4C9",
+    "business_id_count": 456,
+    "manifest_sha256": "9F9BD9F2CB0FC8B6DAA855FC510A013647DDB12F08C3600F4BB82A148DB1765B",
+    "gallery_sha256": "4C5FD5DF071B965612D69AB3CF07FE70D71CB15CB54F5AE1D984D6C91C17DE6A",
     "without_reference_business_ids": [
       1,
       2,
@@ -19898,7 +20249,10 @@
       499,
       502,
       503,
-      510
+      510,
+      511,
+      516,
+      517
     ]
   }
 }
