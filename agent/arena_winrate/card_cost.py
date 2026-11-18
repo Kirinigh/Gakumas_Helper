@@ -502,6 +502,22 @@ class GenericCostReferenceGallery:
             keep.append(label)
         if not keep:
             return None
+        # A tiny detached scanline can otherwise stretch the numeral's resize
+        # box despite the row/column support trim below. Reject it only when a
+        # substantial digit supplies a core and a clear vertical gap separates
+        # the speck. Nearby broken strokes and full-height neighbouring digits
+        # must remain part of the evidence.
+        core_label = max(keep, key=lambda label: int(stats[label, cv2.CC_STAT_AREA]))
+        _, core_y, _, core_height, core_area = (int(value) for value in stats[core_label])
+        if core_height >= 8:
+            retained: list[int] = []
+            for label in keep:
+                _, y, _, height, area = (int(value) for value in stats[label])
+                vertical_gap = max(core_y - (y + height), y - (core_y + core_height), 0)
+                if height <= 2 and area * 8 < core_area and vertical_gap >= 3:
+                    continue
+                retained.append(label)
+            keep = retained
         numeral = np.isin(labels, keep).astype(np.uint8)
         points_y, points_x = np.where(numeral > 0)
         crop = numeral[
