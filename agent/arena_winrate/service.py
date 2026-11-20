@@ -109,6 +109,7 @@ class ArenaOwnScoreService:
         provider: OwnSnapshotProvider,
         *,
         before_cache_save: Callable[[], None] | None = None,
+        validate_capture: Callable[[Mapping[str, Any]], None] | None = None,
         preserve_grade_override: bool = False,
     ) -> ArenaOwnScoreEvaluation:
         if not isinstance(preserve_grade_override, bool):
@@ -130,6 +131,16 @@ class ArenaOwnScoreService:
                 attempts=attempt,
                 error=str(failure),
             )
+        if validate_capture is not None:
+            try:
+                validate_capture(snapshot)
+            except OwnScoreCacheError as error:
+                return ArenaOwnScoreEvaluation(
+                    status="incomplete_input",
+                    attempts=attempt,
+                    error=str(error),
+                    error_detail=error.technical_detail or str(error),
+                )
         request = {
             "schema_version": PROTOCOL_VERSION,
             "request_id": snapshot["capture_id"],
@@ -202,17 +213,22 @@ def reset_prepared_own_score_cache(cache_store: OwnScoreCacheStore) -> None:
 
 def own_score_cache_prepared_for_current_task(
     cache_store: OwnScoreCacheStore,
+    *,
+    include_expired: bool = False,
 ) -> bool:
     """Return whether this process marked the cache during the current Maa task.
 
     The task entry action clears this marker.  This narrow predicate also drops
-    a marker after the 04:00 boundary; cache identity remains authoritative in
-    ``prepare_own_score_cache`` before any match can use the prepared capture.
+    a marker after the 04:00 boundary by default. A caller deciding whether
+    to attempt a second refresh can include it and require preparation
+    validation, which rejects the expired capture.
     """
 
     prepared = _PREPARED_CACHE_DAYS.get(cache_store.path)
     if prepared is None:
         return False
+    if include_expired:
+        return True
     if prepared[0] != contest_day_key():
         _PREPARED_CACHE_DAYS.pop(cache_store.path, None)
         return False
@@ -245,9 +261,25 @@ def prepare_own_score_cache(
     if force_recalculate:
         reset_prepared_own_score_cache(cache_store)
     preparation_day = contest_day_key()
+    prepared = _PREPARED_CACHE_DAYS.get(cache_path) if require_prepared else None
+    if require_prepared:
+        if prepared is None:
+            raise OwnScoreCacheError(
+                "本次任务没有成功准备己方缓存；请重新运行任务"
+            )
+        if prepared[0] != preparation_day:
+            raise OwnScoreCacheError(
+                "竞技场日期在自动准备己方缓存后跨过了每日 04:00 刷新边界；请重新运行任务"
+            )
     evaluation: ArenaOwnScoreEvaluation | None = None
 
-    def validate_cached_snapshot(snapshot: Mapping[str, Any]) -> None:
+    def validate_snapshot_for_cache(snapshot: Mapping[str, Any]) -> None:
+        if snapshot["season"] != season or tuple(snapshot["stageIds"]) != stage_ids:
+            raise OwnScoreCacheError("己方阵容的期数或舞台与当前选择不符")
+        if prepared is not None and prepared[1] != str(snapshot.get("capture_id")):
+            raise OwnScoreCacheError(
+                "本次任务准备的己方缓存已被其他内容替换；请重新运行任务"
+            )
         if validate_loadout is None:
             return
         for stage in snapshot["own_team"]["stages"]:
@@ -261,7 +293,7 @@ def prepare_own_score_cache(
                         else "归属无法确认"
                     )
                     raise OwnScoreCacheError(
-                        f"旧己方缓存舞台{stage['stage_number']}/成员{member['slot']}的"
+                        f"己方阵容舞台{stage['stage_number']}/成员{member['slot']}的"
                         f"P道具与上排第1张固有技能卡{reason}；请重算竞技场己方总分",
                         technical_detail=getattr(error, "technical_detail", None) or str(error),
                     ) from error
@@ -281,7 +313,11 @@ def prepare_own_score_cache(
             simulations=simulations,
             seed=seed,
             cache_store=cache_store,
-        ).calculate(provider, before_cache_save=ensure_preparation_day)
+        ).calculate(
+            provider,
+            before_cache_save=ensure_preparation_day,
+            validate_capture=validate_snapshot_for_cache,
+        )
         if evaluation.status != "calculated":
             return evaluation, None
     try:
@@ -293,7 +329,7 @@ def prepare_own_score_cache(
             expected_upstream_commit=expected_upstream_commit,
         )
         if cached is not None:
-            validate_cached_snapshot(cached[0])
+            validate_snapshot_for_cache(cached[0])
     except OwnScoreResimulationRequired as error:
         if force_recalculate and evaluation is not None:
             return (
@@ -313,7 +349,7 @@ def prepare_own_score_cache(
         if snapshot is None:
             cached = None
         else:
-            validate_cached_snapshot(snapshot)
+            validate_snapshot_for_cache(snapshot)
 
             class CachedOwnSnapshotProvider:
                 def read_own(self) -> Mapping[str, Any]:
@@ -340,7 +376,7 @@ def prepare_own_score_cache(
                     expected_upstream_commit=expected_upstream_commit,
                 )
                 if cached is not None:
-                    validate_cached_snapshot(cached[0])
+                    validate_snapshot_for_cache(cached[0])
             except OwnScoreCacheError as error:
                 return (
                     replace(
@@ -369,20 +405,15 @@ def prepare_own_score_cache(
         capture_id = str(cached[0]["capture_id"])
         _PREPARED_CACHE_DAYS[cache_path] = (preparation_day, capture_id)
     elif require_prepared:
-        prepared = _PREPARED_CACHE_DAYS.get(cache_path)
-        if prepared is None:
-            raise OwnScoreCacheError(
-                "本次任务没有成功准备己方缓存；请重新运行任务"
-            )
         if cached is None:
             raise OwnScoreCacheError(
                 "本次任务准备的己方缓存已缺失或与当前期数不兼容；请重新运行任务"
             )
-        if prepared[1] != str(cached[0].get("capture_id")):
+        if _PREPARED_CACHE_DAYS.get(cache_path) != prepared:
             raise OwnScoreCacheError(
                 "本次任务准备的己方缓存已被其他内容替换；请重新运行任务"
             )
-        if prepared[0] != preparation_day:
+        if contest_day_key() != preparation_day:
             raise OwnScoreCacheError(
                 "竞技场日期在自动准备己方缓存后跨过了每日 04:00 刷新边界；请重新运行任务"
             )

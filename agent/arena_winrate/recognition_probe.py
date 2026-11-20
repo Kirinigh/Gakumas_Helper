@@ -395,10 +395,6 @@ class RecognitionProbe:
         ordinary_fallback = _ordinary_p_item_fallback_proof(diagnostic) if p_item and outcome == "completed" else None
         if ordinary_fallback is not None:
             category = "p_item_return_ordinary_fallback"
-        elif p_item and outcome == "completed":
-            rereads = diagnostic.get("p_item_body_rereads")
-            if isinstance(rereads, list) and any(isinstance(row, Mapping) and row.get("accepted") is True for row in rereads):
-                category = "p_item_return_body_reread"
         if cost_evidence:
             category = "cost_evidence_inconclusive"
         elif recovered is not None:
@@ -508,7 +504,6 @@ class RecognitionProbe:
             "stage_plan": diagnostic.get("probe_stage_plan"),
             "body_text": diagnostic.get("probe_body_text"),
             "p_item_restore": diagnostic.get("p_item_restore"),
-            "p_item_body_rereads": diagnostic.get("p_item_body_rereads"),
             "cost_evidence": cost_evidence,
             "reader_probe_revision": "arena-feedback-20260923-cost-evidence-v4",
             "build": self.settings.get("build"),

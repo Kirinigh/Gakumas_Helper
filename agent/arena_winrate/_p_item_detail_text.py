@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import re
 import json
+import math
 import unicodedata
 from typing import Any, Literal
 from pathlib import Path
-from dataclasses import field, dataclass
+from dataclasses import field, replace, dataclass
 from collections.abc import Mapping, Sequence
 
 BOUNDARY = "\u2063"
 NUMBER = re.compile(r"[+-]?\d+(?:[.,]\d+)?%?")
 OBSERVED_NUMBER = r"([+-]?[0-9]+(?:[.,][0-9]+)?%?)(?![0-9.,%])"
+_DETAIL_COUNT_TRAILER = re.compile(r"\(試験・ステージ内[1-9][0-9]*回\)\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,8 +23,58 @@ class PItemDetailTextResult:
     reason: str = ""
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
+
+def retain_native_detail_vetoes(
+    result: PItemDetailTextResult, vetoes: dict[int, list[dict]],
+) -> PItemDetailTextResult:
+    """Keep contradictions across interpretations of the same observation."""
+    if not vetoes:
+        return result
+    diagnostics = result.diagnostics
+    conflicts = diagnostics.get("conflicts", {})
+    retained = {item_id: list(entries) for item_id, entries in diagnostics.get("native_detail_vetoes", {}).items()}
+    for item_id, entries in vetoes.items():
+        seen = retained.setdefault(item_id, [])
+        seen.extend(entry for entry in entries if entry not in seen)
+    if result.status == "unique" and any(item_id in retained for item_id in result.ids):
+        result = replace(result, status="unknown", ids=(), reason="excluded_native_detail_conflict")
+    return replace(result, diagnostics={
+        **diagnostics,
+        "native_detail_vetoes": retained,
+        "conflicts": {
+            **retained,
+            **{item_id: entries for item_id, entries in conflicts.items() if entries or item_id not in retained},
+        },
+        "positive_support": {
+            item_id: entries if item_id not in retained else []
+            for item_id, entries in diagnostics.get("positive_support", {}).items()
+        },
+    })
+
+
 def normalize(text: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
+
+
+def _normalize_detail_atom(text: str) -> str:
+    return normalize(text).translate(str.maketrans({"值": "値", "增": "増", "·": "・"})).replace("体力消费", "体力消費")
+
+
+def _valid_detail_atoms(atoms: Sequence[Mapping], size: tuple[int, int] | None = None) -> bool:
+    try:
+        for atom in atoms:
+            box = atom["box"]
+            if (not isinstance(atom["text"], str) or len(box) != 4
+                    or any(isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value)
+                           for value in box)
+                    or min(box[:2]) < 0 or min(box[2:]) <= 0):
+                return False
+            if size is not None and (box[0] + box[2] > size[0] or box[1] + box[3] > size[1]):
+                return False
+        return True
+    except (KeyError, TypeError, OverflowError):
+        return False
+
 
 def bounds(atom: dict) -> tuple[float, float, float, float]:
     x, y, w, h = atom["box"]
@@ -104,18 +156,26 @@ def body_layout(atoms: list[dict], title_index: int, sources: PItemSourceTextFra
         if not key:
             rejected.append({"index": index, "reason": "empty_source_text"})
             continue
-        if panel_box is not None:
-            px, py, pw, ph = panel_box
-            ax, ay, ar, ab = bounds(atom)
-            if not (px <= ax < ar <= px + pw and py <= ay < ab <= py + ph):
-                if px <= (ax + ar) / 2 <= px + pw and py <= (ay + ab) / 2 <= py + ph:
-                    return {"status": "unknown", "reason": "panel_atom_crosses_boundary", "body": "", "atoms": []}
-                rejected.append({"index": index, "reason": "outside_confirmed_detail_panel"})
-                continue
         matched_sources = sources.matching_frames(atom, height)
         if len(matched_sources) >= 2:
             rejected.append({"index": index, "reason": "stable_source_background", "source_frame_indices": matched_sources})
             continue
+        if panel_box is not None:
+            px, py, pw, ph = panel_box
+            ax, ay, ar, ab = bounds(atom)
+            spill = max(px - ax, py - ay, ar - px - pw, ab - py - ph)
+            if spill > 0:
+                overlap_width = min(ar, px + pw) - max(ax, px)
+                overlap_height = min(ab, py + ph) - max(ay, py)
+                # Give detector boxes a letter-sized tolerance when most of
+                # the atom is still in the observed panel. Never clip its text.
+                within_tolerance = (spill <= .5 * height and overlap_width >= .75 * (ar - ax)
+                                    and overlap_height >= .75 * (ab - ay))
+                if not within_tolerance:
+                    if px <= (ax + ar) / 2 <= px + pw and py <= (ay + ab) / 2 <= py + ph:
+                        return {"status": "unknown", "reason": "panel_atom_crosses_boundary", "body": "", "atoms": []}
+                    rejected.append({"index": index, "reason": "outside_confirmed_detail_panel"})
+                    continue
         x, y, w, h = atom["box"]
         if y + h / 2 < title_bottom or x < tx - 0.5 * height:
             rejected.append({"index": index, "reason": "outside_title_body_origin"})
@@ -178,10 +238,9 @@ def atom_text_view(atoms: list[dict], layout: dict) -> tuple[str, list[dict]]:
     previous_atom = None
     for row in layout["atoms"]:
         for index in row:
-            text = normalize(atoms[index]["text"]).translate(str.maketrans({"值": "値", "增": "増", "·": "・"}))
             # Native OCR can emit the simplified glyph in this fixed cost
             # label. Keep every operand and the original atom boundary intact.
-            text = text.replace("体力消费", "体力消費")
+            text = _normalize_detail_atom(atoms[index]["text"])
             if not text:
                 continue
             # A percentage is also a complete numeric edge. An independent
@@ -275,8 +334,8 @@ def _source_literal_pattern(literal: str) -> str:
     Explicit icons already present in a reference remain literal.
     """
     escaped = re.escape(literal)
-    # The current native template explicitly prefixes this fixed cost label.
-    # Legacy OCR may omit only that prefix; operands and token bounds stay exact.
+    # Only a reference that explicitly names FixedStamina may accept the old
+    # rendering without its prefix. Existing short labels keep their boundaries.
     escaped = escaped.replace("固定体力消費", r"(?:固定)?体力消費")
     if "❤" in literal or "♥" in literal:
         return escaped
@@ -304,6 +363,93 @@ def _is_complete_numeric_field(literals: tuple[str, ...], values: tuple[str, ...
     # Fixed source action fields, not partial trigger clauses or a keyword list.
     return bool(values and literals[0] and sum(c.isalpha() for c in literals[0]) >= 2
                 and all(not part or all(c.isalpha() or c == "・" for c in part) for part in literals))
+
+
+def _native_body_conflict_ids(body: list[dict], paragraphs_by_id: Mapping[int, tuple[str, ...]]) -> set[int]:
+    """Check intact fields and explicit variant labels, without supplying operands."""
+    from ._reader_visual import _spatial_ocr_rows
+
+    retained = [atom for atom in body if not (len(value := _normalize_detail_atom(atom["text"])) == 1
+                and unicodedata.category(value) == "So")]
+    ordered = [{"text": text, "box": box} for _, _, row in _spatial_ocr_rows(retained) for text, box in row]
+    text, _ = atom_text_view(ordered, {"atoms": [list(range(len(ordered)))]})
+    rules = {}
+    for paragraphs in paragraphs_by_id.values():
+        for paragraph in paragraphs:
+            literals, values, pattern = source_field(paragraph)
+            if values:
+                rules[literals] = re.compile(pattern)
+    rejected = set()
+    for literals, pattern in rules.items():
+        observed = {match.groups() for match in pattern.finditer(text)}
+        complete_label = _is_complete_numeric_field(literals, ("0",)) and literals[0] in text
+        for item_id, paragraphs in paragraphs_by_id.items():
+            allowed = {match.groups() for paragraph in paragraphs for match in pattern.finditer(paragraph)}
+            if ((observed and not observed.issubset(allowed))
+                    or (complete_label and not any(literals[0] in paragraph for paragraph in paragraphs))):
+                rejected.add(item_id)
+    for atom in body:
+        literals, values, pattern = source_field(_normalize_detail_atom(atom["text"]))
+        if not _is_complete_numeric_field(literals, values):
+            continue
+        compiled = re.compile(pattern)
+        for item_id, paragraphs in paragraphs_by_id.items():
+            allowed = {match.groups() for paragraph in paragraphs for match in compiled.finditer(paragraph)}
+            if values not in allowed:
+                rejected.add(item_id)
+    return rejected
+
+
+def _shared_scalar_after_bullet(
+    bullet: dict, field: dict, paragraphs: set[str], shared_paragraphs: set[str], height: float,
+) -> str | None:
+    """Prove a separate paragraph mark before a complete shared signed field."""
+    bx, by, bw, bh = bullet["box"]
+    fx, fy, _, fh = field["box"]
+    if not (0 < bw <= height and 0 < bh <= height and 0 < fh
+            and 0 <= fx - bx - bw <= height
+            and abs(by + bh / 2 - fy - fh / 2) <= .45 * min(bh, fh)):
+        return None
+    text = normalize(field["text"])
+    # A letter attached to the front of an exact catalog field is one OCR
+    # anomaly. It cannot supply a label, operand, sign, unit or condition.
+    if text not in paragraphs and re.match(r"[A-Za-z]", text):
+        text = text[1:]
+    if text not in shared_paragraphs:
+        return None
+    literals, values, _ = source_field(text)
+    if len(values) != 1 or not values[0].startswith("+") or literals[-1] or not _is_complete_numeric_field(literals, values):
+        return None
+    return text
+
+
+def _detached_title_plus(
+    atoms: list[dict], title_index: int, sources: PItemSourceTextFrames, size: tuple[int, int],
+) -> int | None:
+    """Find a separate plus on the title baseline, independent of body operands."""
+    _, title_top, title_right, title_bottom = bounds(atoms[title_index])
+    height = title_bottom - title_top
+    suffixes = []
+    for index, atom in enumerate(atoms):
+        if index == title_index or normalize(atom["text"]) != "+":
+            continue
+        x, y, width, sign_height = atom["box"]
+        if (0 < width <= height and 0 < sign_height <= height
+                and -.25 * height <= x - title_right <= .75 * height
+                and abs(y + sign_height / 2 - (title_top + title_bottom) / 2) <= .5 * sign_height
+                and _valid_detail_atoms((atom,), size)
+                and len(sources.matching_frames(atom, height)) < 2):
+            suffixes.append(index)
+    if len(suffixes) != 1:
+        return None
+    index = suffixes[0]
+    sx, sy, sw, sh = atoms[index]["box"]
+    for atom in atoms:
+        x, y, _, atom_height = atom["box"]
+        if (NUMBER.match(normalize(atom["text"])) and -.25 * sh <= x - sx - sw <= sh
+                and abs(y + atom_height / 2 - sy - sh / 2) <= .45 * min(sh, atom_height)):
+            return None
+    return index
 
 
 class PItemDetailTextIndex:
@@ -393,18 +539,64 @@ class PItemDetailTextIndex:
         value = row.get("upgraded")
         return value if isinstance(value, bool) else normalize(str(row.get("name", ""))).endswith("+")
 
-    def prepare_body_reread(self, atoms, *, title_index, source_frames=(), plan=None, eligible_ids=None, original_result):
-        """A bounded alternate view uses this index's same bound references."""
-        from ._p_item_body_reread import build_body_reread_plan
-
-        family = self.family_ids_for_title(str(atoms[title_index]["text"]), plan=plan, eligible_ids=eligible_ids)
-        if not family or not set(family).issubset(self.available_ids):
-            return None
-        return build_body_reread_plan(
-            atoms, title_index=title_index, source_frames=source_frames,
-            family_references={item_id: self._references[item_id] for item_id in family},
-            original_result=original_result,
-        )
+    def retain_native_body_conflicts(
+        self, atoms, *, title_index, source_frames, plan, eligible_ids=None, result,
+    ):
+        """Keep explicit negative evidence from title/footer-bounded native text."""
+        diagnostics = result.diagnostics
+        conflicts = diagnostics.get("conflicts", {})
+        if (result.status != "ambiguous" or result.reason != "insufficient_difference_evidence"
+                or diagnostics.get("unbound_reference_ids") or diagnostics.get("layout", {}).get("uncertainty")
+                or any(conflicts.get(item_id, conflicts.get(str(item_id))) for item_id in result.ids)
+                or not _valid_detail_atoms(atoms, (720, 1280))
+                or len(source_frames) > 3 or any(not _valid_detail_atoms(frame) for frame in source_frames)):
+            return result
+        title = _normalize_detail_atom(atoms[title_index]["text"])
+        if not title or title.endswith("+") or sum(_normalize_detail_atom(atom["text"]) == title for atom in atoms) != 1:
+            return result
+        family = self.family_ids_for_title(atoms[title_index]["text"], plan=plan, eligible_ids=eligible_ids)
+        if len(family) < 2 or not set(family).issubset(self.available_ids) or not result.ids or not set(result.ids).issubset(family):
+            return result
+        references = {item_id: self._references[item_id] for item_id in family}
+        names = [_normalize_detail_atom(row["name"]) for row in references.values()]
+        if names.count(title) != 1 or any(name.removesuffix("+") != title for name in names):
+            return result
+        if any(not isinstance(row["paragraphs"], (tuple, list)) for row in references.values()):
+            return result
+        paragraphs_by_id = {item_id: tuple(_normalize_detail_atom(p) for p in row["paragraphs"])
+                            for item_id, row in references.items()}
+        if any(not paragraphs or not all(paragraphs) for paragraphs in paragraphs_by_id.values()):
+            return result
+        trailers = {paragraphs[-1] for paragraphs in paragraphs_by_id.values()}
+        if len(trailers) != 1 or not _DETAIL_COUNT_TRAILER.fullmatch(next(iter(trailers))):
+            return result
+        trailer = next(iter(trailers))
+        ends = [atom for atom in atoms if _normalize_detail_atom(atom["text"]) == trailer]
+        _, title_top, _, title_bottom = bounds(atoms[title_index])
+        if len(ends) != 1 or ends[0]["box"][1] < title_bottom:
+            return result
+        title_height = title_bottom - title_top
+        trailer_bottom = bounds(ends[0])[3]
+        sources = PItemSourceTextFrames(source_frames)
+        non_source = [atom for index, atom in enumerate(atoms) if index != title_index
+                      and len(sources.matching_frames(atom, title_height)) < 2]
+        # Retain the original observation's footer allowance. It bounds only
+        # negative evidence and cannot authorize an identity or a field value.
+        bottom = max(trailer_bottom, max((bounds(atom)[3] for atom in non_source
+                                         if atom["box"][1] < trailer_bottom and bounds(atom)[3] > title_top), default=0))
+        bottom = min(1280, bottom + min(4, max(2, title_height * .1)))
+        body = [atom for atom in non_source if atom["box"][1] < bottom and bounds(atom)[3] > title_bottom]
+        rejected = _native_body_conflict_ids(body, paragraphs_by_id)
+        if not rejected:
+            return result
+        return replace(result, diagnostics={
+            **diagnostics,
+            "conflicts": {
+                **conflicts,
+                **{item_id: [*conflicts.get(item_id, ()), {"reason": "native_body_field_conflict"}]
+                   for item_id in rejected},
+            },
+        })
 
     def _resolve(
         self, title: str, text: str, spans: list[dict], *, plan: str | None,
@@ -569,16 +761,33 @@ class PItemDetailTextIndex:
             return None
         height = layout["title_height"]
         title_left = atoms[title_index]["box"][0]
-        paragraphs = {normalize(paragraph) for item_id in scoped
-                      for paragraph in self._references[item_id]["paragraphs"]}
+        paragraphs_by_item = [{normalize(paragraph) for paragraph in self._references[item_id]["paragraphs"]}
+                              for item_id in scoped]
+        paragraphs = set.union(*paragraphs_by_item)
+        shared_paragraphs = set.intersection(*paragraphs_by_item)
         replacements = {}
+        bullet_indices = []
         bullet_lefts = []
+        field_prefix_edits = []
+        detached_scalar_bullet = False
         for row in layout["atoms"]:
             first = row[0]
             text = normalize(atoms[first]["text"])
             left = atoms[first]["box"][0]
             if not (text.startswith("+") and title_left + .5 * height <= left <= title_left + 1.5 * height):
                 continue
+            if text == "+" and len(row) == 2:
+                field_index = row[1]
+                field = _shared_scalar_after_bullet(atoms[first], atoms[field_index], paragraphs, shared_paragraphs, height)
+                if field is not None:
+                    replacements[first] = ""
+                    bullet_indices.append(first)
+                    bullet_lefts.append(left)
+                    detached_scalar_bullet = True
+                    if field != normalize(atoms[field_index]["text"]):
+                        replacements[field_index] = field
+                        field_prefix_edits.append(field_index)
+                    continue
             row_text = "".join(normalize(atoms[index]["text"]) for index in row)[1:]
             if not row_text or not row_text[0].isalpha():
                 continue
@@ -587,10 +796,12 @@ class PItemDetailTextIndex:
             if not any(paragraph.startswith(row_text) for paragraph in paragraphs):
                 continue
             replacements[first] = text[1:]
+            bullet_indices.append(first)
             bullet_lefts.append(left)
-        # At least two independent, aligned rows establish the bullet column.
-        # A lone plus and atom-internal signs remain ordinary protected text.
-        if replacements and (len(replacements) < 2 or max(bullet_lefts) - min(bullet_lefts) > .5 * height):
+        # A lone mark needs the separate, complete shared field above. Other
+        # marks must still agree with the same column on independent rows.
+        if bullet_indices and ((len(bullet_indices) < 2 and not detached_scalar_bullet)
+                               or max(bullet_lefts) - min(bullet_lefts) > .5 * height):
             return None
         repaired_atoms = [{**atom, "text": replacements.get(index, atom["text"])}
                           for index, atom in enumerate(atoms)]
@@ -632,7 +843,7 @@ class PItemDetailTextIndex:
             **result.diagnostics,
             "layout": {"panel_box": panel_box, "status": layout["status"], "reason": "complete_reference_wrapped_body",
                        "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": ()},
-            "body_recovery": {"bullet_atom_indices": tuple(replacements), "wrapped_gaps": gaps,
+            "body_recovery": {"bullet_atom_indices": tuple(bullet_indices), "field_prefix_edits": tuple(field_prefix_edits), "wrapped_gaps": gaps,
                               "inserted_character": character, "insertion_offset": offset,
                               "observed_text": text, "complete_reference_id": item_id,
                               "numeric_edits": 0, "additional_ocr_calls": 0},
@@ -840,6 +1051,72 @@ class PItemDetailTextIndex:
                                       "numeric_value_edits": 0, "additional_ocr_calls": 0},
         })
 
+    def _native_detail_vetoes(
+        self, atoms: list[dict], title_index: int, sources: PItemSourceTextFrames,
+        layout: dict, result: PItemDetailTextResult, size: tuple[int, int],
+    ) -> dict[int, list[dict]]:
+        title = normalize(atoms[title_index]["text"])
+        scoped = result.diagnostics.get("plan_scoped_ids", ())
+        if (title.endswith("+") or not any(self._upgraded(item_id) for item_id in scoped)
+                or not _valid_detail_atoms((atoms[title_index],), size)):
+            return {}
+        exact_ids = self._titles.get(title, ())
+        ordinary_ids = [item_id for item_id in scoped if item_id in exact_ids and not self._upgraded(item_id)]
+        if len(ordinary_ids) != 1 or ordinary_ids[0] not in result.ids:
+            return {}
+        ordinary = ordinary_ids[0]
+        contradictions = []
+        if set(scoped) & self._titles.get(title + "+", set()):
+            suffix = _detached_title_plus(atoms, title_index, sources, size)
+            if suffix is not None:
+                contradictions.append({"reason": "detached_native_title_plus", "atom_indices": (suffix,)})
+        rows = layout["atoms"]
+        excluded = [entry["index"] for entry in layout.get("rejected", ())
+                    if entry["reason"] in {"after_body_geometric_gap", "outside_connected_body_column",
+                                           "outside_title_body_origin"}]
+        known = self._family_known_fields.get(self._title_scopes.get(title, ()), {})
+        if not rows or not known or not excluded:
+            return {ordinary: contradictions} if contradictions else {}
+
+        # Geometry admits nearby candidates; only a complete known field can
+        # contradict the ordinary result. The OCR boxes and values stay intact.
+        row_bounds = [union([atoms[index] for index in row]) for row in rows]
+        left = min(box[0] for box in row_bounds)
+        right = max(box[2] for box in row_bounds)
+        title_bottom = bounds(atoms[title_index])[3]
+        height = layout["title_height"]
+        eligible = []
+        for index in excluded:
+            atom = atoms[index]
+            x, y, end_x, end_y = bounds(atom)
+            numeric_fragment = re.fullmatch(r"[+\-0-9.,%]+", normalize(atom["text"])) is not None
+            lane_end = right + height if numeric_fragment else min(left + 4 * height, right + height)
+            if (left - height <= x <= lane_end
+                    and end_x >= left and y >= title_bottom - .25 * height
+                    and any(y - bottom <= 3 * height and end_y >= top - height
+                            for _, top, _, bottom in row_bounds)
+                    and _valid_detail_atoms((atom,), size)):
+                eligible.append({**atom, "index": index})
+        for row in component_rows(eligible, height):
+            for component in row["components"]:
+                indices = [atom["index"] for atom in component["atoms"]]
+                if any(bounds(atoms[b])[0] - bounds(atoms[a])[2] > .5 * height
+                       for a, b in zip(indices, indices[1:])):
+                    continue
+                text, _ = atom_text_view(atoms, {"atoms": [indices]})
+                field, boundary, operand_tail = text.partition(BOUNDARY)
+                literals, values, _ = source_field(field)
+                incomplete_operand = bool(boundary and re.fullmatch(r"[+\-0-9.,%]+", operand_tail))
+                if (literals in known and values
+                        and (incomplete_operand or values not in known[literals].get(ordinary, ()))):
+                    contradictions.append({
+                        "reason": "excluded_native_body_field_conflict",
+                        "atom_indices": tuple(indices), "text": text, "values": values,
+                        "operand_tail": operand_tail if incomplete_operand else None,
+                        "literal_fragments": literals,
+                    })
+        return {ordinary: contradictions} if contradictions else {}
+
     def match(
         self, atoms: Sequence[Mapping[str, Any]], *, title_index: int,
         source_frames: Sequence[Sequence[Mapping[str, Any]]] | PItemSourceTextFrames = (),
@@ -860,6 +1137,21 @@ class PItemDetailTextIndex:
         uncertain = {index for entry in layout.get("uncertainty", ()) for index in entry.get("atom_indices", ())}
         result = self._resolve(str(atom_rows[title_index]["text"]), text, spans, plan=plan, eligible_ids=eligible_ids, uncertain_atoms=uncertain,
                                layout_diagnostics={"panel_box": panel_box, "status": layout["status"], "reason": layout["reason"], "body_atom_indices": layout["atoms"], "excluded_atom_count": len(layout.get("rejected", ())), "uncertainty": layout.get("uncertainty", ())})
+        vetoes = self._native_detail_vetoes(
+            atom_rows, title_index, sources, layout, result, detail_coordinate_size or (720, 1280),
+        )
+        result = self._recover_native_body(
+            atom_rows, title_index, sources, layout, result, plan=plan, eligible_ids=eligible_ids,
+            panel_box=panel_box, detail_image=detail_image, detail_coordinate_size=detail_coordinate_size,
+        )
+        return retain_native_detail_vetoes(result, vetoes)
+
+    def _recover_native_body(
+        self, atom_rows: list[dict], title_index: int, sources: PItemSourceTextFrames, layout: dict,
+        result: PItemDetailTextResult, *, plan: str | None, eligible_ids: frozenset[int] | None,
+        panel_box: tuple[int, int, int, int] | None, detail_image: Any,
+        detail_coordinate_size: tuple[int, int] | None,
+    ) -> PItemDetailTextResult:
         fragments = _adjacent_operand_fragments(atom_rows, layout, result)
         if fragments:
             return PItemDetailTextResult("unknown", reason=result.reason if result.status == "unknown" else "numeric_operand_fragment_unresolved", diagnostics={
@@ -886,22 +1178,33 @@ class PItemDetailTextIndex:
         if panel_box is not None and (result.status != "unique" or contextual_candidate):
             # A short base-variant field can itself be an incomplete prefix of
             # the upgraded paragraph when a separate effect icon interrupts it.
-            from ._p_item_detail_decorations import recover_decorated_body, recover_contextual_effect_icon
+            from ._p_item_detail_decorations import (
+                recover_decorated_body,
+                recover_owned_effect_icons,
+                recover_contextual_effect_icon,
+            )
 
             scoped = self.family_ids_for_title(str(atom_rows[title_index]["text"]), plan=plan, eligible_ids=eligible_ids)
             if len(scoped) >= 2 and all(item_id in self._bodies for item_id in scoped):
+                paragraphs = {item_id: self._references[item_id]["paragraphs"] for item_id in scoped}
                 if result.status != "unique":
                     proof = recover_decorated_body(
-                        atom_rows, title_index, layout,
-                        {item_id: self._references[item_id]["paragraphs"] for item_id in scoped},
+                        atom_rows, title_index, layout, paragraphs,
                         tuple(literals[0] for literals in self._complete_fields),
                     )
+                    reason = "complete_reference_decoration_recovery"
+                    if proof is None and result.reason == "insufficient_difference_evidence":
+                        proof = recover_owned_effect_icons(
+                            atom_rows, title_index, layout, paragraphs,
+                            image=detail_image, coordinate_size=detail_coordinate_size,
+                        )
+                        reason = "same_frame_paragraph_mark_recovery"
                     if proof is not None:
                         recovered = self._resolve(str(atom_rows[title_index]["text"]), proof["text"], proof["spans"],
                                                   plan=plan, eligible_ids=eligible_ids,
                                                   layout_diagnostics=result.diagnostics.get("layout"))
                         if recovered.status == "unique" and recovered.ids == (proof["item_id"],):
-                            return PItemDetailTextResult("unique", recovered.ids, "complete_reference_decoration_recovery", {
+                            return PItemDetailTextResult("unique", recovered.ids, reason, {
                                 **recovered.diagnostics,
                                 "decoration_recovery": {"edits": proof["edits"], "complete_reference_id": proof["item_id"],
                                                         "numeric_value_edits": 0, "additional_ocr_calls": 0},
@@ -910,8 +1213,7 @@ class PItemDetailTextIndex:
                 # damaged delay bullets. Require the complete distinguishing
                 # paragraph, then keep every other original-body conflict.
                 proof = recover_contextual_effect_icon(
-                    atom_rows, title_index, layout,
-                    {item_id: self._references[item_id]["paragraphs"] for item_id in scoped},
+                    atom_rows, title_index, layout, paragraphs,
                     tuple(literals[0] for literals in self._complete_fields),
                 )
                 if proof is not None:

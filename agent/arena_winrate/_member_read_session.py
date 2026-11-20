@@ -343,6 +343,7 @@ def member_recognition_error_code(error: Exception) -> str | None:
             "skill_card_cost_fallback_location_missing",
             "skill_card_cost_fallback_roi_conflict",
             "skill_card_detail_effect_view_conflict",
+            "skill_card_detail_structural_field_conflict",
             "skill_card_detail_positive_evidence_missing",
             "skill_card_reference_unavailable",
             "skill_card_reference_catalog_invalid",

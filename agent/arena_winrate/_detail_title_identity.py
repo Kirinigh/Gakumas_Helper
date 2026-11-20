@@ -731,7 +731,43 @@ class DetailTitleIdentity:
         title, (tx, ty, tw, th), _ = title_rows[0]
         # Touching a crop boundary could hide a leading glyph or terminal '+'.
         if min(tx, ty, 2 * w - tx - tw, 2 * h - ty - th) < 3:
-            return None
+            # The OCR detector can expand a complete line to a tight crop's
+            # edge. Reuse real surrounding pixels once; synthetic padding
+            # cannot prove that the original crop did not cut a glyph.
+            padding = max(3, round(h / 6))
+            height, width = image.shape[:2]
+            cx, cy = max(0, x - padding), max(0, y - padding)
+            cr, cb = min(width, x + w + padding), min(height, y + h + padding)
+            if (
+                (tx < 3 and cx == x) or (ty < 3 and cy == y)
+                or (2 * w - tx - tw < 3 and cr == x + w)
+                or (2 * h - ty - th < 3 and cb == y + h)
+            ):
+                return None
+            context = cv2.resize(image[cy:cb, cx:cr], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            self.port._increment("skill_card_isolated_title_context_reads")
+            self.port._increment("skill_card_isolated_title_roi_reads")
+            try:
+                context_items = self.port._with_full_frame_ocr_kind("derived_roi", self.port._ocr, context, r".+")
+                context_rows = self.port._spatial_ocr_rows(context_items)
+            except Exception:
+                return None
+            if self.port._isolated_skill_card_title_key(image, group, box) != key:
+                return None
+            if len(context_rows) != 1:
+                return None
+            context_title, (nx, ny, nw, nh), _ = context_rows[0]
+            if (
+                min(nx, ny, context.shape[1] - nx - nw, context.shape[0] - ny - nh) < 3
+                or self.port._normalized_skill_card_ocr_lines(context_title) != self.port._normalized_skill_card_ocr_lines(title)
+                # The complete line must still cover the original observation's
+                # center. A nearby body/background line cannot replace it.
+                or not (cx + nx / 2 <= x + (tx + tw / 2) / 2 <= cx + (nx + nw) / 2)
+                or not (cy + ny / 2 <= y + (ty + th / 2) / 2 <= cy + (ny + nh) / 2)
+            ):
+                return None
+            title, (tx, ty, tw, th) = context_title, (nx, ny, nw, nh)
+            x, y = cx, cy
         mapped = (x + tx // 2, y + ty // 2, (tw + 1) // 2, (th + 1) // 2)
         if not self.port._skill_card_title_row_has_neutral_ink(image, mapped):
             return None

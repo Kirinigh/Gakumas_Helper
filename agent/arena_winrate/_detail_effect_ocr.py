@@ -8,23 +8,60 @@ from __future__ import annotations
 
 import re
 import json
+import unicodedata
 from typing import Any, Protocol
-from collections.abc import Callable, Sequence
+from collections import Counter
+from collections.abc import Mapping, Callable, Sequence
 
 from .reader import ClickedSkillCard
-from .catalog import _OCR_EFFECT_VIEW_BOUNDARY, _ADDED_NUMERIC_EFFECT_MARKERS, ArenaCatalogError, ArenaEntityCatalog
+from .catalog import (
+    _NUMERIC_EFFECT_LABELS,
+    _OCR_EFFECT_VIEW_BOUNDARY,
+    _ADDED_NUMERIC_EFFECT_MARKERS,
+    ArenaCatalogError,
+    ArenaEntityCatalog,
+    StructuralOmissionFieldConflict,
+    _normalise_effect_text,
+)
 from ._reader_errors import ArenaReaderError
 from ._reader_visual import _box, _text
 from ._reader_evidence import _EffectRoiSourceBinding, _TitleBoundEffectRoiText, _SourceBackgroundOcrBudget
 from .recognition_probe import RecognitionProbe
-from ._detail_text_layout import ErrorNumericLayoutRecovery, ErrorWrappedSignedRecovery
+from ._detail_text_layout import NUMERIC_TOKEN_BOUNDARY, ErrorNumericLayoutRecovery, ErrorWrappedSignedRecovery, _inside_roi
 from ._skill_detail_domain import SkillDetailDomain, project_domain_items, attribute_skill_detail
 from ._detail_capture_evidence import _EvidenceClock, _FullFrameOcrEvidence
-from ._skill_card_effect_recovery import EffectBodyRecovery, recover_wrapped_effect_decoration
+from ._skill_card_effect_recovery import (
+    _VALUE_LABELS,
+    EffectBodyRecovery,
+    recover_wrapped_effect_decoration,
+    recover_overlapping_enthusiasm_operand,
+)
+
+_EFFECT_OPERAND_LABEL = "|".join(map(re.escape, dict.fromkeys((
+    *_NUMERIC_EFFECT_LABELS, *_VALUE_LABELS, "コスト値減少", "コスト値増加", "消費",
+))))
+_LABELED_EFFECT_OPERAND = re.compile(rf"(?P<label>{_EFFECT_OPERAND_LABEL})[+\-−]?[0-9]+\Z")
+_SPLIT_EFFECT_OPERAND_LABEL = re.compile(rf"(?:{_EFFECT_OPERAND_LABEL})[+\-−]?\Z")
+_DETACHED_EFFECT_OPERAND = re.compile(r"[+\-−]?[0-9]+\Z")
+_EFFECT_OPERAND_FRAGMENT = re.compile(r"不|未|非|無|なし|[0-9.%+\-−]+|回|囘|ターン|倍|以上|以下")
+_ONCE_PER_STAGE_LABELS = ("試験・ステージ中", "試験·ステージ中", "試験ステージ中")
+
+
+def _normalise_operand_atom(text: str) -> str:
+    return _normalise_effect_text(unicodedata.normalize("NFKC", text))
 
 
 class _EvidenceLogger(Protocol):
     def debug(self, message: str) -> None: ...
+
+
+class _SkillDetailTextWithNumericFragments(str):
+    """Keep a native title readable until detail identity can bind the boxes."""
+
+    def __new__(cls, text: str, validate: Callable[[int, tuple[int, int] | None], None]):
+        value = super().__new__(cls, text)
+        value.validate = validate
+        return value
 
 
 class DetailEffectOcrPort(Protocol):
@@ -149,6 +186,7 @@ class DetailEffectOcr:
                 return None
             height, width = image.shape[:2]
             roi = self.port._title_anchored_effect_roi_without_background_parameters(width, height, titles[0], native_items)
+            self._assert_native_view_numeric_fragments(native_items, image, titles[0], roi, evidence)
             wrapped = self.recover_wrapped_signed_text(atoms, titles[0], roi)
             if wrapped.status == "recovered":
                 self.port._increment("skill_card_error_wrapped_row_repairs")
@@ -297,6 +335,9 @@ class DetailEffectOcr:
             if len(titles) != 1:
                 return None
             height, width = image.shape[:2]
+            if self._numeric_fragment_pairs(evidence.all_items) or self._numeric_fragment_pairs(native_items):
+                roi = self.port._title_anchored_effect_roi_without_background_parameters(width, height, titles[0], native_items)
+                self._assert_native_view_numeric_fragments(native_items, image, titles[0], roi, evidence)
             repaired = self.recover_skill_effect_body(
                 atoms,
                 titles[0],
@@ -325,6 +366,147 @@ class DetailEffectOcr:
             return None
         finally:
             self.port._record_duration_sample("skill_card_error_body_recovery", self.clock.perf_counter() - started)
+
+    def _native_skill_card_omission_text(self, image: Any, card_id: int, *, preserve_body_boundaries: bool = False) -> str:
+        """Use cached OCR boxes scoped to the opened title without another read."""
+        self._assert_detail_recovery_binding(image, card_id)
+        evidence = self.port._cached_full_frame_ocr_evidence(image)
+        if (image is None or evidence is None or evidence.image is not image
+                or not evidence.hit or evidence.kind != "detail_capture"):
+            raise ArenaReaderError("skill_card_detail_positive_evidence_missing", "no cached native detail boxes")
+        pattern = self.port._skill_card_frame_title_pattern(image, card_id)
+        titles = [item for item in evidence.all_items if re.fullmatch(pattern, _text(item).strip())]
+        if len(titles) != 1:
+            raise ArenaReaderError("skill_card_detail_positive_evidence_missing", "no unique native detail title")
+        title = _box(titles[0])
+        height, width = image.shape[:2]
+        roi = self.port._title_anchored_effect_roi_without_background_parameters(
+            width, height, title, evidence.all_items,
+        )
+        local = tuple(item for item in evidence.all_items if _inside_roi(_box(item), roi)
+                      and (item is titles[0] or _box(item)[1] + _box(item)[3] / 2 >= title[1] + title[3]))
+        self._assert_native_view_numeric_fragments(local, image, title, roi, evidence)
+        body = tuple(item for item in local if item is not titles[0])
+        local = self._coalesce_omission_field_atoms(local, body, card_id)
+        atoms = tuple((_text(item), _box(item)) for item in local)
+        rows = self.port._spatial_ocr_rows(local)
+        repair = self.recover_skill_effect_body(atoms, title, roi, rows)
+        replacements = {index: value for index, _, value in repair.replacements}
+        repaired_atoms = tuple(
+            (replacements.get(index, text), box) for index, (text, box) in enumerate(atoms)
+        )
+        if self._native_omission_operand_conflicts(repaired_atoms):
+            raise self._native_operand_effect_view_conflict()
+        if preserve_body_boundaries:
+            body_items = tuple({"text": text, "box": box} for text, box in repaired_atoms)
+            return "\n".join((_text(titles[0]), self._scoped_omission_body_text(body_items, title, roi)))
+        return repair.text if repair.changed else self._ordered_effect_atom_text(local)
+
+    def _coalesce_omission_field_atoms(self, items, local_items, card_id):
+        """Preserve a split cost or footer as one observed field on its own row."""
+        card = getattr(self.port.catalog, "_cards_by_id", {}).get(card_id)
+        if not isinstance(card, Mapping):
+            return items
+        labels = _ONCE_PER_STAGE_LABELS if card.get("limit") == 1 else ()
+        cost = self.port.catalog._typed_cost_descriptor(card)
+        if cost is not None:
+            labels = (*labels, cost[0])
+        if not labels:
+            return items
+
+        keys = tuple((_text(item).strip(), _box(item)) for item in items)
+        counts = Counter(keys)
+        replacements = {}
+        for _, _, row in self.port._spatial_ocr_rows(local_items):
+            start = 0
+            while start < len(row):
+                end = self._joined_omission_field_end(row, start, labels)
+                group = row[start:end]
+                start = end
+                if len(group) < 2 or any(counts[atom] != 1 for atom in group):
+                    continue
+                boxes = [box for _, box in group]
+                left = min(x for x, _, _, _ in boxes)
+                top = min(y for _, y, _, _ in boxes)
+                right = max(x + width for x, _, width, _ in boxes)
+                bottom = max(y + height for _, y, _, height in boxes)
+                replacements[group[0]] = {
+                    "text": "".join(text for text, _ in group),
+                    "box": (left, top, right - left, bottom - top),
+                }
+                replacements.update((atom, None) for atom in group[1:])
+        if not replacements:
+            return items
+        return tuple(value for item, key in zip(items, keys, strict=True)
+                     if (value := replacements.get(key, item)) is not None)
+
+    @staticmethod
+    def _joined_omission_field_end(row, start, labels):
+        # Begin inside the label. Once a digit is read, further bare digits
+        # must stay separate, even when their boxes touch.
+        partial = _normalise_operand_atom(row[start][0]).lstrip("(")
+        if not partial or not any(label.startswith(partial) for label in labels):
+            return start + 1
+        end = start + 1
+        for index in range(start + 1, len(row)):
+            text, box = row[index]
+            if not DetailEffectOcr._neighboring_effect_atoms(row[index - 1][1], box):
+                break
+            token = _normalise_operand_atom(text)
+            candidate = partial + token
+            prefix = next((label for label in labels if candidate.startswith(label)), None)
+            if prefix is not None:
+                payload = candidate[len(prefix):]
+                if not payload:
+                    end = index + 1
+                elif re.fullmatch(r"[+-]?[0-9]+", payload) and prefix in _ONCE_PER_STAGE_LABELS:
+                    # The recognised footer count can also have a separate unit.
+                    end = index + 1
+                elif re.match(r"[+-]?[0-9]+", payload):
+                    return index + 1
+                else:
+                    break
+                if payload and (index + 1 == len(row) or _normalise_operand_atom(row[index + 1][0]) not in {"回", "囘"}):
+                    return end
+            elif not any(label.startswith(candidate) for label in labels):
+                break
+            partial = candidate
+        return end
+
+    @staticmethod
+    def _native_operand_effect_view_conflict() -> ArenaReaderError:
+        return ArenaReaderError(
+            "skill_card_detail_effect_view_conflict",
+            "native detail has an adjacent sign, number or qualifier at a protected value",
+        )
+
+    @staticmethod
+    def _native_omission_operand_conflicts(atoms):
+        """Find adjoining modifiers only when a body label owns the observed value."""
+        normalized = tuple((_normalise_operand_atom(text), box) for text, box in atoms)
+        pairs = []
+        for index, (value, value_box) in enumerate(normalized):
+            x, y, width, height = value_box
+            if _LABELED_EFFECT_OPERAND.search(value) is None:
+                if not _DETACHED_EFFECT_OPERAND.fullmatch(value):
+                    continue
+                # Bare numbers are common on the underlying screen. A detached
+                # operand needs a label directly to its left on the same row.
+                if not any(
+                    _SPLIT_EFFECT_OPERAND_LABEL.search(label)
+                    and min(y + height, ly + lh) - max(y, ly) >= .5 * min(height, lh)
+                    and 0 <= x - lx - lw <= .5 * min(height, lh)
+                    for label, (lx, ly, lw, lh) in normalized
+                ):
+                    continue
+            for other, (fragment, (fx, fy, fw, fh)) in enumerate(normalized):
+                if other == index or fy >= y + height or fy + fh <= y:
+                    continue
+                gap = fx - x - width if fx > x else x - fx - fw
+                if (-.25 * min(height, fh) <= gap <= .5 * min(height, fh)
+                        and _EFFECT_OPERAND_FRAGMENT.fullmatch(fragment)):
+                    pairs.append((index, other))
+        return tuple(pairs)
 
     def _skill_card_effect_roi_text(self, image: Any) -> str:
         keys = [key for key, frame in self.port._card_detail_images.items() if frame is image]
@@ -421,7 +603,13 @@ class DetailEffectOcr:
             lookup = getattr(self.port, "_cached_full_frame_ocr_evidence", None)
             evidence = lookup(image) if lookup is not None else None
             if evidence is not None and evidence.image is image and evidence.hit:
-                self._assert_effect_numeric_atom_boundaries(evidence.all_items)
+                pairs = self._numeric_fragment_pairs(evidence.all_items)
+                if pairs:
+                    return _SkillDetailTextWithNumericFragments(
+                        text, lambda card_id, current_key: self._validate_native_numeric_fragments(
+                            image, evidence.all_items, pairs, card_id, key, current_key,
+                        ),
+                    )
             return text
         finally:
             self.port._increment(f"skill_card_detail_{phase}_ocr_reads")
@@ -491,6 +679,12 @@ class DetailEffectOcr:
             title_box,
             native_items,
         )
+        roi = (left, top, roi_width, roi_height)
+        evidence = self.port._cached_full_frame_ocr_evidence(image)
+        native_conflicts = self._native_view_numeric_fragment_conflicts(native_items, image, title_box, roi, evidence)
+        if any(not all(self._inside_detail_body(_box(item), title_box, roi) for item in pair)
+               for pair in native_conflicts):
+            raise self._numeric_boundary_error()
         crop = image[top : top + roi_height, left : left + roi_width]
         if crop.size == 0:
             raise ArenaReaderError(
@@ -509,12 +703,12 @@ class DetailEffectOcr:
             centre_y = item_y + item_height / 2.0
             if left <= centre_x <= left + roi_width and top <= centre_y <= top + roi_height:
                 native_roi_items.append(item)
-        repair = self.recover_skill_effect_body(
-            tuple((_text(item), _box(item)) for item in native_roi_items), title_box,
-            (left, top, roi_width, roi_height), self.port._spatial_ocr_rows(native_roi_items),
+        body_items = tuple(item for item in native_roi_items if _box(item)[1] + _box(item)[3] / 2 >= title_box[1] + title_box[3])
+        body_atoms = tuple((_text(item), _box(item)) for item in body_items)
+        omission_conflicts = tuple(
+            (body_items[field], body_items[fragment])
+            for field, fragment in self._native_omission_operand_conflicts(body_atoms)
         )
-        native_text = repair.text if repair.changed else self._ordered_effect_atom_text(native_roi_items)
-        full_text = self._repaired_full_effect_text(native_items, native_roi_items, repair)
         enlarged = cv2.resize(
             crop,
             None,
@@ -536,9 +730,51 @@ class DetailEffectOcr:
             projected = project_domain_items(observed.all_items, (left, top, roi_width, roi_height))
             if projected is None:
                 raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "derived OCR crosses its input crop")
-            self._assert_effect_numeric_atom_boundaries(projected)
+            disputed = (*native_conflicts, *omission_conflicts)
+            if self._numeric_fragment_pairs(projected):
+                raise self._native_operand_effect_view_conflict() if disputed else self._numeric_boundary_error()
+            deferred = ()
+            if disputed:
+                derived_titles = tuple(item for item in projected if re.fullmatch(title_pattern, _text(item).strip()))
+                if (len(derived_titles) != 1 or not self._overlaps_operand(_box(derived_titles[0]), title_box)
+                        or not all(self._derived_separates_native_fragment(field, fragment, projected)
+                                   for field, fragment in disputed)):
+                    raise self._native_operand_effect_view_conflict()
+                # Keep every disputed numeric token in the reconstructed text,
+                # but preserve its proven independence from its adjacent field.
+                fragment_keys = {(_text(fragment), _box(fragment)) for _, fragment in disputed}
+                deferred = tuple(item for item in native_items if (_text(item), _box(item)) in fragment_keys)
+                native_roi_items = [item for item in native_roi_items if (_text(item), _box(item)) not in fragment_keys]
+            original_items = native_items
+            native_body = tuple(item for item in native_roi_items if self._inside_detail_body(_box(item), title_box, roi))
+            native_items = self._coalesce_omission_field_atoms(native_items, native_body, card_id)
+            if native_items is not original_items:
+                native_roi_items = [item for item in native_items if _inside_roi(_box(item), roi)
+                                    and all(item is not fragment for fragment in deferred)]
+            repair = self.recover_skill_effect_body(
+                tuple((_text(item), _box(item)) for item in native_roi_items), title_box, roi,
+                self.port._spatial_ocr_rows(native_roi_items),
+            )
+            native_text = repair.text if repair.changed else self._ordered_effect_atom_text(native_roi_items)
+            if deferred:
+                native_text = "\n".join((native_text, *self._isolated_numeric_atom_lines(deferred)))
+            full_text = self._repaired_full_effect_text(native_items, native_roi_items, repair, deferred=deferred)
+            derived_body = tuple(item for item in projected if self._inside_detail_body(_box(item), title_box, roi))
+            derived_items = self._coalesce_omission_field_atoms(projected, derived_body, card_id)
+            validate_cost = getattr(self.port.catalog, "_assert_typed_detail_cost_atoms", None)
+            if validate_cost is not None:
+                try:
+                    validate_cost(card_id, tuple(
+                        _text(item)
+                        for view in (native_roi_items, derived_items)
+                        for item in view
+                        if self._inside_detail_body(_box(item), title_box, roi)
+                    ))
+                except StructuralOmissionFieldConflict as error:
+                    raise ArenaReaderError("skill_card_detail_structural_field_conflict", str(error)) from error
             enlarged_text = self._repair_derived_effect_text(
-                projected, title_pattern, (left, top, roi_width, roi_height),
+                derived_items, title_pattern, roi,
+                native_items=native_roi_items, native_title=title_box, card_id=card_id,
             )
             observations = tuple(value for value in (native_text, enlarged_text) if value.strip())
             texts = tuple(dict.fromkeys(observations))
@@ -555,25 +791,34 @@ class DetailEffectOcr:
                 recovered = recover_wrapped_effect_decoration(
                     tuple((_text(item), _box(item)) for item in native_roi_items),
                     title_box, (left, top, roi_width, roi_height),
-                    self.port._spatial_ocr_rows(native_roi_items), image=image,
+                    self.port._spatial_ocr_rows(native_roi_items),
+                    corroborating_atoms=tuple((_text(item), _box(item)) for item in projected),
                 )
                 if not recovered.changed:
                     raise
+                deferred = (*deferred, *(native_roi_items[index] for index in recovered.deferred_indices))
                 filtered = tuple(item for index, item in enumerate(native_roi_items)
-                                 if index not in recovered.excluded_indices)
+                                 if index not in (*recovered.excluded_indices, *recovered.deferred_indices))
                 composed = self.recover_skill_effect_body(
                     tuple((_text(item), _box(item)) for item in filtered), title_box,
                     (left, top, roi_width, roi_height), self.port._spatial_ocr_rows(filtered),
                 )
                 native_text = composed.text if composed.changed else self._ordered_effect_atom_text(filtered)
+                if deferred:
+                    native_text = "\n".join((native_text, *self._isolated_numeric_atom_lines(deferred)))
                 full_text = self._repaired_full_effect_text(
                     native_items, filtered, composed,
                     excluded=tuple(native_roi_items[index] for index in recovered.excluded_indices),
+                    deferred=deferred,
                 )
                 merged = self.port._merge_skill_card_effect_detail_views(card_id, (native_text, enlarged_text, full_text))
                 self.port._increment("skill_card_detail_wrapped_decoration_repairs")
             return _TitleBoundEffectRoiText(
                 merged, len(observations), recovered_full_text=full_text,
+                scoped_body_text=self._scoped_omission_body_text(derived_items, title_box, roi),
+                scoped_native_text="\n".join((
+                    _text(matches[0]), self._scoped_omission_body_text(native_roi_items, title_box, roi),
+                )),
                 source_binding=self._effect_roi_source_binding(
                     image, card_id, (left, top, roi_width, roi_height), native_items, full_text,
                 ),
@@ -660,8 +905,11 @@ class DetailEffectOcr:
             if projected is None:
                 raise ArenaReaderError("skill_card_detail_domain_unconfirmed", "enhanced OCR crosses its input crop")
             self._assert_effect_numeric_atom_boundaries(projected)
-            return self._repair_derived_effect_text(
-                projected, title_pattern, (left, top, roi_width, roi_height),
+            roi = (left, top, roi_width, roi_height)
+            return _TitleBoundEffectRoiText(
+                self._repair_derived_effect_text(projected, title_pattern, roi),
+                1,
+                scoped_body_text=self._scoped_omission_body_text(projected, _box(matches[0]), roi),
             )
         finally:
             self.port._add_timing(
@@ -669,10 +917,46 @@ class DetailEffectOcr:
                 self.clock.perf_counter() - started,
             )
 
-    def _repair_derived_effect_text(self, items, title_pattern, roi):
+    @staticmethod
+    def _neighboring_effect_atoms(first, second):
+        x, y, width, height = first
+        next_x, next_y, _, next_height = second
+        scale = min(height, next_height)
+        overlap = min(y + height, next_y + next_height) - max(y, next_y)
+        return scale > 0 and overlap >= .5 * scale and -.25 * scale <= next_x - x - width <= .5 * scale
+
+    def _scoped_omission_body_text(self, items, title_box, roi):
+        in_body = tuple(item for item in items if self._inside_detail_body(_box(item), title_box, roi))
+        spans = []
+        for _, _, row in self.port._spatial_ocr_rows(in_body):
+            previous = None
+            for text, box in row:
+                if previous is not None and self._neighboring_effect_atoms(previous, box):
+                    spans[-1] += text
+                else:
+                    spans.append(text)
+                previous = box
+        # Compaction must not turn a detached digit into an operand, including
+        # when both OCR boxes were captured inside the title crop.
+        return f"\n{NUMERIC_TOKEN_BOUNDARY}\n".join(spans)
+
+    def _repair_derived_effect_text(
+        self, items, title_pattern, roi, *, native_items=(), native_title=None, card_id=None,
+    ):
         titles = [item for item in items if re.search(title_pattern, _text(item))]
         if len(titles) != 1:
             return self._ordered_effect_atom_text(items)
+        if native_title is not None and card_id is not None:
+            operand = recover_overlapping_enthusiasm_operand(
+                tuple((_text(item), _box(item)) for item in native_items),
+                tuple((_text(item), _box(item)) for item in items),
+                native_title, _box(titles[0]),
+            )
+            if operand is not None and int(operand[1]) in self.port.catalog._fixed_enthusiasm_effect_values(card_id):
+                index, value = operand
+                items = tuple({"text": value, "box": _box(item)} if i == index else item
+                              for i, item in enumerate(items))
+                self.port._increment("skill_card_detail_overlapping_enthusiasm_operands_recovered")
         repair = self.recover_skill_effect_body(
             tuple((_text(item), _box(item)) for item in items), _box(titles[0]), roi,
             self.port._spatial_ocr_rows(items),
@@ -785,6 +1069,8 @@ class DetailEffectOcr:
                                      "removed_old_labels": sorted(removed)}, ensure_ascii=False))
         return _TitleBoundEffectRoiText(
             merged, view.observation_count, recovered_full_text=scoped_full,
+            scoped_body_text=view.scoped_body_text,
+            scoped_native_text=view.scoped_native_text,
             source_binding=binding._replace(full_text=scoped_full),
         )
 
@@ -799,32 +1085,145 @@ class DetailEffectOcr:
         if expected is not None and expected != card_id:
             raise ArenaReaderError("skill_card_detail_id_changed", "recovery card differs from the opened detail")
 
-    def _assert_effect_numeric_atom_boundaries(self, items: Sequence[Any]) -> None:
-        """Reject a contiguous numeric suffix split by OCR, without pixels.
-
-        Native lexical boundaries protect remote game-page digits; they must
-        not turn two immediately adjacent fragments of one value into two
-        independent values. This narrow check does not infer any digit or
-        classify remote background text.
-        """
+    @staticmethod
+    def _numeric_fragment_pairs(items: Sequence[Any]) -> tuple[tuple[Any, Any], ...]:
+        """Find possible contiguous suffixes without interpreting either box."""
+        effects = []
         for item in items:
             value = _text(item).strip()
-            if not _ADDED_NUMERIC_EFFECT_MARKERS.search(value) or re.search(r"[0-9]+$", value) is None:
-                continue
-            x, y, width, height = _box(item)
-            for other in items:
-                if other is item or re.fullmatch(r"[0-9]+", _text(other).strip()) is None:
-                    continue
-                a, b, w, h = _box(other)
+            if _ADDED_NUMERIC_EFFECT_MARKERS.search(value) and re.search(r"[0-9]+$", value):
+                effects.append((item, _box(item)))
+        if not effects:
+            return ()
+        numbers = [(item, _box(item)) for item in items if re.fullmatch(r"[0-9]+", _text(item).strip())]
+        pairs = []
+        for item, (x, y, width, height) in effects:
+            for other, (a, b, _, h) in numbers:
                 scale = min(height, h)
                 overlap = min(y + height, b + h) - max(y, b)
                 if (scale > 0 and max(height, h) <= 1.7 * scale
                         and overlap >= 0.5 * scale and 0 <= a - x - width <= 0.75 * scale):
-                    raise ArenaReaderError("skill_card_detail_ambiguous", "adjacent OCR atoms may split one numeric effect value")
+                    pairs.append((item, other))
+        return tuple(pairs)
+
+    @staticmethod
+    def _numeric_boundary_error() -> ArenaReaderError:
+        return ArenaReaderError(
+            "skill_card_detail_numeric_boundary_unconfirmed", "adjacent OCR atoms may split one numeric effect value",
+        )
+
+    def _assert_effect_numeric_atom_boundaries(self, items: Sequence[Any]) -> None:
+        if self._numeric_fragment_pairs(items):
+            raise self._numeric_boundary_error()
+
+    def _validate_native_numeric_fragments(self, image, items, pairs, card_id, key, current_key):
+        if (key != current_key or self.port._card_detail_images.get(key) is not image
+                or self.port._card_detail_open_ids.get(key) != card_id):
+            raise self._numeric_boundary_error()
+        pattern = self.port._skill_card_frame_title_pattern(image, card_id)
+        titles = [_box(item) for item in items if re.fullmatch(pattern, _text(item).strip())]
+        if len(titles) != 1:
+            raise self._numeric_boundary_error()
+        height, width = image.shape[:2]
+        title = titles[0]
+        roi = self.port._title_anchored_effect_roi_without_background_parameters(width, height, title, items)
+        self._assert_scoped_numeric_fragments(items, image, title, roi, pairs=pairs)
+
+    def _assert_native_view_numeric_fragments(self, items, image, title, roi, evidence):
+        if self._native_view_numeric_fragment_conflicts(items, image, title, roi, evidence):
+            raise self._numeric_boundary_error()
+
+    def _native_view_numeric_fragment_conflicts(self, items, image, title, roi, evidence):
+        conflicts = self._scoped_numeric_fragment_conflicts(items, image, title, roi)
+        if (isinstance(evidence, _FullFrameOcrEvidence) and evidence.image is image and evidence.hit and evidence.kind != "derived_roi"
+                and items is not evidence.all_items):
+            conflicts += self._scoped_numeric_fragment_conflicts(evidence.all_items, image, title, roi)
+        return conflicts
+
+    def _assert_scoped_numeric_fragments(self, items, image, title, roi, *, pairs=None):
+        if self._scoped_numeric_fragment_conflicts(items, image, title, roi, pairs=pairs):
+            raise self._numeric_boundary_error()
+
+    @staticmethod
+    def _inside_detail_body(box, title, roi):
+        x, y, w, h = box
+        left, top, width, height = roi
+        return left <= x and max(top, title[1] + title[3]) <= y and x + w <= left + width and y + h <= top + height
+
+    def _scoped_numeric_fragment_conflicts(self, items, image, title, roi, *, pairs=None):
+        pairs = self._numeric_fragment_pairs(items) if pairs is None else pairs
+        if not pairs:
+            return ()
+        height, width = image.shape[:2]
+        right = roi[0] + roi[2]
+        crop_x, _, crop_width, _ = self.port._title_anchored_effect_roi(width, height, title)
+        proven_stat_column = right < crop_x + crop_width
+        conflicts = []
+        for effect, digit in pairs:
+            # The exact digit must take part in the independent, title-adjacent
+            # stat-column proof. The crop edge alone does not classify a digit.
+            if (proven_stat_column and self._inside_detail_body(_box(effect), title, roi) and _box(digit)[0] >= right
+                    and self.port._background_parameter_column_left(
+                        width, height, title, tuple(item for item in items if item is not digit),
+                    ) is None and self._cached_source_stat_matches(image, digit)):
+                continue
+            conflicts.append((effect, digit))
+        return tuple(conflicts)
+
+    @staticmethod
+    def _overlaps_operand(first, second):
+        ax, ay, aw, ah = first
+        bx, by, bw, bh = second
+        return (min(ax + aw, bx + bw) - max(ax, bx) >= .5 * max(aw, bw)
+                and min(ay + ah, by + bh) - max(ay, by) >= .5 * max(ah, bh))
+
+    def _derived_separates_native_fragment(self, field, fragment, projected):
+        # A second reading of only the effect value is insufficient. Both raw
+        # boxes must be reproduced in the title-bound crop, with no intervening
+        # modifier of the effect. A detached integer must repeat its exact sign.
+        text, fragment_text = (_normalise_operand_atom(_text(item)) for item in (field, fragment))
+        match = _LABELED_EFFECT_OPERAND.search(text)
+        if match is None or not _DETACHED_EFFECT_OPERAND.fullmatch(fragment_text):
+            return False
+        atoms = tuple((_normalise_operand_atom(_text(item)), _box(item)) for item in projected)
+        overlapping_fields = tuple(
+            index for index, (value, box) in enumerate(atoms)
+            if self._overlaps_operand(box, _box(field))
+            and (derived_field := _LABELED_EFFECT_OPERAND.search(value)) is not None
+            and derived_field["label"] == match["label"]
+        )
+        fields = tuple(index for index in overlapping_fields if atoms[index][0] == text)
+        fragments = tuple(
+            value for value, box in atoms
+            if value == fragment_text and self._overlaps_operand(box, _box(fragment))
+        )
+        if len(fields) != 1 or len(fragments) != 1:
+            return False
+        return (
+            len(overlapping_fields) == 1
+            and not any(index == fields[0] for index, _ in self._native_omission_operand_conflicts(atoms))
+        )
+
+    def _cached_source_stat_matches(self, detail_image: Any, digit: Any) -> bool:
+        keys = [key for key, frame in self.port._card_detail_images.items() if frame is detail_image]
+        if len(keys) != 1:
+            return False
+        sources = self.port._card_count_frames.get(keys[0][0], ())
+        signature = (_text(digit).strip(), _box(digit))
+        matches = set()
+        for source in sources:
+            if source is detail_image or id(source) in matches:
+                continue
+            evidence = self.port._cached_full_frame_ocr_evidence(source)
+            if (isinstance(evidence, _FullFrameOcrEvidence) and evidence.image is source and evidence.hit
+                    and evidence.kind != "derived_roi"
+                    and sum((_text(item).strip(), _box(item)) == signature for item in evidence.all_items) == 1):
+                matches.add(id(source))
+        return len(matches) >= 2
 
     def _repaired_full_effect_text(
         self, full_items: Sequence[Any], local_items: Sequence[Any], repair: EffectBodyRecovery,
-        *, excluded: Sequence[Any] = (),
+        *, excluded: Sequence[Any] = (), deferred: Sequence[Any] = (),
     ) -> str:
         """Preserve outer semantic evidence when replacing a failed local view.
 
@@ -834,12 +1233,12 @@ class DetailEffectOcr:
         signatures = [(_text(item), _box(item)) for item in full_items]
         replacements = {(_text(local_items[index]), _box(local_items[index])): value
                         for index, _, value in repair.replacements}
-        removed = {(_text(item), _box(item)) for item in excluded}
+        separated = {(_text(item), _box(item)) for item in (*excluded, *deferred)}
         local_signatures = {(_text(item), _box(item)) for item in local_items}
         local, outer = [], []
         for item, signature in zip(full_items, signatures, strict=True):
             unique = signatures.count(signature) == 1
-            if unique and signature in removed:
+            if unique and signature in separated:
                 continue
             (local if signature in local_signatures else outer).append(
                 {"text": replacements[signature], "box": _box(item)}
@@ -848,7 +1247,12 @@ class DetailEffectOcr:
         # label must not be inserted between a local effect and its operand.
         # Outer atoms remain available to the same catalog conflict check.
         return "\n".join(value for value in (self._ordered_effect_atom_text(local),
-                                              self._ordered_effect_atom_text(outer)) if value)
+                                              self._ordered_effect_atom_text(outer),
+                                              *self._isolated_numeric_atom_lines(deferred)) if value)
+
+    @staticmethod
+    def _isolated_numeric_atom_lines(items: Sequence[Any]) -> tuple[str, ...]:
+        return tuple(f"{NUMERIC_TOKEN_BOUNDARY}{_text(item)}{NUMERIC_TOKEN_BOUNDARY}" for item in items)
 
     def _ordered_effect_atom_text(self, items: Sequence[Any]) -> str:
         """Restore local reading order without concatenating numeric atoms.

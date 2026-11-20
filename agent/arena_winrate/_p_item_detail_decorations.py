@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import re
 
-from ._p_item_detail_text import BOUNDARY, bounds, normalize, atom_text_view, token_span_valid
+import cv2
+import numpy as np
+
+from ._p_item_detail_text import BOUNDARY, bounds, normalize, source_field, atom_text_view, token_span_valid
 
 DELAY = re.compile(r"[1-9][0-9]*ターン後、")
 
@@ -29,6 +32,100 @@ def _effect_icon_indices(atoms, rows, text_by_atom, height, effect_heads, *, bul
                     and any(head and text_by_atom[row[position + 1]].startswith(head) for head in effect_heads)):
                 icons.add(i)
     return icons
+
+
+def _separate_paragraph_mark(mark, owner, height):
+    mx, my, mw, mh = mark["box"]
+    ox, oy, _, oh = owner["box"]
+    return (.2 * height <= ox - (mx + mw) <= 2 * height
+            and 0 < mw <= height and 0 < mh <= height
+            and abs(my + mh / 2 - oy - oh / 2) <= .45 * min(mh, oh))
+
+
+def _same_frame_mark_match(image, observed, recognized, coordinate_size):
+    """Compare two observed patches, without classifying a glyph by shape."""
+    sx, sy = image.shape[1] / coordinate_size[0], image.shape[0] / coordinate_size[1]
+    x, y, right, bottom = bounds(observed)
+    left, top, right, bottom = round(x * sx), round(y * sy), round(right * sx), round(bottom * sy)
+    width, height = right - left, bottom - top
+    if not (0 <= left < right <= image.shape[1] and 0 <= top < bottom <= image.shape[0]
+            and min(width, height) >= 4):
+        return None
+    sample = image[top:bottom, left:right]
+    if not np.any(np.std(sample, axis=(0, 1))):
+        return None
+    bx, by, bw, bh = recognized["box"]
+    margin = max(1, round(.15 * min(width, height)))
+    rx = round((bx + bw / 2) * sx - width / 2) - margin
+    ry = round((by + bh / 2) * sy - height / 2) - margin
+    rw, rh = width + 2 * margin, height + 2 * margin
+    if not (0 <= rx and rx + rw <= image.shape[1] and 0 <= ry and ry + rh <= image.shape[0]):
+        return None
+    search = image[ry:ry + rh, rx:rx + rw]
+    _, similarity, _, (dx, dy) = cv2.minMaxLoc(cv2.matchTemplate(search, sample, cv2.TM_CCOEFF_NORMED))
+    patch = search[dy:dy + height, dx:dx + width]
+    mean_error = float(np.abs(sample.astype(np.int16) - patch).mean())
+    return (similarity, mean_error) if similarity >= .985 and mean_error <= 4 else None
+
+
+def recover_owned_effect_icons(atoms, title_index, layout, paragraphs, *, image, coordinate_size):
+    """Recover a complete body only after confirming each detached paragraph mark.
+
+    Require the native OCR to explicitly recognize an ornamental symbol next
+    to another complete catalog-owned paragraph on this same frame. Pixel
+    agreement corroborates this one existing symbol at repeated row positions.
+    Nothing in this fallback classifies a digit, a word-internal glyph, a
+    colored effect icon with no witnessed instance, or a numeric operator.
+    """
+    if (layout["status"] != "resolved" or len(paragraphs) < 2
+            or any(entry["reason"] in ("after_body_geometric_gap", "outside_connected_body_column")
+                   for entry in layout.get("rejected", ()))
+            or not isinstance(image, np.ndarray) or image.dtype != np.uint8
+            or image.ndim != 3 or image.shape[2] != 3
+            or coordinate_size is None or len(coordinate_size) != 2 or min(coordinate_size) <= 0):
+        return None
+    rows = layout["atoms"]
+    decorations = layout.get("decorations", ())
+    if not decorations or sum(map(len, rows)) > 96:
+        return None
+    references = {item_id: tuple(normalize(part) for part in body) for item_id, body in paragraphs.items()}
+    shared = set.intersection(*(set(body) for body in references.values()))
+    fields = {part for part in shared if part and not (part[0].isnumeric() or part[0] in "+-−") and source_field(part)[1]}
+    height = layout["title_height"]
+    title_bottom = bounds(atoms[title_index])[3]
+    owners = {row[-1] for row in rows
+              if atoms[row[-1]]["box"][1] >= title_bottom and normalize(atoms[row[-1]]["text"]) in fields}
+    witnesses = [
+        (entry["index"], owner) for entry in decorations if entry["reason"] == "complete_symbol_decoration"
+        for owner in owners if _separate_paragraph_mark(atoms[entry["index"]], atoms[owner], height)
+    ]
+    edits = []
+    for row in rows:
+        if len(row) != 2 or row[-1] not in owners:
+            continue
+        marker, owner = row
+        observed = normalize(atoms[marker]["text"])
+        if observed != "+" or not _separate_paragraph_mark(atoms[marker], atoms[owner], height):
+            continue
+        for witness, witness_owner in witnesses:
+            if (witness_owner == owner
+                    or abs(atoms[marker]["box"][0] - atoms[witness]["box"][0]) > .2 * height):
+                continue
+            match = _same_frame_mark_match(image, atoms[marker], atoms[witness], coordinate_size)
+            if match is not None:
+                similarity, mean_error = match
+                edits.append({"kind": "same_frame_paragraph_mark", "atom_index": marker, "owner_atom_index": owner,
+                              "reference_atom_index": witness, "observed": observed,
+                              "similarity": float(similarity), "mean_pixel_error": mean_error})
+                break
+    if not edits:
+        return None
+    omitted = {edit["atom_index"] for edit in edits}
+    text, spans = atom_text_view(atoms, {"atoms": [[i for i in row if i not in omitted] for row in rows]})
+    matched = [item_id for item_id, body in references.items() if text == "".join(body)]
+    if len(matched) != 1:
+        return None
+    return {"item_id": matched[0], "text": text, "spans": spans, "edits": edits}
 
 
 def recover_contextual_effect_icon(atoms, title_index, layout, paragraphs, effect_heads):

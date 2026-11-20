@@ -1718,6 +1718,11 @@ class MaaArenaReaderBackend:
     def _recover_failed_skill_card_body_text(self, key: tuple[int, int]) -> str | None:
         return self._component_detail_effect_ocr()._recover_failed_skill_card_body_text(key)
 
+    def _native_skill_card_omission_text(self, image: Any, card_id: int, *, preserve_body_boundaries: bool = False) -> str:
+        return self._component_detail_effect_ocr()._native_skill_card_omission_text(
+            image, card_id, preserve_body_boundaries=preserve_body_boundaries,
+        )
+
     def _read_resolved_card_detail(
         self,
         key: tuple[int, int],

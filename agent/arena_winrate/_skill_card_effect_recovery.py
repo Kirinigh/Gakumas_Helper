@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any
 from dataclasses import dataclass
 from collections.abc import Sequence
 
@@ -17,7 +16,6 @@ from ._detail_text_layout import (
     _inside_roi,
     _text_connected,
 )
-from ._decoration_pixel_evidence import has_repeated_four_point_decoration
 from ._skill_card_title_recovery import _one_edit
 
 # These are shared game terms, independent of the current card's allowed effects.
@@ -38,25 +36,82 @@ class EffectBodyRecovery:
     reordered_indices: tuple[int, ...] = ()
     replacements: tuple[tuple[int, str, str], ...] = ()
     excluded_indices: tuple[int, ...] = ()
+    deferred_indices: tuple[int, ...] = ()
 
     @property
     def changed(self) -> bool:
-        return bool(self.reordered_indices or self.replacements or self.excluded_indices)
+        return bool(self.reordered_indices or self.replacements or self.excluded_indices or self.deferred_indices)
+
+
+def recover_overlapping_enthusiasm_operand(
+    native: Sequence[Atom], derived: Sequence[Atom], title: Box, derived_title: Box,
+) -> tuple[int, str] | None:
+    """Reuse an intact native operand when the derived label repeats as a digit."""
+    def overlaps(a: Box, b: Box) -> bool:
+        return (max(a[0], b[0]) < min(a[0] + a[2], b[0] + b[2])
+                and max(a[1], b[1]) < min(a[1] + a[3], b[1] + b[3]))
+
+    if not overlaps(title, derived_title):
+        return None
+    fields = [(box, match[1]) for text, box in native
+              if (match := re.fullmatch(r"熱意追加(\+[1-9][0-9]*)", _normalise_text(text)))
+              and box[1] >= title[1] + title[3]]
+    if len(fields) != 1:
+        return None
+    field, value = fields[0]
+    x, y, width, height = field
+    if height <= 0:
+        return None
+    # The full field must cover both pieces of the very same derived row.
+    # OCR boxes can drift slightly between the two scales.
+    margin = height / 4
+    parts = [(index, _normalise_text(text), box) for index, (text, box) in enumerate(derived)
+             if text.strip() and overlaps(field, box)]
+    if len(parts) != 2:
+        return None
+    (head_index, label, head), (index, payload, operand) = sorted(parts, key=lambda part: part[2][0])
+    if label != "熱意追加" or re.fullmatch(r"[0-9]" + re.escape(value), payload) is None:
+        return None
+    hx, hy, hw, hh = head
+    ox, oy, ow, oh = operand
+    overlap = hx + hw - ox
+    glyph_width = min(ow / len(payload), hw / len(label))
+    field_width_per_character = width / (len(label) + len(value))
+    if (abs(hx - x) > margin or abs(ox + ow - x - width) > margin
+            or not (y - margin <= min(hy, oy) and max(hy + hh, oy + oh) <= y + height + margin)
+            or abs(hy + hh / 2 - oy - oh / 2) > margin
+            or ox - hx < (len(label) - 1) * field_width_per_character
+            or not .5 * glyph_width <= overlap <= 1.5 * glyph_width):
+        return None
+
+    # A fragment just outside the intact box may still extend the operand.
+    # Require an isolated row in both views before reconciling the overlap.
+    def adjacent(box: Box) -> bool:
+        bx, by, bw, bh = box
+        return (bx <= x + width + field_width_per_character
+                and bx + bw >= x - field_width_per_character
+                and by < y + height and by + bh > y)
+
+    if (sum(adjacent(box) for text, box in native if text.strip()) != 1
+            or any(adjacent(box) for i, (text, box) in enumerate(derived)
+                   if text.strip() and i not in (head_index, index))):
+        return None
+    return index, value
 
 
 def recover_wrapped_effect_decoration(
     atoms: tuple[Atom, ...], title_box: Box, search_roi: Box,
     rows: Sequence[tuple[str, Box, tuple[Atom, ...]]],
-    *, background_parameter_left: int | None = None, image: Any = None,
+    *, background_parameter_left: int | None = None, corroborating_atoms: Sequence[Atom] = (),
 ) -> EffectBodyRecovery:
-    """Remove one proven icon-lane glyph from an otherwise complete wrap.
+    """Recover the reading order of a complete field interrupted by an icon lane.
 
     Nothing supplies or edits an operand. Two nearby complete effect rows
     must establish the indented text column, and the continuation must return
     to the title's left margin. Unknown text and all numeric/sign/negation
-    fragments remain evidence. A single ASCII digit additionally requires
-    same-frame pixels proving a repeated four-point decoration. The caller
-    alone proves a background column and supplies its current source image.
+    fragments remain evidence. A single ASCII digit moves out of the field
+    only when the enlarged view reads the same complete field independently
+    and its box does not touch either operand. The digit itself stays literal.
     """
     unchanged = EffectBodyRecovery("\n".join(text for text, _ in atoms))
     if len(set(atoms)) != len(atoms) or title_box not in [box for _, box in atoms]:
@@ -67,7 +122,7 @@ def recover_wrapped_effect_decoration(
         return unchanged
     physical_row = {atom: index for index, (_, _, row) in enumerate(rows) for atom in row}
     normalized = [_normalise_text(text) for text, _ in atoms]
-    pairs: list[tuple[int, int, int, tuple[int, ...]]] = []
+    pairs: list[tuple[int, tuple[int, ...], bool]] = []
     for head, (label, box) in enumerate(atoms):
         if normalized[head] not in _VALUE_LABELS or not _inside_roi(box, search_roi):
             continue
@@ -128,19 +183,40 @@ def recover_wrapped_effect_decoration(
                 or abs((b + h / 2) - (y + height / 2)) > 0.35 * height
                 or a < title_box[0] or a + w > x - 0.5 * height):
             continue
-        if numeric:
-            support_rows = {physical_row[atoms[index]]: atoms[index][1] for index in supports}
-            if not has_repeated_four_point_decoration(image, atoms[icon][1], tuple(support_rows.values())):
-                continue
-        pairs.append((head, value, icon, background))
+        if numeric and not _corroborates_wrapped_field(corroborating_atoms, atoms[head], atoms[value], atoms[icon][1]):
+            continue
+        pairs.append((icon, background, numeric))
     if len(pairs) != 1:
         return unchanged
-    _, _, icon, background = pairs[0]
-    excluded = tuple(sorted((icon, *background)))
+    icon, background, numeric = pairs[0]
+    excluded = background if numeric else tuple(sorted((icon, *background)))
+    deferred = (icon,) if numeric else ()
     return EffectBodyRecovery(
-        "\n".join(text for index, (text, _) in enumerate(atoms) if index not in excluded),
+        "\n".join([text for index, (text, _) in enumerate(atoms) if index not in (*excluded, *deferred)]
+                  + [f"{NUMERIC_TOKEN_BOUNDARY}{atoms[index][0]}{NUMERIC_TOKEN_BOUNDARY}" for index in deferred]),
         excluded_indices=excluded,
+        deferred_indices=deferred,
     )
+
+
+def _corroborates_wrapped_field(atoms: Sequence[Atom], label: Atom, value: Atom, icon: Box) -> bool:
+    def overlaps(a: Box, b: Box) -> bool:
+        return (min(a[0] + a[2], b[0] + b[2]) > max(a[0], b[0])
+                and min(a[1] + a[3], b[1] + b[3]) > max(a[1], b[1]))
+
+    if overlaps(icon, label[1]) or overlaps(icon, value[1]) or any(overlaps(icon, box) for _, box in atoms):
+        return False
+    head, operand = (tuple(index for index, (text, box) in enumerate(atoms)
+                           if _normalise_text(text) == _normalise_text(original) and overlaps(box, original_box))
+                     for original, original_box in (label, value))
+    if len(head) != 1 or len(operand) != 1:
+        return False
+    head_box, value_box = atoms[head[0]][1], atoms[operand[0]][1]
+    top, bottom = head_box[1], value_box[1] + value_box[3]
+    return (top < value_box[1] and not any(
+        top <= box[1] + box[3] / 2 < bottom
+        for index, (_, box) in enumerate(atoms) if index not in (head[0], operand[0])
+    ))
 
 
 def _unique_word(observed: str, words: Sequence[str]) -> str | None:

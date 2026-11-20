@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import json
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 from collections import Counter
+from dataclasses import asdict
 from collections.abc import Sequence
 
 from arena_winrate import (
@@ -17,6 +18,7 @@ from arena_winrate import (
     fixed_member_slot_boxes,
     infer_parameter_label_boxes,
 )
+from arena_winrate import grade as grade_rules
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded
 from arena_winrate._reader_visual import _box, _text
 from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle
@@ -80,6 +82,7 @@ class MemberNavigationReaderPort(Protocol):
     def _read_enhanced_numeric_roi(self, image: Any, roi: tuple[int, int, int, int]) -> tuple[int | None, tuple[str, ...]]: ...
     def _read_member_recovery_page(self, image: Any = ...) -> tuple[Any, Sequence[Any]]: ...
     def _record_duration_sample(self, name: str, elapsed: float) -> None: ...
+    def _save_failure_evidence(self, diagnostic: dict[str, Any], error: str, *, event: str) -> None: ...
     def _reset_member_card_state(self) -> None: ...
     def _retry_transient_communication_items(self, items: Sequence[Any]) -> bool: ...
 
@@ -144,40 +147,104 @@ class MemberNavigationReader:
             x0, y0, avatar_width, slot_height = box
             crop = image[y0 : y0 + slot_height, x0 : x0 + avatar_width]
             if crop.shape[:2] != (slot_height, avatar_width):
-                raise ArenaReaderError("member_slot_roi_invalid", f"member slot exceeds frame: {box}")
+                self._raise_member_slot_failure(
+                    target, stage_number, image, totals, observations, slot_cap,
+                    ArenaReaderError("member_slot_roi_invalid", f"member slot exceeds frame: {box}"),
+                    slot=slot, box=box,
+                )
             state, metrics = self.classify_member_slot(crop)
             observations[slot] = (state, metrics, box)
         for slot, (state, metrics, box) in observations.items():
             if slot > slot_cap:
                 if state is MemberSlotState.OCCUPIED:
-                    raise ArenaReaderError(
-                        "member_slot_outside_grade_cap_occupied",
-                        f"{target.team_id}/stage-{stage_number}/slot-{slot} is occupied "
-                        f"outside Grade {self.port._grade} cap {slot_cap}: {metrics}",
+                    self._raise_member_slot_failure(
+                        target, stage_number, image, totals, observations, slot_cap,
+                        ArenaReaderError(
+                            "member_slot_outside_grade_cap_occupied",
+                            f"{target.team_id}/stage-{stage_number}/slot-{slot} is occupied "
+                            f"outside Grade {self.port._grade} cap {slot_cap}: {metrics}",
+                        ),
+                        slot=slot, box=box,
                     )
                 if state is MemberSlotState.AMBIGUOUS:
-                    raise ArenaReaderError(
-                        "member_slot_outside_grade_cap_ambiguous",
-                        f"{target.team_id}/stage-{stage_number}/slot-{slot} is not proven empty "
-                        f"outside Grade {self.port._grade} cap {slot_cap}: {metrics}",
+                    self._raise_member_slot_failure(
+                        target, stage_number, image, totals, observations, slot_cap,
+                        ArenaReaderError(
+                            "member_slot_outside_grade_cap_ambiguous",
+                            f"{target.team_id}/stage-{stage_number}/slot-{slot} is not proven empty "
+                            f"outside Grade {self.port._grade} cap {slot_cap}: {metrics}",
+                        ),
+                        slot=slot, box=box,
                     )
                 continue
             if state is MemberSlotState.OCCUPIED:
                 occupied[slot] = box
             elif state is MemberSlotState.AMBIGUOUS:
-                raise ArenaReaderError(
-                    "member_slot_ambiguous",
-                    f"{target.team_id}/stage-{stage_number}/slot-{slot} is neither an explicit black blank nor a confirmed portrait: {metrics}",
+                self._raise_member_slot_failure(
+                    target, stage_number, image, totals, observations, slot_cap,
+                    ArenaReaderError(
+                        "member_slot_ambiguous",
+                        f"{target.team_id}/stage-{stage_number}/slot-{slot} is neither an explicit black blank nor a confirmed portrait: {metrics}",
+                    ),
+                    slot=slot, box=box,
                 )
         if not occupied:
-            raise ArenaReaderError(
-                "member_count_mismatch",
-                f"{target.team_id}/stage-{stage_number} has no occupied member within Grade {self.port._grade} cap {slot_cap}",
+            self._raise_member_slot_failure(
+                target, stage_number, image, totals, observations, slot_cap,
+                ArenaReaderError(
+                    "member_count_mismatch",
+                    f"{target.team_id}/stage-{stage_number} has no occupied member within Grade {self.port._grade} cap {slot_cap}",
+                ),
             )
         key = (target.team_id, stage_number)
         self.port._member_boxes[key] = occupied
         self.port._member_slot_observations[key] = observations
         return tuple(occupied)
+
+    def _raise_member_slot_failure(
+        self, target: TeamTarget, stage_number: int, image: Any,
+        totals: Sequence[tuple[int, int, int, int]],
+        observations: dict[int, tuple[MemberSlotState, MemberSlotMetrics, tuple[int, int, int, int]]],
+        slot_cap: int, error: ArenaReaderError, *,
+        slot: int | None = None, box: tuple[int, int, int, int] | None = None,
+    ) -> NoReturn:
+        """Keep the rejected preview before recovery; never acquire another frame."""
+        try:
+            diagnostic = {
+                "started": self.clock.perf_counter(), "source": image, "frames": [], "actions": [],
+                "position": {
+                    "team_id": target.team_id, "opponent_position": target.opponent_position,
+                    "stage_number": stage_number, "member_slot": slot,
+                    "phase": "member_slots", "kind": "member_slot",
+                },
+                "member_slot_observation": {
+                    "frame_role": "stage_preview_before_recovery", "frame_shape": list(image.shape),
+                    "grade": self.port._grade, "slot_cap": slot_cap,
+                    "selected_total_anchor": list(totals[stage_number - 1]),
+                    "team_total_anchors": [list(anchor) for anchor in totals],
+                    "failed_slot": slot, "failed_box": list(box) if box is not None else None,
+                    "slots": [
+                        {"slot": number, "state": state.value, "box": list(slot_box), "metrics": asdict(metrics)}
+                        for number, (state, metrics, slot_box) in observations.items()
+                    ],
+                    "metric_thresholds": {
+                        name: getattr(grade_rules, name)
+                        for name in (
+                            "MEMBER_SLOT_MIN_GRAY_STDDEV", "MEMBER_SLOT_MIN_EDGE_DENSITY",
+                            "EMPTY_SLOT_MAX_INNER_GRAY_MEAN", "EMPTY_SLOT_MIN_DARK_PIXEL_RATIO",
+                            "EMPTY_PLACEHOLDER_MAX_INNER_GRAY_MEAN", "EMPTY_PLACEHOLDER_MAX_GRAY_STDDEV",
+                            "EMPTY_PLACEHOLDER_MAX_EDGE_DENSITY",
+                        )
+                    },
+                },
+            }
+            self.port._save_failure_evidence(diagnostic, str(error), event="arena_reader_failure")
+        except Exception as diagnostic_error:
+            self.logger.warning(json.dumps({
+                "event": "arena_member_slot_evidence_save_failed", "error": str(error),
+                "diagnostic_error": str(diagnostic_error),
+            }, ensure_ascii=False))
+        raise error
 
     def open_member(self, target: TeamTarget, stage_number: int, slot: int) -> None:
         self.port._last_detail_failure_location = None

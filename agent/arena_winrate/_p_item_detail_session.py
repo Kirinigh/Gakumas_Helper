@@ -6,13 +6,14 @@ from enum import Enum, auto
 from dataclasses import replace
 
 from .reader import ArenaReaderError
+from ._p_item_detail_text import retain_native_detail_vetoes
 from ._p_item_detail_evidence import PItemDetailEvidence
 
 
 class _FrameStep(Enum):
-    NEXT = auto()
-    REPEAT = auto()
-    STOP = auto()
+    DETAIL = auto()
+    SOURCE = auto()
+    SOURCE_TRANSITION = auto()
 
 
 class PItemDetailSession:
@@ -101,8 +102,7 @@ class PItemDetailSession:
         self.ordinary_title_fallback = None
         self.ordinary_fallback_blocked = False
         self.ordinary_fallback_family = None
-        self.body_reread_images = []
-        self.body_reread_blocked_ids = set()
+        self.detail_conflicted_ids = set()
         open_wait_started = self.clock.perf_counter()
         self._wait_for_detail()
         self.backend._add_timing(
@@ -196,47 +196,11 @@ class PItemDetailSession:
             if self.diagnostic is not None:
                 self.diagnostic.pop("p_item_text", None)
             step = self._observe_detail()
-            if step is _FrameStep.STOP:
-                break
-            if step is _FrameStep.REPEAT:
-                continue
-            source_visible = False
-            source_transition = False
             if self.terminal_error is not None:
                 self._record_family_title(False)
                 break
-            if self.image is not None:
-                self.last_frame_may_have_overlay = True
-                try:
-                    if self.source_images and self.source_boxes:
-                        source_visible, self.last_source_visual_errors = self.backend._p_item_source_frame_matches(
-                            self.source_images,
-                            self.image,
-                            self.source_boxes,
-                            self.member_anchors_visible,
-                        )
-                        if source_visible:
-                            self.last_source_match_route = "visual_frozen_generation"
-                        elif (
-                            self.member_anchors_visible
-                            and self.current_title_signature
-                            and self.current_title_signature in self.evidence.stable_source_title_signatures
-                        ):
-                            source_transition = True
-                            self.last_source_match_route = "semantic_source_transition"
-                        else:
-                            self.last_source_match_route = "none"
-                    else:
-                        source_visible = ("体力" in self.last_text and "総合力" in self.last_text) or bool(
-                            self.backend._ocr(self.image, r"^体力$") and self.backend._ocr(self.image, r"^総合力$")
-                        )
-                except Exception as error:
-                    self.terminal_error = error
-                    self.last_error = str(error)
-                    self._record_family_title(False)
-                    break
-            self._record_family_title(not source_visible and not source_transition)
-            if source_visible:
+            self._record_family_title(step is _FrameStep.DETAIL)
+            if step is _FrameStep.SOURCE:
                 self.last_frame_may_have_overlay = False
                 self.last_unique_match = None
                 self.consecutive_unique_matches = 0
@@ -245,7 +209,7 @@ class PItemDetailSession:
                 self.consecutive_non_source_reads = 0
                 self.consecutive_source_transition_reads = 0
                 self.last_error = "the original member page remained stable after the click"
-            elif source_transition:
+            elif step is _FrameStep.SOURCE_TRANSITION:
                 self.last_unique_match = None
                 self.consecutive_unique_matches = 0
                 self.unique_match_used_effect = False
@@ -421,105 +385,39 @@ class PItemDetailSession:
         }
         self.transaction_states.extend(("ORDINARY_TITLE_FALLBACK", "RESOLVED"))
 
-    def _track_body_reread_conflicts(self, result):
-        """No later alternate view may erase accepted native contradictions."""
+    @staticmethod
+    def _detail_conflict_ids(result):
+        """Collect contradictions for the caller to commit after frame validation."""
         diagnostic = result.diagnostics
         family = diagnostic.get("plan_scoped_ids", ())
-        self.body_reread_blocked_ids.update(
+        conflicts = {
             item_id for item_id, entries in diagnostic.get("conflicts", {}).items() if entries
-        )
+        }
         supported = {item_id for item_id, entries in diagnostic.get("positive_support", {}).items() if entries}
         if result.status == "unique" or len(supported) == 1:
-            self.body_reread_blocked_ids.update(item_id for item_id in family if item_id not in supported)
+            conflicts.update(item_id for item_id in family if item_id not in supported)
+        return conflicts
 
-    def _try_body_reread(self, atoms, title_index, source_frames, native_result, resolver):
-        """One full-content crop per original frame, at most two per opening."""
-        prepare = getattr(self.backend.catalog, "prepare_clicked_p_item_body_reread", None)
-        if (native_result.status != "ambiguous" or not callable(prepare)
-                or not self.source_images or self.last_source_row_uncertain
-                or len(self.body_reread_images) >= 2
-                or any(self.image is frame for frame in self.body_reread_images)
-                or self.clock.monotonic() >= self.deadline):
-            return native_result
-        plan = prepare(atoms, title_index=title_index, source_frames=source_frames,
-                       plan=self.plan, original_result=native_result, **self.slot_scope)
-        if plan is None:
-            return native_result
-        import cv2
-
-        from ._reader_visual import _box, _text
-        from ._p_item_body_reread import fuse_body_reread, contradicted_body_ids
-
-        self.body_reread_blocked_ids.update(contradicted_body_ids(plan, atoms))
-        if plan.base_id in self.body_reread_blocked_ids:
-            self.ordinary_fallback_blocked = True
-
-        self.backend._check_cancelled()
-        height, width = self.image.shape[:2]
-        sx, sy = width / 720, height / 1280
-        x, y, w, h = plan.roi
-        left, top = max(0, int(x * sx)), max(0, int(y * sy))
-        right, bottom = min(width, int((x + w) * sx + 1)), min(height, int((y + h) * sy + 1))
-        if right <= left or bottom <= top:
-            return native_result
-        enlarged = cv2.resize(self.image[top:bottom, left:right], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        self.backend._check_cancelled()
-        if self.clock.monotonic() >= self.deadline:
-            return native_result
-        self.body_reread_images.append(self.image)
-        self.backend._increment("p_item_detail_body_roi_reads")
-        started = self.clock.perf_counter()
-        try:
-            detail = self.backend._ocr_detail(enlarged, r".+", roi=(0, 0, enlarged.shape[1], enlarged.shape[0]))
-        except (RuntimeError, OSError) as error:
-            self.backend._increment("p_item_detail_body_roi_errors")
-            if self.diagnostic is not None:
-                self.diagnostic.setdefault("p_item_body_rereads", []).append({
-                    "roi": plan.roi, "accepted": False, "error": str(error),
-                    "additional_ocr_calls": 1, "additional_screenshots": 0,
-                })
-            return native_result
-        finally:
-            self.backend._add_timing("p_item_detail_body_roi_ocr", self.clock.perf_counter() - started)
-        self.backend._check_cancelled()
-        items = tuple(detail.all_results or detail.filtered_results or ()) if detail and detail.hit else ()
-        reread_atoms = [
-            {"text": _text(item), "box": ((left + _box(item)[0] / 2) / sx,
-                                              (top + _box(item)[1] / 2) / sy,
-                                              _box(item)[2] / 2 / sx, _box(item)[3] / 2 / sy)}
-            for item in items
-        ]
-        titles = [i for i, atom in enumerate(reread_atoms)
-                  if self.evidence.normalize_title_row(atom["text"]).removesuffix("+")
-                  == self.evidence.normalize_title_row(self.last_title_text).removesuffix("+")]
-        recovered = None
-        if len(titles) == 1 and self.clock.monotonic() < self.deadline:
-            result = resolver(reread_atoms, title_index=titles[0], source_frames=source_frames,
-                              plan=self.plan, candidate_p_item_ids=self.candidate_ids,
-                              visual_tiebreak_p_item_ids=self.visual_tiebreak_ids, **self.slot_scope)
-            self._track_body_reread_conflicts(result)
-            self.body_reread_blocked_ids.update(contradicted_body_ids(plan, reread_atoms))
-            if plan.base_id in self.body_reread_blocked_ids:
-                self.ordinary_fallback_blocked = True
-            recovered = fuse_body_reread(plan, atoms, reread_atoms, result)
-            if recovered is not None and any(item_id in self.body_reread_blocked_ids for item_id in recovered.ids):
-                recovered = None
-        self.backend._check_cancelled()
-        if self.clock.monotonic() >= self.deadline:
-            recovered = None
-        if self.diagnostic is not None:
-            parent = next((frame for frame in self.diagnostic.get("probe_frames", ()) if frame["image"] is self.image), {})
-            self.diagnostic.setdefault("p_item_body_rereads", []).append({
-                "roi": plan.roi, "coordinate_size": (720, 1280), "scale": 2,
-                "parent_reco_id": parent.get("reco_id"), "reco_id": getattr(detail, "reco_id", None),
-                "atoms": reread_atoms, "accepted": recovered is not None,
-                "additional_ocr_calls": 1, "additional_screenshots": 0,
-                "alignment": recovered.diagnostics.get("body_reread") if recovered is not None else None,
-            })
-        if recovered is not None:
-            self.backend._increment("p_item_detail_body_roi_recoveries")
-            return recovered
-        return native_result
+    def _classify_source_frame(self):
+        """Use this capture and its existing OCR before interpreting detail text."""
+        self.last_frame_may_have_overlay = True
+        if self.source_images and self.source_boxes:
+            visible, self.last_source_visual_errors = self.backend._p_item_source_frame_matches(
+                self.source_images, self.image, self.source_boxes, self.member_anchors_visible,
+            )
+            if visible:
+                self.last_source_match_route = "visual_frozen_generation"
+                return _FrameStep.SOURCE
+            if (self.member_anchors_visible and self.current_title_signature
+                    and self.current_title_signature in self.evidence.stable_source_title_signatures):
+                self.last_source_match_route = "semantic_source_transition"
+                return _FrameStep.SOURCE_TRANSITION
+            self.last_source_match_route = "none"
+        elif ("体力" in self.last_text and "総合力" in self.last_text) or (
+            self.backend._ocr(self.image, r"^体力$") and self.backend._ocr(self.image, r"^総合力$")
+        ):
+            return _FrameStep.SOURCE
+        return _FrameStep.DETAIL
 
     def _observe_detail(self):
         self.isolated_title_family_proven = False
@@ -540,9 +438,15 @@ class PItemDetailSession:
             )
             self.current_title_signature = tuple(normalized for _, normalized, _, _ in current_rows)
             self.last_source_row_uncertain = False
+            self.raw_matches = ()
+            self.matches = ()
+            self.effect_disambiguated = False
+            self.last_title_text = ""
+            step = self._classify_source_frame()
+            if step is not _FrameStep.DETAIL:
+                return step
             used_source_rows: set[int] = set()
             used_background_rows: set[tuple[int, int]] = set()
-            self.last_title_text = ""
             for raw, normalized, row_box, components in current_rows:
                 exact_sources = tuple(
                     (index,)
@@ -688,11 +592,12 @@ class PItemDetailSession:
                 title_index = len(text_atoms)
                 if current_atoms:
                     text_atoms.append({"text": self.last_title_text, "box": row_box})
+                sources = tuple(value[5] for value in self.evidence.source_observations) if self.source_images else ()
                 text_started = self.clock.perf_counter()
                 text_result = text_resolver(
                     text_atoms,
                     title_index=title_index,
-                    source_frames=tuple(value[5] for value in self.evidence.source_observations) if self.source_images else (),
+                    source_frames=sources,
                     plan=self.plan,
                     candidate_p_item_ids=self.candidate_ids,
                     **self.slot_scope,
@@ -710,13 +615,14 @@ class PItemDetailSession:
                     ))
                     native_panel_box = isolated_p_item_body_region(self.image, self.source_images, native_title_box)
                     if native_panel_box is not None:
+                        native_vetoes = text_result.diagnostics.get("native_detail_vetoes", {})
                         panel_box = tuple(value / scale for value, scale in zip(
                             native_panel_box, (width / 720.0, height / 1280.0) * 2, strict=True,
                         ))
                         text_result = text_resolver(
                             text_atoms,
                             title_index=title_index,
-                            source_frames=tuple(value[5] for value in self.evidence.source_observations),
+                            source_frames=sources,
                             plan=self.plan,
                             candidate_p_item_ids=self.candidate_ids,
                             **self.slot_scope,
@@ -728,17 +634,27 @@ class PItemDetailSession:
                             detail_image=self.image,
                             detail_coordinate_size=(720, 1280),
                         )
+                        text_result = retain_native_detail_vetoes(text_result, native_vetoes)
                         self.backend._increment("p_item_detail_panel_reuses")
-                self._track_body_reread_conflicts(text_result)
-                text_result = self._try_body_reread(
-                    text_atoms, title_index,
-                    tuple(value[5] for value in self.evidence.source_observations) if self.source_images else (),
-                    text_result, text_resolver,
-                )
-                if text_result.status == "unique" and any(item_id in self.body_reread_blocked_ids for item_id in text_result.ids):
+                retain_conflicts = getattr(self.backend.catalog, "retain_clicked_p_item_native_body_conflicts", None)
+                if (text_result.status == "ambiguous" and sources and not self.last_source_row_uncertain
+                        and not text_result.diagnostics.get("native_detail_vetoes")
+                        and callable(retain_conflicts) and self.clock.monotonic() < self.deadline):
+                    retained = retain_conflicts(text_atoms, title_index=title_index, source_frames=sources,
+                                                plan=self.plan, result=text_result, **self.slot_scope)
+                    self.backend._check_cancelled()
+                    if self.clock.monotonic() < self.deadline:
+                        text_result = retained
+                if text_result.diagnostics.get("native_detail_vetoes"):
+                    self.backend._check_cancelled()
+                    if self.clock.monotonic() >= self.deadline:
+                        self.matches = ()
+                        return _FrameStep.DETAIL
+                self.detail_conflicted_ids.update(self._detail_conflict_ids(text_result))
+                if text_result.status == "unique" and any(item_id in self.detail_conflicted_ids for item_id in text_result.ids):
                     text_result = replace(text_result, status="unknown", ids=(), reason="contradictory_detail_observations", diagnostics={
                         **text_result.diagnostics,
-                        "opening_conflicted_ids": tuple(sorted(self.body_reread_blocked_ids)),
+                        "opening_conflicted_ids": tuple(sorted(self.detail_conflicted_ids)),
                     })
                 self.backend._add_timing("p_item_detail_text", self.clock.perf_counter() - text_started)
                 self.backend._increment(f"p_item_detail_text_{text_result.status}")
@@ -780,4 +696,4 @@ class PItemDetailSession:
             self.image = None
             self.current_title_signature = ()
             self.last_source_row_uncertain = False
-        return _FrameStep.NEXT
+        return _FrameStep.DETAIL

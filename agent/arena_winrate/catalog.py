@@ -23,6 +23,14 @@ class ArenaCatalogError(ValueError):
     """Raised when clicked detail text cannot resolve one exact engine ID."""
 
 
+class StructuralOmissionFieldConflict(ArenaCatalogError):
+    """A rendered field contradicts a proposed UI omission."""
+
+
+class StructuralOmissionFieldUnreadable(ArenaCatalogError):
+    """A rendered structural field needs another observation."""
+
+
 class PIdolBindingError(ArenaCatalogError):
     """Raised when a member's P-item and intrinsic card cannot share an owner."""
 
@@ -661,6 +669,12 @@ class ArenaEntityCatalog:
                         f"allowed_values={values!r}, suffix={suffix!r}"
                     )
 
+    def _fixed_enthusiasm_effect_values(self, card_id: int) -> tuple[int, ...]:
+        card = self._cards_by_id.get(card_id, {})
+        return tuple(int(value) for value in re.findall(
+            r"setEnthusiasmBonus\(([0-9]+)\)", str(card.get("actions", "")),
+        ))
+
     def _validate_fixed_enthusiasm_effect(self, card_id: int, detail_text: str) -> None:
         """Keep each visible fixed enthusiasm operand literal and unitless.
 
@@ -669,9 +683,7 @@ class ArenaEntityCatalog:
         contracts; an intact row cannot hide another present corrupt value.
         """
         card = self._cards_by_id.get(card_id, {})
-        values = tuple(int(value) for value in re.findall(
-            r"setEnthusiasmBonus\(([0-9]+)\)", str(card.get("actions", "")),
-        ))
+        values = self._fixed_enthusiasm_effect_values(card_id)
         if not values or not isinstance(detail_text, str):
             return
         continuations = tuple(
@@ -918,19 +930,19 @@ class ArenaEntityCatalog:
             return None
         return recovered[0]
 
-    def prepare_clicked_p_item_body_reread(
-        self, atoms, *, title_index, source_frames=(), plan=None, slot_index=None, original_result,
+    def retain_clicked_p_item_native_body_conflicts(
+        self, atoms, *, title_index, source_frames, plan, slot_index=None, result,
     ):
-        """Keep an alternate body view inside the original plan/slot scope."""
+        """Check native negative evidence inside the original plan/slot scope."""
         index = self._get_p_item_detail_text_index()
         if index is None or type(title_index) is not int or not 0 <= title_index < len(atoms):
-            return None
+            return result
         scope = {} if slot_index is None else {
             "eligible_ids": self.arena_p_item_candidate_ids(plan=plan, slot_index=slot_index),
         }
-        return index.prepare_body_reread(
+        return index.retain_native_body_conflicts(
             atoms, title_index=title_index, source_frames=source_frames,
-            plan=plan, original_result=original_result, **scope,
+            plan=plan, result=result, **scope,
         )
 
     def resolve_clicked_p_item_text(
@@ -2357,13 +2369,14 @@ class ArenaEntityCatalog:
     ) -> str:
         """Classify whether visible positive effects uniquely prove a group.
 
-        ``catalog_unique`` needs no effect discrimination because the trusted
-        badge total has one legal group. ``positive_unique`` is selected by
-        one or more explicitly rendered customized values or explicitly
+        ``catalog_unique`` means the supplied total has one legal group. The
+        caller must distinguish a badge observation from a total inferred
+        from the group itself. ``positive_unique`` is selected by one or
+        more explicitly rendered customized values or explicitly
         rendered unchanged baseline values that exclude another legal group. A
         ``negative_dependent`` result still relies on a missing or unchanged
-        row and therefore needs an independent effect-ROI read before runtime
-        use.
+        row. The caller must distinguish UI-defined omissions from effects
+        that need other evidence.
         """
         self._validate_added_numeric_effects(card_id, detail_text)
 
@@ -2447,19 +2460,52 @@ class ArenaEntityCatalog:
             else "negative_dependent"
         )
 
+    def has_structural_omission(
+        self, card_id: int, resolved: Mapping[str, int],
+    ) -> bool:
+        """Identify groups that use a catalogued zero-cost or limit omission."""
+        card = self._cards_by_id.get(card_id)
+        return card is not None and any(
+            level > 0 and self._customization_evidence_carrier(card, int(identifier), level, resolved)
+            == "structural_omission"
+            for identifier, level in resolved.items()
+        )
+
+    def _assert_typed_detail_cost_atoms(
+        self, card_id: int, atoms: Sequence[str], *, expected_cost: int | None = None,
+    ) -> None:
+        descriptor = self._typed_cost_descriptor(self._cards_by_id.get(card_id, {}))
+        if descriptor is None:
+            return
+        label, base_cost, _ = descriptor
+        invalid_suffix = r"[+.%％,−/×÷秒-]|回|囘|倍|以上|以下"
+        if label not in {"好調消費", "好印象消費", "絶好調消費"}:
+            invalid_suffix += r"|ターン"
+        pattern = _numeric_effect_label_pattern(label) + r"([+−-]?[0-9]+)"
+        costs = set()
+        for text in atoms:
+            atom = _normalise_effect_text(text)
+            for marker in re.finditer(pattern, atom):
+                value = marker.group(1)
+                if not value.isdecimal() or int(value) > base_cost or re.match(invalid_suffix, atom[marker.end():]):
+                    raise StructuralOmissionFieldConflict(f"card {card_id} detail has a conflicting typed cost")
+                costs.add(int(value))
+        if len(costs) > 1 or (expected_cost is not None and costs - {expected_cost}):
+            raise StructuralOmissionFieldConflict(f"card {card_id} detail has a conflicting typed cost")
+
     def certify_structural_omission_evidence(
         self,
         card_id: int,
         *,
         full_detail_text: str,
-        effect_roi_text: str,
+        effect_roi_text: str | None,
         expected_count: int,
         resolved: Mapping[str, int],
         generic_cost_frame_values: Sequence[int] | None = None,
         effect_roi_title_bound: bool = False,
         full_detail_title_proof: _DetailIdentityProof | None = None,
     ) -> str:
-        """Certify selected UI-defined omissions from two covered OCR views.
+        """Certify selected UI-defined omissions or independent costs.
 
         A typed cost reduced to zero and a removed once-per-stage footer are
         intentionally omitted by the contest detail UI. Absence alone is not
@@ -2480,7 +2526,14 @@ class ArenaEntityCatalog:
         card-face generic-cost value. A customization indistinguishable from
         an identical base action (for example, another ``upgradeHand`` when
         the base already contains it) remains fail-closed.
+
+        A missing ROI argument value (None) selects native omission handling.
+        The accepted title and a recognized body anchor bind that observation.
+        Unseen features are absent for the UI-defined omissions in this mode.
         """
+        native_omission = effect_roi_text is None
+        if effect_roi_text is None:
+            effect_roi_text = ""
         self._validate_added_numeric_effects(card_id, full_detail_text)
         self._validate_added_numeric_effects(card_id, effect_roi_text)
 
@@ -2541,16 +2594,32 @@ class ArenaEntityCatalog:
                 and card.get("limit") == 1
             )
         )
+        field_atoms = tuple(
+            _normalise_effect_text(atom)
+            for view in (full_detail_text, effect_roi_text)
+            for separate_view in view.split(_OCR_EFFECT_VIEW_BOUNDARY)
+            for atom in separate_view.splitlines()
+        )
+        evidence_sources = (full_compact,) if native_omission else (full_compact, roi_compact)
+        if (native_omission or selected_structural_omissions) and typed_label is not None:
+            self._assert_typed_detail_cost_atoms(card_id, field_atoms, expected_cost=effective_typed_cost)
+        selected_limit_omission = card.get("limit") == 1 and any(
+            self._customizations[identifier].get("limit") == 0 for identifier in selected_structural_omissions
+        )
+        if selected_limit_omission:
+            limit_label = r"試験[・·]?ステージ中"
+            if any(re.search(limit_label + r"[+−-]?[0-9]+[回囘]", atom) for atom in field_atoms):
+                raise StructuralOmissionFieldConflict(f"card {card_id} detail has a visible once-per-stage limit")
+            if any(re.search(limit_label + r"(?=[0-9()回囘+−-]|$)", atom) for atom in field_atoms):
+                raise StructuralOmissionFieldUnreadable(f"card {card_id} detail has an unreadable once-per-stage limit")
+        if native_omission and not selected_structural_omissions:
+            raise ArenaCatalogError(f"card {card_id} has no UI-defined omission for native confirmation")
         if not anchors and (
             selected_structural_omissions or not selected_generic_costs
         ):
             raise ArenaCatalogError(
                 f"card {card_id} lacks an invariant action anchor for omission coverage"
             )
-        evidence_sources = (
-            ("full detail", full_compact),
-            ("effect ROI", roi_compact),
-        )
         recovered_title_visible = False
         if title and title not in full_title_compact and isinstance(full_detail_title_proof, _DetailIdentityProof):
             proof = full_detail_title_proof
@@ -2575,6 +2644,7 @@ class ArenaEntityCatalog:
         )
         if (
             selected_structural_omissions
+            and not native_omission
             and title not in roi_title_compact
             and not roi_upgraded_title
             and not effect_roi_title_bound
@@ -2582,56 +2652,41 @@ class ArenaEntityCatalog:
             raise ArenaCatalogError(
                 f"card {card_id} effect ROI OCR lacks the exact title anchor"
             )
-        # The two OCR passes cover the same accepted detail image at different
-        # scales. The enlarged effect ROI remains the authoritative coverage
-        # channel. The full-screen pass may miss a row only when that complete
-        # row is independently present inside the ROI. Never concatenate source
-        # boundaries, which could fabricate an anchor from unrelated fragments.
-        roi_missing = tuple(
-            anchor
-            for anchor in anchors
-            if not self._detail_roi_coverage_anchor_present(
-                card,
-                normalized_resolved,
-                anchor,
-                full_compact=full_compact,
-                roi_compact=roi_compact,
+        if native_omission:
+            if not any(
+                self._detail_coverage_anchor_present(card, normalized_resolved, anchor, full_compact)
+                for anchor in anchors
+            ):
+                raise ArenaCatalogError(f"card {card_id} native detail OCR lacks a recognized body anchor")
+        else:
+            # The enlarged ROI is the coverage channel for the two-view path.
+            # Keep row searches within each view rather than joining their text.
+            roi_missing = tuple(
+                anchor
+                for anchor in anchors
+                if not self._detail_roi_coverage_anchor_present(
+                    card, normalized_resolved, anchor, full_compact=full_compact, roi_compact=roi_compact,
+                )
             )
-        )
-        counted_roi_coverage = any(
-            self._detail_counted_score_anchor_present(
-                card,
-                normalized_resolved,
-                anchor,
-                roi_compact,
+            if roi_missing and not any(
+                self._detail_counted_score_anchor_present(card, normalized_resolved, anchor, roi_compact)
+                for anchor in anchors
+            ):
+                raise ArenaCatalogError(
+                    f"card {card_id} effect ROI OCR lacks invariant anchors {roi_missing!r}"
+                )
+            uncovered_full_missing = tuple(
+                anchor
+                for anchor in anchors
+                if not any(
+                    self._detail_coverage_anchor_present(card, normalized_resolved, anchor, compact)
+                    for compact in evidence_sources
+                )
             )
-            for anchor in anchors
-        )
-        if roi_missing and not counted_roi_coverage:
-            raise ArenaCatalogError(
-                f"card {card_id} effect ROI OCR lacks invariant anchors {roi_missing!r}"
-            )
-        uncovered_full_missing = tuple(
-            anchor
-            for anchor in anchors
-            if not self._detail_coverage_anchor_present(
-                card,
-                normalized_resolved,
-                anchor,
-                full_compact,
-            )
-            and not self._detail_coverage_anchor_present(
-                card,
-                normalized_resolved,
-                anchor,
-                roi_compact,
-            )
-        )
-        if uncovered_full_missing:
-            raise ArenaCatalogError(
-                f"card {card_id} covered detail OCR lacks invariant anchors "
-                f"{uncovered_full_missing!r}"
-            )
+            if uncovered_full_missing:
+                raise ArenaCatalogError(
+                    f"card {card_id} covered detail OCR lacks invariant anchors {uncovered_full_missing!r}"
+                )
         certified_omissions = 0
         certified_generic_costs = 0
         for customization_text, level in normalized_resolved.items():
@@ -2656,8 +2711,6 @@ class ArenaEntityCatalog:
             once_footer_omitted = (
                 definition.get("limit") == 0
                 and card.get("limit") == 1
-                and "試験・ステージ中1回" not in full_compact
-                and "試験・ステージ中1回" not in roi_compact
             )
             if typed_cost_omitted or once_footer_omitted:
                 certified_omissions += 1
@@ -2673,7 +2726,7 @@ class ArenaEntityCatalog:
                     int(level),
                     resolved=normalized_resolved,
                 )
-                for _source_name, compact in evidence_sources
+                for compact in evidence_sources
             )
             if not channel_has_positive_signature:
                 raise ArenaCatalogError(
@@ -2685,6 +2738,10 @@ class ArenaEntityCatalog:
             raise ArenaCatalogError(
                 f"card {card_id} has no selected external evidence to certify"
             )
+        if native_omission:
+            if not certified_omissions:
+                raise ArenaCatalogError(f"card {card_id} native detail contradicts the proposed omissions")
+            return "native_omission_unique"
         if certified_omissions and certified_generic_costs:
             return "external_evidence_unique"
         if certified_generic_costs:

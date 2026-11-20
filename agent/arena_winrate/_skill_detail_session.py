@@ -15,7 +15,7 @@ class _FrameStep(Enum):
     STOP = auto()
 
 
-from .catalog import ArenaCatalogError
+from .catalog import _OCR_EFFECT_VIEW_BOUNDARY, ArenaCatalogError, StructuralOmissionFieldConflict, StructuralOmissionFieldUnreadable
 from ._detail_identity import build_detail_identity_proof, matches_detail_identity_transaction
 from ._reader_evidence import (
     _TitleBoundEffectRoiText,
@@ -500,6 +500,7 @@ class SkillDetailSession:
                 "skill_card_cost_fallback_location_missing",
                 "skill_card_cost_fallback_roi_conflict",
                 "skill_card_detail_effect_view_conflict",
+                "skill_card_detail_structural_field_conflict",
             }:
                 self.terminal_error = error
                 return _FrameStep.STOP
@@ -656,7 +657,13 @@ class SkillDetailSession:
                 key=self.key,
             )
         except ArenaReaderError as initial_error:
-            if initial_error.code != "skill_card_detail_ambiguous":
+            if initial_error.code not in {
+                "skill_card_detail_ambiguous",
+                "skill_card_detail_effect_view_conflict",
+                "skill_card_detail_numeric_boundary_unconfirmed",
+            }:
+                raise
+            if initial_error.code != "skill_card_detail_ambiguous" and self.clock.monotonic() >= self.deadline:
                 raise
             if not self.frame_is_settled:
                 self.backend._increment("skill_card_detail_render_incomplete_rereads")
@@ -746,6 +753,11 @@ class SkillDetailSession:
                             roi_observation_count,
                             recovered_full_text=getattr(self.roi_text, "recovered_full_text", None),
                             source_binding=getattr(self.roi_text, "source_binding", None),
+                            scoped_native_text=getattr(self.roi_text, "scoped_native_text", ""),
+                            scoped_body_text=_OCR_EFFECT_VIEW_BOUNDARY.join(filter(None, (
+                                getattr(self.roi_text, "scoped_body_text", ""),
+                                getattr(enhanced_roi_text, "scoped_body_text", ""),
+                            ))),
                         )
                         self.combined_text = self.backend._merge_skill_card_effect_detail_views(
                             card_id,
@@ -818,164 +830,261 @@ class SkillDetailSession:
             self.backend._increment("skill_card_detail_same_frame_effect_roi_recoveries")
         return _FrameStep.NEXT
 
+    def _confirm_native_omission(self, *, preserve_body_boundaries=False):
+        if self.count_mismatch:
+            raise ArenaReaderError(
+                "skill_card_detail_count_conflict",
+                "a native omission cannot override a known badge count",
+            )
+        self.detail_image = self.backend._card_detail_images.get(self.key)
+        full_detail_text = self.backend._native_skill_card_omission_text(
+            self.detail_image, self.resolved.card_id, preserve_body_boundaries=preserve_body_boundaries,
+        )
+        combined_text = self.backend._merge_skill_card_effect_detail_views(
+            self.resolved.card_id, (full_detail_text,),
+        )
+        try:
+            local_resolution = self.backend._resolve_clicked_card_text(
+                self.candidate_ids,
+                combined_text,
+                expected_customization_count=self.expected_customization_count,
+                allow_zero_without_badge_count=self.allow_zero_without_badge_count,
+                allow_auxiliary_badge_glyph=False,
+                key=self.key,
+            )
+        except ArenaReaderError as error:
+            if error.code != "skill_card_detail_ambiguous":
+                raise
+            raise ArenaReaderError(
+                "skill_card_detail_positive_evidence_missing",
+                "the accepted native title and body did not resolve one customization group",
+            ) from error
+        if not self.backend._same_clicked_card_resolution(self.resolved, local_resolution):
+            raise ArenaReaderError(
+                "skill_card_detail_positive_evidence_missing",
+                "native details outside the accepted title range affected the resolution",
+            )
+        self._certify_negative_evidence(full_detail_text, None, effect_roi_title_bound=False)
+        self.text = self.backend._card_detail_texts[self.key] = combined_text
+
+    def _has_structural_omission(self):
+        has_omission = getattr(self.backend.catalog, "has_structural_omission", None)
+        return has_omission is not None and has_omission(self.resolved.card_id, self.resolved.customizations) is True
+
+    def _inferred_omission_needs_body(self):
+        # A unique group at the total inferred from that same group is not
+        # independent evidence that the missing rows are deliberate omissions.
+        return (
+            self.resolved.detail_evidence_mode == "catalog_unique"
+            and self.evidence_customization_count != self.resolved_count
+            and self._has_structural_omission()
+        )
+
     def _confirm_negative_evidence(self):
-        if self.resolved.detail_evidence_mode == "negative_dependent":
-            if self.same_frame_effect_roi_context is not None:
-                full_detail_text, self.roi_text, _ = self.same_frame_effect_roi_context
-                effect_roi_title_bound = True
-                self.combined_text = self.backend._merge_skill_card_effect_detail_views(
-                    self.resolved.card_id,
-                    (full_detail_text, self.roi_text),
-                )
-            else:
-                self.detail_image = self.backend._card_detail_images.get(self.key)
-                if self.detail_image is None:
+        inferred_omission = self._inferred_omission_needs_body()
+        if self.resolved.detail_evidence_mode != "negative_dependent" and not inferred_omission:
+            return _FrameStep.NEXT
+
+        field_conflict = None
+        if self.same_frame_effect_roi_context is None and (inferred_omission or self._has_structural_omission()):
+            try:
+                self._confirm_native_omission(preserve_body_boundaries=inferred_omission)
+            except ArenaReaderError as error:
+                if error.code not in {
+                    "skill_card_detail_effect_view_conflict",
+                    "skill_card_detail_numeric_boundary_unconfirmed",
+                    "skill_card_detail_structural_field_conflict",
+                } and not (inferred_omission and error.code in {
+                    "skill_card_detail_positive_evidence_missing",
+                    "skill_card_detail_count_conflict",
+                }):
+                    raise
+                if not self.frame_is_settled and error.code != "skill_card_detail_structural_field_conflict":
                     raise ArenaReaderError(
-                        "skill_card_detail_positive_evidence_missing",
-                        "the accepted detail page has no cached image for an "
-                        "independent effect-ROI OCR; "
-                        f"key={self.key!r}; card_id={self.resolved.card_id}; "
-                        f"customizations={dict(self.resolved.customizations)!r}; "
-                        f"expected_badge_count={self.evidence_customization_count!r}",
-                    )
-                full_detail_text = self.text
-                # A fixed screen column is not a valid coverage
-                # boundary: live detail panels shift horizontally,
-                # and a fresh frame cannot repair a cropped panel.
-                # Every structural-omission pass is therefore bound
-                # to the uniquely resolved title, including the
-                # first pass. A bounded fresh-frame retry remains
-                # only for genuinely incomplete effect animation.
-                effect_roi_title_bound = True
+                        "skill_card_detail_render_incomplete",
+                        "native omission could not be confirmed before the detail settled",
+                    ) from error
+                if self.same_frame_effect_roi_attempted or self.clock.monotonic() >= self.deadline:
+                    raise
+                if error.code == "skill_card_detail_structural_field_conflict":
+                    field_conflict = error
+                self.backend._increment("skill_card_detail_native_omission_fallbacks")
+            else:
+                return _FrameStep.NEXT
+
+        if self.same_frame_effect_roi_context is not None:
+            full_detail_text, self.roi_text, _ = self.same_frame_effect_roi_context
+            effect_roi_title_bound = True
+            self.combined_text = self.backend._merge_skill_card_effect_detail_views(
+                self.resolved.card_id,
+                (full_detail_text, self.roi_text),
+            )
+        else:
+            self.detail_image = self.backend._card_detail_images.get(self.key)
+            if self.detail_image is None:
+                raise ArenaReaderError(
+                    "skill_card_detail_positive_evidence_missing",
+                    "the accepted detail page has no cached image for an "
+                    "independent effect-ROI OCR; "
+                    f"key={self.key!r}; card_id={self.resolved.card_id}; "
+                    f"customizations={dict(self.resolved.customizations)!r}; "
+                    f"expected_badge_count={self.evidence_customization_count!r}",
+                )
+            # A fixed screen column is not a valid coverage
+            # boundary: live detail panels shift horizontally,
+            # and a fresh frame cannot repair a cropped panel.
+            # Every structural-omission pass is therefore bound
+            # to the uniquely resolved title, including the
+            # first pass. A bounded fresh-frame retry remains
+            # only for genuinely incomplete effect animation.
+            effect_roi_title_bound = True
+            self.same_frame_effect_roi_attempted = True
+            try:
                 self.roi_text = self.backend._skill_card_title_anchored_effect_roi_text(
                     self.detail_image,
                     self.resolved.card_id,
                 )
-                self._consume_effect_roi_full_text()
-                full_detail_text = self.text
+            except ArenaReaderError as error:
+                if field_conflict is None or error.code == "skill_card_detail_id_changed":
+                    raise
+                raise field_conflict from error
+            if field_conflict is not None:
+                # A new view that omits a complete, contradictory field
+                # cannot disprove the original observed value.
+                raise field_conflict
+            self._consume_effect_roi_full_text()
+            full_detail_text = self.text
+            self.combined_text = self.backend._merge_skill_card_effect_detail_views(
+                self.resolved.card_id,
+                (self.text, self.roi_text),
+            )
+            evidence_views = (full_detail_text, self.roi_text)
+            if inferred_omission:
+                # Re-resolve against scoped atoms so detached numbers cannot
+                # supply positive evidence and bypass the omission check.
+                evidence_views = (
+                    getattr(self.roi_text, "scoped_native_text", ""),
+                    getattr(self.roi_text, "scoped_body_text", ""),
+                )
                 self.combined_text = self.backend._merge_skill_card_effect_detail_views(
-                    self.resolved.card_id,
-                    (self.text, self.roi_text),
+                    self.resolved.card_id, evidence_views,
                 )
-                try:
-                    self.resolved = self.backend._resolve_clicked_card_text(
-                        self.candidate_ids,
-                        self.combined_text,
-                        expected_customization_count=(self.expected_customization_count),
-                        allow_zero_without_badge_count=(self.allow_zero_without_badge_count),
-                        allow_auxiliary_badge_glyph=False,
-                        generic_cost_fallback_policy=(self.generic_cost_fallback_policy),
-                        allow_generic_cost_fallback=(self.auxiliary_badge_glyph_allowed),
-                        generic_cost_coverage_context=(
-                            full_detail_text,
-                            self.roi_text,
-                            _effect_roi_observation_count(self.roi_text),
-                        ),
-                        key=self.key,
-                    )
-                except ArenaReaderError as combined_error:
-                    if combined_error.code != "skill_card_detail_ambiguous" or not self.auxiliary_badge_glyph_allowed:
-                        raise
-                    self.resolved = self.backend._resolve_clicked_card_text(
-                        self.candidate_ids,
-                        self.combined_text,
-                        expected_customization_count=(self.expected_customization_count),
-                        allow_zero_without_badge_count=(self.allow_zero_without_badge_count),
-                        allow_auxiliary_badge_glyph=True,
-                        generic_cost_fallback_policy=(self.generic_cost_fallback_policy),
-                        allow_generic_cost_fallback=True,
-                        generic_cost_coverage_context=(
-                            full_detail_text,
-                            self.roi_text,
-                            _effect_roi_observation_count(self.roi_text),
-                        ),
-                        key=self.key,
-                    )
-            self.resolved_count = sum(int(value) for value in self.resolved.customizations.values())
-            self.evidence_customization_count = self.expected_customization_count
-            if self.evidence_customization_count is None and self.resolved.resolution_source.endswith("_auxiliary_badge_glyph"):
-                self.auxiliary = self.backend._badge_glyph_count_diagnostics.get(self.key, {})
-                self.auxiliary_count = self.auxiliary.get("resolved_count")
-                if type(self.auxiliary_count) is not int:
-                    raise ArenaReaderError(
-                        "skill_card_badge_glyph_evidence_missing",
-                        "an auxiliary badge-glyph reread has no cached count",
-                    )
-                self.evidence_customization_count = self.auxiliary_count
-            self.count_mismatch = self.expected_customization_count is not None and self.resolved_count != self.expected_customization_count
-            if self.resolved.detail_evidence_mode == "negative_dependent":
-                certifier = getattr(
-                    self.backend.catalog,
-                    "certify_structural_omission_evidence",
-                    None,
+            coverage_context = (*evidence_views, _effect_roi_observation_count(self.roi_text))
+            try:
+                self.resolved = self.backend._resolve_clicked_card_text(
+                    self.candidate_ids,
+                    self.combined_text,
+                    expected_customization_count=(self.expected_customization_count),
+                    allow_zero_without_badge_count=(self.allow_zero_without_badge_count),
+                    allow_auxiliary_badge_glyph=False,
+                    generic_cost_fallback_policy=(self.generic_cost_fallback_policy),
+                    allow_generic_cost_fallback=(self.auxiliary_badge_glyph_allowed),
+                    generic_cost_coverage_context=coverage_context,
+                    key=self.key,
                 )
-                certified_mode = None
-                certification_error = "catalog has no structural omission certifier"
-                certification_count = self.evidence_customization_count
-                if certification_count is None:
-                    # The coverage certifier is itself the independent
-                    # evidence boundary: it accepts every selected level
-                    # only when two covered detail views prove an explicit
-                    # positive signature, a UI-defined typed-cost/limit
-                    # omission, or a stable three-frame card-face cost.
-                    # Let it certify the resolved group's total without
-                    # making the fallible face-badge digit a prerequisite.
-                    certification_count = self.resolved_count
-                if certifier is not None and certification_count is not None:
-                    title_proof = self._recovered_full_detail_title_proof(full_detail_text)
-                    title_proof_kwargs = {} if title_proof is None else {"full_detail_title_proof": title_proof}
-                    try:
-                        certified_mode = certifier(
-                            self.resolved.card_id,
-                            full_detail_text=full_detail_text,
-                            effect_roi_text=self.roi_text,
-                            expected_count=certification_count,
-                            resolved=self.resolved.customizations,
-                            generic_cost_frame_values=(self.generic_cost_frame_values),
-                            effect_roi_title_bound=(effect_roi_title_bound),
-                            **title_proof_kwargs,
-                        )
-                    except ArenaCatalogError as error:
-                        certification_error = str(error)
-                if self.generic_cost_evidence_error is not None:
-                    certification_error = f"{certification_error}; card_face_cost={self.generic_cost_evidence_error}"
-                if certified_mode not in {
-                    "structural_omission_unique",
-                    "card_face_generic_cost_unique",
-                    "external_evidence_unique",
-                }:
-                    raise ArenaReaderError(
-                        "skill_card_detail_positive_evidence_missing",
-                        "full-screen and enlarged effect-ROI OCR both lacked "
-                        "positive evidence and did not certify a UI-defined "
-                        "structural omission or independent card-face cost; "
-                        f"key={self.key!r}; card_id={self.resolved.card_id}; "
-                        f"customizations={dict(self.resolved.customizations)!r}; "
-                        f"expected_badge_count={self.evidence_customization_count!r}; "
-                        f"certification={certification_error}; "
-                        f"effect_roi={self.roi_text[:240]!r}",
-                    )
-                self.resolved = ClickedSkillCard(
-                    self.resolved.card_id,
-                    dict(self.resolved.customizations),
-                    resolution_source=self.resolved.resolution_source,
-                    detail_confirmation_reads=self.resolved.detail_confirmation_reads,
-                    detail_evidence_mode=certified_mode,
-                    conservative_cost_assumption=getattr(
-                        self.resolved,
-                        "conservative_cost_assumption",
-                        None,
-                    ),
+            except ArenaReaderError as combined_error:
+                if combined_error.code != "skill_card_detail_ambiguous" or not self.auxiliary_badge_glyph_allowed:
+                    raise
+                self.resolved = self.backend._resolve_clicked_card_text(
+                    self.candidate_ids,
+                    self.combined_text,
+                    expected_customization_count=(self.expected_customization_count),
+                    allow_zero_without_badge_count=(self.allow_zero_without_badge_count),
+                    allow_auxiliary_badge_glyph=True,
+                    generic_cost_fallback_policy=(self.generic_cost_fallback_policy),
+                    allow_generic_cost_fallback=True,
+                    generic_cost_coverage_context=coverage_context,
+                    key=self.key,
                 )
-                self.backend._increment("skill_card_detail_external_evidence_certifications")
-                if certified_mode in {
-                    "structural_omission_unique",
-                    "external_evidence_unique",
-                }:
-                    self.backend._increment("skill_card_detail_structural_omission_certifications")
-            self.text = self.combined_text
-            self.backend._card_detail_texts[self.key] = self.combined_text
+        self.resolved_count = sum(int(value) for value in self.resolved.customizations.values())
+        self.evidence_customization_count = self.expected_customization_count
+        if self.evidence_customization_count is None and self.resolved.resolution_source.endswith("_auxiliary_badge_glyph"):
+            self.auxiliary = self.backend._badge_glyph_count_diagnostics.get(self.key, {})
+            self.auxiliary_count = self.auxiliary.get("resolved_count")
+            if type(self.auxiliary_count) is not int:
+                raise ArenaReaderError(
+                    "skill_card_badge_glyph_evidence_missing",
+                    "an auxiliary badge-glyph reread has no cached count",
+                )
+            self.evidence_customization_count = self.auxiliary_count
+        self.count_mismatch = self.expected_customization_count is not None and self.resolved_count != self.expected_customization_count
+        inferred_omission = self._inferred_omission_needs_body()
+        if self.resolved.detail_evidence_mode == "negative_dependent" or inferred_omission:
+            # The merged ROI text also contains full-screen atoms for conflict
+            # checks. Only the separately scoped crop can prove a readable body.
+            effect_text = getattr(self.roi_text, "scoped_body_text", "") if inferred_omission else self.roi_text
+            self._certify_negative_evidence(
+                full_detail_text, effect_text, effect_roi_title_bound=effect_roi_title_bound,
+            )
+        self.text = self.backend._card_detail_texts[self.key] = self.combined_text
         return _FrameStep.NEXT
+
+    def _certify_negative_evidence(self, full_detail_text, effect_roi_text, *, effect_roi_title_bound):
+        certifier = getattr(self.backend.catalog, "certify_structural_omission_evidence", None)
+        certified_mode = None
+        certification_error = "catalog has no structural omission certifier"
+        if certifier is not None:
+            title_proof = self._recovered_full_detail_title_proof(full_detail_text)
+            title_proof_kwargs = {} if title_proof is None else {"full_detail_title_proof": title_proof}
+            try:
+                certified_mode = certifier(
+                    self.resolved.card_id,
+                    full_detail_text=full_detail_text,
+                    effect_roi_text=effect_roi_text,
+                    expected_count=(
+                        self.resolved_count
+                        if self.evidence_customization_count is None
+                        else self.evidence_customization_count
+                    ),
+                    resolved=self.resolved.customizations,
+                    generic_cost_frame_values=self.generic_cost_frame_values,
+                    effect_roi_title_bound=effect_roi_title_bound,
+                    **title_proof_kwargs,
+                )
+            except StructuralOmissionFieldUnreadable as error:
+                if effect_roi_text is None:
+                    raise ArenaReaderError("skill_card_detail_numeric_boundary_unconfirmed", str(error)) from error
+                certification_error = str(error)
+            except StructuralOmissionFieldConflict as error:
+                raise ArenaReaderError("skill_card_detail_structural_field_conflict", str(error)) from error
+            except ArenaCatalogError as error:
+                certification_error = str(error)
+        if self.generic_cost_evidence_error is not None:
+            certification_error = f"{certification_error}; card_face_cost={self.generic_cost_evidence_error}"
+        if certified_mode not in {
+            "native_omission_unique",
+            "structural_omission_unique",
+            "card_face_generic_cost_unique",
+            "external_evidence_unique",
+        }:
+            detail = (
+                "native detail did not confirm a UI-defined structural omission"
+                if effect_roi_text is None else
+                "full-screen and enlarged effect-ROI OCR both lacked positive evidence and "
+                "did not certify a UI-defined structural omission or independent card-face cost"
+            )
+            raise ArenaReaderError(
+                "skill_card_detail_positive_evidence_missing",
+                f"{detail}; key={self.key!r}; card_id={self.resolved.card_id}; "
+                f"customizations={dict(self.resolved.customizations)!r}; "
+                f"expected_badge_count={self.evidence_customization_count!r}; "
+                f"certification={certification_error}; "
+                f"effect_roi={None if effect_roi_text is None else effect_roi_text[:240]!r}",
+            )
+        self.resolved = ClickedSkillCard(
+            self.resolved.card_id,
+            dict(self.resolved.customizations),
+            resolution_source=self.resolved.resolution_source,
+            detail_confirmation_reads=self.resolved.detail_confirmation_reads,
+            detail_evidence_mode=certified_mode,
+            conservative_cost_assumption=getattr(self.resolved, "conservative_cost_assumption", None),
+        )
+        if certified_mode == "native_omission_unique":
+            self.backend._increment("skill_card_detail_native_omission_certifications")
+        else:
+            self.backend._increment("skill_card_detail_external_evidence_certifications")
+        if certified_mode in {"structural_omission_unique", "external_evidence_unique"}:
+            self.backend._increment("skill_card_detail_structural_omission_certifications")
 
     def _confirm_positive_evidence(self):
         if (

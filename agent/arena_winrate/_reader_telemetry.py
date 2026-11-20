@@ -591,6 +591,8 @@ class TelemetryReader:
                 evidence["p_item_family_name"] = diagnostic["p_item_family_name"]
             if diagnostic.get("p_item_restore") is not None:
                 evidence["p_item_restore"] = diagnostic["p_item_restore"]
+            if diagnostic.get("member_slot_observation") is not None:
+                evidence["member_slot_observation"] = diagnostic["member_slot_observation"]
             (folder / "evidence.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
             self.logger.warning(json.dumps(evidence, ensure_ascii=False, sort_keys=True))
         except Exception as diagnostic_error:

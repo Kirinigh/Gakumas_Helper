@@ -805,6 +805,26 @@ class OwnScoreCacheStore:
             self.last_summary_error_detail = f"summary_path={self.summary_path!s}; {error!r}"
         return record
 
+    def needs_season_refresh(self, season: int) -> bool:
+        """Distinguish a missing or other-season lineup from an invalid cache."""
+        try:
+            self.path.stat()
+        except FileNotFoundError:
+            return True
+        except OSError as error:
+            raise OwnScoreCacheError("own-score cache status could not be read") from error
+        record = self._read_record()
+        try:
+            cached_season = _positive_integer(record.get("season"), field="season")
+            snapshot = validate_own_snapshot(record.get("own_snapshot"))
+            stage_ids = record.get("stageIds")
+            if (snapshot["season"] != cached_season or snapshot["stageIds"] != stage_ids
+                    or any(type(stage_id) is not int for stage_id in stage_ids)):
+                raise _CacheSummaryError("own-score cache and lineup identity do not match")
+        except (SnapshotValidationError, _CacheSummaryError) as error:
+            raise OwnScoreCacheError("cached own lineup identity is invalid; use manual recalculation") from error
+        return cached_season != season
+
     def load_for_match(
         self,
         *,

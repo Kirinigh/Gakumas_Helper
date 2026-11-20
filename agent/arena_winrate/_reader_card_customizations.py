@@ -19,6 +19,8 @@ from arena_winrate import (
     stable_generic_cost_value,
 )
 
+from ._detail_effect_ocr import _SkillDetailTextWithNumericFragments
+
 
 class CardCustomizationsReaderPort(Protocol):
     """Only the state and callbacks needed by this responsibility."""
@@ -522,6 +524,8 @@ class CardCustomizationsReader:
                 source_card_box=self.port._skill_card_source_box(key),
                 source_card_slot=None if key is None else key[1],
             )
+            if isinstance(text, _SkillDetailTextWithNumericFragments):
+                text.validate(card_id, key)
             generic_cost_frame_values = self.port._measure_optional_card_face_generic_cost(key, card_id) if key is not None else None
             cost_error = getattr(self.port, "_card_face_cost_optional_errors", {}).get(key) if key is not None else None
             if expected_customization_count == 0:

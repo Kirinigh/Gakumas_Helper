@@ -14,6 +14,7 @@ from arena_winrate import (
     team_stage_total_anchors,
     arena_page_allows_team_entry,
 )
+from arena_winrate.recovery import error_retry_box
 from arena_winrate._reader_visual import _box, _text, _support_bonus_dialog_headings, _support_bonus_overlay_visible
 from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle, RecoveryPageObservation
 
@@ -21,7 +22,9 @@ from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle
 class ArenaNavigationReaderPort(Protocol):
     """Only the state and callbacks needed by this responsibility."""
 
-    def _arena_page_state(self, image: Any) -> tuple[ArenaPageState, tuple[int, int, int, int, int]]: ...
+    def _arena_page_state(
+        self, image: Any, *, observations: Sequence[Any] | None = ...,
+    ) -> tuple[ArenaPageState, tuple[int, int, int, int, int]]: ...
 
     _badge_candidate_detail_checks: Any
     _box_center_point: Any
@@ -30,6 +33,7 @@ class ArenaNavigationReaderPort(Protocol):
 
     _challenge_selection_committed: Any
 
+    def _check_cancelled(self) -> None: ...
     def _click(self, box: tuple[int, int, int, int], *, settle_seconds: float = ...) -> None: ...
     def _dismiss_grade_reward_hint(self, image: Any, observations: Sequence[Any]) -> bool: ...
     def _dismiss_skill_card_detail(self, *, image: Any = None) -> None: ...
@@ -79,6 +83,12 @@ class ArenaNavigationReader:
         grade_error: ArenaReaderError | None = None
         unavailable_reads = 0
         ambiguous_reads = 0
+        recovery = self.port._page_recovery_state
+        support = recovery.support_bonus_toggle
+        expired_close = support is not None and support.direction == "closing" and (
+            support.recovery_reads >= 3
+            or support.recovery_deadline is not None and self.clock.monotonic() >= support.recovery_deadline
+        )
         for attempt in range(4):
             image = self.port._capture()
             # A fresh own-team read resolves Grade once.  Cached/opponent reads
@@ -86,13 +96,31 @@ class ArenaNavigationReader:
             # arena-main guard.  The page-state check still runs on every
             # capture.  When Grade is unknown, keep the broad OCR first so the
             # shared OCR entry cannot be polluted by narrower page filters.
-            if grade is None:
+            if grade is None or expired_close:
                 grade_observations = tuple(self.port._ocr(image, r".+"))
-            state, counts = self.port._arena_page_state(image)
+            if expired_close:
+                state, counts = self.port._arena_page_state(image, observations=grade_observations)
+            else:
+                state, counts = self.port._arena_page_state(image)
             if arena_page_allows_team_entry(
                 state,
                 require_opponents=require_opponents,
             ):
+                if expired_close:
+                    # This new entry can retire an old close using the page it
+                    # already observed. The original budget stays exhausted.
+                    self.port._check_cancelled()
+                    if (
+                        self.port._matching_ocr_items(grade_observations, r"^\s*閉じる\s*$")
+                        or error_retry_box(grade_observations) is not None
+                    ):
+                        raise ArenaReaderError(
+                            "support_bonus_close_unconfirmed",
+                            "arena main anchors coexist with dialog evidence; team entry blocked",
+                        )
+                    if recovery.support_bonus_toggle is support:
+                        recovery.support_bonus_toggle = None
+                    expired_close = False
                 if grade is None:
                     try:
                         grade = self.port._read_grade(

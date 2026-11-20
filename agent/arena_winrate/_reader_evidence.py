@@ -88,20 +88,26 @@ class _SourceBackgroundOcrBudget:
 
 
 class _TitleBoundEffectRoiText(str):
-    """Merged ROI text carrying how many non-empty OCR passes produced it."""
+    """Merged ROI text and the separate scoped body evidence from its crop."""
 
     observation_count: int
     recovered_full_text: str | None
+    scoped_body_text: str
+    scoped_native_text: str
     source_binding: _EffectRoiSourceBinding | None
 
     def __new__(
         cls, value: str, observation_count: int, *, recovered_full_text: str | None = None,
         source_binding: _EffectRoiSourceBinding | None = None,
+        scoped_body_text: str = "",
+        scoped_native_text: str = "",
     ) -> "_TitleBoundEffectRoiText":
         instance = str.__new__(cls, value)
         instance.observation_count = observation_count
         instance.recovered_full_text = recovered_full_text
         instance.source_binding = source_binding
+        instance.scoped_body_text = scoped_body_text
+        instance.scoped_native_text = scoped_native_text
         return instance
 
 

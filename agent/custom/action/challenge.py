@@ -380,10 +380,18 @@ def _prepare_daily_own_score_cache(
     cache_store: OwnScoreCacheStore,
     simulations: int,
     trigger: str,
-) -> bool:
-    """Run the one fresh own read shared by both daily preparation entry points."""
+    expected_day: str | None = None,
+) -> tuple[dict, dict] | None:
+    """Run a fresh own read and return its validated on-disk cache."""
 
-    preparation_day = contest_day_key()
+    preparation_day = expected_day if expected_day is not None else contest_day_key()
+
+    def check_before_save() -> None:
+        cancellation_for(context).check()
+        if contest_day_key() != preparation_day:
+            raise OwnScoreCacheError("竞技场已跨过每日 04:00 刷新边界，未保存新缓存")
+
+    check_before_save()
     backend = MaaArenaReaderBackend(context, season, bundle_dir)
     reader = ArenaLineupReader(backend, season)
     evaluation, cached = prepare_own_score_cache(
@@ -396,7 +404,7 @@ def _prepare_daily_own_score_cache(
         seed=400,
         expected_upstream_commit=adapter.expected_upstream_commit,
         force_recalculate=True,
-        before_cache_save=cancellation_for(context).check,
+        before_cache_save=check_before_save,
         validate_loadout=backend.catalog.validate_p_idol_loadout,
     )
     if evaluation is None:
@@ -412,22 +420,25 @@ def _prepare_daily_own_score_cache(
         cost_customization_fallbacks=own_cost_fallbacks,
     )
     if evaluation.status != "calculated":
-        return _publish_status(
+        _publish_status(
             context,
             own_score_user_status(evaluation, simulations=simulations,
                                   location=_failure_location(backend, evaluation.error_detail or evaluation.error)),
             log_detail=evaluation.error_detail or evaluation.error,
         )
+        return None
     if cached is None:
-        return _stop_with_error(
+        _stop_with_error(
             context,
             "每日挑战自动重算完成，但新缓存仍不可复用，已安全停止",
         )
+        return None
     if contest_day_key() != preparation_day:
-        return _stop_with_error(
+        _stop_with_error(
             context,
             "每日挑战自动重算跨过了每日 04:00 刷新边界，请重新运行任务",
         )
+        return None
 
     status = own_score_user_status(evaluation, simulations=simulations)
     getattr(logger, status.level)(f"每日挑战自动重算：{status.message}")
@@ -436,7 +447,7 @@ def _prepare_daily_own_score_cache(
             "每日挑战自动重算的缓存摘要技术细节："
             f"{evaluation.summary_error_detail}"
         )
-    return True
+    return cached
 
 
 def _select_challenge_index(
@@ -843,7 +854,7 @@ class ChallengePrepareOwnScore(CustomAction):
                 cancel_check=cancellation_for(context).check,
             )
             cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
-            return _prepare_daily_own_score_cache(
+            return bool(_prepare_daily_own_score_cache(
                 context,
                 season=season,
                 bundle_dir=component.bundle_dir,
@@ -851,7 +862,7 @@ class ChallengePrepareOwnScore(CustomAction):
                 cache_store=cache_store,
                 simulations=config.simulations,
                 trigger="daily_option",
-            )
+            ))
         except (
             ArenaReaderError,
             AdapterError,
@@ -1102,10 +1113,10 @@ class ChallengeAuto(CustomAction):
                         ),
                     )
 
-                if (
-                    auto_recalculate_own
-                    and not own_score_cache_prepared_for_current_task(cache_store)
-                ):
+                prepared_own_score = own_score_cache_prepared_for_current_task(
+                    cache_store, include_expired=True,
+                )
+                if auto_recalculate_own and not prepared_own_score:
                     logger.info(
                         "每日挑战自动重算前置未在页面稳定前命中；"
                         "正在从已确认的竞技场主界面补做一次己方读取"
@@ -1118,8 +1129,10 @@ class ChallengeAuto(CustomAction):
                         cache_store=cache_store,
                         simulations=config.simulations,
                         trigger="daily_option_stable_entry_fallback",
+                        expected_day=contest_day,
                     ):
                         return False
+                    prepared_own_score = True
 
                 class CachedOnlyOwnSnapshotProvider:
                     def read_own(self) -> Mapping[str, object]:
@@ -1138,14 +1151,14 @@ class ChallengeAuto(CustomAction):
                         seed=400,
                         expected_upstream_commit=adapter.expected_upstream_commit,
                         force_recalculate=False,
-                        require_prepared=auto_recalculate_own,
+                        require_prepared=prepared_own_score,
                         before_cache_save=cancellation_for(context).check,
                         validate_loadout=_own_score_cache_catalog(
                             context, component.bundle_dir,
                         ).validate_p_idol_loadout,
                     )
                 except OwnScoreCacheError as error:
-                    if auto_recalculate_own:
+                    if prepared_own_score:
                         return _stop_with_error(
                             context,
                             "自动重算己方数据未能安全衔接到胜率计算，已停止",
@@ -1174,16 +1187,39 @@ class ChallengeAuto(CustomAction):
                                 or own_cache_evaluation.error
                             ),
                         )
+                if (cached is None and own_cache_evaluation is None and not prepared_own_score
+                        and cache_store.needs_season_refresh(season.season)):
+                    if contest_day_key() != contest_day:
+                        return _stop_with_error(
+                            context, "竞技场已跨过每日 04:00 刷新边界，未重读己方阵容，请重新运行任务",
+                        )
+                    arena_task_log.background(
+                        context, f"第 {season.season} 期没有己方缓存，正在重读三个舞台的己方阵容",
+                        user_logger,
+                    )
+                    cached = _prepare_daily_own_score_cache(
+                        context,
+                        season=season,
+                        bundle_dir=component.bundle_dir,
+                        adapter=adapter,
+                        cache_store=cache_store,
+                        simulations=config.simulations,
+                        trigger="daily_cache_miss",
+                        expected_day=contest_day,
+                    )
+                    if cached is None:
+                        return False
+                    prepared_own_score = True
                 if cached is None:
                     return _stop_with_error(
                         context,
-                        "所选赛季没有可复用的己方分数缓存；可在每日挑战的胜率选敌设置中启用"
+                        "所选期数的己方缓存不可复用；可在胜率选敌设置中启用"
                         "“自动重算己方数据”，或先手动运行“重算竞技场己方总分”"
                     )
                 own_snapshot, own_score_cache = cached
                 effective_grade, grade_state = resolve_cached_arena_grade(
                     cache_store,
-                    None if auto_recalculate_own else config.grade_override,
+                    None if prepared_own_score else config.grade_override,
                 )
                 logger.info(
                     "竞技场 Grade 已从己方缓存复用: "
@@ -1195,9 +1231,11 @@ class ChallengeAuto(CustomAction):
                     f"竞技场日常：Grade {effective_grade}；"
                     f"胜率门槛 {config.threshold_percent}%，快速选择下限 {config.lower_threshold_percent}%；"
                     f"模拟 {config.simulations} 次，累计超时 {config.timeout_seconds} 秒；"
-                    + ("本轮已刷新己方数据" if auto_recalculate_own else "使用已保存的己方数据"),
+                    + ("本次任务已刷新己方数据" if prepared_own_score else "使用已保存的己方数据"),
                     user_logger,
                 )
+                if prepared_own_score and contest_day_key() != contest_day:
+                    return _stop_with_error(context, "竞技场已跨过每日 04:00 刷新边界，请重新运行任务")
                 backend = MaaArenaReaderBackend(
                     context,
                     season,
