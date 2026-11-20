@@ -3,7 +3,8 @@
 The development repository and its history are never copied. Only explicitly
 listed product sources are exported and privacy-checked. The first public
 snapshot is an explicit root; every later snapshot has the previously verified
-public ``main`` as its only parent, preserving a sanitized linear history.
+public ``main`` as its only parent. Historical public PR objects are admitted
+only when frozen and verified.
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ from datetime import datetime
 from collections.abc import Callable
 
 try:
+    from tools.deployment.public_pr_history import PR_MERGE, verify_public_pr
+
     from tools.deployment.privacy_gate import (
         PrivacyGateError,
         validate_tree,
@@ -35,6 +38,7 @@ except ModuleNotFoundError:  # Direct script execution from tools/deployment.
         validate_relative_path,
         private_machine_markers,
     )
+    from public_pr_history import PR_MERGE, verify_public_pr
 
 DIRECTORY_ALLOWLIST = (
     "agent",
@@ -897,7 +901,7 @@ def _validate_public_history(
     _run(("git", "fsck", "--full", "--strict", "--no-reflogs"), cwd=parent_root, env=env)
 
     history_lines = _run(
-        ("git", "rev-list", "--reverse", "--parents", parent_revision),
+        ("git", "rev-list", "--reverse", "--topo-order", "--parents", parent_revision),
         cwd=parent_root,
         env=env,
     ).splitlines()
@@ -908,12 +912,22 @@ def _validate_public_history(
         fields = line.split()
         if len(fields) == 1:
             roots += 1
-        elif len(fields) != 2:
+        elif len(fields) != 2 and fields[0] != PR_MERGE:
             raise PublicSnapshotError("public parent history must be linear and contain no merge commits")
         commits.append(fields[0])
         parents_by_commit[fields[0]] = tuple(fields[1:])
     if roots != 1 or not commits or commits[-1] != parent_revision:
         raise PublicSnapshotError("public parent history must contain exactly one public root")
+    try:
+        public_pr = verify_public_pr(
+            parents_by_commit,
+            repository=repository,
+            read_raw_commit=lambda commit: _run_bytes(
+                ("git", "cat-file", "commit", commit), cwd=parent_root, env=env,
+            ),
+        )
+    except ValueError as error:
+        raise PublicSnapshotError(str(error)) from error
 
     history_root = temporary / "verified-public-history"
     history_root.mkdir()
@@ -932,12 +946,14 @@ def _validate_public_history(
             cwd=parent_root,
             env=env,
         ).splitlines()
-        if len(metadata) != 4 or metadata[0] not in PUBLIC_HISTORY_IDENTITIES:
+        approved_pr_commit = commit in public_pr
+        if len(metadata) != 4 or (not approved_pr_commit and metadata[0] not in PUBLIC_HISTORY_IDENTITIES):
             raise PublicSnapshotError(f"public history commit identity is not fixed: {commit}")
         public_version = _release_version_from_message(metadata[1], commit=commit)
         source_update = public_version is None
         if source_update:
-            _validate_source_commit_message(metadata[1])
+            if commit != PR_MERGE:
+                _validate_source_commit_message(metadata[1])
             if previous_project_version is None or previous_public_version is None:
                 raise PublicSnapshotError("source update requires an independent public release parent")
             public_version = previous_public_version
@@ -951,7 +967,8 @@ def _validate_public_history(
             )
         legacy_match = LEGACY_PUBLIC_VERSION_PATTERN.fullmatch(public_version)
         if source_update:
-            expected_date = _release_commit_date(metadata[2].removesuffix("T00:00:00Z"))
+            date = metadata[3][:10] if approved_pr_commit else metadata[2].removesuffix("T00:00:00Z")
+            expected_date = _release_commit_date(date)
             expected_message = None
         elif legacy_match is not None:
             if independent_namespace_started:
@@ -1013,7 +1030,7 @@ def _validate_public_history(
                 raise PublicSnapshotError(f"public history commit date is inconsistent: {commit}")
             expected_date = _release_commit_date(metadata[2].removesuffix("T00:00:00Z"))
             expected_message = f"{metadata[1]}\n"
-        if metadata[2:] != [expected_date, expected_date]:
+        if not approved_pr_commit and metadata[2:] != [expected_date, expected_date]:
             raise PublicSnapshotError(f"public history commit date is inconsistent: {commit}")
         if previous_commit_date is not None and expected_date < previous_commit_date:
             raise PublicSnapshotError(
@@ -1034,13 +1051,14 @@ def _validate_public_history(
             b"author",
             b"committer",
         )
-        if header_keys != expected_header_keys:
+        if not approved_pr_commit and header_keys != expected_header_keys:
             raise PublicSnapshotError(
                 f"public history commit contains unsupported headers or a signature: {commit}"
             )
         if source_update:
             message = decoded_message.removesuffix("\n")
-            _validate_source_commit_message(message)
+            if commit != PR_MERGE:
+                _validate_source_commit_message(message)
             message_path = history_root / "commit-message.txt"
             message_path.write_text(message, encoding="utf-8")
             _reject_internal_task_identifiers(history_root)
@@ -1085,7 +1103,7 @@ def _validate_public_history(
             if _run(
                 ("git", "rev-parse", f"{commit}^{{tree}}"), cwd=parent_root, env=env
             ) == _run(
-                ("git", "rev-parse", f"{commits[index - 1]}^{{tree}}"), cwd=parent_root, env=env
+                ("git", "rev-parse", f"{parents_by_commit[commit][0]}^{{tree}}"), cwd=parent_root, env=env
             ):
                 raise PublicSnapshotError("source update must contain a real file change")
         if interface.get("github") != repository:
@@ -1469,6 +1487,9 @@ def build_public_snapshot(
             privacy = _validate_snapshot(committed_tree)
             if _file_inventory(output) != _file_inventory(committed_tree):
                 raise PublicSnapshotError("public snapshot Git tree differs from the privacy-checked working tree")
+            lineage_mode = "initial_public_root" if initial_public_root else "linear_public_history"
+            if PR_MERGE in verified_history:
+                lineage_mode = "verified_public_pr_history"
             return {
                 "output": str(output),
                 "revision": revision,
@@ -1478,7 +1499,7 @@ def build_public_snapshot(
                 "commit_message": commit_message or _release_commit_message(version),
                 "upstream_version": upstream_version,
                 "repository": repository,
-                "lineage_mode": "initial_public_root" if initial_public_root else "linear_public_history",
+                "lineage_mode": lineage_mode,
                 "parent_revision": public_parent_revision,
                 "history_commit_count": len(verified_history),
                 "files_scanned": privacy["files_scanned"],

@@ -1093,11 +1093,11 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  File.Copy(sourcePath, pendingPath, overwrite: true);
                  cancellationToken.ThrowIfCancellationRequested();
  
-@@ -1811,6 +1872,44 @@
+@@ -1811,6 +1872,51 @@
              ReplaceFile(stagedPath, targetPath, CancellationToken.None);
          }
  
-+        private void RemoveEmptyTargetDirectory(string targetPath)
++        internal void RemoveEmptyTargetDirectory(string targetPath, bool conflictIsError = true)
 +        {
 +            if (!Directory.Exists(targetPath)) return;
 +            var pending = new Stack<string>();
@@ -1106,11 +1106,18 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
 +            while (pending.TryPop(out var directory))
 +            {
 +                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
-+                    throw new IOException("更新目标目录不能包含链接。");
++                {
++                    if (conflictIsError) throw new IOException("更新目标目录不能包含链接。");
++                    return;
++                }
 +                directories.Add(directory);
 +                foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
 +                {
-+                    if (!Directory.Exists(entry)) throw new IOException("更新目标目录仍包含文件，保留原内容。");
++                    if (!Directory.Exists(entry))
++                    {
++                        if (conflictIsError) throw new IOException("更新目标目录仍包含文件，保留原内容。");
++                        return;
++                    }
 +                    pending.Push(entry);
 +                }
 +            }
@@ -1138,7 +1145,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          public void TrackReplacement(string targetPath, string backupPath)
          {
              _changes.Add(new FileChange(targetPath, backupPath));
-@@ -1826,7 +1925,7 @@
+@@ -1826,7 +1932,7 @@
          {
              if (!_committed)
              {
@@ -1147,7 +1154,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                      TryDeleteBackupRoot();
                  return;
              }
-@@ -1837,8 +1936,10 @@
+@@ -1837,8 +1943,10 @@
          private string NextBackupPath() =>
              Path.Combine(_backupRoot, $"{_nextBackupId++:D8}.bak");
  
@@ -1160,7 +1167,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              var succeeded = true;
              LoggerHelper.Warning($"更新未完成，开始回滚已修改文件：数量={_changes.Count}");
              for (var index = _changes.Count - 1; index >= 0; index--)
-@@ -1852,11 +1953,12 @@
+@@ -1852,11 +1960,12 @@
                          File.Delete(change.TargetPath);
                      }
  
@@ -1174,7 +1181,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                          File.Move(change.BackupPath, change.TargetPath, overwrite: true);
                      }
                  }
-@@ -1867,8 +1969,15 @@
+@@ -1867,8 +1976,15 @@
                  }
              }
  
@@ -1190,7 +1197,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              return succeeded;
          }
  
-@@ -2030,7 +2139,7 @@
+@@ -2030,7 +2146,7 @@
                  Dismiss(sukiToast);
                  ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
                  Instances.RootViewModel.SetUpdating(false);
@@ -1199,7 +1206,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              }
  
              // 解压文件
-@@ -2154,13 +2263,14 @@
+@@ -2154,13 +2270,14 @@
      {
          for (int i = 0; i < retries; i++)
          {
@@ -1221,7 +1228,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  await Task.Delay(2000 * (i + 1));
              }
          }
-@@ -2402,7 +2512,7 @@
+@@ -2402,7 +2519,7 @@
                  Dismiss(sukiToast);
                  ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.DownloadFailed.ToLocalization());
                  Instances.RootViewModel.SetUpdating(false);
@@ -1230,7 +1237,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              }
  
              SetText(textBlock, LangKeys.ApplyingUpdate.ToLocalization());
-@@ -2461,7 +2571,7 @@
+@@ -2461,7 +2578,7 @@
          string repo = "MFAAvalonia",
          bool onlyCheck = false,
          string targetVersion = "",
@@ -1239,7 +1246,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
      {
          var versionType = repo.Equals("MFAAvalonia", StringComparison.OrdinalIgnoreCase)
              ? Instances.VersionUpdateSettingsUserControlModel.UIUpdateChannelIndex.ToVersionType()
-@@ -2474,7 +2584,7 @@
+@@ -2474,7 +2591,7 @@
  
          var releaseUrl = $"https://api.github.com/repos/{owner}/{repo}/releases";
          int page = 1;
@@ -1248,7 +1255,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          using var httpClient = CreateHttpClientWithProxy();
  
          if (!string.IsNullOrWhiteSpace(Instances.VersionUpdateSettingsUserControlModel.GitHubToken))
-@@ -2496,7 +2606,7 @@
+@@ -2496,7 +2613,7 @@
              var urlWithParams = $"{releaseUrl}?per_page={perPage}&page={page}";
              try
              {
@@ -1257,7 +1264,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  if (response.IsSuccessStatusCode)
                  {
                      string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-@@ -2507,6 +2617,7 @@
+@@ -2507,6 +2624,7 @@
                      }
                      foreach (var tag in tags)
                      {
@@ -1265,7 +1272,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                          // 检查是否为预发布版本
                          if ((bool)tag["prerelease"] && versionType == VersionType.Stable)
                          {
-@@ -2542,7 +2653,7 @@
+@@ -2542,7 +2660,7 @@
                                  if (!onlyCheck && repo != "MFAAvalonia")
                                      SaveChangelog(tag, "body");
                              }
@@ -1274,7 +1281,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                              return (url, latestVersion, sha256);
                          }
  
-@@ -2556,11 +2667,8 @@
+@@ -2556,11 +2674,8 @@
                              }
                          }
                      }
@@ -1288,7 +1295,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  }
                  else
                  {
-@@ -2587,7 +2695,7 @@
+@@ -2587,7 +2702,7 @@
                  if (!onlyCheck && repo != "MFAAvalonia")
                      SaveChangelog(bestRelease, "body");
              }
@@ -1297,7 +1304,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          }
          return (url, latestVersion, sha256);
      }
-@@ -2779,7 +2887,7 @@
+@@ -2779,7 +2894,7 @@
          return $@"\b{osOrFamily}-{arch}\b";
      }
  
@@ -1306,7 +1313,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
      {
          string downloadUrl = string.Empty;
          string sha256 = string.Empty;
-@@ -2802,12 +2910,15 @@
+@@ -2802,12 +2917,15 @@
  
          try
          {
@@ -1327,7 +1334,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  if (releaseData["assets"] is JArray { Count: > 0 } assets)
                  {
                      var orderedAssets = assets
-@@ -2834,11 +2945,6 @@
+@@ -2834,11 +2952,6 @@
                      downloadUrl = bestAsset?.Url ?? string.Empty;
                      sha256 = bestAsset?.Sha256 ?? string.Empty;
                  }
@@ -1339,7 +1346,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              }
          }
          catch (Exception e) when (e is not OperationCanceledException)
-@@ -3104,6 +3210,8 @@
+@@ -3104,6 +3217,8 @@
          TextBlock? downloadSpeedTextBlock = null)
      {
          var targetFilePath = filePath;
@@ -1348,7 +1355,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          try
          {
              using var httpClient = CreateHttpClientWithProxy();
-@@ -3125,7 +3233,9 @@
+@@ -3125,7 +3240,9 @@
                  }
              }
  
@@ -1359,7 +1366,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              response.EnsureSuccessStatusCode();
  
              if (response.Content.Headers.ContentDisposition != null)
-@@ -3147,6 +3257,7 @@
+@@ -3147,6 +3264,7 @@
  
              await using var contentStream = await response.Content.ReadAsStreamAsync();
              await using var fileStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
@@ -1367,7 +1374,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
  
              var buffer = new byte[8192];
              var stopwatch = Stopwatch.StartNew();
-@@ -3176,7 +3287,7 @@
+@@ -3176,7 +3294,7 @@
                  double progressPercentage;
                  if (totalBytes.HasValue && totalBytes.Value > 0)
                  {
@@ -1376,7 +1383,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
                  }
                  else
                  {
-@@ -3199,6 +3310,11 @@
+@@ -3199,6 +3317,11 @@
                  }
              }
  
@@ -1388,7 +1395,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
              SetProgress(progressBar, 100);
              SetDownloadInfo(downloadSizeTextBlock, downloadSpeedTextBlock, totalBytesRead, totalBytes ?? totalBytesRead, bytesPerSecond);
              DispatcherHelper.PostOnMainThread(() =>
-@@ -3211,6 +3327,11 @@
+@@ -3211,6 +3334,11 @@
  
              return (true, targetFilePath);
          }
@@ -1400,7 +1407,7 @@ diff --git a/MFAAvalonia/Helper/VersionChecker.cs b/MFAAvalonia/Helper/VersionCh
          catch (HttpRequestException httpEx)
          {
              LoggerHelper.Error($"HTTP 请求失败：原因={httpEx.Message}", httpEx);
-@@ -3225,6 +3346,20 @@
+@@ -3225,6 +3353,20 @@
          {
              LoggerHelper.Error($"下载文件时发生未知错误：原因={ex.Message}", ex);
              return (false, targetFilePath);
@@ -2034,7 +2041,7 @@ diff --git a/MFAAvalonia/Helper/DerivedFileUpdate.cs b/MFAAvalonia/Helper/Derive
 new file mode 100644
 --- /dev/null
 +++ b/MFAAvalonia/Helper/DerivedFileUpdate.cs
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,510 @@
 +using System;
 +using System.IO;
 +using System.IO.Compression;
@@ -2057,6 +2064,7 @@ new file mode 100644
 +internal static class DerivedFileUpdate
 +{
 +    internal const string StateName = "GAKUMAS_HELPER_UPDATE.json";
++    private const string SitePackages = "python/Lib/site-packages";
 +    private static readonly HashSet<string> MutableRoots = new(StringComparer.OrdinalIgnoreCase)
 +        { ".local", "config", "logs", "log", "cache", "captures", "screenshots", "profiles", "userdata", "user_data", "runtime-data", "temp", "tmp", "temp_res", "temp_mfa", "temp_maafw", "backup", "debug" };
 +    internal sealed class Budget { public int Remaining { get; set; } = 2; }
@@ -2184,7 +2192,7 @@ new file mode 100644
 +        }
 +    }
 +    internal static bool RuntimeRefreshPath(string path) => path.Equals("interface.json", StringComparison.OrdinalIgnoreCase)
-+        || path.StartsWith("python/Lib/site-packages/", StringComparison.OrdinalIgnoreCase)
++        || path.StartsWith(SitePackages + "/", StringComparison.OrdinalIgnoreCase)
 +        || path.StartsWith("python/Scripts/", StringComparison.OrdinalIgnoreCase);
 +    internal static void VerifyTree(string root, State state, string? stateHash = null, bool refreshRuntime = false)
 +    {
@@ -2383,6 +2391,21 @@ new file mode 100644
 +                if (!Hash(PathIn(step.Directory, relative)).Equals(step.Metadata.target.files[relative], StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("增量文件校验失败。");
 +        }
 +    }
++    private static void PruneObsoleteDistributionMetadata(string root, State target, VersionChecker.UpdateFileTransaction transaction)
++    {
++        var sitePackagesPath = PathIn(root, SitePackages);
++        if (!Directory.Exists(sitePackagesPath)) return;
++        var targetEntries = target.files.Keys
++            .Where(p => p.StartsWith(SitePackages + "/", StringComparison.OrdinalIgnoreCase))
++            .Select(p => p[(SitePackages.Length + 1)..].Split('/', 2)[0])
++            .ToHashSet(StringComparer.OrdinalIgnoreCase);
++        foreach (var directory in Directory.GetDirectories(sitePackagesPath))
++        {
++            var name = Path.GetFileName(directory);
++            if (name.EndsWith(".dist-info", StringComparison.OrdinalIgnoreCase) && !targetEntries.Contains(name))
++                transaction.RemoveEmptyTargetDirectory(directory, conflictIsError: false);
++        }
++    }
 +    internal static void Apply(Plan plan, Action<string>? beforeMutation = null)
 +    {
 +        using var transaction = new VersionChecker.UpdateFileTransaction(plan.Work);
@@ -2401,6 +2424,7 @@ new file mode 100644
 +                    beforeMutation?.Invoke(relative);
 +                    transaction.DeleteFile(PathIn(plan.Root, relative));
 +                }
++                if (target.runtime_refresh) PruneObsoleteDistributionMetadata(plan.Root, target, transaction);
 +                foreach (var source in Directory.EnumerateFiles(step.Directory, "*", SearchOption.AllDirectories))
 +                {
 +                    var relative = Path.GetRelativePath(step.Directory, source).Replace('\\', '/');

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": "task095-20261117-real928-native-ui-v1",
-  "status": "OFFLINE_VALIDATED",
+  "revision": "task095-temporary-placeholder-932-v1",
+  "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
   "sources": {
@@ -53,7 +53,12 @@
         "dataset_id": "task095-skill-card-extension-pc-705100-0089-released928-ui-20261117",
         "manifest_sha256": "72762BF61E609526C71CA7C012F53B7312E57582F0443D3F1E14A4B4C3D329DC"
       }
-    ]
+    ],
+    "temporary_placeholder_catalog": {
+      "repository": "https://github.com/gakumas-tools/gakumas-tools",
+      "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
+      "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+    }
   },
   "facets": {
     "plan": {
@@ -21492,6 +21497,158 @@
         "originCharacterId": "",
         "kind_basis": "official_idol_origin"
       }
+    },
+    {
+      "business_id": 929,
+      "name": "噛み合わない理屈",
+      "upgraded": false,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "sense",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 167,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:929",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
+            "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 930,
+      "name": "噛み合わない理屈+",
+      "upgraded": true,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "sense",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 167,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:929",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
+            "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 931,
+      "name": "噛み合わないプライド",
+      "upgraded": false,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 168,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:931",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
+            "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 932,
+      "name": "噛み合わないプライド+",
+      "upgraded": true,
+      "internal_id": null,
+      "asset_id": null,
+      "plan": "anomaly",
+      "rarity": "SSR",
+      "kind": "p_idol",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 168,
+        "catalog_rarity": "SSR",
+        "card_type": "active",
+        "official_plan": null,
+        "official_rarity": null,
+        "originIdolCardId": null,
+        "originSupportCardId": null,
+        "originPrimaStellaIdolCardId": null,
+        "originCharacterId": null,
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:931",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
+            "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+          },
+          "official_identity_status": "UNKNOWN_PENDING",
+          "decoded_master_sha256": null,
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
     }
   ],
   "indexes": {
@@ -21860,7 +22017,9 @@
         925,
         926,
         927,
-        928
+        928,
+        929,
+        930
       ],
       "logic": [
         9,
@@ -22430,7 +22589,9 @@
         915,
         916,
         917,
-        918
+        918,
+        931,
+        932
       ]
     },
     "kind": {
@@ -22788,7 +22949,11 @@
         925,
         926,
         927,
-        928
+        928,
+        929,
+        930,
+        931,
+        932
       ],
       "support": [
         236,
@@ -23849,7 +24014,11 @@
         921,
         922,
         923,
-        924
+        924,
+        929,
+        930,
+        931,
+        932
       ],
       "SR": [
         70,
@@ -24315,19 +24484,19 @@
   "counts": {
     "plan": {
       "free": 65,
-      "sense": 297,
+      "sense": 299,
       "logic": 315,
-      "anomaly": 251
+      "anomaly": 253
     },
     "kind": {
-      "p_idol": 354,
+      "p_idol": 358,
       "support": 118,
       "basic": 68,
       "other": 388
     },
     "rarity": {
       "L": 27,
-      "SSR": 448,
+      "SSR": 452,
       "SR": 218,
       "R": 154,
       "N": 81
@@ -24336,26 +24505,32 @@
   "gallery_coverage": [
     {
       "component": "skill-base",
-      "manifest_sha256": "C25ED0CEE8ECC74C0BE9898818F0F44F8B2441BA259211D14382E1FCE8CEAA1F",
-      "gallery_sha256": "41FCBD07B963BEB82DD9214B56C1127C4309CD5FEB900329AA80FB65C72989C0",
-      "row_count": 4374,
-      "business_id_count": 928,
+      "manifest_sha256": "15C956041F258406AE9416FA8D86C05107E511747030237C15968475E5CEEFF9",
+      "gallery_sha256": "F120AC859BA5F96FDB3CC77DA6A2E1F85556341219E4560A37B770412D709DA0",
+      "row_count": 4378,
+      "business_id_count": 932,
+      "enabled_business_id_count": 928,
+      "temporary_placeholder_business_id_count": 4,
       "join_key": "business_id"
     },
     {
       "component": "skill-arena",
-      "manifest_sha256": "42ADC841D463F1DDC94EAC0B1DAA033B54FA8C55CCD1FE953CF75DB8689CC924",
-      "gallery_sha256": "DF2E7C4D6D4601EAC0FBB6D1189888B5FF978FC93567AF0A9E800E7D4B22A69B",
-      "row_count": 8550,
-      "business_id_count": 928,
+      "manifest_sha256": "6A7C22180452ABEC4C51133865A845B26393EF50A80C1A34E641B75C9604BD27",
+      "gallery_sha256": "18CDA8B0DADF7531E7B1D5EE72624038C35708271D751F37C4140F74E40BA23C",
+      "row_count": 8554,
+      "business_id_count": 932,
+      "enabled_business_id_count": 928,
+      "temporary_placeholder_business_id_count": 4,
       "join_key": "business_id"
     },
     {
       "component": "badge-reference",
-      "manifest_sha256": "FDC289AF2B85BA09D749F4790CC402E789B6C923E1A8C88417AB5FEBA36E5E30",
-      "gallery_sha256": "D74C8FD2A41FBCD0F0E84F8026F1CE714A784DADC10DE8F2F7949BA9367E390F",
-      "row_count": 3607,
-      "business_id_count": 928,
+      "manifest_sha256": "A08A2653004C3877AB77E3FA9C0C836A8BB585CF94859F1E1667EF00B5F22787",
+      "gallery_sha256": "8B6901A38BECB474D49880EE0C73F6C68BAE2E6148BC4A53D550C33DE33472A6",
+      "row_count": 3611,
+      "business_id_count": 932,
+      "enabled_business_id_count": 928,
+      "temporary_placeholder_business_id_count": 4,
       "join_key": "business_id"
     }
   ]

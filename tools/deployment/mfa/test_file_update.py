@@ -81,7 +81,10 @@ def run(args):
         dependency.mkdir(parents=True)
         (dependency / "same.py").write_text("release dependency")
         (dependency / "numpy.py").write_text(f"dependency release {index}")
-        (dependency / f"numpy-{index}.dist-info").write_text(str(index))
+        metadata = dependency / f"numpy-{index}.dist-info"
+        (metadata / "licenses").mkdir(parents=True)
+        (metadata / "METADATA").write_text(f"Name: numpy\nVersion: {index}\n")
+        (metadata / "RECORD").write_text("numpy.py,,\n")
         if index == 1:
             (package / "transition").write_text("file before directory transition")
         else:
@@ -150,14 +153,20 @@ def run(args):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("user data")
+        dependency = root / "python/Lib/site-packages"
+        (dependency / "orphan-1.dist-info/licenses").mkdir(parents=True)
+        (dependency / "keep-1.dist-info").mkdir()
+        (dependency / "keep-1.dist-info/config.json").write_text("user data")
+        (dependency / "ordinary-empty").mkdir()
+        (root / "python/Scripts/elsewhere-1.dist-info").mkdir(parents=True)
         if name == "modified":
             (root / "code.py").write_text("local patch")
         if name.startswith("runtime_drift"):
             (root / "interface.json").write_text('{"version":"local-season-sync"}')
-            dependency = root / "python/Lib/site-packages"
             (dependency / "same.py").write_text("pip upgraded this unchanged release file")
             (dependency / "numpy.py").unlink()
-            (dependency / "numpy-new.dist-info").write_text("new pip metadata")
+            (dependency / "numpy-new.dist-info/licenses").mkdir(parents=True)
+            (dependency / "numpy-new.dist-info/METADATA").write_text("new pip metadata")
         if name in {"extra_local_code", "changelog_extra_code"}:
             (root / "local_patch.py").write_text("local patch")
         if name == "changelog_sidecar":
@@ -240,7 +249,10 @@ def run(args):
             if target.is_file():
                 assert (root / target.relative_to(packages["v0.5.4"])).read_bytes() == target.read_bytes(), (name, target.name)
         assert not (root / "obsolete.py").exists()
-        assert not (root / "python/Lib/site-packages/numpy-new.dist-info").exists()
+        assert {path.name for path in dependency.glob("*.dist-info")} == {"numpy-4.dist-info", "keep-1.dist-info"}, name
+        assert (dependency / "keep-1.dist-info/config.json").read_text() == "user data"
+        assert (dependency / "ordinary-empty").is_dir()
+        assert (root / "python/Scripts/elsewhere-1.dist-info").is_dir()
         assert (root / "config/settings.json").read_text() == "user data"
         assert (root / ".local/runtime-data/cache.json").read_text() == "user data"
         assert (root / "logs/old.log").read_text() == "user data"

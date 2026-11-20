@@ -16,9 +16,18 @@ import subprocess
 from pathlib import Path
 
 try:
+    from tools.deployment.public_pr_history import (
+        PR_MERGE,
+        PR_NUMBER,
+        PR_COMMITS,
+        PR_CONTRIBUTOR,
+        verify_public_pr,
+    )
+
     from tools.deployment.privacy_gate import validate_tree
 except ModuleNotFoundError:
     from privacy_gate import validate_tree
+    from public_pr_history import PR_MERGE, PR_NUMBER, PR_COMMITS, PR_CONTRIBUTOR, verify_public_pr
 
 TOOL_VERSION = "2.14.1"
 REPOSITORY = "https://github.com/Kirinigh/Gakumas_Helper"
@@ -35,16 +44,18 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(args: list[str], cwd: Path) -> str:
+def run(args: list[str], cwd: Path, *, raw: bool = False) -> str | bytes:
     # Do not let shell/CI overrides silently filter commits or select a template.
     environment = {
         key: value for key, value in os.environ.items()
-        if not key.startswith("GIT_CLIFF_")
+        if not key.upper().startswith("GIT_")
         and key not in {"GITHUB_REPO", "GITLAB_REPO", "GITEA_REPO", "OUTPUT"}
     }
-    return subprocess.check_output(
-        args, cwd=cwd, env=environment, encoding="utf-8", timeout=120,
-    ).strip()
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    result = subprocess.check_output(
+        args, cwd=cwd, env=environment, encoding=None if raw else "utf-8", timeout=120,
+    )
+    return result if raw else result.strip()
 
 
 def generate(
@@ -66,12 +77,26 @@ def generate(
     if target:
         require(git("rev-parse", f"refs/tags/{version}^{{commit}}") == revision,
                 "Existing target tag differs from frozen public SHA")
-    rows = git("rev-list", "--reverse", "--parents", f"{base}..{revision}").splitlines()
+    revision_range = f"{base}..{revision}"
+    rows = git("rev-list", "--reverse", "--topo-order", "--parents", revision_range).splitlines()
     commits = [row.split()[0] for row in rows]
     require(bool(commits), "Release range is empty")
-    require(rows == [f"{sha} {parent}" for sha, parent in zip(
-        commits, [base, *commits[:-1]], strict=True,
-    )], "Only the approved linear public history may generate notes")
+    parents = {fields[0]: tuple(fields[1:]) for fields in (row.split() for row in rows)}
+    public_pr = verify_public_pr(
+        parents, repository=REPOSITORY,
+        read_raw_commit=lambda commit: run(["git", "cat-file", "commit", commit], source, raw=True),
+    )
+    first_parent = git("rev-list", "--first-parent", "--reverse", revision_range).splitlines()
+    expected_commits = []
+    for commit, parent in zip(first_parent, [base, *first_parent[:-1]], strict=True):
+        if commit == PR_MERGE:
+            require(commit in public_pr and parents[commit] == (parent, PR_COMMITS[-1]),
+                    "Public PR merge must continue the release's first-parent history")
+            expected_commits.extend(PR_COMMITS)
+        else:
+            require(parents[commit] == (parent,), "Only the approved linear public history may generate notes")
+        expected_commits.append(commit)
+    require(commits == expected_commits, "Unexpected commits outside the approved first-parent history")
     value = json.loads(manifest.read_text(encoding="utf-8-sig"))
     release = value["release"]
     require(release["version"] == version and release["repository"] == REPOSITORY,
@@ -85,7 +110,7 @@ def generate(
     # Explicit bounds, not --latest: main may already lead the previous release.
     context = json.loads(run([
         *command, "--repository", str(source), "--ignore-tags", ".*", "--tag", version,
-        "--context", f"{base}..{revision}",
+        "--context", revision_range,
     ], source))
     actual = [item["id"] for section in context for item in section["commits"]]
     require(len(actual) == len(commits) and set(actual) == set(commits),
@@ -109,6 +134,14 @@ def generate(
         links = re.findall(re.escape(REPOSITORY) + r"/commit/([0-9a-f]{40})\)", body)
         require(len(links) == len(commits) and set(links) == set(commits),
                 "Rendered notes must link every public commit exactly once")
+        if public_pr:
+            authors = {item["author"]["name"] for item in context[0]["commits"] if item["id"] in PR_COMMITS}
+            require(authors == {PR_CONTRIBUTOR}, "Public PR contributor differs from verified attribution")
+            body += (
+                f"\n\n感谢 [{PR_CONTRIBUTOR}](https://github.com/{PR_CONTRIBUTOR}) 在 "
+                f"[PR #{PR_NUMBER}]({REPOSITORY}/pull/{PR_NUMBER}) 中贡献费用数字噪点过滤"
+                "与透明空成员槽识别修复。"
+            )
         body += (
             f"\n\n### 完整比较\n\n"
             f"[{previous_tag} → {version}]({REPOSITORY}/compare/{previous_tag}...{version})\n\n"
@@ -129,6 +162,13 @@ def generate(
             "config_sha256": digest(CONFIG), "manifest_sha256": digest(manifest),
             "notes_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
         }
+        if public_pr:
+            metadata["pull_requests"] = [{
+                "number": PR_NUMBER,
+                "contributor": PR_CONTRIBUTOR,
+                "merge_revision": PR_MERGE,
+                "source_commits": list(PR_COMMITS),
+            }]
         # Private git-cliff context (including author email) is never an output.
         public = root / "public"
         public.mkdir()

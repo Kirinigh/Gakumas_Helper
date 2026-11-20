@@ -182,15 +182,22 @@ static class Program
         if (mode == "directory-rollback")
         {
             var original = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToDictionary(p => p, DerivedFileUpdate.Hash);
+            var directories = Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).ToHashSet(StringComparer.OrdinalIgnoreCase);
             try
             {
-                DerivedFileUpdate.Apply(plan, relative => { if (relative == "zz-final.py") throw new IOException("after directory replacement"); });
+                DerivedFileUpdate.Apply(plan, relative =>
+                {
+                    if (relative != "zz-final.py") return;
+                    if (Directory.Exists(Path.Combine(root, "python/Lib/site-packages/orphan-1.dist-info")))
+                        throw new InvalidOperationException("The empty metadata directory was not removed before the failure");
+                    throw new IOException("after directory replacement");
+                });
                 throw new Exception("Expected injected failure");
             }
             catch (IOException) { }
             rolledBack = original.All(p => File.Exists(p.Key) && DerivedFileUpdate.Hash(p.Key) == p.Value)
                 && original.Count == Directory.GetFiles(root, "*", SearchOption.AllDirectories).Length
-                && Directory.Exists(Path.Combine(root, "reverse/empty"));
+                && directories.SetEquals(Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories));
             if (!rolledBack) throw new Exception("Directory migration rollback failed");
             await DerivedFileUpdate.Execute(plan, client);
         }

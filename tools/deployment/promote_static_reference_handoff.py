@@ -129,6 +129,22 @@ APPROVED_RELEASED_914_PLACEHOLDER_CATALOG = {
     "revision": "880be403add7894d49543cca7ba15e512c323285",
     "sha256": "486C42C85F8FC564A6D0E27234B28D4FA85AA93FCABDD6E3CF83CB04166EA92A",
 }
+# Only this exact B20 parent and the frozen formal 932-row catalog authorize
+# the inactive 929-932 extension. The badge parent is an all-enabled schema-2
+# wrapper with a separately preserved schema-1 evaluation.
+APPROVED_RELEASED_928_BASE_MANIFESTS = {
+    "128-dimensional card-art embedding retrieval": "C25ED0CEE8ECC74C0BE9898818F0F44F8B2441BA259211D14382E1FCE8CEAA1F",
+    "arena_custom_card_embedding": "42ADC841D463F1DDC94EAC0B1DAA033B54FA8C55CCD1FE953CF75DB8689CC924",
+    "task410_arena_card_reference": "FDC289AF2B85BA09D749F4790CC402E789B6C923E1A8C88417AB5FEBA36E5E30",
+}
+APPROVED_RELEASED_928_CLASSIFICATION_SHA256 = "89C0586FDDC84C4949B8899ABA2950CDF4D2BA64AFCF58D3D45F3A7D431D43B9"
+APPROVED_RELEASED_928_PLACEHOLDER_CATALOG = {
+    "repository": "https://github.com/gakumas-tools/gakumas-tools",
+    "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
+    "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590",
+}
+# Sorted compact JSON binds the packed catalog independently of its formatting.
+APPROVED_RELEASED_928_CATALOG_CONTENT_SHA256 = "B84A60497647E4AADB5218D00BF6D99D6C1470A3110AD0148528999AD39D7ACF"
 
 
 P_ITEM_PRODUCTION_SOURCE_EVIDENCE_TOOL_CONTRACT = (
@@ -2409,6 +2425,12 @@ def is_released914_placeholder_component(manifest: Mapping[str, Any]) -> bool:
     return manifest.get("runtime", {}).get("temporary_placeholder_business_ids") == list(range(915, 923))
 
 
+def is_released928_placeholder_component(manifest: Mapping[str, Any]) -> bool:
+    """Select the B20/932 delivery; its source and prefix are checked separately."""
+    ids = manifest.get("runtime", {}).get("temporary_placeholder_business_ids")
+    return ids == [929, 930, 931, 932] and all(type(value) is int for value in ids)
+
+
 def validate_temporary_placeholder_component(
     component_root: Path,
     manifest: Mapping[str, Any],
@@ -2421,10 +2443,10 @@ def validate_temporary_placeholder_component(
     """Validate the authorized inactive extension and return its unchanged base.
 
     This is deliberately separate from promotion: the caller must apply the
-    existing release/source checks to the returned schema-1 base. For the 914
-    delivery its gallery is the verified enabled prefix of the root NPZ; the
-    caller must use that explicit view, not read it as a separate base file. Disabled rows
-    complete the catalog only and never acquire a recognition PASS status.
+    existing release/source checks to the returned base. The 914 and B20 bases
+    are verified enabled prefixes of the root NPZ. The B20 badge additionally
+    retains the verified all-enabled mask and the old schema-1 evaluation.
+    Disabled rows complete catalog coverage without recognition acceptance.
     """
 
     def require(condition: bool, message: str) -> None:
@@ -2447,16 +2469,19 @@ def validate_temporary_placeholder_component(
         with np.load(path, allow_pickle=False) as payload:
             return {key: payload[key] for key in payload.files}
 
-    def validate_complete_910_base(root: Path, value: Mapping[str, Any], payload: dict[str, Any], *, inline: bool = False) -> None:
-        def complete_files(directory: Path, item: Mapping[str, Any], values: dict[str, Any], *, inline: bool = False) -> None:
+    def validate_complete_910_base(root: Path, value: Mapping[str, Any], payload: dict[str, Any], *, inline: bool = False, b20: bool = False) -> None:
+        def complete_files(directory: Path, item: Mapping[str, Any], values: dict[str, Any], *, inline: bool = False, model_root: Path | None = None) -> None:
             if "embeddings" in values:
                 model = item["model"]
-                require(sha256_file(inside(directory, model["path"])).upper() == str(model["sha256"]).upper(), "910 base encoder bytes changed")
+                require(sha256_file(inside(model_root or directory, model["path"])).upper() == str(model["sha256"]).upper(), "910 base encoder bytes changed")
                 table = item["gallery"]
                 if inline:
                     # The schema-1 table, like its NPZ, is an exact enabled prefix.
-                    data = (json.dumps(values["class_names"].tolist(), ensure_ascii=False, indent=2) + "\n").replace("\n", "\r\n").encode("utf-8")
-                    require(hashlib.sha256(data).hexdigest().upper() == str(table["class_table_sha256"]).upper(), "enabled prefix class table bytes changed")
+                    data = (json.dumps(values["class_names"].tolist(), ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+                    digests = {hashlib.sha256(data.replace(b"\n", b"\r\n")).hexdigest().upper()}
+                    if b20:
+                        digests.add(hashlib.sha256(data).hexdigest().upper())
+                    require(str(table["class_table_sha256"]).upper() in digests, "enabled prefix class table bytes changed")
                 else:
                     class_path = inside(directory, table["class_table_path"])
                     require(sha256_file(class_path).upper() == str(table["class_table_sha256"]).upper(), "910 base class table bytes changed")
@@ -2482,7 +2507,7 @@ def validate_temporary_placeholder_component(
         keys = {"embeddings", "class_names", "card_ids", "visual_group_ids", "upgrade_counts", "upgrade_markers"}
         require(set(raw) == set(payload) == keys, "910 nested array inventory changed")
         require(str(nested["gallery"]["sha256"]).upper() == str(union["base_gallery_sha256"]).upper(), "910 nested gallery binding changed")
-        complete_files(nested_root, nested, raw)
+        complete_files(nested_root, nested, raw, model_root=root if b20 else None)
         count = len(raw["card_ids"])
         appended = union["appended_rows"]
         require(type(appended) is int and 0 < appended <= count and union["preserved_rows"] == count and len(payload["card_ids"]) == count + appended, "910 full-UI row counts changed")
@@ -2499,6 +2524,23 @@ def validate_temporary_placeholder_component(
                     expected = np.asarray([str(name) + "_full_ui" for name in expected])
                 require(np.array_equal(payload[key][count:], expected), "910 frozen full-UI identities changed")
 
+    def validate_b20_badge_base(root: Path, base: Mapping[str, Any], payload: dict[str, Any]) -> None:
+        descriptor = base["build"]["inherited_validation"]
+        inherited_path = inside(root, descriptor["manifest_path"])
+        require(inherited_path == root / "inherited/manifest.json" and sha256_file(inherited_path).upper() == descriptor["manifest_sha256"],
+                "B20 badge inherited manifest bytes changed")
+        inherited = _load_object(inherited_path, label="B20 schema-1 badge")
+        require(inherited["schema_version"] == 1 and inherited["component"] == base["component"]
+                and inherited["gallery"]["sha256"] == descriptor["gallery_sha256"], "B20 badge inherited manifest binding differs")
+        inherited_arrays = arrays(inherited_path.parent, inherited)
+        require(set(inherited_arrays) == set(payload) and all(
+            values.dtype == inherited_arrays[key].dtype and values.shape == inherited_arrays[key].shape
+            and values.tobytes() == inherited_arrays[key].tobytes() for key, values in payload.items()
+        ), "B20 badge inherited arrays changed")
+        validate_complete_910_base(inherited_path.parent, inherited, inherited_arrays)
+        report = inherited["evaluation"]
+        require(sha256_file(inside(root, report["path"])).upper() == report["sha256"], "B20 badge evaluation mirror changed")
+
     try:
         root = component_root.resolve()
         require(type(manifest.get("schema_version")) is int and manifest["schema_version"] == 2, "schema must be 2")
@@ -2507,26 +2549,42 @@ def validate_temporary_placeholder_component(
             "reason": "user authorized inactive catalog placeholders; no new recognition or real-sample acceptance claimed",
         }, "handoff contract is invalid")
         released_914 = is_released914_placeholder_component(manifest)
-        base_root = root if released_914 else root / "preserved_base"
-        base_path = inside(base_root, "inherited-manifest.json" if released_914 else "manifest.json")
+        released_928 = is_released928_placeholder_component(manifest)
+        inline = released_914 or released_928
+        b20_masked_badge = released_928 and manifest.get("component") == "task410_arena_card_reference"
+        base_root = root if inline else root / "preserved_base"
+        base_path = inside(base_root, "inherited-manifest.json" if inline else "manifest.json")
         base = _load_object(base_path, label="temporary placeholder preserved base")
-        require(type(base.get("schema_version")) is int and base["schema_version"] == 1, "base must retain the schema-1 release contract")
+        require(type(base.get("schema_version")) is int and base["schema_version"] == (2 if b20_masked_badge else 1),
+                "B20 badge base must retain schema 2" if b20_masked_badge else "base must retain the schema-1 release contract")
         require(base.get("production_handoff", {}).get("status") in {"READY", PROMOTED_STATUS}, "base is not release-ready")
-        require("temporary_placeholder_business_ids" not in base.get("runtime", {}), "base already contains placeholders")
+        if b20_masked_badge:
+            require(base.get("runtime", {}).get("temporary_placeholder_business_ids") == [], "B20 badge base must be all enabled")
+        else:
+            require("temporary_placeholder_business_ids" not in base.get("runtime", {}), "base already contains placeholders")
         build = manifest.get("build")
         require(isinstance(build, Mapping), "build metadata is invalid")
         new = arrays(root, manifest)
-        if released_914:
-            require(sha256_file(base_path).upper() == APPROVED_RELEASED_914_BASE_MANIFESTS.get(manifest.get("component")), "914 base is not the approved source-bound delivery")
+        if inline:
+            approved = APPROVED_RELEASED_928_BASE_MANIFESTS if released_928 else APPROVED_RELEASED_914_BASE_MANIFESTS
+            require(sha256_file(base_path).upper() == approved.get(manifest.get("component")),
+                    "B20 base is not the approved source-bound delivery" if released_928 else "914 base is not the approved source-bound delivery")
             count = build.get("preserved_rows")
             require(type(count) is int and count > 0, "914 enabled prefix count is invalid")
             require("reference_enabled" in new, "914 enabled mask is missing")
             old = {key: value[:count] for key, value in new.items() if key != "reference_enabled"}
+            replay = {**old, "reference_enabled": new["reference_enabled"][:count]} if b20_masked_badge else old
             encoded = io.BytesIO()
-            np.savez_compressed(encoded, **old)
+            np.savez_compressed(encoded, **replay)
             require(hashlib.sha256(encoded.getvalue()).hexdigest().upper() == str(base["gallery"]["sha256"]).upper(), "approved enabled prefix gallery bytes changed")
-            require(sha256_file(preserved_classification_path).upper() == APPROVED_RELEASED_910_CLASSIFICATION_SHA256, "914 released classification ancestor changed")
-            validate_complete_910_base(base_root, base, old, inline=True)
+            if released_928:
+                require(sha256_file(preserved_classification_path).upper() == APPROVED_RELEASED_928_CLASSIFICATION_SHA256, "B20 classification ancestor changed")
+            else:
+                require(sha256_file(preserved_classification_path).upper() == APPROVED_RELEASED_910_CLASSIFICATION_SHA256, "914 released classification ancestor changed")
+            if b20_masked_badge:
+                validate_b20_badge_base(base_root, base, old)
+            else:
+                validate_complete_910_base(base_root, base, old, inline=True, b20=released_928)
         else:
             old = arrays(base_root, base)
         embedding = "embeddings" in old
@@ -2537,9 +2595,9 @@ def validate_temporary_placeholder_component(
         active_ids = set(map(int, old[id_key]))
         released_910 = active_ids == set(range(1, 911))
         require(not released_914 or active_ids == set(range(1, 915)), "914 enabled catalog coverage changed")
-        active_business_count = 914 if released_914 else 910 if released_910 else 888 if active_ids == set(range(1, 889)) else 886
-        catalog_count = 922 if released_914 or released_910 else 908
-        real_card_update = active_business_count in {888, 910, 914}
+        active_business_count = 928 if released_928 else 914 if released_914 else 910 if released_910 else 888 if active_ids == set(range(1, 889)) else 886
+        catalog_count = 932 if released_928 else 922 if released_914 or released_910 else 908
+        real_card_update = active_business_count in {888, 910, 914, 928}
         placeholder_ids = tuple(range(active_business_count + 1, catalog_count + 1))
         placeholder_count = len(placeholder_ids)
         if released_910:
@@ -2552,7 +2610,7 @@ def validate_temporary_placeholder_component(
                 "active 910 classification is not the approved source-bound delivery",
             )
             validate_complete_910_base(base_root, base, old)
-        elif real_card_update and not released_914:
+        elif real_card_update and not inline:
             require(
                 sha256_file(base_path).upper() in (
                     APPROVED_REAL_CARD_BASE_MANIFESTS.get(manifest.get("component")),
@@ -2569,12 +2627,12 @@ def validate_temporary_placeholder_component(
             "appended_rows": placeholder_count,
             "enabled_rows": count,
         }
-        if not released_914:
+        if not inline:
             expected_build["base_classification_sha256"] = sha256_file(preserved_classification_path).upper()
         if real_card_update:
             inherited_path = inside(root, "inherited-manifest.json")
             require(sha256_file(inherited_path).upper() == sha256_file(base_path).upper(), "inherited real-card evidence changed")
-            expected_build["inherited_validation"] = {
+            active_prefix_binding = {
                 "manifest_path": "inherited-manifest.json",
                 "manifest_sha256": sha256_file(base_path).upper(),
                 "gallery_sha256": str(base["gallery"]["sha256"]).upper(),
@@ -2582,6 +2640,11 @@ def validate_temporary_placeholder_component(
                 "scope": "enabled_original_rows_only",
                 "array_relation": "EXACT_PREFIX",
             }
+            if b20_masked_badge:
+                expected_build["enabled_parent_validation"] = active_prefix_binding
+                expected_build["inherited_validation"] = base["build"]["inherited_validation"]
+            else:
+                expected_build["inherited_validation"] = active_prefix_binding
         require(build == expected_build, "build/base binding is invalid")
         require(set(map(int, old[id_key])) == set(range(1, active_business_count + 1)), "base catalog coverage is invalid")
         for key in keys:
@@ -2614,7 +2677,12 @@ def validate_temporary_placeholder_component(
         catalog_source = declaration["catalog"]
         require(isinstance(catalog_source, Mapping) and set(catalog_source) == {"repository", "revision", "sha256"}, "catalog source metadata is invalid")
         require(catalog_source["repository"] == "https://github.com/gakumas-tools/gakumas-tools" and _is_sha1(catalog_source["revision"]), "catalog source is not a fixed approved repository")
-        if released_914:
+        if released_928:
+            require(dict(catalog_source) == APPROVED_RELEASED_928_PLACEHOLDER_CATALOG, "B20 placeholder catalog source differs")
+            canonical_catalog = json.dumps(catalog, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            require(hashlib.sha256(canonical_catalog).hexdigest().upper() == APPROVED_RELEASED_928_CATALOG_CONTENT_SHA256,
+                    "B20 packed catalog content differs from the approved frozen source")
+        elif released_914:
             # This immutable catalog is an identity/range anchor. Current official
             # production actions/costs are validated by the independent RIS gate.
             require(dict(catalog_source) == APPROVED_RELEASED_914_PLACEHOLDER_CATALOG, "914 placeholder identity source differs")
@@ -2652,7 +2720,7 @@ def validate_temporary_placeholder_component(
         }, "source references are inconsistent")
         inherited_domain = base.get("source", {}).get("source_domain")
         expected_source = dict(base.get("source", {}))
-        if (released_910 or released_914) and not embedding:
+        if (released_910 or inline) and not embedding:
             require(arena_component_root is not None, "910 badge requires its current arena sibling")
             arena_root = arena_component_root.resolve()
             require(arena_root.parent == root.parent and arena_root != root, "910 badge arena must be an exact sibling")
@@ -2694,7 +2762,7 @@ def validate_temporary_placeholder_component(
             for root_path, value in ((base_root, base), (root, manifest)):
                 model_path = inside(root_path, value["model"]["path"])
                 require(sha256_file(model_path).upper() == str(value["model"]["sha256"]).upper(), "encoder bytes changed")
-                if released_914 and value is base:
+                if inline and value is base:
                     continue  # Exact inline class table was checked above.
                 class_path = inside(root_path, value["gallery"]["class_table_path"])
                 require(sha256_file(class_path).upper() == str(value["gallery"]["class_table_sha256"]).upper(), "class table hash changed")
@@ -2731,8 +2799,11 @@ def validate_temporary_placeholder_component(
             previous["sources"].pop("temporary_placeholder_catalog")
         require(classification.get("status") == TEMPORARY_PLACEHOLDER_STATUS and classification.get("runtime_filtering_enabled") is False, "classification status changed")
         require(len(previous["cards"]) == active_business_count and classification["cards"][:active_business_count] == previous["cards"], "previous classification records changed")
+        if released_928:
+            require(canonical_json_bytes({"cards": classification["cards"][:active_business_count]})
+                    == canonical_json_bytes({"cards": previous["cards"]}), "B20 classification row types changed")
         if real_card_update:
-            if not released_910 and not released_914:
+            if not released_910 and not inline:
                 rows = json.dumps(previous["cards"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
                 require(hashlib.sha256(rows).hexdigest().upper() == APPROVED_REAL_CARD_CLASSIFICATION_ROWS_SHA256, "real-card classification differs from the approved source identities")
             require(all("temporary_placeholder" not in row["source"] for row in previous["cards"]), "active classification still declares an inactive placeholder")

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": "task095-batch20-p-item-classification-519-native-ui-append-v1",
-  "status": "OFFLINE_VALIDATED",
+  "revision": "task095-temporary-missing-p-items-523-v1",
+  "status": "USER_AUTHORIZED_TEMPORARY_MISSING_REFERENCES",
   "classification_rule": "p_item_plan_and_four_kinds_v1",
   "runtime_filtering_enabled": false,
   "sources": {
@@ -21,7 +21,13 @@
     },
     "catalog_evidence_sha256": "2283800936E49F54FCD317861028575C52025BD933D4A1AAC5EE35B814A96332",
     "visual_dataset_manifest_sha256": "EAC98A86F5FF40F122675E374B3B764FFE95CBB44584198F2E7C1EC5F2D7795D",
-    "visual_crosswalk_sha256": "487AD54AD0929BEFA59AD09E32CEA30D227EFE9CC6AB7F72107CBF5293A3DB49"
+    "visual_crosswalk_sha256": "487AD54AD0929BEFA59AD09E32CEA30D227EFE9CC6AB7F72107CBF5293A3DB49",
+    "temporary_placeholder_catalog": {
+      "repository": "https://github.com/gakumas-tools/gakumas-tools",
+      "path": "packages/gakumas-data/json/p_items.json",
+      "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
+      "sha256": "441A4F0F24490AC5117956122DFC797391202693DEF6A3D937D2FE9C1BDF82D0"
+    }
   },
   "facets": {
     "plan": {
@@ -19096,6 +19102,110 @@
         }
       },
       "paired_business_id": 518
+    },
+    {
+      "business_id": 520,
+      "name": "乖離する美学",
+      "upgraded": false,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 521,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 167,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
+    },
+    {
+      "business_id": 521,
+      "name": "乖離する美学+",
+      "upgraded": true,
+      "plan": "sense",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 520,
+      "source": {
+        "catalog_plan": "sense",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 167,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
+    },
+    {
+      "business_id": 522,
+      "name": "轟く名前",
+      "upgraded": false,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 523,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 168,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
+    },
+    {
+      "business_id": 523,
+      "name": "轟く名前+",
+      "upgraded": true,
+      "plan": "anomaly",
+      "kind": "p_idol",
+      "reference_available": false,
+      "paired_business_id": 522,
+      "source": {
+        "catalog_plan": "anomaly",
+        "catalog_mode": "stage",
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 168,
+        "catalog_rarity": "SSR",
+        "catalog_welfare": false,
+        "plan_basis": "catalog_plan_for_temporary_missing_reference",
+        "kind_basis": "catalog_source_for_temporary_missing_reference",
+        "official": null,
+        "official_mapping": "catalog_only_temporary_missing_reference",
+        "temporary_missing_reference": {
+          "rule_version": "catalog-only-blank-reference-v1",
+          "reference_enabled": false,
+          "reason": "VERIFIED_IDENTITY_AND_UI_PENDING"
+        }
+      }
     }
   ],
   "indexes": {
@@ -19322,7 +19432,9 @@
         516,
         517,
         518,
-        519
+        519,
+        520,
+        521
       ],
       "logic": [
         5,
@@ -19625,7 +19737,9 @@
         504,
         505,
         506,
-        507
+        507,
+        522,
+        523
       ]
     },
     "kind": {
@@ -19958,7 +20072,11 @@
         514,
         515,
         518,
-        519
+        519,
+        520,
+        521,
+        522,
+        523
       ],
       "support_inheritable": [
         71,
@@ -20161,12 +20279,12 @@
   "counts": {
     "plan": {
       "free": 50,
-      "sense": 170,
+      "sense": 172,
       "logic": 178,
-      "anomaly": 121
+      "anomaly": 123
     },
     "kind": {
-      "p_idol": 329,
+      "p_idol": 333,
       "support_inheritable": 50,
       "support_non_inheritable": 92,
       "other": 48
@@ -20181,7 +20299,11 @@
     436,
     437,
     438,
-    439
+    439,
+    520,
+    521,
+    522,
+    523
   ],
   "gallery_coverage": {
     "component": "p_item_reference",
@@ -20252,7 +20374,23 @@
       510,
       511,
       516,
-      517
+      517,
+      520,
+      521,
+      522,
+      523
     ]
+  },
+  "temporary_missing_references": {
+    "rule_version": "catalog-only-blank-reference-v1",
+    "business_ids": [
+      520,
+      521,
+      522,
+      523
+    ],
+    "placeholder_image": "resource/base/model/embedding/p_item_missing-reference.png",
+    "reference_enabled": false,
+    "status": "USER_AUTHORIZED_TEMPORARY_MISSING_REFERENCES"
   }
 }

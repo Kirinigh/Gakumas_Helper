@@ -100,16 +100,28 @@ def placeholder_image():
 def load_component(root, accepted_ids, *, embedding):
     root = Path(root).resolve()
     manifest = read(root / "manifest.json")
-    require(manifest.get("schema_version") == 1, "input must be an active schema-1 component; duplicate append forbidden")
+    schema = manifest.get("schema_version")
+    all_enabled_badge = not embedding and schema == 2
+    require(schema == 1 or all_enabled_badge, "input must be an active schema-1 component or all-enabled badge")
     runtime = manifest.get("runtime", {})
-    require(not any(k.startswith("temporary_") for k in runtime), "existing temporary declaration is not appendable")
+    temporary = {key: value for key, value in runtime.items() if key.startswith("temporary_")}
+    if all_enabled_badge:
+        require(temporary == {
+            "temporary_reference_rule_version": RULE, "temporary_placeholder_business_ids": [],
+        } and "temporary_placeholders" not in manifest.get("source", {}), "schema-2 badge must declare no placeholders")
+    else:
+        require(not temporary, "existing temporary declaration is not appendable")
     path = inside(root, manifest["gallery"]["path"])
     require(sha(path) == manifest["gallery"]["sha256"], "input gallery digest mismatch")
     with np.load(path, allow_pickle=False) as payload:
         arrays = {key: payload[key].copy() for key in payload.files}
-    require(set(arrays) == (EMBEDDING_KEYS if embedding else REFERENCE_KEYS), "unsupported or already extended input arrays")
+    keys = EMBEDDING_KEYS if embedding else REFERENCE_KEYS
+    require(set(arrays) == (keys | {"reference_enabled"} if all_enabled_badge else keys), "unsupported or already extended input arrays")
     ids = arrays["card_ids"] if embedding else arrays["business_ids"]
     count = len(ids)
+    if all_enabled_badge:
+        mask = arrays.pop("reference_enabled")
+        require(mask.dtype == np.bool_ and mask.shape == (count,) and mask.all(), "schema-2 badge mask must be strictly all enabled")
     require(all(v.ndim >= 1 and len(v) == count for v in arrays.values()), "input row arrays disagree")
     require(set(map(int, ids)) == set(accepted_ids), "input component/classification coverage mismatch")
     names = arrays["class_names"] if embedding else arrays["reference_names"]
@@ -129,6 +141,80 @@ def load_component(root, accepted_ids, *, embedding):
         require(arrays["top_coarse"].shape == (count, 8, 16, 3), "invalid card reference dimensions")
         require(arrays["green_masks"].shape == (count, 96, 96), "invalid green mask dimensions")
     return root, manifest, arrays
+
+
+def preserved_badge_files(badge, arena, accepted_ids):
+    badge_root, badge_manifest, badge_arrays = badge
+    arena_root, arena_manifest, arena_arrays = arena
+    if badge_manifest["schema_version"] != 2:
+        return {}
+
+    badge_build = badge_manifest["build"]
+    inherited = badge_build["inherited_validation"]
+    inner_manifest_path = inside(badge_root, inherited["manifest_path"])
+    inner_root = inner_manifest_path.parent
+    require(inner_root != badge_root and inner_manifest_path.name == "manifest.json",
+            "schema-2 badge must bind a separate inherited manifest")
+    require(inherited["scope"] == "enabled_original_rows_only" and inherited["array_relation"] == "EXACT_PREFIX"
+            and inherited["row_count"] == len(badge_arrays["business_ids"])
+            and sha(inner_manifest_path) == inherited["manifest_sha256"] == badge_build["base_manifest_sha256"]
+            and inherited["gallery_sha256"] == badge_build["base_gallery_sha256"],
+            "schema-2 badge inherited manifest binding mismatch")
+    _, inner, inner_arrays = load_component(inner_root, accepted_ids, embedding=False)
+    require(inner["schema_version"] == 1 and inner["component"] == badge_manifest["component"]
+            and inner["gallery"]["sha256"] == inherited["gallery_sha256"],
+            "schema-2 badge must inherit the exact schema-1 gallery")
+    require(all(inner_arrays[key].dtype == values.dtype and inner_arrays[key].shape == values.shape
+                and inner_arrays[key].tobytes() == values.tobytes() for key, values in badge_arrays.items()),
+            "schema-2 badge active arrays differ from the inherited gallery")
+    evaluation = inner["evaluation"]
+    report_path = inside(inner_root, evaluation["path"])
+    report_mirror = inside(badge_root, evaluation["path"])
+    report = read(report_path)
+    require(sha(report_path) == sha(report_mirror) == evaluation["sha256"]
+            and evaluation["status"] == report["status"] == "PASS"
+            and report["components"]["candidate"]["gallery_sha256"] == inherited["gallery_sha256"]
+            and report["components"]["candidate"]["reference_row_count"] == inherited["row_count"],
+            "schema-1 badge evaluation binding mismatch")
+
+    badge_source = badge_manifest["source"]
+    require(badge_source["arena_component"] == arena_manifest["component"]
+            and badge_source["arena_component_manifest_sha256"] == sha(arena_root / "manifest.json")
+            and badge_source["arena_gallery_sha256"] == arena_manifest["gallery"]["sha256"],
+            "schema-2 badge is not bound to the supplied arena component")
+    arena_build = arena_manifest["build"]
+    require(arena_build["tool_contract"] == "task095-arena-full-ui-union-v1",
+            "schema-2 badge requires a full-UI arena parent")
+    raw_manifest_path = inside(arena_root, "preserved_base/manifest.json")
+    raw_root = raw_manifest_path.parent
+    raw = read(raw_manifest_path)
+    raw_gallery = inside(raw_root, raw["gallery"]["path"])
+    raw_classes = inside(raw_root, raw["gallery"]["class_table_path"])
+    inner_source = inner["source"]
+    require(raw["schema_version"] == 1 and raw["component"] == inner_source["arena_component"] == arena_manifest["component"]
+            and raw["model"] == arena_manifest["model"]
+            and sha(raw_manifest_path) == inner_source["arena_component_manifest_sha256"] == arena_build["base_manifest_sha256"]
+            and sha(raw_gallery) == raw["gallery"]["sha256"] == inner_source["arena_gallery_sha256"] == arena_build["base_gallery_sha256"]
+            and sha(raw_classes) == raw["gallery"]["class_table_sha256"],
+            "schema-1 badge is not bound to the preserved raw arena component")
+    count = arena_build["preserved_rows"]
+    with np.load(raw_gallery, allow_pickle=False) as payload:
+        require(set(payload.files) == EMBEDDING_KEYS and len(payload["class_names"]) == count
+                and read(raw_classes) == payload["class_names"].tolist()
+                and len(arena_arrays["class_names"]) == count + arena_build["appended_rows"],
+                "preserved raw arena row contract mismatch")
+        for key, values in arena_arrays.items():
+            prefix, original = values[:count], payload[key]
+            same = (np.array_equal(prefix, original) if key == "class_names"
+                    else prefix.dtype == original.dtype and prefix.shape == original.shape
+                    and prefix.tobytes() == original.tobytes())
+            require(same, f"preserved raw arena {key} is not an exact prefix")
+    return {
+        "badge-reference": tuple(path.relative_to(badge_root) for path in (
+            inner_manifest_path, inside(inner_root, inner["gallery"]["path"]), report_path, report_mirror,
+        )),
+        "skill-arena": tuple(path.relative_to(arena_root) for path in (raw_manifest_path, raw_gallery, raw_classes)),
+    }
 
 
 def append_arrays(arrays, rows, groups, image, *, vector=None):
@@ -198,7 +284,7 @@ def append_retained_disabled(arrays, proof):
     return result
 
 
-def candidate_component(source, output, rows, groups, image, image_sha, catalog_source, *, embedder_factory=OnnxCardEmbedder, peer_arena_root=None, retained_proof=None):
+def candidate_component(source, output, rows, groups, image, image_sha, catalog_source, *, embedder_factory=OnnxCardEmbedder, peer_arena_root=None, retained_proof=None, preserved_files=(), preserve_active_parent=False):
     root, original, arrays = source
     manifest = deepcopy(original)
     newline = "\r\n" if b"\r\n" in (root / "manifest.json").read_bytes() else "\n"
@@ -218,8 +304,13 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
     # Preserve the exact validated parent, including full-UI dataset lineage and
     # historical evaluations. Those conclusions apply only to the enabled rows.
     inherited_manifest = output / "inherited-manifest.json"
-    if retained_proof is not None:
+    preserve_parent = retained_proof is not None or preserve_active_parent
+    if preserve_parent:
         shutil.copyfile(root / "manifest.json", inherited_manifest)
+    for relative in preserved_files:
+        target = output / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(root / relative, target)
     image_path = output / "temporary-card.png"
     if retained_proof is not None:
         shutil.copyfile(retained_proof["image"], image_path)
@@ -270,7 +361,7 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
     else:
         source_metadata["reference_file_count"] = len(extended["business_ids"])
         manifest["gallery"].update(business_card_id_count=len(all_ids), visual_group_count=len(set(map(str, extended["visual_group_ids"]))))
-        if peer_arena_root is not None and retained_proof is not None:
+        if peer_arena_root is not None and preserve_parent:
             peer_manifest_path = Path(peer_arena_root) / "manifest.json"
             peer_manifest = read(peer_manifest_path)
             source_metadata.update(
@@ -288,7 +379,7 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
         "appended_rows": len(rows),
         "enabled_rows": int(extended["reference_enabled"].sum()),
     }
-    if retained_proof is not None:
+    if preserve_parent:
         manifest["build"]["inherited_validation"] = {
             "manifest_path": inherited_manifest.name,
             "manifest_sha256": sha(inherited_manifest),
@@ -299,6 +390,9 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
         }
     if retained_proof is not None:
         manifest["build"]["retained_disabled_reference_proof"] = retained_proof["evidence"]
+    if original["schema_version"] == 2:
+        manifest["build"]["enabled_parent_validation"] = manifest["build"]["inherited_validation"]
+        manifest["build"]["inherited_validation"] = deepcopy(original["build"]["inherited_validation"])
     manifest["validation"] = {
         "state": STATUS,
         "preserved_active_reference_rows": "ARRAY_PREFIX_IDENTICAL",
@@ -452,6 +546,18 @@ def build(*, catalog, accepted_catalog, classification_path, base_root, arena_ro
         require(all(index_row[k] == v for k, v in labels(catalog_row).items()), "accepted classification facets changed")
     sources = [load_component(root, accepted_ids, embedding=embedding) for root, embedding in ((base_root, True), (arena_root, True), (badge_root, False))]
     require(len({str(source[0]) for source in sources}) == 3, "duplicate input component roots")
+    preserved = preserved_badge_files(sources[2], sources[1], accepted_ids)
+    if preserved:
+        coverage_rows = old["gallery_coverage"]
+        coverage = {row["component"]: row for row in coverage_rows}
+        require(len(coverage) == len(coverage_rows) == 3, "accepted classification component coverage mismatch")
+        for name, (root, manifest, arrays) in zip(("skill-base", "skill-arena", "badge-reference"), sources, strict=True):
+            ids = arrays["card_ids"] if "card_ids" in arrays else arrays["business_ids"]
+            require(coverage.get(name) == {
+                "component": name, "manifest_sha256": sha(root / "manifest.json"),
+                "gallery_sha256": manifest["gallery"]["sha256"], "row_count": len(ids),
+                "business_id_count": len(accepted_ids), "join_key": "business_id",
+            }, "accepted classification is not bound to the supplied schema-2 badge and gallery set")
     decoded = read(decoded_master) if decoded_master else None
     require(decoded is None or isinstance(decoded, list), "decoded master must be a frozen row list")
     require(re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", catalog_repository), "catalog repository must be explicit GitHub provenance")
@@ -475,6 +581,8 @@ def build(*, catalog, accepted_catalog, classification_path, base_root, arena_ro
             embedder_factory=embedder_factory,
             peer_arena_root=output / "skill-arena" if name == "badge-reference" else None,
             retained_proof=proofs[len(components)] if proofs is not None else None,
+            preserved_files=preserved.get(name, ()),
+            preserve_active_parent=bool(preserved),
         )
         if proofs is not None:
             manifest["build"]["retained_classification_sha256"] = sha(retained_classification_path)

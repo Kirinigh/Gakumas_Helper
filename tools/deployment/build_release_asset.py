@@ -7,6 +7,7 @@ revalidates the candidate before writing immutable GitHub Release assets.
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import json
@@ -1638,6 +1639,8 @@ def _validate_ready_masked_badge_inheritance(
     *,
     union_manifest_path: Path,
     union_gallery_path: Path,
+    enabled_prefix_count: int | None = None,
+    validated_union_parent_gallery_sha256: str | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """Prove an all-enabled schema-2 wrapper preserves its qualified base.
 
@@ -1669,11 +1672,15 @@ def _validate_ready_masked_badge_inheritance(
     inner_path = _resolve_inside(inherited_root, str(inner_gallery.get("path", "")))
     outer_path = _resolve_inside(root, str(outer_gallery.get("path", "")))
     require(inner_path.is_file() and outer_path.is_file(), "gallery is missing")
-    inner_sha, outer_sha = sha256_file(inner_path).upper(), sha256_file(outer_path).upper()
-    require(inner_sha == str(inner_gallery.get("sha256", "")).upper()
-            and outer_sha == str(outer_gallery.get("sha256", "")).upper(), "gallery hash differs")
-    require(type(outer_gallery.get("bytes")) is int and outer_gallery["bytes"] == outer_path.stat().st_size,
-            "outer gallery size differs")
+    inner_sha = sha256_file(inner_path).upper()
+    require(inner_sha == str(inner_gallery.get("sha256", "")).upper(), "inherited gallery hash differs")
+    require((enabled_prefix_count is None) == (validated_union_parent_gallery_sha256 is None),
+            "enabled placeholder inheritance must supply a validated union parent")
+    if enabled_prefix_count is None:
+        require(sha256_file(outer_path).upper() == str(outer_gallery.get("sha256", "")).upper(),
+                "outer gallery hash differs")
+        require(type(outer_gallery.get("bytes")) is int and outer_gallery["bytes"] == outer_path.stat().st_size,
+                "outer gallery size differs")
     require({k: v for k, v in outer_gallery.items() if k not in {"bytes", "sha256"}}
             == {k: v for k, v in inner_gallery.items() if k != "sha256"}, "gallery declaration changed")
     keys = {"business_ids", "visual_group_ids", "reference_names", "top_coarse", "green_masks"}
@@ -1682,10 +1689,21 @@ def _validate_ready_masked_badge_inheritance(
             require(set(old.files) == keys and set(new.files) == keys | {"reference_enabled"},
                     "array inventory differs")
             count = len(old["business_ids"])
-            require(count > 0 and all(new[k].dtype == old[k].dtype and new[k].shape == old[k].shape
-                                      and new[k].tobytes() == old[k].tobytes() for k in keys),
+            if enabled_prefix_count is not None:
+                require(enabled_prefix_count == count, "enabled placeholder row count differs")
+                view = _enabled_gallery_prefix(new, enabled_prefix_count)
+                view["reference_enabled"] = new["reference_enabled"][:count]
+                encoded = io.BytesIO()
+                np.savez_compressed(encoded, **{key: view[key] for key in new.files})
+                require(hashlib.sha256(encoded.getbuffer()).hexdigest().upper() == str(outer_gallery.get("sha256", "")).upper()
+                        and encoded.getbuffer().nbytes == outer_gallery.get("bytes"),
+                        "outer enabled gallery prefix bytes differ")
+            else:
+                view = new
+            require(count > 0 and all(view[k].dtype == old[k].dtype and view[k].shape == old[k].shape
+                                      and view[k].tobytes() == old[k].tobytes() for k in keys),
                     "inherited gallery arrays changed")
-            flags = new["reference_enabled"]
+            flags = view["reference_enabled"]
             require(flags.dtype == np.bool_ and flags.shape == (count,) and bool(flags.all()),
                     "all reference rows must be enabled")
             ids = sorted({int(value) for value in old["business_ids"]})
@@ -1729,8 +1747,9 @@ def _validate_ready_masked_badge_inheritance(
             and source.get("business_card_id_set_sha256") == hashlib.sha256(
                 json.dumps(ids, separators=(",", ":")).encode("ascii")
             ).hexdigest().upper(), "business-ID summary differs")
+    union_sha = validated_union_parent_gallery_sha256 or sha256_file(union_gallery_path)
     require(str(source.get("arena_component_manifest_sha256", "")).upper() == sha256_file(union_manifest_path).upper()
-            and str(source.get("arena_gallery_sha256", "")).upper() == sha256_file(union_gallery_path).upper(),
+            and str(source.get("arena_gallery_sha256", "")).upper() == union_sha.upper(),
             "outer full-UI union binding differs")
     return inherited_root, inherited
 
@@ -2604,6 +2623,7 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
     ).parent
     placeholder_bases: dict[str, tuple[Path, dict[str, Any]]] = {}
     inline_placeholder_bases: set[str] = set()
+    released_928_bases: set[str] = set()
     placeholder_components = {"card_vision", "arena_card_vision", "arena_badge_reference"}
     temporary = {
         name for name in placeholder_components
@@ -2617,9 +2637,13 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
             candidate,
             str(Path(COMPONENT_MANIFESTS["card_vision"]).parent / "preserved_base/skill_card_classification.json"),
         )
-        inline_placeholder_bases = {name for name in temporary if static_handoff.is_released914_placeholder_component(raw[name])}
-        if inline_placeholder_bases and inline_placeholder_bases != temporary:
+        released_928_bases = {name for name in temporary if static_handoff.is_released928_placeholder_component(raw[name])}
+        released_914_bases = {name for name in temporary if static_handoff.is_released914_placeholder_component(raw[name])}
+        if released_914_bases and released_914_bases != temporary:
             raise ReleaseBuildError("914 inline placeholder components must be packaged together")
+        if released_928_bases and released_928_bases != temporary:
+            raise ReleaseBuildError("928 inline placeholder components must be packaged together")
+        inline_placeholder_bases = released_914_bases | released_928_bases
         for component in sorted(temporary):
             component_root = _resolve_inside(candidate, COMPONENT_MANIFESTS[component]).parent
             try:
@@ -2745,7 +2769,18 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
             arena_reference_rows_by_id.get(business_id, 0) + 1
         )
     ready_badge_base = None
-    if not placeholder_bases and badge.get("schema_version") == 2:
+    if released_928_bases:
+        _, enabled_badge_parent = placeholder_bases["arena_badge_reference"]
+        _, enabled_arena_parent = placeholder_bases["arena_card_vision"]
+        ready_badge_base = _validate_ready_masked_badge_inheritance(
+            badge_root,
+            enabled_badge_parent,
+            union_manifest_path=arena_card_root / "inherited-manifest.json",
+            union_gallery_path=_resolve_inside(arena_card_root, str(arena_card["gallery"]["path"])),
+            enabled_prefix_count=badge["build"]["preserved_rows"],
+            validated_union_parent_gallery_sha256=enabled_arena_parent["gallery"]["sha256"],
+        )
+    elif not placeholder_bases and badge.get("schema_version") == 2:
         ready_badge_base = _validate_ready_masked_badge_inheritance(
             badge_root,
             badge,
@@ -2773,7 +2808,11 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
         evaluation_badge_rows, evaluation_rows_by_id, evaluation_live_rows,
     ) = _load_badge_gallery_contract(
         _resolve_inside(evaluation_badge_root, str(evaluation_badge["gallery"]["path"])),
-        active_prefix_count=badge["build"]["preserved_rows"] if "arena_badge_reference" in inline_placeholder_bases else None,
+        active_prefix_count=(
+            badge["build"]["preserved_rows"]
+            if ready_badge_base is None and "arena_badge_reference" in inline_placeholder_bases
+            else None
+        ),
     )
     _validate_badge_live_evaluation(
         evaluation_badge_root,
