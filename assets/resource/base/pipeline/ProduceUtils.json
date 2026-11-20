@@ -415,7 +415,8 @@
         ],
         "template": [
           "produce/move_1.png",
-          "produce/move_2.png"
+          "produce/move_2.png",
+          "produce/copy.png"
         ]
       }
     },
@@ -438,7 +439,8 @@
         "template": [
           "produce/skip_round.png",
           "produce/skip_round_1.png",
-          "produce/skip_round_2.png"
+          "produce/skip_round_2.png",
+          "produce/skip_round_plain.png"
         ]
       }
     },
