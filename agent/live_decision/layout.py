@@ -152,3 +152,37 @@ def infer_dmm_max_stamina(image: Any, stamina: int) -> dict[str, Any]:
         }
     except (AttributeError, ImportError, TypeError, ValueError, ZeroDivisionError):
         return {"accepted": False, "value": None, "confidence": 0.0}
+
+
+def calibrated_live_client_size(size):
+    """Resolve a native size to its fixed rendering profile, without drift.
+
+    The small HIF window can round either client edge by one physical pixel.
+    Maa still captures/clicks in the existing 720x1280 normalized coordinates.
+    This profile only chooses recognition assets; it never resizes a window.
+    """
+    if not isinstance(size, tuple) or len(size) != 2 or any(type(v) is not int for v in size):
+        return None
+    if size == (720, 1280):
+        return size
+    # Native 474: at 144 DPI, Maa's logical client is 721x1282 while
+    # the physical client is 1082x1923. Its own long-side normalization
+    # produces the same 720x1280 layout. Bind input to the observed logical
+    # dimensions; this mapping never converts or sends native coordinates.
+    if all(abs(v-base) <= 1 for v,base in zip(size, (721, 1282), strict=True)):
+        return (720, 1280)
+    if all(abs(v-base) <= 1 for v,base in zip(size, (480, 853), strict=True)):
+        return (480, 853)
+    # Both observed small clients deliver a 720x1280 Maa screenshot. Use
+    # small-window recognition assets; Maa maps clicks to its own client.
+    if size in ((359, 638), (360, 640)):
+        return (480, 853)
+    # A disconnected display can move the existing 540x960 window between
+    # DPI contexts, rounding both client edges together. Native 1302 proves
+    # the existing 720 glyph profile after full-frame HIF normalization;
+    # the capture adapter separately binds and maps Maa's 721/722px image.
+    # Native 1920 also records 541x962 at 144 DPI with a complete 720x1280
+    # capture. Admit that observed rounding, not arbitrary aspect-ratio drift.
+    if size in ((540, 960), (541, 961), (541, 962), (542, 962)):
+        return (720, 1280)
+    return None

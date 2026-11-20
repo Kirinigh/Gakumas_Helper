@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Mapping
 from dataclasses import replace, dataclass
 
-from .kernel import CardDefinition
+from .kernel import CardDefinition, ItemDefinition
 from .contracts import (
     Stance,
     CardRef,
@@ -52,6 +52,20 @@ class DynamicDeckSample:
     request: DecisionRequest
 
 
+@dataclass(frozen=True)
+class ItemInventoryScenario:
+    scenario_id: str
+    item_ids: tuple[str, ...]
+
+    def validate(self) -> None:
+        if not self.scenario_id or any(character.isspace() for character in self.scenario_id):
+            raise ValueError("item inventory scenario requires a stable non-whitespace ID")
+        if any(not item_id for item_id in self.item_ids):
+            raise ValueError("item inventory IDs cannot be empty")
+        if len(self.item_ids) != len(set(self.item_ids)):
+            raise ValueError("item inventory cannot contain duplicate business IDs")
+
+
 def deck_signature(cards: tuple[CardRef, ...]) -> str:
     entries = sorted(":".join(str(value) for value in card.semantic_key) for card in cards)
     return "|".join(entries)
@@ -64,6 +78,35 @@ def split_for_deck_signature(signature: str) -> DatasetSplit:
     if bucket < 85:
         return DatasetSplit.VALIDATION
     return DatasetSplit.TEST
+
+
+def build_fixed_item_inventory_scenarios(
+    item_ids: tuple[str, ...],
+    *,
+    pairing_seed: int,
+) -> tuple[ItemInventoryScenario, ...]:
+    """Build deterministic empty, singleton and pair inventory scenarios."""
+
+    if len(item_ids) != len(set(item_ids)):
+        raise ValueError("item scenario source IDs must be unique")
+    if any(not item_id for item_id in item_ids):
+        raise ValueError("item scenario source IDs cannot be empty")
+    ordered = sorted(item_ids, key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value))
+    scenarios = [ItemInventoryScenario("empty", ())]
+    scenarios.extend(ItemInventoryScenario(f"single-{item_id}", (item_id,)) for item_id in ordered)
+    shuffled = list(ordered)
+    random.Random(pairing_seed).shuffle(shuffled)
+    if len(shuffled) > 1:
+        for index in range(0, len(shuffled), 2):
+            left = shuffled[index]
+            right = shuffled[index + 1] if index + 1 < len(shuffled) else shuffled[0]
+            pair = tuple(sorted((left, right), key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value)))
+            scenarios.append(ItemInventoryScenario(f"pair-{'-'.join(pair)}", pair))
+    for scenario in scenarios:
+        scenario.validate()
+    if len({scenario.scenario_id for scenario in scenarios}) != len(scenarios):
+        raise ValueError("item inventory scenario IDs must be unique")
+    return tuple(scenarios)
 
 
 class NiaProDynamicDeckGenerator:
@@ -275,3 +318,108 @@ class NiaProDynamicDeckGenerator:
             mutation_events=tuple(events),
             request=request,
         )
+
+
+class NiaProItemLifecycleGenerator:
+    """Expand fixed dynamic decks into paired stage-entry item inventories.
+
+    Every inventory scenario reuses the same deck seed, mutation history and
+    synthetic turn attributes.
+    The resulting state starts at turn one with no historical schedules or
+    resources, so persistent effects can be initialized exactly once before
+    the first policy decision instead of being injected into a later snapshot.
+    """
+
+    generator_name = "nia-pro-item-lifecycle-paired"
+    generator_version = "1.1"
+
+    def __init__(
+        self,
+        base_generator: NiaProDynamicDeckGenerator,
+        item_definitions: Mapping[str, ItemDefinition],
+        *,
+        inventory_scenarios: tuple[ItemInventoryScenario, ...],
+        stage_turns: int,
+        max_stamina: int = 30,
+    ):
+        self.base_generator = base_generator
+        self.item_definitions = dict(item_definitions)
+        self.inventory_scenarios = inventory_scenarios
+        self.stage_turns = stage_turns
+        self.max_stamina = max_stamina
+        self._validate_config()
+
+    def _validate_config(self) -> None:
+        if self.stage_turns < 1:
+            raise ValueError("item lifecycle stage_turns must be positive")
+        if self.max_stamina < 1:
+            raise ValueError("item lifecycle max_stamina must be positive")
+        if not self.inventory_scenarios:
+            raise ValueError("item lifecycle requires inventory scenarios")
+        scenario_ids: set[str] = set()
+        for scenario in self.inventory_scenarios:
+            scenario.validate()
+            if scenario.scenario_id in scenario_ids:
+                raise ValueError("item inventory scenario IDs must be unique")
+            scenario_ids.add(scenario.scenario_id)
+            unknown = sorted(set(scenario.item_ids) - set(self.item_definitions))
+            if unknown:
+                raise ValueError(f"item inventory references unknown definitions: {unknown}")
+            mismatched = sorted(
+                item_id for item_id in scenario.item_ids if self.item_definitions[item_id].plan not in {None, self.base_generator.plan_type}
+            )
+            if mismatched:
+                raise ValueError(f"item inventory is not legal for {self.base_generator.plan_type.value}: {mismatched}")
+
+    def generate(
+        self,
+        *,
+        seed: int,
+        episode_count_per_inventory: int,
+    ) -> tuple[DynamicDeckSample, ...]:
+        if episode_count_per_inventory < 1:
+            raise ValueError("episode_count_per_inventory must be positive")
+        base_samples = self.base_generator.generate(
+            seed=seed,
+            episode_count=episode_count_per_inventory,
+        )
+        attributes = ("vocal", "dance", "visual")
+        samples: list[DynamicDeckSample] = []
+        for scenario in self.inventory_scenarios:
+            inventory_signature = ",".join(scenario.item_ids) or "empty"
+            for base_sample in base_samples:
+                deck = base_sample.request.state.deck
+                state = StrategyState(
+                    turn=1,
+                    turns_remaining=self.stage_turns,
+                    score=0,
+                    stamina=self.max_stamina,
+                    max_stamina=self.max_stamina,
+                    genki=0,
+                    actions_remaining=1,
+                    hand_limit=5,
+                    score_multiplier=1.0,
+                    deck=deck,
+                    items=scenario.item_ids,
+                    turn_attributes=tuple(
+                        attributes[(base_sample.seed + turn) % len(attributes)] for turn in range(self.stage_turns)
+                    ),
+                )
+                request = replace(
+                    base_sample.request,
+                    snapshot_id=f"{base_sample.request.snapshot_id}-items-{scenario.scenario_id}",
+                    state=state,
+                    card_slots=tuple((card.instance_id, index) for index, card in enumerate(deck.hand)),
+                )
+                request.validate()
+                samples.append(
+                    DynamicDeckSample(
+                        episode_id=f"{base_sample.episode_id}-items-{scenario.scenario_id}",
+                        seed=base_sample.seed,
+                        split=split_for_deck_signature(f"{base_sample.deck_signature}|items:{inventory_signature}"),
+                        deck_signature=base_sample.deck_signature,
+                        mutation_events=base_sample.mutation_events,
+                        request=request,
+                    )
+                )
+        return tuple(samples)

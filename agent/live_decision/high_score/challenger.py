@@ -76,7 +76,7 @@ def _without_slot(action: GameAction) -> GameAction:
 
 
 def _effect_tree(definition):
-    pending = list(definition.effects + definition.persistent_effects)
+    pending = list(definition.effects + getattr(definition, 'persistent_effects', ()))
     while pending:
         effect = pending.pop()
         yield effect

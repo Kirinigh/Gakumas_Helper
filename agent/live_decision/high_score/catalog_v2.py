@@ -22,7 +22,7 @@ from .kernel import (
 )
 from .contracts import Stance, CardZone, PlanType, SchedulePhase
 
-EFFECT_IR_VERSION = "task275-effect-ir@1.24"
+EFFECT_IR_VERSION = "task275-effect-ir@1.26"
 
 _NUMBER = r"(-?\d+(?:\.\d+)?)"
 _COST_RE = re.compile(rf"^(cost|stamina)-={_NUMBER}$")
@@ -47,11 +47,17 @@ _EXCELLENT_CONDITION_RE = re.compile(rf"^perfectConditionTurns\+={_NUMBER}$")
 _GOOD_IMPRESSION_RE = re.compile(rf"^goodImpressionTurns\+={_NUMBER}$")
 _MOTIVATION_RE = re.compile(rf"^motivation\+={_NUMBER}$")
 _STAMINA_GAIN_RE = re.compile(rf"^fixedStamina\+={_NUMBER}$")
+_STAMINA_MAX_GAIN_RE = re.compile(r"^fixedStamina\+=maxStamina\*(\d+(?:\.\d+)?)$")
+_CONCENTRATION_BUFF_RE = re.compile(
+    r"^setConcentration(Effect|Addition)Buff\((\d+(?:\.\d+)?)(?:,([1-9]\d*))?\)$"
+)
 _STAMINA_LOSS_RE = re.compile(rf"^fixedStamina-={_NUMBER}$")
 _FIXED_STAMINA_MAX_LOSS_RE = re.compile(r"^fixedStamina-=maxStamina$")
 _FULL_POWER_RE = re.compile(rf"^fullPowerCharge\+={_NUMBER}$")
 _EXTRA_ACTION_RE = re.compile(r"^cardUsesRemaining\+=(\d+)$")
 _DOUBLE_CARD_EFFECT_RE = re.compile(r"^doubleCardEffectCards\+=(\d+)$")
+_NULLIFY_GENKI_TURNS_RE = re.compile(r"^nullifyGenkiTurns\+=([1-9]\d*)$")
+_ANTI_DEBUFF_RE = re.compile(r"^nullifyDebuff\+=([1-9]\d*)$")
 _HALF_COST_TURNS_RE = re.compile(r"^halfCostTurns\+=(\d+)$")
 _DOUBLE_COST_TURNS_RE = re.compile(r"^doubleCostTurns\+=(\d+)$")
 _ADD_CARD_TO_DECK_RE = re.compile(r"^addCardToDeck\((\d+)\)$")
@@ -91,11 +97,12 @@ _ACTION_MOTIVATION_MULTIPLIER_RE = re.compile(
 )
 _TARGET_RE = re.compile(r"^target:(.+?)\s*\{(.*)\}$", re.DOTALL)
 _AT_PHASE_RE = re.compile(
-    r"^at:(beforeCardUsed|cardUsed|afterCardUsed|fullPowerChargeIncreased|cardMovedToHand|cardMovedToHeld|stanceChanged|endOfTurn|beforeStartOfTurn|startOfTurn|afterStartOfTurn|turn)"
+    r"^at:(beforeCardUsed|cardUsed|afterCardUsed|fullPowerChargeIncreased|cardMovedToHand|cardMovedToHeld|stanceChanged|endOfTurn|beforeStartOfTurn|startOfTurn|afterStartOfTurn|everyTurn|turn)"
     r"(?:\[(active|mental)\])?\s*\{(.*)\}$",
     re.DOTALL,
 )
 _MOVE_RANDOM_TO_HAND_RE = re.compile(r"^moveRandomToHand\[(.+)\]$")
+_MOVE_RANDOM_TO_TOP_RE = re.compile(r"^moveRandomToTopOfDeck\[(.+)\]\(([1-9]\d*)\)$")
 _MOVE_SELECTED_TO_HAND_RE = re.compile(r"^moveSelectedToHand\[(.+)\]$")
 _CARD_SCORE_RE = re.compile(r"^g\.score\+=(-?\d+)$")
 _CARD_GENKI_RE = re.compile(r"^g\.genki\+=(-?\d+)$")
@@ -274,6 +281,10 @@ def _card_zones(value: str) -> tuple[CardZone, ...] | None:
 
 def _compile_condition(value: str) -> EffectCondition | None:
     condition = value.strip().removeprefix("@usable ").removeprefix("if:").strip()
+    if match := re.fullmatch(r"is(Vocal|Dance|Visual)Turn", condition):
+        return EffectCondition(ConditionKind.TURN_ATTRIBUTE, value=match.group(1).lower())
+    if match := re.fullmatch(r"cardSourceType==(default|pIdol|produce|support)", condition):
+        return EffectCondition(ConditionKind.USED_CARD_SOURCE_TYPE, value=match.group(1))
     conjunction = _split_condition_and(condition)
     if len(conjunction) > 1:
         compiled = tuple(_compile_condition(part) for part in conjunction)
@@ -285,6 +296,17 @@ def _compile_condition(value: str) -> EffectCondition | None:
         )
     if condition == "isStrength":
         return EffectCondition(ConditionKind.STANCE_FAMILY, value="strength")
+    if match := re.fullmatch(r"effectCounter>=(\d+)", condition):
+        return EffectCondition(ConditionKind.EFFECT_COUNTER_MIN, threshold=int(match.group(1)))
+    if match := re.fullmatch(r"effectCounter%(\d+)==(\d+)", condition):
+        if int(match.group(1)) < 1 or int(match.group(2)) >= int(match.group(1)):
+            return None
+        return EffectCondition(ConditionKind.EFFECT_COUNTER_MOD_EQ, modulus=int(match.group(1)), remainder=int(match.group(2)))
+    if match := re.fullmatch(r"turnsElapsed%(\d+)==(\d+)", condition):
+        if int(match.group(1)) < 1 or int(match.group(2)) >= int(match.group(1)):
+            return None
+        return EffectCondition(ConditionKind.TURNS_ELAPSED_MOD_EQ,
+            modulus=int(match.group(1)), remainder=int(match.group(2)))
     if condition == "isPreservation":
         return EffectCondition(ConditionKind.STANCE_FAMILY, value="preservation")
     if condition == "isFullPower":
@@ -359,6 +381,10 @@ def _compile_condition(value: str) -> EffectCondition | None:
         "motivation": ConditionKind.MOTIVATION_MIN,
         "genki": ConditionKind.GENKI_MIN,
     }
+    if match := re.fullmatch(r"goodConditionTurns<=(\d+)", condition):
+        return EffectCondition(ConditionKind.GOOD_CONDITION_MAX, threshold=int(match.group(1)))
+    if match := re.fullmatch(r"stamina>=maxStamina\*(\d+(?:\.\d+)?)", condition):
+        return EffectCondition(ConditionKind.STAMINA_RATIO_MIN, threshold=float(match.group(1)))
     if match := re.fullmatch(
         r"(concentration|goodConditionTurns|perfectConditionTurns|goodImpressionTurns|motivation|genki)>=(\d+)",
         condition,
@@ -393,6 +419,11 @@ def _compile_condition(value: str) -> EffectCondition | None:
         return EffectCondition(
             count_conditions[match.group(1)],
             threshold=int(match.group(2)),
+        )
+    if match := re.fullmatch(r"countCards\[removed\]>=(\d+)", condition):
+        return EffectCondition(
+            ConditionKind.REMOVED_CARD_COUNT_MIN,
+            threshold=int(match.group(1)),
         )
     if match := re.fullmatch(r"countCards\[!removed\s*&\s*T\]>=(\d+)", condition):
         return EffectCondition(
@@ -431,6 +462,7 @@ def _compile_card_selector(value: str) -> CardSelector | None:
     base_card_id: str | None = None
     effect_tag: str | None = None
     source_type: str | None = None
+    rarity: str | None = None
     for term in terms:
         normalized = term[1:-1].strip() if term.startswith("(") and term.endswith(")") else term
         alternatives = tuple(part.strip() for part in normalized.split("|"))
@@ -438,6 +470,8 @@ def _compile_card_selector(value: str) -> CardSelector | None:
             zones.extend(zone_mapping[alternative] for alternative in alternatives)
         elif term in {"active", "mental"} and card_type is None:
             card_type = term
+        elif term in {"N", "R", "SR", "SSR", "L", "T"} and rarity is None:
+            rarity = term
         elif term.isdigit() and card_id is None:
             card_id = term
         elif match := re.fullmatch(r"id\((\d+)\)", term):
@@ -459,6 +493,7 @@ def _compile_card_selector(value: str) -> CardSelector | None:
         else:
             return None
     selector = CardSelector(
+        rarity=rarity,
         zones=tuple(dict.fromkeys(zones)),
         card_type=card_type,
         card_id=card_id,
@@ -542,6 +577,9 @@ def _compile_action_sequence(value: str) -> tuple[EffectSpec, ...] | None:
         if compiled is None:
             return None
         effects.extend(
+            effect
+            if effect.condition is not None
+            else
             replace(
                 effect,
                 score_enthusiasm_multiplier=enthusiasm_multiplier,
@@ -574,47 +612,65 @@ def _compile_action(statement: str) -> tuple[EffectSpec, ...] | None:
         phase_name = match.group(1)
         trigger_card_type = match.group(2)
         body = match.group(3).strip()
+        counter_condition = None
+        if outer := _IF_RE.fullmatch(body):
+            parts = _split_top_level(outer.group(2))
+            if len(parts) == 2 and parts[0] == "effectCounter+=1":
+                inner = _IF_RE.fullmatch(parts[1])
+                counter_condition = _compile_condition(outer.group(1))
+                if inner is None or counter_condition is None:
+                    return None
+                body = f"if:{outer.group(1)} & {inner.group(1)} {{ {inner.group(2)} }}"
         schedule_limit: int | None = None
         schedule_ttl: int | None = None
-        trailing_lifetime = re.search(r"(?:;\s*|\s+)(limit|ttl):(\d+)\s*$", body)
+        schedule_delay: int | None = None
+        trailing_lifetime = re.search(r"(?:;\s*|\s+)(limit|ttl|delay):(\d+)\s*$", body)
         while trailing_lifetime is not None:
             lifetime_value = int(trailing_lifetime.group(2))
-            if lifetime_value < 1:
+            if lifetime_value < 1 and trailing_lifetime.group(1) != "delay":
                 return None
             if trailing_lifetime.group(1) == "limit":
                 if schedule_limit is not None:
                     return None
                 schedule_limit = lifetime_value
-            else:
+            elif trailing_lifetime.group(1) == "ttl":
                 if schedule_ttl is not None:
                     return None
                 schedule_ttl = lifetime_value
+            else:
+                if schedule_delay is not None or phase_name != "turn":
+                    return None
+                schedule_delay = lifetime_value
             body = body[: trailing_lifetime.start()].strip()
             trailing_lifetime = re.search(
-                r"(?:;\s*|\s+)(limit|ttl):(\d+)\s*$",
+                r"(?:;\s*|\s+)(limit|ttl|delay):(\d+)\s*$",
                 body,
             )
         if nested_condition := _IF_RE.fullmatch(body):
             nested_body = nested_condition.group(2).strip()
             nested_lifetime = re.search(
-                r"(?:;\s*|\s+)(limit|ttl):(\d+)\s*$",
+                r"(?:;\s*|\s+)(limit|ttl|delay):(\d+)\s*$",
                 nested_body,
             )
             while nested_lifetime is not None:
                 lifetime_value = int(nested_lifetime.group(2))
-                if lifetime_value < 1:
+                if lifetime_value < 1 and nested_lifetime.group(1) != "delay":
                     return None
                 if nested_lifetime.group(1) == "limit":
                     if schedule_limit is not None:
                         return None
                     schedule_limit = lifetime_value
-                else:
+                elif nested_lifetime.group(1) == "ttl":
                     if schedule_ttl is not None:
                         return None
                     schedule_ttl = lifetime_value
+                else:
+                    if schedule_delay is not None or phase_name != "turn":
+                        return None
+                    schedule_delay = lifetime_value
                 nested_body = nested_body[: nested_lifetime.start()].strip()
                 nested_lifetime = re.search(
-                    r"(?:;\s*|\s+)(limit|ttl):(\d+)\s*$",
+                    r"(?:;\s*|\s+)(limit|ttl|delay):(\d+)\s*$",
                     nested_body,
                 )
             body = f"if:{nested_condition.group(1)} {{ {nested_body} }}"
@@ -639,6 +695,7 @@ def _compile_action(statement: str) -> tuple[EffectSpec, ...] | None:
             "endOfTurn": SchedulePhase.END_OF_TURN,
             "beforeStartOfTurn": SchedulePhase.BEFORE_START_OF_TURN,
             "turn": SchedulePhase.TURN,
+            "everyTurn": SchedulePhase.EVERY_TURN,
             "startOfTurn": SchedulePhase.START_OF_TURN,
             "afterStartOfTurn": SchedulePhase.AFTER_START_OF_TURN,
         }[phase_name]
@@ -647,6 +704,10 @@ def _compile_action(statement: str) -> tuple[EffectSpec, ...] | None:
                 EffectKind.SCHEDULE,
                 scheduled_effects=compiled,
                 delay_turns=(
+                    # Source delay N blocks while >= 0 and decrements at
+                    # turn end. Our countdown fires at 1: N means N+1 turns.
+                    schedule_delay + 1
+                    if schedule_delay is not None else
                     0
                     if phase_name
                     in {
@@ -665,6 +726,7 @@ def _compile_action(statement: str) -> tuple[EffectSpec, ...] | None:
                 schedule_limit=schedule_limit,
                 schedule_ttl=schedule_ttl,
                 trigger_card_type=trigger_card_type,
+                schedule_counter_condition=counter_condition,
             ),
         )
     if match := _TARGET_RE.fullmatch(statement):
@@ -706,10 +768,16 @@ def _compile_action(statement: str) -> tuple[EffectSpec, ...] | None:
         )
     if match := _GENKI_RE.fullmatch(statement):
         return (EffectSpec(EffectKind.GENKI, float(match.group(1))),)
+    if match := re.fullmatch(r"fixedGenki\+=([0-9]+)", statement):
+        return (EffectSpec(EffectKind.FIXED_GENKI, int(match.group(1))),)
+    if match := re.fullmatch(r"costReduction\+=([0-9]+)", statement):
+        return (EffectSpec(EffectKind.COST_REDUCTION, int(match.group(1))),)
     if match := _CONCENTRATION_RE.fullmatch(statement):
         return (EffectSpec(EffectKind.CONCENTRATION, float(match.group(1))),)
     if match := _GOOD_CONDITION_RE.fullmatch(statement):
         return (EffectSpec(EffectKind.GOOD_CONDITION, float(match.group(1))),)
+    if match := re.fullmatch(r"goodConditionTurns-=(\d+)", statement):
+        return (EffectSpec(EffectKind.GOOD_CONDITION, -float(match.group(1))),)
     if match := _EXCELLENT_CONDITION_RE.fullmatch(statement):
         return (EffectSpec(EffectKind.EXCELLENT_CONDITION, float(match.group(1))),)
     if match := _GOOD_IMPRESSION_RE.fullmatch(statement):
@@ -718,6 +786,14 @@ def _compile_action(statement: str) -> tuple[EffectSpec, ...] | None:
         return (EffectSpec(EffectKind.MOTIVATION, float(match.group(1))),)
     if match := _STAMINA_GAIN_RE.fullmatch(statement):
         return (EffectSpec(EffectKind.STAMINA, float(match.group(1))),)
+    if match := _STAMINA_MAX_GAIN_RE.fullmatch(statement):
+        return (EffectSpec(EffectKind.STAMINA, value_source=EffectValueSource.MAX_STAMINA, value_scale=float(match.group(1))),)
+    if match := _CONCENTRATION_BUFF_RE.fullmatch(statement):
+        return (EffectSpec(
+            EffectKind.CONCENTRATION_EFFECT_BUFF if match.group(1) == "Effect" else EffectKind.CONCENTRATION_ADDITION_BUFF,
+            amount=float(match.group(2)),
+            duration=int(match.group(3)) if match.group(3) is not None else None,
+        ),)
     if match := _STAMINA_LOSS_RE.fullmatch(statement):
         return (EffectSpec(EffectKind.STAMINA, -float(match.group(1))),)
     if _FIXED_STAMINA_MAX_LOSS_RE.fullmatch(statement):
@@ -728,6 +804,10 @@ def _compile_action(statement: str) -> tuple[EffectSpec, ...] | None:
         return (EffectSpec(EffectKind.EXTRA_ACTION, float(match.group(1))),)
     if match := _DOUBLE_CARD_EFFECT_RE.fullmatch(statement):
         return (EffectSpec(EffectKind.DOUBLE_CARD_EFFECT, float(match.group(1))),)
+    if match := _NULLIFY_GENKI_TURNS_RE.fullmatch(statement):
+        return (EffectSpec(EffectKind.NULLIFY_GENKI_TURNS, float(match.group(1))),)
+    if match := _ANTI_DEBUFF_RE.fullmatch(statement):
+        return (EffectSpec(EffectKind.ANTI_DEBUFF, float(match.group(1))),)
     if match := _HALF_COST_TURNS_RE.fullmatch(statement):
         return (EffectSpec(EffectKind.HALF_COST_TURNS, float(match.group(1))),)
     if match := _DOUBLE_COST_TURNS_RE.fullmatch(statement):
@@ -776,6 +856,11 @@ def _compile_action(statement: str) -> tuple[EffectSpec, ...] | None:
         selector = _compile_card_selector(match.group(1))
         if selector is not None and selector.zones and CardZone.HAND not in selector.zones:
             return (EffectSpec(EffectKind.MOVE_RANDOM_TO_HAND, card_selector=selector),)
+        return None
+    if match := _MOVE_RANDOM_TO_TOP_RE.fullmatch(statement):
+        selector = _compile_card_selector(match.group(1))
+        if selector is not None and selector.zones and set(selector.zones) <= {CardZone.DRAW_PILE, CardZone.DISCARD}:
+            return (EffectSpec(EffectKind.MOVE_RANDOM_TO_TOP, amount=int(match.group(2)), card_selector=selector),)
         return None
     if match := _MOVE_SELECTED_TO_HAND_RE.fullmatch(statement):
         zones = _card_zones(match.group(1))
@@ -870,14 +955,28 @@ def _compile_cost(value: str) -> tuple[int, int, CardCostKind] | None:
     return None
 
 
-def compile_skill_card_catalog(path: str | Path, *, plan_type: PlanType) -> CompiledCardCatalog:
+def compile_skill_card_catalog(
+    path: str | Path,
+    *,
+    plan_type: PlanType,
+    include_free_card_ids: tuple[str, ...] = (),
+) -> CompiledCardCatalog:
     source = Path(path)
     source_bytes = source.read_bytes()
     rows = list(csv.DictReader(source_bytes.decode("utf-8-sig").splitlines()))
     rows_by_id = {str(row["id"]): row for row in rows}
     selected = [row for row in rows if row.get("plan") == plan_type.value.lower()]
+    if len(include_free_card_ids) != len(set(include_free_card_ids)):
+        raise ValueError("explicit free-card IDs must be unique")
+    for card_id in include_free_card_ids:
+        row = rows_by_id.get(card_id)
+        if row is None or row.get("plan") != "free":
+            raise ValueError(f"explicit free-card ID is missing or not free: {card_id}")
+        selected.append(row)
     source_variants: dict[str, dict[bool, str]] = {}
-    for row in selected:
+    for row in rows:
+        if row.get("plan") not in {plan_type.value.lower(), "free"}:
+            continue
         source_variants.setdefault(str(row["name"]).removesuffix("+"), {})[
             str(row.get("upgraded", "")).upper() == "TRUE"
         ] = str(row["id"])
@@ -938,6 +1037,9 @@ def compile_skill_card_catalog(path: str | Path, *, plan_type: PlanType) -> Comp
                             SchedulePhase.END_OF_TURN: {
                                 EffectKind.FREE_PLAY_RANDOM,
                             },
+                            SchedulePhase.EVERY_TURN: {
+                                EffectKind.FREE_PLAY_RANDOM,
+                            },
                         }.get(effect.schedule_phase, set())
                         for nested in effect.scheduled_effects
                     )
@@ -968,7 +1070,7 @@ def compile_skill_card_catalog(path: str | Path, *, plan_type: PlanType) -> Comp
         definition = CardDefinition(
             card_id=card_id,
             name=name,
-            plan=plan_type,
+            plan=None if row.get("plan") == "free" else plan_type,
             stamina_cost=cost[0],
             full_power_cost=cost[1],
             cost_kind=cost[2],

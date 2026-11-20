@@ -3,7 +3,8 @@ from __future__ import annotations
 import math
 from enum import Enum
 from typing import Mapping
-from dataclasses import replace, dataclass
+from fractions import Fraction
+from dataclasses import dataclass
 
 from .contracts import (
     NIA_PRO_RULESET_ID,
@@ -31,6 +32,8 @@ from .contracts import (
     TurnResolutionContinuation,
     ScheduledEffectsContinuation,
 )
+from .state_copy import replace, register_copy_record
+from .validation_cache import check_search_budget, immutable_state_transform, registered_state_validation
 
 
 class KernelError(RuntimeError):
@@ -54,6 +57,8 @@ class EffectKind(str, Enum):
     SCORE = "SCORE"
     STAMINA = "STAMINA"
     GENKI = "GENKI"
+    FIXED_GENKI = "FIXED_GENKI"
+    COST_REDUCTION = "COST_REDUCTION"
     FULL_POWER = "FULL_POWER"
     PASSION = "PASSION"
     PASSION_BUFF = "PASSION_BUFF"
@@ -74,16 +79,22 @@ class EffectKind(str, Enum):
     CARD_MODIFICATION = "CARD_MODIFICATION"
     SCHEDULE = "SCHEDULE"
     MOVE_RANDOM_TO_HAND = "MOVE_RANDOM_TO_HAND"
+    MOVE_RANDOM_TO_TOP = "MOVE_RANDOM_TO_TOP"
+    REMOVE_RANDOM = "REMOVE_RANDOM"
     EXCHANGE_HAND = "EXCHANGE_HAND"
     DOUBLE_CARD_EFFECT = "DOUBLE_CARD_EFFECT"
     FREE_PLAY_SELECTED = "FREE_PLAY_SELECTED"
+    NULLIFY_GENKI_TURNS = "NULLIFY_GENKI_TURNS"
     HALF_COST_TURNS = "HALF_COST_TURNS"
     DOUBLE_COST_TURNS = "DOUBLE_COST_TURNS"
+    ANTI_DEBUFF = "ANTI_DEBUFF"
     ADD_CARD_TO_DECK = "ADD_CARD_TO_DECK"
     ENTHUSIASM_BONUS_BUFF = "ENTHUSIASM_BONUS_BUFF"
     ENTHUSIASM_MULTIPLIER_BUFF = "ENTHUSIASM_MULTIPLIER_BUFF"
     FULL_POWER_CHARGE_BUFF = "FULL_POWER_CHARGE_BUFF"
     SCORE_BUFF = "SCORE_BUFF"
+    CONCENTRATION_EFFECT_BUFF = "CONCENTRATION_EFFECT_BUFF"
+    CONCENTRATION_ADDITION_BUFF = "CONCENTRATION_ADDITION_BUFF"
     STANCE_LOCK_TURNS = "STANCE_LOCK_TURNS"
     NULLIFY_COST_CARDS = "NULLIFY_COST_CARDS"
     UPGRADE_HAND = "UPGRADE_HAND"
@@ -95,6 +106,7 @@ class EffectKind(str, Enum):
 
 
 class EffectValueSource(str, Enum):
+    MAX_STAMINA = "MAX_STAMINA"
     GOOD_CONDITION = "GOOD_CONDITION"
     GOOD_IMPRESSION = "GOOD_IMPRESSION"
     MOTIVATION = "MOTIVATION"
@@ -124,10 +136,14 @@ class ConditionKind(str, Enum):
     IS_DIRECT_EFFECT = "IS_DIRECT_EFFECT"
     USED_CARD_EFFECT_TAG = "USED_CARD_EFFECT_TAG"
     USED_CARD_BASE_ID = "USED_CARD_BASE_ID"
+    USED_CARD_ID = "USED_CARD_ID"
+    USED_CARD_SOURCE_TYPE = "USED_CARD_SOURCE_TYPE"
+    TURN_ATTRIBUTE = "TURN_ATTRIBUTE"
     USED_CARD_RARITY_NOT = "USED_CARD_RARITY_NOT"
     MOVED_CARD_ID = "MOVED_CARD_ID"
     MOVED_CARD_BASE_ID = "MOVED_CARD_BASE_ID"
     REMOVED_BASE_CARD_COUNT_MIN = "REMOVED_BASE_CARD_COUNT_MIN"
+    REMOVED_CARD_COUNT_MIN = "REMOVED_CARD_COUNT_MIN"
     STANCE_CHANGE_COUNT_MOD_EQ = "STANCE_CHANGE_COUNT_MOD_EQ"
     STANCE_CHANGE_COUNT_MIN = "STANCE_CHANGE_COUNT_MIN"
     STRENGTH_COUNT_MIN = "STRENGTH_COUNT_MIN"
@@ -136,22 +152,33 @@ class ConditionKind(str, Enum):
     TROUBLE_CARD_COUNT_MIN = "TROUBLE_CARD_COUNT_MIN"
     CONCENTRATION_MIN = "CONCENTRATION_MIN"
     GOOD_CONDITION_MIN = "GOOD_CONDITION_MIN"
+    GOOD_CONDITION_MAX = "GOOD_CONDITION_MAX"
+    STAMINA_RATIO_MIN = "STAMINA_RATIO_MIN"
     EXCELLENT_CONDITION_MIN = "EXCELLENT_CONDITION_MIN"
     GOOD_IMPRESSION_MIN = "GOOD_IMPRESSION_MIN"
     MOTIVATION_MIN = "MOTIVATION_MIN"
     GENKI_MIN = "GENKI_MIN"
+    EFFECT_COUNTER_MIN = "EFFECT_COUNTER_MIN"
+    EFFECT_COUNTER_MOD_EQ = "EFFECT_COUNTER_MOD_EQ"
+    TURNS_ELAPSED_MOD_EQ = "TURNS_ELAPSED_MOD_EQ"
 
 
 @dataclass(frozen=True)
 class EffectCondition:
     kind: ConditionKind
     value: str | None = None
-    threshold: int | None = None
+    threshold: int | float | None = None
     all_of: tuple[EffectCondition, ...] = ()
     modulus: int | None = None
     remainder: int | None = None
 
     def validate(self) -> None:
+        if self.kind in {ConditionKind.TURN_ATTRIBUTE, ConditionKind.USED_CARD_SOURCE_TYPE}:
+            values = ({"vocal", "dance", "visual"} if self.kind is ConditionKind.TURN_ATTRIBUTE
+                      else {"default", "pIdol", "produce", "support"})
+            if self.value not in values or self.threshold is not None or self.all_of or self.modulus is not None or self.remainder is not None:
+                raise HighScoreContractError("invalid attribute or card source condition")
+            return
         if self.kind is ConditionKind.ALL:
             if (
                 len(self.all_of) < 2
@@ -173,7 +200,8 @@ class EffectCondition:
             ):
                 raise HighScoreContractError("IS_DIRECT_EFFECT does not accept payload")
             return
-        if self.kind is ConditionKind.STANCE_CHANGE_COUNT_MOD_EQ:
+        if self.kind in {ConditionKind.STANCE_CHANGE_COUNT_MOD_EQ, ConditionKind.EFFECT_COUNTER_MOD_EQ,
+                         ConditionKind.TURNS_ELAPSED_MOD_EQ}:
             if (
                 self.modulus is None
                 or self.modulus < 1
@@ -196,6 +224,7 @@ class EffectCondition:
             ConditionKind.PREVIOUS_STANCE_IS,
             ConditionKind.USED_CARD_EFFECT_TAG,
             ConditionKind.USED_CARD_BASE_ID,
+            ConditionKind.USED_CARD_ID,
             ConditionKind.USED_CARD_RARITY_NOT,
             ConditionKind.MOVED_CARD_ID,
             ConditionKind.MOVED_CARD_BASE_ID,
@@ -208,6 +237,7 @@ class EffectCondition:
             ConditionKind.PREVIOUS_STANCE_IS,
             ConditionKind.USED_CARD_EFFECT_TAG,
             ConditionKind.USED_CARD_BASE_ID,
+            ConditionKind.USED_CARD_ID,
             ConditionKind.USED_CARD_RARITY_NOT,
             ConditionKind.MOVED_CARD_ID,
             ConditionKind.MOVED_CARD_BASE_ID,
@@ -227,6 +257,7 @@ class CardSelector:
     base_card_id: str | None = None
     effect_tag: str | None = None
     source_type: str | None = None
+    rarity: str | None = None
 
     def validate(self) -> None:
         if not any(
@@ -239,6 +270,7 @@ class CardSelector:
                 self.base_card_id,
                 self.effect_tag,
                 self.source_type,
+                self.rarity,
             )
         ):
             raise HighScoreContractError("card selector cannot be empty")
@@ -251,6 +283,7 @@ class CardSelector:
                 self.base_card_id,
                 self.effect_tag,
                 self.source_type,
+                self.rarity,
             )
         ):
             raise HighScoreContractError("special card selector cannot be combined with filters")
@@ -258,6 +291,8 @@ class CardSelector:
             raise HighScoreContractError("card selector cannot combine exact and base ids")
         if self.card_type is not None and self.card_type not in {"active", "mental"}:
             raise HighScoreContractError("card selector type is unsupported")
+        if self.rarity is not None and self.rarity not in {"N", "R", "SR", "SSR", "L", "T"}:
+            raise HighScoreContractError("card selector rarity is unsupported")
         if self.effect_tag is not None and self.effect_tag not in {"strength", "fullPowerCharge"}:
             raise HighScoreContractError("card selector effect tag is unsupported")
         if self.source_type is not None and self.source_type not in {
@@ -292,6 +327,7 @@ class CardModification:
             raise HighScoreContractError("card modification repeat bonus cannot be negative")
 
 
+@register_copy_record
 @dataclass(frozen=True)
 class EffectSpec:
     kind: EffectKind
@@ -320,10 +356,16 @@ class EffectSpec:
     score_concentration_multiplier: float = 1.0
     score_good_condition_multiplier: float = 1.0
     genki_motivation_multiplier: float = 1.0
+    schedule_counter_condition: EffectCondition | None = None
 
     def validate(self) -> None:
         if self.repeats < 1:
             raise HighScoreContractError("effect repeats must be positive")
+        if self.kind in {EffectKind.FIXED_GENKI, EffectKind.COST_REDUCTION} and (
+            type(self.amount) not in {int, float} or not math.isfinite(self.amount)
+            or self.amount < 0 or int(self.amount) != self.amount
+        ):
+            raise HighScoreContractError("fixed genki and cost reduction require non-negative integer amounts")
         if self.kind is EffectKind.STANCE and self.stance is None:
             raise HighScoreContractError("STANCE effect requires stance")
         if self.kind is EffectKind.STATUS and not self.status_id:
@@ -350,7 +392,7 @@ class EffectSpec:
             self.amount < 1 or not float(self.amount).is_integer()
         ):
             raise HighScoreContractError("DOUBLE_CARD_EFFECT requires a positive integer amount")
-        if self.kind in {EffectKind.HALF_COST_TURNS, EffectKind.DOUBLE_COST_TURNS} and (
+        if self.kind in {EffectKind.HALF_COST_TURNS, EffectKind.DOUBLE_COST_TURNS, EffectKind.NULLIFY_GENKI_TURNS} and (
             self.amount < 1 or not float(self.amount).is_integer()
         ):
             raise HighScoreContractError(f"{self.kind.value} requires a positive integer amount")
@@ -396,24 +438,37 @@ class EffectSpec:
             EffectKind.ENTHUSIASM_MULTIPLIER_BUFF,
             EffectKind.FULL_POWER_CHARGE_BUFF,
             EffectKind.SCORE_BUFF,
+            EffectKind.CONCENTRATION_EFFECT_BUFF,
+            EffectKind.CONCENTRATION_ADDITION_BUFF,
         } and (self.amount < 0 or (self.duration is not None and self.duration < 1)):
             raise HighScoreContractError("buff amount and duration are invalid")
-        if self.kind in {EffectKind.STANCE_LOCK_TURNS, EffectKind.NULLIFY_COST_CARDS} and (
+        if self.kind in {EffectKind.STANCE_LOCK_TURNS, EffectKind.NULLIFY_COST_CARDS, EffectKind.ANTI_DEBUFF} and (
             self.amount < 1 or not float(self.amount).is_integer()
         ):
             raise HighScoreContractError(f"{self.kind.value} requires a positive integer amount")
+        if self.kind is EffectKind.ANTI_DEBUFF and self.duration is not None:
+            raise HighScoreContractError("anti-debuff charges do not expire by turn")
         if self.kind is EffectKind.CARD_MODIFICATION:
             if self.card_selector is None or self.card_modification is None:
                 raise HighScoreContractError("CARD_MODIFICATION requires selector and modification")
             self.card_selector.validate()
             self.card_modification.validate()
-        if self.kind is EffectKind.MOVE_RANDOM_TO_HAND:
+        if self.kind in {EffectKind.MOVE_RANDOM_TO_HAND, EffectKind.MOVE_RANDOM_TO_TOP, EffectKind.REMOVE_RANDOM}:
             if self.card_selector is None or not self.card_selector.zones:
                 raise HighScoreContractError("MOVE_RANDOM_TO_HAND requires an explicitly zoned selector")
             if self.card_selector.all_cards or CardZone.HAND in self.card_selector.zones:
                 raise HighScoreContractError("MOVE_RANDOM_TO_HAND source zones cannot include the hand")
             self.card_selector.validate()
+        if self.kind is EffectKind.REMOVE_RANDOM:
+            if (self.amount < 1 or not float(self.amount).is_integer()
+                    or len(set(self.card_selector.zones)) != len(self.card_selector.zones)
+                    or not set(self.card_selector.zones) <= {CardZone.DRAW_PILE, CardZone.DISCARD}):
+                raise HighScoreContractError("random removal requires a positive count and unique draw/discard zones")
+        if self.kind is EffectKind.MOVE_RANDOM_TO_TOP and (self.amount < 1 or not float(self.amount).is_integer()):
+            raise HighScoreContractError("random top-deck count must be a positive integer")
         if self.kind is EffectKind.SCHEDULE:
+            if self.schedule_counter_condition is not None:
+                self.schedule_counter_condition.validate()
             minimum_delay = (
                 0
                 if self.schedule_phase
@@ -450,6 +505,7 @@ class EffectSpec:
             or self.schedule_limit != 1
             or self.schedule_ttl is not None
             or self.trigger_card_type is not None
+            or self.schedule_counter_condition is not None
         ):
             raise HighScoreContractError("schedule payload is only valid for SCHEDULE effects")
         if self.condition is not None:
@@ -474,6 +530,7 @@ class CardDefinition:
     base_card_id: str | None = None
     upgrade_card_id: str | None = None
     source_type: str | None = None
+    canonical_card_id: str | None = None
 
     def validate(self) -> None:
         if not self.card_id or not self.name:
@@ -496,6 +553,10 @@ class CardDefinition:
             raise HighScoreContractError("card type is unsupported")
         if self.base_card_id is not None and not self.base_card_id:
             raise HighScoreContractError("base card id cannot be empty")
+        if self.canonical_card_id is not None and (
+            not isinstance(self.canonical_card_id, str) or not self.canonical_card_id.isdecimal()
+        ):
+            raise HighScoreContractError("canonical card id must be a catalog id")
         if self.upgrade_card_id == self.card_id:
             raise HighScoreContractError("card cannot upgrade to itself")
         if self.source_type is not None and self.source_type not in {
@@ -551,6 +612,30 @@ class ItemDefinition:
 
 
 @dataclass(frozen=True)
+class MemoryAbilityDefinition:
+    """A run-owned effect, independent of the card which triggers it.
+
+    The producer assigns a stable ability id within the run. Exact-card and
+    base-family conditions are explicit; the kernel never infers upgrades.
+    """
+
+    ability_id: str
+    name: str
+    persistent_effects: tuple[EffectSpec, ...]
+    plan: PlanType | None = None
+
+    def validate(self) -> None:
+        if not self.ability_id or not self.name or not self.persistent_effects:
+            raise HighScoreContractError("invalid memory ability definition")
+        if self.plan is not None and not isinstance(self.plan, PlanType):
+            raise HighScoreContractError("memory ability plan is invalid")
+        for effect in self.persistent_effects:
+            if effect.kind is not EffectKind.SCHEDULE:
+                raise HighScoreContractError("memory ability effects must be scheduled")
+            effect.validate()
+
+
+@dataclass(frozen=True)
 class RuleEvent:
     event_type: str
     source_id: str
@@ -558,6 +643,7 @@ class RuleEvent:
     detail: str | None = None
 
 
+@register_copy_record
 @dataclass(frozen=True)
 class TransitionBranch:
     probability: float
@@ -637,6 +723,17 @@ def _condition_matches(
 ) -> bool:
     if condition is None:
         return True
+    if condition.kind is ConditionKind.TURN_ATTRIBUTE:
+        if not state.turn_attributes:
+            raise KernelError("turn_attributes_required")
+        return state.turn_attributes[0] == condition.value
+    if condition.kind is ConditionKind.USED_CARD_SOURCE_TYPE:
+        if trigger_context is None or trigger_context.used_card_id is None:
+            return False
+        definition = cards.get(trigger_context.used_card_id)
+        if definition is None or definition.source_type is None:
+            raise KernelError("used_card_source_type_unknown")
+        return definition.source_type == condition.value
     if condition.kind is ConditionKind.ALL:
         return all(
             _condition_matches(state, nested, cards, trigger_context)
@@ -699,6 +796,11 @@ def _condition_matches(
             trigger_context is not None
             and trigger_context.used_card_base_id == condition.value
         )
+    if condition.kind is ConditionKind.USED_CARD_ID:
+        return (trigger_context is not None and (
+            (cards[trigger_context.used_card_id].canonical_card_id or trigger_context.used_card_id)
+            if trigger_context.used_card_id in cards else trigger_context.used_card_id
+        ) == condition.value)
     if condition.kind is ConditionKind.USED_CARD_RARITY_NOT:
         return (
             trigger_context is not None
@@ -708,13 +810,17 @@ def _condition_matches(
     if condition.kind is ConditionKind.MOVED_CARD_ID:
         return (
             trigger_context is not None
-            and trigger_context.moved_card_id == condition.value
+            and ((cards[trigger_context.moved_card_id].canonical_card_id or trigger_context.moved_card_id)
+                 if trigger_context.moved_card_id in cards else trigger_context.moved_card_id) == condition.value
         )
     if condition.kind is ConditionKind.MOVED_CARD_BASE_ID:
         return (
             trigger_context is not None
             and trigger_context.moved_card_base_id == condition.value
         )
+    if condition.kind is ConditionKind.REMOVED_CARD_COUNT_MIN:
+        assert condition.threshold is not None
+        return len(state.deck.removed) >= condition.threshold
     if condition.kind is ConditionKind.REMOVED_BASE_CARD_COUNT_MIN:
         assert condition.threshold is not None
         return (
@@ -760,6 +866,15 @@ def _condition_matches(
     if condition.kind is ConditionKind.GOOD_CONDITION_MIN:
         assert condition.threshold is not None
         return state.good_condition_turns >= condition.threshold
+    if condition.kind is ConditionKind.GOOD_CONDITION_MAX:
+        assert condition.threshold is not None
+        return state.good_condition_turns <= condition.threshold
+    if condition.kind is ConditionKind.STAMINA_RATIO_MIN:
+        assert condition.threshold is not None
+        observed = state
+        if observed.max_stamina <= 0:
+            raise KernelError("maximum_stamina_required")
+        return observed.stamina >= observed.max_stamina * condition.threshold
     if condition.kind is ConditionKind.EXCELLENT_CONDITION_MIN:
         assert condition.threshold is not None
         return state.excellent_condition_turns >= condition.threshold
@@ -772,6 +887,16 @@ def _condition_matches(
     if condition.kind is ConditionKind.GENKI_MIN:
         assert condition.threshold is not None
         return state.genki >= condition.threshold
+    if condition.kind is ConditionKind.TURNS_ELAPSED_MOD_EQ:
+        # Frozen TurnManager starts turnsElapsed at zero; our turn is one-based.
+        return (state.turn - 1) % condition.modulus == condition.remainder
+    if condition.kind in {ConditionKind.EFFECT_COUNTER_MIN, ConditionKind.EFFECT_COUNTER_MOD_EQ}:
+        if trigger_context is None or type(trigger_context.effect_counter) is not int:
+            raise KernelError("effect_counter_context_required")
+        if condition.kind is ConditionKind.EFFECT_COUNTER_MIN:
+            assert condition.threshold is not None
+            return trigger_context.effect_counter >= condition.threshold
+        return trigger_context.effect_counter % condition.modulus == condition.remainder
     return False
 
 
@@ -783,7 +908,7 @@ class PythonNiaProKernel:
     """
 
     kernel_name = "python-nia-pro"
-    kernel_version = "1.23"
+    kernel_version = "1.26"
 
     def __init__(
         self,
@@ -792,10 +917,12 @@ class PythonNiaProKernel:
         items: Mapping[str, ItemDefinition] | None = None,
         *,
         ruleset_id: str = NIA_PRO_RULESET_ID,
+        memory_abilities: Mapping[str, MemoryAbilityDefinition] | None = None,
     ):
         self.cards = dict(cards)
         self.drinks = dict(drinks or {})
         self.items = dict(items or {})
+        self.memory_abilities = dict(memory_abilities or {})
         self.ruleset_id = ruleset_id
         for definition in self.cards.values():
             definition.validate()
@@ -803,6 +930,23 @@ class PythonNiaProKernel:
             definition.validate()
         for definition in self.items.values():
             definition.validate()
+        for ability_id, definition in self.memory_abilities.items():
+            definition.validate()
+            if ability_id != definition.ability_id:
+                raise HighScoreContractError("memory ability registry key mismatch")
+
+    def card_definition(self, state, card):
+        """Current card effects; the base rules retain their ordinary lookup."""
+        return self.cards.get(card.card_id)
+
+    def _card_resolution_support_tier(self, definition):
+        return 0
+
+    def _card_resolution_projection_kind(self, definition):
+        return 'verified_effects'
+
+    def _resolving_card_definition(self, frame):
+        return self.cards.get(frame.card_id)
 
     def legal_actions(
         self,
@@ -814,6 +958,7 @@ class PythonNiaProKernel:
         state.validate()
         self._validate_registered_state(state, plan_type=plan_type)
         state = self._materialize_persistent_effects(state)
+        state = self._prune_exhausted_schedules(state)
         state.validate()
         if state.deck.knowledge in {DeckKnowledge.UNKNOWN, DeckKnowledge.BROKEN}:
             raise KernelError(f"unsupported_deck_knowledge:{state.deck.knowledge.value}")
@@ -839,10 +984,10 @@ class PythonNiaProKernel:
         if decision_kind is DecisionKind.SECONDARY:
             return ()
         actions: list[GameAction] = []
-        if decision_kind is DecisionKind.CARD:
+        if decision_kind in {DecisionKind.CARD, DecisionKind.LIVE}:
             if state.actions_remaining > 0:
                 for card in state.deck.hand:
-                    definition = self.cards.get(card.card_id)
+                    definition = self.card_definition(state, card)
                     if definition is None or (definition.plan is not None and definition.plan is not plan_type):
                         continue
                     if definition.required_stance is not None and definition.required_stance is not state.stance:
@@ -861,8 +1006,8 @@ class PythonNiaProKernel:
                         continue
                     actions.append(GameAction(kind=ActionKind.PLAY_CARD, card_instance_id=card.instance_id))
             actions.append(GameAction(kind=ActionKind.END_TURN))
-        elif decision_kind is DecisionKind.DRINK:
-            for drink_id in state.drinks:
+        if decision_kind is DecisionKind.DRINK or (decision_kind is DecisionKind.LIVE and state.actions_remaining > 0):
+            for drink_id in dict.fromkeys(state.drinks):
                 definition = self.drinks.get(drink_id)
                 if (
                     definition is not None
@@ -937,7 +1082,7 @@ class PythonNiaProKernel:
         card = self._card_by_instance(state, instance_id)
         if card is None:
             return False
-        definition = self.cards.get(card.card_id)
+        definition = self.card_definition(state, card)
         if definition is None:
             return False
         condition_matches = (
@@ -950,6 +1095,7 @@ class PythonNiaProKernel:
         state.validate()
         self._validate_registered_state(state, plan_type=plan_type)
         state = self._materialize_persistent_effects(state)
+        state = self._prune_exhausted_schedules(state)
         state.validate()
         action.validate()
         if action.kind is ActionKind.PLAY_CARD:
@@ -969,6 +1115,31 @@ class PythonNiaProKernel:
         if action.kind is ActionKind.FINISH_SELECTION:
             return self._finish_selection(state)
         raise KernelError(f"unsupported_action:{action.kind.value}")
+
+    def initialize_stage_entry(
+        self,
+        state: StrategyState,
+        *,
+        plan_type: PlanType,
+    ) -> StrategyState:
+        """Materialize persistent card and item effects at a clean stage entry."""
+        state.validate()
+        self._validate_registered_state(state, plan_type=plan_type)
+        if state.turn != 1 or state.turns_remaining <= 0:
+            raise KernelError("stage_entry_requires_live_turn_one")
+        if state.persistent_effects_initialized:
+            raise KernelError("stage_entry_already_initialized")
+        if state.scheduled_effects:
+            raise KernelError("stage_entry_requires_empty_schedule")
+        if (
+            state.pending_choice is not None
+            or state.pending_after_card_ids
+            or state.resolution_stack
+        ):
+            raise KernelError("stage_entry_requires_no_pending_resolution")
+        initialized = self._materialize_persistent_effects(state)
+        initialized.validate()
+        return initialized
 
     def _materialize_persistent_effects(self, state: StrategyState) -> StrategyState:
         if state.persistent_effects_initialized:
@@ -1012,12 +1183,129 @@ class PythonNiaProKernel:
                 self.items[item_id].persistent_effects
             )
         )
+        persistent += tuple(
+            ScheduledEffectRef(
+                source_id=f"memory:{ability_id}",
+                card_id=ability_id,
+                definition_effect_index=index,
+                turns_until_fire=effect.delay_turns,
+                trigger_phase=effect.schedule_phase,
+                remaining_uses=effect.schedule_limit,
+                remaining_turns=effect.schedule_ttl,
+                persistent=True,
+                direct_on_trigger=(effect.schedule_phase is SchedulePhase.TURN
+                                   and effect.schedule_limit == 1),
+                source_kind=EffectSourceKind.MEMORY,
+            )
+            for ability_id in state.memory_abilities
+            for index, effect in enumerate(self.memory_abilities[ability_id].persistent_effects)
+        )
         return replace(
             state,
             scheduled_effects=state.scheduled_effects + persistent,
             persistent_effects_initialized=True,
         )
 
+    def initialize_observed_opening_effects(self, state, observed_uses, *, plan_type):
+        """Only a pristine opening may establish untouched persistent clocks.
+
+        External finite counters must all explicitly match their initial
+        limits. Used or expired effects require restore_persistent_effects.
+        """
+        state.validate()
+        self._validate_registered_state(state, plan_type=plan_type)
+        if (state.turn != 1 or state.score != 0 or state.deck.discard or state.deck.removed
+                or state.persistent_effects_initialized or state.scheduled_effects
+                or state.pending_choice or state.resolution_stack or state.pending_after_card_ids):
+            raise KernelError('observed_opening_effects_require_pristine_state')
+        initialized = self._materialize_persistent_effects(state)
+        expected = {(ref.source_kind,ref.source_id,ref.definition_effect_index):ref.remaining_uses
+                    for ref in initialized.scheduled_effects
+                    if ref.source_kind in (EffectSourceKind.ITEM,EffectSourceKind.MEMORY)}
+        if set(observed_uses) != set(expected) or any(
+            type(observed_uses[key]) is not int or observed_uses[key] != limit
+            for key,limit in expected.items()
+        ):
+            raise KernelError('observed_opening_effect_counters_are_not_initial')
+        return initialized
+
+    def restore_persistent_effects(
+        self,
+        state: StrategyState,
+        observed: tuple[ScheduledEffectRef, ...],
+        *,
+        plan_type: PlanType,
+    ) -> StrategyState:
+        """Restore a quiescent observation without resetting finite counters.
+
+        Every persistent source/index must be present, including exhausted
+        effects. Missing entries are unknown, never an implied zero or limit.
+        Delayed/transient effects and pending continuations require the full
+        serialized state path, not this initial observation adapter.
+        """
+        state.validate()
+        # Scenario gates requiring initialized counters run on the completed
+        # result below. Validate registrations before constructing references.
+        PythonNiaProKernel._validate_registered_state(self, state, plan_type=plan_type)
+        if state.persistent_effects_initialized:
+            raise KernelError("observed_effects_already_initialized")
+        if state.pending_choice or state.pending_after_card_ids or state.resolution_stack:
+            raise KernelError("observed_effects_require_no_pending_resolution")
+        if state.scheduled_effects:
+            raise KernelError("observed_effects_require_empty_schedule")
+        expected = self._materialize_persistent_effects(state).scheduled_effects
+        def key(ref):
+            return ref.source_kind, ref.source_id, ref.definition_effect_index
+        expected_by_key = {key(ref): ref for ref in expected if ref.persistent}
+        if len(expected_by_key) != len(expected):
+            raise KernelError("observed_persistent_effect_inventory_ambiguous")
+        observed_by_key = {}
+        for ref in observed:
+            ref.validate()
+            if not ref.persistent or key(ref) in observed_by_key:
+                raise KernelError("observed_persistent_effect_duplicate_or_transient")
+            observed_by_key[key(ref)] = ref
+        if observed_by_key.keys() != expected_by_key.keys():
+            raise KernelError("observed_persistent_effect_inventory_mismatch")
+        for identity, ref in observed_by_key.items():
+            initial = expected_by_key[identity]
+            # Only lifecycle values may differ from the registered definition.
+            if replace(ref, remaining_uses=initial.remaining_uses,
+                       remaining_turns=initial.remaining_turns,
+                       turns_until_fire=initial.turns_until_fire,
+                       effect_counter=initial.effect_counter) != initial:
+                raise KernelError("observed_persistent_effect_definition_mismatch")
+            for remaining, limit in ((ref.remaining_uses, initial.remaining_uses),
+                                     (ref.remaining_turns, initial.remaining_turns)):
+                if ((limit is None and remaining is not None)
+                        or (limit is not None and (type(remaining) is not int or not 0 <= remaining <= limit))):
+                    raise KernelError("observed_persistent_effect_counter_out_of_range")
+            if (type(ref.turns_until_fire) is not int
+                    or ref.turns_until_fire > initial.turns_until_fire):
+                raise KernelError("observed_persistent_effect_delay_out_of_range")
+            if (self._scheduled_effect_spec(ref).schedule_counter_condition is None
+                    and ref.effect_counter != 0):
+                raise KernelError("observed_persistent_effect_has_no_event_counter")
+        # Preserve the producer's explicit source order; never sort effects
+        # from separate sources whose triggered operations may not commute.
+        result = replace(state, scheduled_effects=tuple(observed),
+                         persistent_effects_initialized=True)
+        result.validate()
+        self._validate_registered_state(result, plan_type=plan_type)
+        return result
+
+    @staticmethod
+    def _prune_exhausted_schedules(state: StrategyState) -> StrategyState:
+        active = tuple(
+            scheduled
+            for scheduled in state.scheduled_effects
+            if scheduled.remaining_uses != 0 and scheduled.remaining_turns != 0
+        )
+        if active == state.scheduled_effects:
+            return state
+        return replace(state, scheduled_effects=active)
+
+    @registered_state_validation
     def _validate_registered_state(self, state: StrategyState, *, plan_type: PlanType) -> None:
         unknown = sorted({card.card_id for card in state.deck.all_cards if card.card_id not in self.cards})
         if unknown:
@@ -1090,6 +1378,33 @@ class PythonNiaProKernel:
             )
         if state.field_effects:
             raise KernelError("unsupported_field_effects")
+        unknown_memories = sorted(set(state.memory_abilities) - self.memory_abilities.keys())
+        if unknown_memories:
+            raise KernelError("unregistered_memory_ability:" + ",".join(unknown_memories))
+        if any(self.memory_abilities[ability_id].plan not in {None, plan_type}
+               for ability_id in state.memory_abilities):
+            raise KernelError("memory_ability_plan_mismatch")
+        if not state.terminal and not state.turn_attributes:
+            def needs_attribute(condition):
+                return condition is not None and (
+                    condition.kind is ConditionKind.TURN_ATTRIBUTE
+                    or any(needs_attribute(child) for child in condition.all_of))
+
+            def effects_need_attribute(effects):
+                return any(needs_attribute(effect.condition)
+                           or needs_attribute(effect.schedule_counter_condition)
+                           or effects_need_attribute(effect.scheduled_effects) for effect in effects)
+
+            definitions = (
+                [self.cards[card.card_id] for card in state.deck.all_cards]
+                + [self.items[item_id] for item_id in state.items]
+                + [self.drinks[drink_id] for drink_id in set(state.drinks) | scheduled_drinks]
+                + [self.memory_abilities[ability_id] for ability_id in state.memory_abilities]
+            )
+            if any(needs_attribute(getattr(definition, "condition", None)) or effects_need_attribute(
+                getattr(definition, "effects", ()) + getattr(definition, "persistent_effects", ())
+            ) for definition in definitions):
+                raise KernelError("turn_attributes_required")
 
     def _pay_stamina_cost(self, state: StrategyState, cost: int, source_id: str) -> tuple[StrategyState, tuple[RuleEvent, ...]]:
         if cost > state.stamina + state.genki:
@@ -1157,8 +1472,12 @@ class PythonNiaProKernel:
             ),
             CardCostKind.MOTIVATION: ("motivation", "COST_MOTIVATION"),
         }[kind]
+        remaining = getattr(state, field_name) - cost
+        changes = {field_name: remaining}
+        if kind is CardCostKind.GOOD_CONDITION and not remaining:
+            changes['good_condition_fresh'] = False
         return (
-            replace(state, **{field_name: getattr(state, field_name) - cost}),
+            replace(state, **changes),
             (RuleEvent(event_type, card.instance_id, cost),),
         )
 
@@ -1171,7 +1490,7 @@ class PythonNiaProKernel:
         if len(matches) != 1:
             raise KernelError("card_instance_missing")
         card = matches[0]
-        definition = self.cards.get(card.card_id)
+        definition = self.card_definition(state, card)
         if definition is None:
             raise KernelError("card_definition_missing")
         if definition.plan is not None and definition.plan is not plan_type:
@@ -1485,7 +1804,7 @@ class PythonNiaProKernel:
         card = self._card_by_instance(state, str(action.card_instance_id))
         if card is None:
             raise KernelError("free_play_card_instance_missing")
-        definition = self.cards.get(card.card_id)
+        definition = self.card_definition(state, card)
         if definition is None:
             raise KernelError("free_play_card_definition_missing")
         if definition.plan is not None and definition.plan is not plan_type:
@@ -1602,7 +1921,7 @@ class PythonNiaProKernel:
         card = self._card_by_instance(state, str(action.card_instance_id))
         if card is None:
             raise KernelError("paid_play_card_instance_missing")
-        definition = self.cards.get(card.card_id)
+        definition = self.card_definition(state, card)
         if definition is None:
             raise KernelError("paid_play_card_definition_missing")
         if definition.plan is not None and definition.plan is not plan_type:
@@ -1780,6 +2099,8 @@ class PythonNiaProKernel:
                                 remaining_effect_passes=remaining,
                                 condition_stance=condition_state.stance,
                                 condition_full_power=condition_state.full_power,
+                                support_tier=self._card_resolution_support_tier(definition),
+                                projection_kind=self._card_resolution_projection_kind(definition),
                             )
                             stack = branch.state.resolution_stack
                             insert_at = len(stack)
@@ -1977,6 +2298,23 @@ class PythonNiaProKernel:
                         )
                 result = self._merge_probability_branches(tuple(expanded))
             return result
+        if effect.kind is EffectKind.MOVE_RANDOM_TO_TOP:
+            result = []
+            for branch in branches:
+                for child in self._move_random_to_top(branch.state, effect.card_selector, int(effect.amount), source_id=source_id):
+                    result.append(replace(child, probability=branch.probability * child.probability, events=branch.events + child.events))
+            return self._merge_probability_branches(tuple(result))
+        if effect.kind is EffectKind.REMOVE_RANDOM:
+            result = branches
+            for _ in range(int(effect.amount)):
+                result = self._merge_probability_branches(tuple(
+                    replace(child, probability=branch.probability * child.probability,
+                            events=branch.events + child.events)
+                    for branch in result
+                    for child in self._remove_random(branch.state, effect.card_selector,
+                                                     source_id=source_id)
+                ))
+            return result
         if effect.kind is EffectKind.MOVE_RANDOM_TO_HAND:
             assert effect.card_selector is not None
             expanded = tuple(
@@ -2136,6 +2474,77 @@ class PythonNiaProKernel:
             )
         return result
 
+    @staticmethod
+    def effect_amount(state, effect):
+        amount = effect.amount
+        if effect.value_source is not None:
+            if effect.value_source is EffectValueSource.MAX_STAMINA and state.max_stamina <= 0:
+                raise KernelError("maximum_stamina_required")
+            source_value = {
+                EffectValueSource.MAX_STAMINA: state.max_stamina,
+                EffectValueSource.GOOD_CONDITION: state.good_condition_turns,
+                EffectValueSource.GOOD_IMPRESSION: state.good_impression_turns,
+                EffectValueSource.MOTIVATION: state.motivation,
+                EffectValueSource.GENKI: state.genki,
+            }[effect.value_source]
+            amount += source_value * effect.value_scale
+        return amount
+
+    @staticmethod
+    def _score_finish(parameter_gain, score_buff_amounts, score_multiplier):
+        """Apply the original ordered decimal multipliers and rounding stages."""
+        if score_buff_amounts:
+            # Native 1684/1685: 147's reservation has 660 parameters and +10%.
+            # Binary 660 * 1.1 becomes 726.0000000000001, adding a false point
+            # at the existing ceil. Preserve each decimal operand exactly;
+            # neither change the rounding stage nor normalize off-grid inputs.
+            parameter_gain = Fraction(str(parameter_gain)) * (
+                1 + sum(Fraction(str(amount)) for amount in score_buff_amounts)
+            )
+        parameter_gain = math.ceil(parameter_gain)
+        return math.ceil(parameter_gain * Fraction(str(score_multiplier)))
+
+    def score_effect_gain(self, state, effect, source_id, *, amount=None):
+        """Pure score arithmetic shared by transitions and future estimates."""
+        if effect.kind is not EffectKind.SCORE:
+            raise KernelError("score_gain_requires_score_effect")
+        amount = self.effect_amount(state, effect) if amount is None else amount
+        source_card = self._card_by_instance(state, source_id)
+        if source_card is not None:
+            amount += source_card.score_bonus
+        amount += state.cumulative_full_power * effect.full_power_scale
+        # Native 943 distinguishes the two rounding stages: concentration
+        # 68 with +5% contributes ceil(71.4)=72, then High Touch applies x2.
+        # Decimal percentages are exact here, so an integral effect cannot
+        # acquire a false extra point from binary floating-point residue.
+        concentration_effect = state.concentration
+        if state.concentration_effect_buffs:
+            concentration_effect = math.ceil(state.concentration * (
+                1 + sum(self._concentration_percentage(buff.amount)
+                        for buff in state.concentration_effect_buffs)))
+        parameter_gain = math.ceil(
+            amount
+            + concentration_effect * effect.score_concentration_multiplier
+            + state.passion * effect.score_enthusiasm_multiplier
+        )
+        if state.good_condition_turns > 0:
+            # The base bonus is 5/10 and excellent condition adds one tenth
+            # per good-condition turn. Keep that numerator integral until
+            # multiplication: 75 * (1 + .5 + 19 * .1) otherwise becomes
+            # 255.00000000000003 and incorrectly ceilings to 256 (native 920).
+            good_condition_tenths = 5
+            if state.excellent_condition_turns > 0:
+                good_condition_tenths += state.good_condition_turns
+            parameter_gain = parameter_gain * (
+                10
+                + good_condition_tenths
+                * effect.score_good_condition_multiplier
+            ) / 10
+        parameter_gain *= _stance_parameter_multiplier(state.stance)
+        parameter_gain *= 1.0 + state.parameter_gain_bonus_pct / 100.0
+        return self._score_finish(parameter_gain, tuple(buff.amount for buff in state.score_buffs),
+                                  state.score_multiplier)
+
     def _apply_non_draw_effect(
         self,
         state: StrategyState,
@@ -2150,42 +2559,30 @@ class PythonNiaProKernel:
         trigger_context: EffectTriggerContext | None,
         source_kind: EffectSourceKind,
     ) -> tuple[StrategyState, RuleEvent]:
-        amount = effect.amount
-        if effect.value_source is not None:
-            source_value = {
-                EffectValueSource.GOOD_CONDITION: state.good_condition_turns,
-                EffectValueSource.GOOD_IMPRESSION: state.good_impression_turns,
-                EffectValueSource.MOTIVATION: state.motivation,
-                EffectValueSource.GENKI: state.genki,
-            }[effect.value_source]
-            amount += source_value * effect.value_scale
-        if effect.kind is EffectKind.SCORE:
-            source_card = self._card_by_instance(state, source_id)
-            if source_card is not None:
-                amount += source_card.score_bonus
-            amount += state.cumulative_full_power * effect.full_power_scale
-            parameter_gain = math.ceil(
-                amount
-                + state.concentration * effect.score_concentration_multiplier
-                + state.passion * effect.score_enthusiasm_multiplier
+        amount = self.effect_amount(state, effect)
+        if effect.kind is EffectKind.ANTI_DEBUFF:
+            charges = sum(status.stacks for status in state.statuses if status.status_id == "anti_debuff")
+            statuses = tuple(status for status in state.statuses if status.status_id != "anti_debuff")
+            return (
+                replace(state, statuses=(*statuses, TimedStatus("anti_debuff", charges + int(amount)))),
+                RuleEvent("ANTI_DEBUFF", source_id, amount),
             )
-            if state.good_condition_turns > 0:
-                good_condition_bonus = 0.5
-                if state.excellent_condition_turns > 0:
-                    good_condition_bonus += state.good_condition_turns * 0.1
-                parameter_gain *= (
-                    1
-                    + good_condition_bonus
-                    * effect.score_good_condition_multiplier
-                )
-            parameter_gain *= _stance_parameter_multiplier(state.stance)
-            parameter_gain *= 1.0 + state.parameter_gain_bonus_pct / 100.0
-            parameter_gain *= 1.0 + sum(buff.amount for buff in state.score_buffs)
-            parameter_gain = math.ceil(parameter_gain)
-            score_gain = math.ceil(parameter_gain * state.score_multiplier)
+        if state.statuses and (effect.kind in {
+            EffectKind.DOUBLE_COST_TURNS, EffectKind.NULLIFY_GENKI_TURNS, EffectKind.STANCE_LOCK_TURNS,
+        } or (effect.kind is EffectKind.FULL_POWER and amount < 0)):
+            for index, status in enumerate(state.statuses):
+                if status.status_id == "anti_debuff" and status.stacks:
+                    remainder = (replace(status, stacks=status.stacks - 1),) if status.stacks > 1 else ()
+                    statuses = (*state.statuses[:index], *remainder, *state.statuses[index + 1:])
+                    return replace(state, statuses=statuses), RuleEvent(
+                        "DEBUFF_NULLIFIED", source_id, 1, effect.kind.value,
+                    )
+        if effect.kind is EffectKind.SCORE:
+            score_gain = self.score_effect_gain(state, effect, source_id, amount=amount)
             return replace(state, score=state.score + score_gain), RuleEvent("SCORE", source_id, score_gain)
         if effect.kind is EffectKind.STAMINA:
-            stamina = min(state.max_stamina, max(0, state.stamina + int(amount)))
+            resolved = math.ceil(round(amount, 2)) if effect.value_source is EffectValueSource.MAX_STAMINA else int(amount)
+            stamina = min(state.max_stamina, max(0, state.stamina + resolved))
             return replace(state, stamina=stamina), RuleEvent("STAMINA", source_id, stamina - state.stamina)
         if effect.kind is EffectKind.FIXED_STAMINA_TO_ZERO:
             return (
@@ -2193,6 +2590,8 @@ class PythonNiaProKernel:
                 RuleEvent("FIXED_STAMINA_TO_ZERO", source_id, -state.stamina),
             )
         if effect.kind is EffectKind.GENKI:
+            if state.nullify_genki_turns:
+                return state, RuleEvent("GENKI_NULLIFIED", source_id, 0)
             source_card = self._card_by_instance(state, source_id)
             if source_card is not None:
                 amount += source_card.genki_bonus
@@ -2202,6 +2601,11 @@ class PythonNiaProKernel:
                 replace(state, genki=max(0, state.genki + resolved)),
                 RuleEvent("GENKI", source_id, resolved),
             )
+        if effect.kind is EffectKind.FIXED_GENKI:
+            resolved = int(amount)
+            return replace(state, genki=max(0, state.genki + resolved)), RuleEvent("FIXED_GENKI", source_id, resolved)
+        if effect.kind is EffectKind.COST_REDUCTION:
+            return replace(state, cost_reduction=state.cost_reduction + int(amount)), RuleEvent("COST_REDUCTION", source_id, amount)
         if effect.kind is EffectKind.FULL_POWER:
             resolved = amount
             if amount > 0:
@@ -2263,6 +2667,16 @@ class PythonNiaProKernel:
                 replace(state, score_buffs=modifiers),
                 RuleEvent("SCORE_BUFF", source_id, amount, str(effect.duration)),
             )
+        if effect.kind in {EffectKind.CONCENTRATION_EFFECT_BUFF, EffectKind.CONCENTRATION_ADDITION_BUFF}:
+            field_name = (
+                "concentration_effect_buffs" if effect.kind is EffectKind.CONCENTRATION_EFFECT_BUFF
+                else "concentration_addition_buffs"
+            )
+            modifiers = self._add_timed_modifier(
+                getattr(state, field_name), amount=amount, duration=effect.duration,
+                concentration_percentage=effect.kind is EffectKind.CONCENTRATION_EFFECT_BUFF,
+            )
+            return replace(state, **{field_name: modifiers}), RuleEvent(effect.kind.value, source_id, amount, str(effect.duration))
         if effect.kind is EffectKind.STANCE_LOCK_TURNS:
             turns = state.stance_lock_turns + int(amount)
             return (
@@ -2330,6 +2744,11 @@ class PythonNiaProKernel:
                 ),
                 RuleEvent("DOUBLE_CARD_EFFECT", source_id, amount),
             )
+        if effect.kind is EffectKind.NULLIFY_GENKI_TURNS:
+            return replace(
+                state, nullify_genki_turns=state.nullify_genki_turns + int(amount),
+                nullify_genki_fresh=state.nullify_genki_fresh or state.nullify_genki_turns == 0,
+            ), RuleEvent("NULLIFY_GENKI_TURNS", source_id, amount)
         if effect.kind is EffectKind.HALF_COST_TURNS:
             turns = state.half_cost_turns + int(amount)
             return (
@@ -2353,7 +2772,9 @@ class PythonNiaProKernel:
                 RuleEvent("DOUBLE_COST_TURNS", source_id, amount),
             )
         if effect.kind is EffectKind.CONCENTRATION:
-            return replace(state, concentration=max(0, state.concentration + int(amount))), RuleEvent("CONCENTRATION", source_id, amount)
+            amount += sum(buff.amount for buff in state.concentration_addition_buffs)
+            resolved = math.ceil(round(amount, 2))
+            return replace(state, concentration=max(0, state.concentration + resolved)), RuleEvent("CONCENTRATION", source_id, resolved)
         if effect.kind is EffectKind.GOOD_CONDITION:
             return (
                 replace(state, good_condition_turns=max(0, state.good_condition_turns + int(amount))),
@@ -2361,7 +2782,11 @@ class PythonNiaProKernel:
             )
         if effect.kind is EffectKind.EXCELLENT_CONDITION:
             return (
-                replace(state, excellent_condition_turns=max(0, state.excellent_condition_turns + int(amount))),
+                replace(state, excellent_condition_turns=max(0, state.excellent_condition_turns + int(amount)),
+                        excellent_condition_fresh=(state.excellent_condition_fresh or (
+                            getattr(self,'excellent_condition_initial_grace',False)
+                            and state.excellent_condition_turns == 0 and amount > 0
+                            and not state.resolution_stack))),
                 RuleEvent("EXCELLENT_CONDITION", source_id, amount),
             )
         if effect.kind is EffectKind.GOOD_IMPRESSION:
@@ -2607,6 +3032,10 @@ class PythonNiaProKernel:
                 trigger_phase=effect.schedule_phase,
                 remaining_uses=effect.schedule_limit,
                 remaining_turns=effect.schedule_ttl,
+                duration_fresh=bool(getattr(self, 'end_turn_schedule_initial_grace', False)
+                                    and not state.resolution_stack
+                                    and effect.schedule_phase is SchedulePhase.END_OF_TURN
+                                    and effect.schedule_ttl),
                 direct_on_trigger=(
                     effect.schedule_phase is SchedulePhase.TURN
                     and effect.schedule_limit == 1
@@ -2754,7 +3183,7 @@ class PythonNiaProKernel:
             cost *= 0.5
         if state.double_cost_turns > 0:
             cost *= 2
-        return math.ceil(cost)
+        return max(0, math.ceil(cost) - state.cost_reduction)
 
     @staticmethod
     def _effective_full_power_cost(card: CardRef, definition: CardDefinition) -> int:
@@ -2988,7 +3417,7 @@ class PythonNiaProKernel:
             )
             current = replace(branch, state=state)
             if isinstance(frame, CardEffectsContinuation):
-                definition = self.cards.get(frame.card_id)
+                definition = self._resolving_card_definition(frame)
                 if definition is None:
                     raise KernelError("card_continuation_definition_missing")
                 condition_state = replace(
@@ -3161,7 +3590,7 @@ class PythonNiaProKernel:
             return False
         if selector.card_type is not None and definition.card_type != selector.card_type:
             return False
-        if selector.card_id is not None and card.card_id != selector.card_id:
+        if selector.card_id is not None and (definition.canonical_card_id or card.card_id) != selector.card_id:
             return False
         if selector.base_card_id is not None and (
             definition.base_card_id or definition.card_id
@@ -3170,6 +3599,8 @@ class PythonNiaProKernel:
         if selector.effect_tag is not None and not self._definition_has_effect_tag(definition, selector.effect_tag):
             return False
         if selector.source_type is not None and definition.source_type != selector.source_type:
+            return False
+        if selector.rarity is not None and definition.rarity != selector.rarity:
             return False
         return True
 
@@ -3273,7 +3704,8 @@ class PythonNiaProKernel:
         grouped: dict[tuple[CardZone, object], tuple[CardZone, CardRef, int]] = {}
         for zone, card in candidates:
             identity: object = card.instance_id
-            if zone is not CardZone.DRAW_PILE or state.deck.knowledge is not DeckKnowledge.KNOWN_ORDER:
+            known_prefix_ids = {value.instance_id for value in state.deck.draw_pile[:state.deck.known_top_count]}
+            if (zone is not CardZone.DRAW_PILE or state.deck.knowledge is not DeckKnowledge.KNOWN_ORDER) and card.instance_id not in known_prefix_ids:
                 identity = card.semantic_key
             key = (zone, identity)
             representative_zone, representative, count = grouped.get(key, (zone, card, 0))
@@ -3328,6 +3760,85 @@ class PythonNiaProKernel:
             )
         return tuple(branches)
 
+    def _remove_random(
+        self, state: StrategyState, selector: CardSelector, *, source_id: str,
+    ) -> tuple[TransitionBranch, ...]:
+        candidates = tuple((zone, card) for zone in selector.zones
+                           for card in self._zone_cards(state, zone)
+                           if self._selector_matches(card, selector))
+        if not candidates:
+            return (TransitionBranch(1.0, state, (RuleEvent("REMOVE_RANDOM_EMPTY", source_id),)),)
+        branches = []
+        # Keep instance identity: a removed card can own a persistent effect,
+        # and a known draw prefix must survive removal from either zone.
+        for zone, card in candidates:
+            deck = state.deck
+            prefix = {value.instance_id for value in deck.draw_pile[:deck.known_top_count]}
+            changed = deck.replace_zones(
+                draw_pile=tuple(value for value in deck.draw_pile if value.instance_id != card.instance_id),
+                discard=tuple(value for value in deck.discard if value.instance_id != card.instance_id),
+                removed=deck.removed + (card,),
+                known_top_count=deck.known_top_count - int(card.instance_id in prefix),
+            )
+            branches.append(TransitionBranch(
+                1.0 / len(candidates), replace(state, deck=changed),
+                (RuleEvent("REMOVE_RANDOM", source_id,
+                           detail=f"{zone.value}->REMOVED:{card.instance_id}"),),
+            ))
+        return tuple(branches)
+
+    def _move_random_to_top(
+        self,
+        state: StrategyState,
+        selector: CardSelector,
+        count: int,
+        *,
+        source_id: str,
+    ) -> tuple[TransitionBranch, ...]:
+        # Select without replacement. Each selected card is placed above the
+        # previous selection; only this prefix becomes known, never the tail.
+        pending = [(TransitionBranch(1.0, state, ()), frozenset())]
+        for _ in range(count):
+            expanded = []
+            for branch, picked in pending:
+                deck = branch.state.deck
+                candidates = tuple(
+                    (zone, card)
+                    for zone in selector.zones
+                    for card in self._zone_cards(branch.state, zone)
+                    if card.instance_id not in picked and self._selector_matches(card, selector)
+                )
+                if not candidates:
+                    expanded.append((branch, picked))
+                    continue
+                prefix_ids = {card.instance_id for card in deck.draw_pile[:deck.known_top_count]}
+                grouped = {}
+                for zone, card in candidates:
+                    preserve_identity = (
+                        (zone is CardZone.DRAW_PILE and (deck.knowledge is DeckKnowledge.KNOWN_ORDER or card.instance_id in prefix_ids))
+                        or bool(branch.state.scheduled_effects)
+                    )
+                    key = (zone, card.instance_id if preserve_identity else card.semantic_key)
+                    _, representative, weight = grouped.get(key, (zone, card, 0))
+                    grouped[key] = (zone, representative, weight + 1)
+                for zone, card, weight in grouped.values():
+                    tail = tuple(value for value in deck.draw_pile if value.instance_id != card.instance_id)
+                    discard = tuple(value for value in deck.discard if value.instance_id != card.instance_id)
+                    next_deck = deck.replace_zones(
+                        draw_pile=(card,) + tail, discard=discard,
+                        known_top_count=deck.known_top_count + (0 if card.instance_id in prefix_ids else 1),
+                    )
+                    expanded.append((
+                        TransitionBranch(
+                            branch.probability * weight / len(candidates),
+                            replace(branch.state, deck=next_deck),
+                            branch.events + (RuleEvent("MOVE_RANDOM_TO_TOP", source_id, detail=f"{zone.value}:{card.instance_id}"),),
+                        ),
+                        picked | {card.instance_id},
+                    ))
+            pending = expanded
+        return tuple(branch for branch, _ in pending)
+
     def _free_play_random(
         self,
         state: StrategyState,
@@ -3379,7 +3890,7 @@ class PythonNiaProKernel:
         *,
         source_id: str,
     ) -> tuple[TransitionBranch, ...]:
-        definition = self.cards.get(card.card_id)
+        definition = self.card_definition(state, card)
         if definition is None:
             raise KernelError("inline_free_card_definition_missing")
         before = self._trigger_event_phase(
@@ -3524,7 +4035,7 @@ class PythonNiaProKernel:
         card = CardRef(instance_id=instance_id, card_id=card_id)
         all_cards = state.deck.all_cards + (card,)
         next_count = state.created_card_count + 1
-        if state.deck.knowledge is DeckKnowledge.KNOWN_COMPOSITION:
+        if state.deck.knowledge is DeckKnowledge.KNOWN_COMPOSITION and not state.deck.known_top_count:
             deck = state.deck.replace_zones(
                 all_cards=all_cards,
                 draw_pile=state.deck.draw_pile + (card,),
@@ -3540,15 +4051,25 @@ class PythonNiaProKernel:
         probability = 1.0 / (len(state.deck.draw_pile) + 1)
         branches: list[TransitionBranch] = []
         for insert_position in range(len(state.deck.draw_pile) + 1):
+            prefix = state.deck.known_top_count
+            if state.deck.knowledge is DeckKnowledge.KNOWN_COMPOSITION and insert_position > prefix:
+                if insert_position != len(state.deck.draw_pile):
+                    continue
+                weight = len(state.deck.draw_pile) - prefix
+            else:
+                weight = 1
             draw_pile = (
                 state.deck.draw_pile[:insert_position]
                 + (card,)
                 + state.deck.draw_pile[insert_position:]
             )
-            deck = state.deck.replace_zones(all_cards=all_cards, draw_pile=draw_pile)
+            deck = state.deck.replace_zones(
+                all_cards=all_cards, draw_pile=draw_pile,
+                known_top_count=prefix + 1 if prefix and insert_position <= prefix else prefix,
+            )
             branches.append(
                 TransitionBranch(
-                    probability,
+                    probability * weight,
                     replace(state, deck=deck, created_card_count=next_count),
                     (
                         RuleEvent(
@@ -3562,17 +4083,43 @@ class PythonNiaProKernel:
         return tuple(branches)
 
     @staticmethod
+    def _concentration_percentage(amount: float) -> Fraction:
+        """Recover only a one-ULP legacy residue at a whole-percent boundary.
+
+        Native concentration modifiers are displayed as integer percentages;
+        the fixed catalog declares .05/.2. Old repeated .05 additions persisted
+        .15000000000000002, which must not turn exactly 115 into ceil(116).
+        Genuine off-grid values retain their decimal precision. This does not
+        rewrite saved states or weaken their native roundtrip validation.
+        """
+        exact = Fraction(str(amount))
+        if exact < 0:
+            # Preserve invalid legacy negatives for the existing state validator.
+            return exact
+        grid = Fraction(round(exact * 100), 100)
+        value = float(grid)
+        if amount in (value, math.nextafter(value, -math.inf), math.nextafter(value, math.inf)):
+            return grid
+        return exact
+
+    @staticmethod
     def _add_timed_modifier(
         modifiers: tuple[TimedModifier, ...],
         *,
         amount: float,
         duration: int | None,
+        concentration_percentage: bool = False,
     ) -> tuple[TimedModifier, ...]:
         for index, modifier in enumerate(modifiers):
             if modifier.remaining_turns == duration:
+                combined = (
+                    float(PythonNiaProKernel._concentration_percentage(modifier.amount)
+                          + PythonNiaProKernel._concentration_percentage(amount))
+                    if concentration_percentage else modifier.amount + amount
+                )
                 return (
                     modifiers[:index]
-                    + (replace(modifier, amount=modifier.amount + amount),)
+                    + (replace(modifier, amount=combined),)
                     + modifiers[index + 1 :]
                 )
         return modifiers + (TimedModifier(amount=amount, remaining_turns=duration),)
@@ -3591,14 +4138,9 @@ class PythonNiaProKernel:
                 result.append(replace(modifier, remaining_turns=modifier.remaining_turns - 1))
         return tuple(result)
 
-    def _draw_one(self, state: StrategyState, *, source_id: str) -> tuple[TransitionBranch, ...]:
-        deck = state.deck
-        if not deck.draw_pile and deck.discard:
-            deck = deck.replace_zones(draw_pile=deck.discard, discard=(), knowledge=DeckKnowledge.KNOWN_COMPOSITION)
-            state = replace(state, deck=deck)
-        if not deck.draw_pile:
-            return (TransitionBranch(1.0, state, (RuleEvent("DRAW_EMPTY", source_id),)),)
-        if deck.knowledge is DeckKnowledge.KNOWN_ORDER:
+    @staticmethod
+    def _draw_candidates(deck):
+        if deck.knowledge is DeckKnowledge.KNOWN_ORDER or deck.known_top_count:
             candidates = ((deck.draw_pile[0], 1.0),)
         elif deck.knowledge is DeckKnowledge.KNOWN_COMPOSITION:
             groups: dict[
@@ -3613,6 +4155,17 @@ class PythonNiaProKernel:
             candidates = tuple((representative, count / total) for representative, count in groups.values())
         else:
             raise KernelError(f"draw_requires_known_deck:{deck.knowledge.value}")
+        return candidates
+
+    def _draw_one(self, state: StrategyState, *, source_id: str) -> tuple[TransitionBranch, ...]:
+        check_search_budget()
+        deck = state.deck
+        if not deck.draw_pile and deck.discard:
+            deck = deck.replace_zones(draw_pile=deck.discard, discard=(), knowledge=DeckKnowledge.KNOWN_COMPOSITION)
+            state = replace(state, deck=deck)
+        if not deck.draw_pile:
+            return (TransitionBranch(1.0, state, (RuleEvent("DRAW_EMPTY", source_id),)),)
+        candidates = self._draw_candidates(deck)
         branches: list[TransitionBranch] = []
         for card, probability in candidates:
             removed = False
@@ -3643,30 +4196,57 @@ class PythonNiaProKernel:
         return tuple(branches)
 
     @staticmethod
+    @immutable_state_transform
     def _canonical_probability_state(state: StrategyState) -> StrategyState:
-        def ordered(zone: tuple[CardRef, ...]) -> tuple[CardRef, ...]:
-            return tuple(sorted(zone, key=lambda card: (*card.semantic_key, card.instance_id)))
+        deck = PythonNiaProKernel._canonical_probability_deck(state.deck)
+        return state if deck is state.deck else replace(state, deck=deck)
 
-        draw_pile = state.deck.draw_pile
-        if state.deck.knowledge is DeckKnowledge.KNOWN_COMPOSITION:
-            draw_pile = ordered(draw_pile)
-        deck = replace(
-            state.deck,
-            all_cards=ordered(state.deck.all_cards),
-            hand=ordered(state.deck.hand),
-            draw_pile=draw_pile,
-            discard=ordered(state.deck.discard),
-            removed=ordered(state.deck.removed),
-            held=ordered(state.deck.held),
-        )
-        return replace(state, deck=deck)
+    @staticmethod
+    @immutable_state_transform
+    def _canonical_card_zone(zone: tuple[CardRef, ...]) -> tuple[CardRef, ...]:
+        ordered = tuple(sorted(zone, key=lambda card: (*card.semantic_key, card.instance_id)))
+        return zone if zone == ordered else ordered
+
+    @staticmethod
+    @immutable_state_transform
+    def _canonical_probability_deck(deck: DeckBelief) -> DeckBelief:
+        # Resource and trigger phases often share the exact same immutable
+        # deck. Reuse its normalization only within this validation session.
+        ordered = PythonNiaProKernel._canonical_card_zone
+
+        draw_pile = deck.draw_pile
+        if deck.knowledge is DeckKnowledge.KNOWN_COMPOSITION:
+            prefix = deck.known_top_count
+            draw_pile = draw_pile[:prefix] + ordered(draw_pile[prefix:])
+        zones = {
+            "all_cards": ordered(deck.all_cards),
+            "hand": ordered(deck.hand),
+            "draw_pile": draw_pile,
+            "discard": ordered(deck.discard),
+            "removed": ordered(deck.removed),
+            "held": ordered(deck.held),
+        }
+        if all(getattr(deck, zone) == value for zone, value in zones.items()):
+            return deck
+        return replace(deck, **zones)
 
     def _merge_probability_branches(
         self,
         branches: tuple[TransitionBranch, ...],
     ) -> tuple[TransitionBranch, ...]:
+        if len(branches) <= 1:
+            # Most post-card trigger chains have a single result. Keep the
+            # same canonical state without hashing every card and schedule
+            # merely to insert and retrieve that one result from a dict.
+            result = []
+            for branch in branches:
+                state = self._canonical_probability_state(branch.state)
+                result.append(branch if state is branch.state
+                              else TransitionBranch(branch.probability, state, branch.events))
+            return tuple(result)
         merged: dict[StrategyState, TransitionBranch] = {}
         for branch in branches:
+            check_search_budget()
             key = self._canonical_probability_state(branch.state)
             previous = merged.get(key)
             if previous is None:
@@ -3730,13 +4310,21 @@ class PythonNiaProKernel:
         next_state = replace(
             state,
             turn=state.turn + 1,
+            deck=self._turn_end_deck(state.deck),
             turns_remaining=turns_remaining,
             score=score,
             actions_remaining=0 if turns_remaining == 0 else 1,
             passion=0,
-            good_condition_turns=max(0, state.good_condition_turns - 1),
-            excellent_condition_turns=max(0, state.excellent_condition_turns - 1),
+            good_condition_turns=(state.good_condition_turns if state.good_condition_fresh
+                                  else max(0, state.good_condition_turns - 1)),
+            good_condition_fresh=False,
+            excellent_condition_turns=(state.excellent_condition_turns if state.excellent_condition_fresh
+                                       else max(0, state.excellent_condition_turns - 1)),
+            excellent_condition_fresh=False,
             good_impression_turns=max(0, state.good_impression_turns - 1),
+            nullify_genki_turns=(state.nullify_genki_turns if state.nullify_genki_fresh
+                                else max(0, state.nullify_genki_turns - 1)),
+            nullify_genki_fresh=False,
             half_cost_turns=(
                 state.half_cost_turns
                 if state.half_cost_fresh
@@ -3761,9 +4349,12 @@ class PythonNiaProKernel:
                 state.full_power_charge_buffs
             ),
             score_buffs=self._decrement_timed_modifiers(state.score_buffs),
+            concentration_effect_buffs=self._decrement_timed_modifiers(state.concentration_effect_buffs),
+            concentration_addition_buffs=self._decrement_timed_modifiers(state.concentration_addition_buffs),
             statuses=statuses,
             score_multiplier=multiplier,
             future_score_multipliers=future,
+            turn_attributes=state.turn_attributes[1:],
         )
         if next_state.terminal:
             next_state = replace(next_state, scheduled_effects=())
@@ -3820,9 +4411,10 @@ class PythonNiaProKernel:
                 effect,
                 remaining_turns=(
                     effect.remaining_turns - 1
-                    if effect.remaining_turns is not None
-                    else None
+                    if effect.remaining_turns is not None and not effect.duration_fresh
+                    else effect.remaining_turns
                 ),
+                duration_fresh=False,
             )
             for effect in next_state.scheduled_effects
             if effect.remaining_turns != 0
@@ -3868,6 +4460,7 @@ class PythonNiaProKernel:
                 for effect in due
                 if effect.trigger_phase is SchedulePhase.TURN
             ),
+            due_every_turn=tuple(effect for effect in due if effect.trigger_phase is SchedulePhase.EVERY_TURN),
         )
         next_state = replace(
             next_state,
@@ -3899,10 +4492,7 @@ class PythonNiaProKernel:
                 replace(frame, stage=TurnResolutionStage.REFILL_SETUP),
             )
         if frame.stage is TurnResolutionStage.REFILL_SETUP:
-            draws = max(
-                0,
-                branch.state.hand_limit - len(branch.state.deck.hand),
-            )
+            draws = self._turn_start_draw_count(branch.state)
             next_frame = replace(
                 frame,
                 stage=TurnResolutionStage.REFILL,
@@ -4021,8 +4611,10 @@ class PythonNiaProKernel:
             return self._run_turn_scheduled_stage(
                 branch,
                 frame.due_turn,
-                replace(frame, stage=TurnResolutionStage.COMPLETE),
+                replace(frame, stage=TurnResolutionStage.EVERY_TURN),
             )
+        if frame.stage is TurnResolutionStage.EVERY_TURN:
+            return self._run_turn_scheduled_stage(branch, frame.due_every_turn, replace(frame, stage=TurnResolutionStage.COMPLETE))
         raise KernelError("unknown_turn_resolution_stage")
 
     def _run_turn_scheduled_stage(
@@ -4159,12 +4751,25 @@ class PythonNiaProKernel:
             expanded.extend(
                 self._run_scheduled_sequence(
                     branch,
-                    due,
+                    tuple(
+                        replace(scheduled, effect_counter=scheduled.effect_counter + 1)
+                        if self._scheduled_effect_spec(scheduled).schedule_counter_condition is not None
+                        and _condition_matches(snapshot, self._scheduled_effect_spec(scheduled).schedule_counter_condition, self.cards, trigger_context)
+                        else scheduled
+                        for scheduled in due
+                    ),
                     matched,
                     trigger_context,
                 )
             )
         return self._merge_probability_branches(tuple(expanded))
+
+    def _turn_start_draw_count(self, state: StrategyState) -> int:
+        """Legacy NIA probe refill; scenario kernels may specify their draw rule."""
+        return max(0, state.hand_limit - len(state.deck.hand))
+
+    def _turn_end_deck(self, deck: DeckBelief) -> DeckBelief:
+        return deck
 
     def _scheduled_effect_spec(
         self,
@@ -4206,6 +4811,11 @@ class PythonNiaProKernel:
                 return None
             definition = self.items.get(scheduled.card_id)
             return None if definition is None else definition.persistent_effects
+        if scheduled.source_kind is EffectSourceKind.MEMORY:
+            if not scheduled.persistent:
+                return None
+            definition = self.memory_abilities.get(scheduled.card_id)
+            return None if definition is None else definition.persistent_effects
         return None
 
     def _scheduled_matched_nested_indices(
@@ -4215,6 +4825,7 @@ class PythonNiaProKernel:
         trigger_context: EffectTriggerContext | None,
     ) -> tuple[int, ...]:
         schedule_effect = self._scheduled_effect_spec(scheduled)
+        trigger_context = replace(trigger_context or EffectTriggerContext(), effect_counter=scheduled.effect_counter)
         return tuple(
             index
             for index, nested in enumerate(schedule_effect.scheduled_effects)
@@ -4237,6 +4848,23 @@ class PythonNiaProKernel:
             return (branch,)
         if len(due) != len(matched):
             raise KernelError("scheduled_effect_match_set_mismatch")
+        if not any(matched):
+            # No nested effect can execute in this sequence. Preserve the
+            # same event order and schedule ledger in one immutable update;
+            # no effect handler, continuation or before-input flag is needed.
+            events, retained = [], []
+            for scheduled in due:
+                effect = self._scheduled_effect_spec(scheduled)
+                events.append(RuleEvent('TRIGGER_SCHEDULED', scheduled.source_id,
+                    detail=f'{scheduled.card_id}:{scheduled.definition_effect_index}:{scheduled.trigger_phase.value}'))
+                events.extend(RuleEvent('CONDITION_SKIPPED', scheduled.source_id,
+                    detail=nested.condition.kind.value if nested.condition is not None else 'UNKNOWN')
+                    for nested in effect.scheduled_effects)
+                retained.append(replace(scheduled, turns_until_fire=(
+                    0 if scheduled.trigger_phase in IMMEDIATE_SCHEDULE_PHASES else 1)))
+            return (TransitionBranch(branch.probability,
+                replace(branch.state, scheduled_effects=branch.state.scheduled_effects + tuple(retained)),
+                branch.events + tuple(events)),)
         scheduled = due[0]
         schedule_effect = self._scheduled_effect_spec(scheduled)
         triggered = replace(
@@ -4428,6 +5056,7 @@ class PythonNiaProKernel:
                 else 1
             ),
             remaining_uses=next_uses,
+            last_fired_turn=(branch.state.turn if fired else scheduled.last_fired_turn),
         )
         return replace(
             branch,

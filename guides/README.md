@@ -27,3 +27,14 @@
 ## 文档状态
 
 这些指南描述当前公开包中已经存在的用户入口。尚未完成的培育高分策略、跨模块整合、独立模型热更新或 MirrorChyan 发布不会在此冒充可用功能。
+
+## 从源码运行离线评测
+
+在公开源码根目录使用项目的 Python 环境运行。两个示例使用合成局面和固定种子，无需客户端、账号或第三方数据。
+
+```powershell
+python -m tools.task280_gkbench_smoke --local-seed 280
+python -m tools.task285_seed_bench --worlds 4 --planning-worlds 4 --output benchmark.json.gz
+```
+
+第一个示例校验公开动作绑定与规则回放。第二个示例在相同裁判种子上比较即时得分策略、独立采样规划和首步诊断组，并在报告中分别记录终局分数、非法动作和配对差值。诊断组只用于分析模拟中的随机状态影响。

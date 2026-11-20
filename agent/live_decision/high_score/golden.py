@@ -81,7 +81,10 @@ def _condition(raw: dict[str, Any] | None) -> EffectCondition | None:
     return EffectCondition(
         kind=ConditionKind(str(raw["kind"])),
         value=str(raw["value"]) if raw.get("value") is not None else None,
-        threshold=int(raw["threshold"]) if raw.get("threshold") is not None else None,
+        threshold=(
+            float(raw["threshold"]) if raw["kind"] == ConditionKind.STAMINA_RATIO_MIN.value
+            else int(raw["threshold"])
+        ) if raw.get("threshold") is not None else None,
         all_of=tuple(
             child
             for value in raw.get("all_of", [])
@@ -97,6 +100,7 @@ def _effect(raw: dict[str, Any]) -> EffectSpec:
     selector_raw = raw.get("card_selector")
     selector = (
         CardSelector(
+            rarity=str(selector_raw["rarity"]) if selector_raw.get("rarity") is not None else None,
             all_cards=bool(selector_raw.get("all_cards", False)),
             source_only=bool(selector_raw.get("source_only", False)),
             zones=tuple(CardZone(str(value)) for value in selector_raw.get("zones", [])),
@@ -130,6 +134,7 @@ def _effect(raw: dict[str, Any]) -> EffectSpec:
         else None
     )
     return EffectSpec(
+        schedule_counter_condition=_condition(raw.get("schedule_counter_condition")),
         kind=EffectKind(str(raw["kind"])),
         amount=float(raw.get("amount", 0.0)),
         repeats=int(raw.get("repeats", 1)),
@@ -201,6 +206,7 @@ def _card_definition(raw: dict[str, Any]) -> CardDefinition:
         condition=condition,
         card_type=str(raw["card_type"]) if raw.get("card_type") is not None else None,
         rarity=str(raw["rarity"]) if raw.get("rarity") is not None else None,
+        canonical_card_id=raw.get("canonical_card_id"),
         base_card_id=(
             str(raw["base_card_id"])
             if raw.get("base_card_id") is not None
@@ -270,6 +276,9 @@ def _scheduled_ref(raw: dict[str, Any]) -> ScheduledEffectRef:
         ),
         persistent=bool(raw.get("persistent", False)),
         direct_on_trigger=bool(raw.get("direct_on_trigger", False)),
+        effect_counter=raw.get("effect_counter", 0),
+        duration_fresh=raw.get("duration_fresh", False),
+        last_fired_turn=raw.get("last_fired_turn"),
     )
 
 
@@ -278,6 +287,7 @@ def _trigger_context(raw: dict[str, Any] | None) -> EffectTriggerContext | None:
         return None
     return EffectTriggerContext(
         is_direct_effect=bool(raw.get("is_direct_effect", False)),
+        effect_counter=raw.get("effect_counter"),
         used_card_instance_id=(
             str(raw["used_card_instance_id"])
             if raw.get("used_card_instance_id") is not None
@@ -376,6 +386,7 @@ def _resolution_continuation(raw: dict[str, Any]) -> ResolutionContinuation:
             due_turn=tuple(
                 _scheduled_ref(value) for value in raw.get("due_turn", [])
             ),
+            due_every_turn=tuple(_scheduled_ref(value) for value in raw.get("due_every_turn", [])),
             draws_remaining=int(raw.get("draws_remaining", 0)),
             held_return_ids=tuple(
                 str(value) for value in raw.get("held_return_ids", [])
@@ -399,6 +410,7 @@ def _state(raw: dict[str, Any]) -> StrategyState:
         removed=zone("removed"),
         held=zone("held"),
         knowledge=DeckKnowledge(str(raw["deck"].get("knowledge", DeckKnowledge.KNOWN_COMPOSITION.value))),
+        known_top_count=raw["deck"].get("known_top_count", 0),
     )
     pending_raw = raw.get("pending_choice")
     pending_choice = (
@@ -457,7 +469,9 @@ def _state(raw: dict[str, Any]) -> StrategyState:
         parameter_gain_bonus_pct=float(raw.get("parameter_gain_bonus_pct", 0.0)),
         concentration=int(raw.get("concentration", 0)),
         good_condition_turns=int(raw.get("good_condition_turns", 0)),
+        good_condition_fresh=bool(raw.get("good_condition_fresh", False)),
         excellent_condition_turns=int(raw.get("excellent_condition_turns", 0)),
+        excellent_condition_fresh=bool(raw.get("excellent_condition_fresh", False)),
         good_impression_turns=int(raw.get("good_impression_turns", 0)),
         motivation=int(raw.get("motivation", 0)),
         statuses=tuple(TimedStatus(**status) for status in raw.get("statuses", [])),
@@ -466,6 +480,8 @@ def _state(raw: dict[str, Any]) -> StrategyState:
         ),
         persistent_effects_initialized=bool(raw.get("persistent_effects_initialized", False)),
         double_card_effects_remaining=int(raw.get("double_card_effects_remaining", 0)),
+        nullify_genki_turns=int(raw.get("nullify_genki_turns", 0)),
+        nullify_genki_fresh=bool(raw.get("nullify_genki_fresh", False)),
         half_cost_turns=int(raw.get("half_cost_turns", 0)),
         half_cost_fresh=bool(raw.get("half_cost_fresh", False)),
         double_cost_turns=int(raw.get("double_cost_turns", 0)),
@@ -529,10 +545,29 @@ def _state(raw: dict[str, Any]) -> StrategyState:
             )
             for modifier in raw.get("score_buffs", [])
         ),
+        concentration_effect_buffs=tuple(
+            TimedModifier(
+                amount=float(modifier["amount"]),
+                remaining_turns=int(modifier["remaining_turns"]) if modifier.get("remaining_turns") is not None else None,
+                fresh=bool(modifier.get("fresh", True)),
+            )
+            for modifier in raw.get("concentration_effect_buffs", [])
+        ),
+        concentration_addition_buffs=tuple(
+            TimedModifier(
+                amount=float(modifier["amount"]),
+                remaining_turns=int(modifier["remaining_turns"]) if modifier.get("remaining_turns") is not None else None,
+                fresh=bool(modifier.get("fresh", True)),
+            )
+            for modifier in raw.get("concentration_addition_buffs", [])
+        ),
         drinks=tuple(str(value) for value in raw.get("drinks", [])),
         items=tuple(str(value) for value in raw.get("items", [])),
+        memory_abilities=tuple(str(value) for value in raw.get("memory_abilities", [])),
         field_effects=tuple(str(value) for value in raw.get("field_effects", [])),
         future_score_multipliers=tuple(float(value) for value in raw.get("future_score_multipliers", [])),
+        turn_attributes=tuple(raw.get("turn_attributes", [])),
+        cost_reduction=raw.get("cost_reduction", 0),
     )
 
 
@@ -579,6 +614,7 @@ def _case(raw: dict[str, Any], ruleset_id: str) -> GoldenCase:
         capabilities=capabilities,
         utility=utility,
         card_slots=tuple((str(instance_id), int(slot)) for instance_id, slot in slots),
+        drink_slots=tuple((int(slot), str(drink_id)) for slot, drink_id in request_raw.get("drink_slots", [])),
         reobserve_attempt=int(request_raw.get("reobserve_attempt", 0)),
         ruleset_id=ruleset_id,
     )

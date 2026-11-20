@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any
+from collections import Counter
 from dataclasses import field, asdict, dataclass
 
+from .validation_cache import immutable_validation
+
 HIGH_SCORE_PROTOCOL_VERSION = "2.0"
-NIA_PRO_RULESET_ID = "nia-pro-task275-probe-v24"
+NIA_PRO_RULESET_ID = "nia-pro-task275-probe-v25"
+HIF_SENSE_RULESET_ID = "hif-sense-task275-offline-v3"
 
 
 class HighScoreContractError(ValueError):
@@ -19,6 +23,7 @@ class PlanType(str, Enum):
 
 
 class DecisionKind(str, Enum):
+    LIVE = "LIVE"
     CARD = "CARD"
     DRINK = "DRINK"
     END_TURN = "END_TURN"
@@ -77,12 +82,14 @@ class SchedulePhase(str, Enum):
     START_OF_TURN = "START_OF_TURN"
     AFTER_START_OF_TURN = "AFTER_START_OF_TURN"
     TURN = "TURN"
+    EVERY_TURN = "EVERY_TURN"
 
 
 class EffectSourceKind(str, Enum):
     CARD = "CARD"
     DRINK = "DRINK"
     ITEM = "ITEM"
+    MEMORY = "MEMORY"
 
 
 class TurnResolutionStage(str, Enum):
@@ -93,6 +100,7 @@ class TurnResolutionStage(str, Enum):
     HELD_RETURN = "HELD_RETURN"
     AFTER_START = "AFTER_START"
     TURN = "TURN"
+    EVERY_TURN = "EVERY_TURN"
     COMPLETE = "COMPLETE"
 
 
@@ -154,6 +162,27 @@ class CardRef:
 
 
 @dataclass(frozen=True)
+class VerifiedHandSupport:
+    """Current held-card observation/projection, never input evidence."""
+    instance_id: str
+    card_id: str
+    turn: int
+    enhancement_count: int
+    projection_kind: str = 'verified_effects'
+
+    def validate(self) -> None:
+        if (type(self.instance_id) is not str or not self.instance_id
+                or type(self.card_id) is not str or not self.card_id or type(self.turn) is not int
+                or self.turn < 1 or type(self.enhancement_count) is not int
+                or not 1 <= self.enhancement_count <= 3):
+            raise HighScoreContractError("verified hand support fact is invalid")
+        if (type(self.projection_kind) is not str
+                or self.projection_kind not in {'verified_effects', 'ordinary_plus_estimate'}
+                or self.projection_kind == 'ordinary_plus_estimate' and self.enhancement_count != 1):
+            raise HighScoreContractError("hand support projection kind is invalid")
+
+
+@dataclass(frozen=True)
 class DeckBelief:
     all_cards: tuple[CardRef, ...]
     hand: tuple[CardRef, ...]
@@ -162,6 +191,7 @@ class DeckBelief:
     removed: tuple[CardRef, ...] = ()
     held: tuple[CardRef, ...] = ()
     knowledge: DeckKnowledge = DeckKnowledge.KNOWN_COMPOSITION
+    known_top_count: int = 0
 
     @property
     def zones(self) -> tuple[CardRef, ...]:
@@ -177,7 +207,12 @@ class DeckBelief:
             and expected == actual
         )
 
+    @immutable_validation
     def validate(self) -> None:
+        if type(self.known_top_count) is not int or not 0 <= self.known_top_count <= len(self.draw_pile):
+            raise HighScoreContractError("known deck prefix is outside the draw pile")
+        if self.known_top_count and self.knowledge not in {DeckKnowledge.KNOWN_ORDER, DeckKnowledge.KNOWN_COMPOSITION}:
+            raise HighScoreContractError("known deck prefix requires known composition")
         for card in self.all_cards:
             card.validate()
         for card in self.zones:
@@ -201,7 +236,20 @@ class DeckBelief:
         removed: tuple[CardRef, ...] | None = None,
         held: tuple[CardRef, ...] | None = None,
         knowledge: DeckKnowledge | None = None,
+        known_top_count: int | None = None,
     ) -> DeckBelief:
+        next_draw = self.draw_pile if draw_pile is None else draw_pile
+        if known_top_count is None:
+            next_ids = {card.instance_id for card in next_draw}
+            surviving_prefix = tuple(
+                card.instance_id for card in self.draw_pile[:self.known_top_count]
+                if card.instance_id in next_ids
+            )
+            known_top_count = (
+                len(surviving_prefix)
+                if tuple(card.instance_id for card in next_draw[:len(surviving_prefix)]) == surviving_prefix
+                else 0
+            )
         updated = DeckBelief(
             all_cards=self.all_cards if all_cards is None else all_cards,
             hand=self.hand if hand is None else hand,
@@ -210,6 +258,7 @@ class DeckBelief:
             removed=self.removed if removed is None else removed,
             held=self.held if held is None else held,
             knowledge=self.knowledge if knowledge is None else knowledge,
+            known_top_count=known_top_count,
         )
         updated.validate()
         return updated
@@ -234,6 +283,7 @@ class TimedModifier:
     remaining_turns: int | None = None
     fresh: bool = True
 
+    @immutable_validation
     def validate(self) -> None:
         if self.amount < 0:
             raise HighScoreContractError("timed modifier amount cannot be negative")
@@ -253,8 +303,19 @@ class ScheduledEffectRef:
     persistent: bool = False
     direct_on_trigger: bool = False
     source_kind: EffectSourceKind = EffectSourceKind.CARD
+    effect_counter: int = 0
+    duration_fresh: bool = False
+    last_fired_turn: int | None = None
 
+    @immutable_validation
     def validate(self) -> None:
+        if self.last_fired_turn is not None and (type(self.last_fired_turn) is not int or self.last_fired_turn < 1):
+            raise HighScoreContractError("last schedule activation turn must be positive")
+        if type(self.duration_fresh) is not bool or (self.duration_fresh and
+                (not self.remaining_turns or self.trigger_phase is not SchedulePhase.END_OF_TURN)):
+            raise HighScoreContractError("fresh schedule duration requires an active end-turn timer")
+        if type(self.effect_counter) is not int or self.effect_counter < 0:
+            raise HighScoreContractError("effect counter cannot be negative")
         if not self.source_id or not self.card_id:
             raise HighScoreContractError("scheduled effect requires source and card ids")
         if not isinstance(self.source_kind, EffectSourceKind):
@@ -262,6 +323,7 @@ class ScheduledEffectRef:
         expected_prefix = {
             EffectSourceKind.DRINK: "drink",
             EffectSourceKind.ITEM: "item",
+            EffectSourceKind.MEMORY: "memory",
         }.get(self.source_kind)
         if (
             expected_prefix is not None
@@ -274,6 +336,8 @@ class ScheduledEffectRef:
             raise HighScoreContractError("scheduled drink effects cannot be persistent")
         if self.source_kind is EffectSourceKind.ITEM and not self.persistent:
             raise HighScoreContractError("scheduled item effects must be persistent")
+        if self.source_kind is EffectSourceKind.MEMORY and not self.persistent:
+            raise HighScoreContractError("scheduled memory effects must be persistent")
         minimum_delay = (
             0
             if self.trigger_phase
@@ -312,6 +376,7 @@ class EffectTriggerContext:
     moved_card_id: str | None = None
     moved_card_base_id: str | None = None
     exclude_used_card_from_targets: bool = False
+    effect_counter: int | None = None
 
 
 @dataclass(frozen=True)
@@ -326,12 +391,20 @@ class CardEffectsContinuation:
     remaining_effect_passes: int
     condition_stance: Stance
     condition_full_power: float
+    support_tier: int = 0
+    projection_kind: str = 'verified_effects'
 
     def validate(self) -> None:
         if not self.source_id or not self.card_id or self.continuation_index < 0:
             raise HighScoreContractError("card continuation reference is invalid")
         if self.remaining_effect_passes < 0 or self.condition_full_power < 0:
             raise HighScoreContractError("card continuation state is invalid")
+        if type(self.support_tier) is not int or not 0 <= self.support_tier <= 3:
+            raise HighScoreContractError("card continuation support tier is invalid")
+        if (type(self.projection_kind) is not str
+                or self.projection_kind not in {'verified_effects', 'ordinary_plus_estimate'}
+                or self.projection_kind == 'ordinary_plus_estimate' and self.support_tier != 1):
+            raise HighScoreContractError("card continuation projection kind is invalid")
 
 
 @dataclass(frozen=True)
@@ -394,6 +467,7 @@ class TurnResolutionContinuation:
     due_start: tuple[ScheduledEffectRef, ...] = ()
     due_after_start: tuple[ScheduledEffectRef, ...] = ()
     due_turn: tuple[ScheduledEffectRef, ...] = ()
+    due_every_turn: tuple[ScheduledEffectRef, ...] = ()
     draws_remaining: int = 0
     held_return_ids: tuple[str, ...] = ()
 
@@ -412,6 +486,7 @@ class TurnResolutionContinuation:
             + self.due_start
             + self.due_after_start
             + self.due_turn
+            + self.due_every_turn
         ):
             scheduled.validate()
 
@@ -495,13 +570,17 @@ class StrategyState:
     parameter_gain_bonus_pct: float = 0.0
     concentration: int = 0
     good_condition_turns: int = 0
+    good_condition_fresh: bool = False
     excellent_condition_turns: int = 0
+    excellent_condition_fresh: bool = False
     good_impression_turns: int = 0
     motivation: int = 0
     statuses: tuple[TimedStatus, ...] = ()
     scheduled_effects: tuple[ScheduledEffectRef, ...] = ()
     persistent_effects_initialized: bool = False
     double_card_effects_remaining: int = 0
+    nullify_genki_turns: int = 0
+    nullify_genki_fresh: bool = False
     half_cost_turns: int = 0
     half_cost_fresh: bool = False
     double_cost_turns: int = 0
@@ -509,6 +588,7 @@ class StrategyState:
     stance_lock_turns: int = 0
     stance_lock_fresh: bool = False
     nullify_cost_cards: int = 0
+    cost_reduction: int = 0
     strength_times: int = 0
     preservation_times: int = 0
     full_power_times: int = 0
@@ -519,18 +599,31 @@ class StrategyState:
     enthusiasm_multiplier_buffs: tuple[TimedModifier, ...] = ()
     full_power_charge_buffs: tuple[TimedModifier, ...] = ()
     score_buffs: tuple[TimedModifier, ...] = ()
+    concentration_effect_buffs: tuple[TimedModifier, ...] = ()
+    concentration_addition_buffs: tuple[TimedModifier, ...] = ()
     drinks: tuple[str, ...] = ()
     items: tuple[str, ...] = ()
+    memory_abilities: tuple[str, ...] = ()
     field_effects: tuple[str, ...] = ()
     future_score_multipliers: tuple[float, ...] = ()
+    turn_attributes: tuple[str, ...] = ()
+    hand_support: tuple[VerifiedHandSupport, ...] = ()
 
     @property
     def terminal(self) -> bool:
         return self.turns_remaining <= 0
 
+    @immutable_validation
     def validate(self) -> None:
         if self.turn < 1 or self.turns_remaining < 0:
             raise HighScoreContractError("turn starts at one and turns_remaining cannot be negative")
+        if type(self.cost_reduction) is not int or self.cost_reduction < 0:
+            raise HighScoreContractError("cost reduction must be a non-negative integer")
+        if self.turn_attributes and (
+            len(self.turn_attributes) != self.turns_remaining
+            or any(value not in {"vocal", "dance", "visual"} for value in self.turn_attributes)
+        ):
+            raise HighScoreContractError("turn attributes must cover every remaining turn")
         if self.score < 0 or self.stamina < 0 or self.max_stamina < 0 or self.stamina > self.max_stamina:
             raise HighScoreContractError("score or stamina is outside its valid range")
         if (
@@ -559,16 +652,38 @@ class StrategyState:
             or self.created_card_count < 0
         ):
             raise HighScoreContractError("resources cannot be negative")
+        if type(self.nullify_genki_turns) is not int or self.nullify_genki_turns < 0:
+            raise HighScoreContractError("nullify genki turns must be a non-negative integer")
+        if type(self.nullify_genki_fresh) is not bool or (self.nullify_genki_fresh and not self.nullify_genki_turns):
+            raise HighScoreContractError("fresh nullify genki marker requires active turns")
         if not isinstance(self.stance, Stance) or not isinstance(self.previous_stance, Stance):
             raise HighScoreContractError("stance values are invalid")
         if self.half_cost_fresh and self.half_cost_turns == 0:
             raise HighScoreContractError("fresh half-cost marker requires active half-cost turns")
+        if type(self.excellent_condition_fresh) is not bool or (
+                self.excellent_condition_fresh and not self.excellent_condition_turns):
+            raise HighScoreContractError("fresh excellent condition requires active turns")
+        if type(self.good_condition_fresh) is not bool or (
+                self.good_condition_fresh and not self.good_condition_turns):
+            raise HighScoreContractError("fresh good condition requires active turns")
         if self.double_cost_fresh and self.double_cost_turns == 0:
             raise HighScoreContractError("fresh double-cost marker requires active double-cost turns")
         if self.stance_lock_fresh and self.stance_lock_turns == 0:
             raise HighScoreContractError("fresh stance-lock marker requires active stance-lock turns")
         if self.score_multiplier <= 0 or any(multiplier <= 0 for multiplier in self.future_score_multipliers):
             raise HighScoreContractError("score multipliers must be positive")
+        if type(self.hand_support) is not tuple:
+            raise HighScoreContractError("hand support facts must be immutable")
+        support_ids = set()
+        owned = {card.instance_id: card.card_id for card in self.deck.all_cards}
+        for fact in self.hand_support:
+            if not isinstance(fact, VerifiedHandSupport):
+                raise HighScoreContractError("hand support must contain typed facts")
+            fact.validate()
+            if (fact.instance_id in support_ids or owned.get(fact.instance_id) != fact.card_id
+                    or fact.turn > self.turn):
+                raise HighScoreContractError("hand support identity or turn is inconsistent")
+            support_ids.add(fact.instance_id)
         for status in self.statuses:
             status.validate()
         for modifier in (
@@ -576,10 +691,15 @@ class StrategyState:
             + self.enthusiasm_multiplier_buffs
             + self.full_power_charge_buffs
             + self.score_buffs
+            + self.concentration_effect_buffs
+            + self.concentration_addition_buffs
         ):
             modifier.validate()
         for scheduled in self.scheduled_effects:
             scheduled.validate()
+        if (any(not isinstance(value, str) or not value for value in self.memory_abilities)
+                or len(set(self.memory_abilities)) != len(self.memory_abilities)):
+            raise HighScoreContractError("memory ability ledger requires unique nonempty ids")
         for continuation in self.resolution_stack:
             continuation.validate()
         if not self.persistent_effects_initialized and any(
@@ -608,6 +728,17 @@ class StrategyState:
             for scheduled in self.scheduled_effects
         ):
             raise HighScoreContractError("scheduled item source does not match the item ledger")
+        if any(
+            scheduled.source_kind is EffectSourceKind.MEMORY
+            and scheduled.card_id not in self.memory_abilities
+            for scheduled in self.scheduled_effects
+        ):
+            raise HighScoreContractError("scheduled memory source does not match the memory ledger")
+        memory_sources = [(ref.source_id, ref.definition_effect_index)
+                          for ref in self.scheduled_effects
+                          if ref.source_kind is EffectSourceKind.MEMORY]
+        if len(memory_sources) != len(set(memory_sources)):
+            raise HighScoreContractError("duplicate scheduled memory source")
         if self.pending_choice is not None:
             self.pending_choice.validate()
             known_instances = {card.instance_id for card in self.deck.all_cards}
@@ -704,6 +835,7 @@ class DecisionRequest:
     reobserve_attempt: int = 0
     ruleset_id: str = NIA_PRO_RULESET_ID
     protocol_version: str = HIGH_SCORE_PROTOCOL_VERSION
+    drink_slots: tuple[tuple[int, str], ...] = ()
 
     def validate(self) -> None:
         if self.protocol_version != HIGH_SCORE_PROTOCOL_VERSION:
@@ -714,6 +846,12 @@ class DecisionRequest:
             raise HighScoreContractError("reobserve_attempt cannot be negative")
         self.state.validate()
         self.utility.validate()
+        if self.decision_kind is DecisionKind.LIVE or self.drink_slots:
+            positions = [slot for slot, _ in self.drink_slots]
+            if (any(type(slot) is not int or not 0 <= slot < 4 for slot in positions)
+                    or len(positions) != len(set(positions))
+                    or Counter(drink_id for _, drink_id in self.drink_slots) != Counter(self.state.drinks)):
+                raise HighScoreContractError("drink slots must cover the observed inventory exactly")
         slot_ids = [instance_id for instance_id, _slot in self.card_slots]
         slots = [slot for _instance_id, slot in self.card_slots]
         if len(slot_ids) != len(set(slot_ids)) or len(slots) != len(set(slots)):
@@ -721,10 +859,13 @@ class DecisionRequest:
         if self.state.pending_choice is not None:
             if self.decision_kind is not DecisionKind.SECONDARY:
                 raise HighScoreContractError("pending choice requires SECONDARY decision kind")
-            if set(slot_ids) != set(self.state.pending_choice.candidate_instance_ids):
-                raise HighScoreContractError("secondary card slot mapping must cover every candidate")
+            self._validate_secondary_slots(slot_ids)
         elif self.decision_kind is DecisionKind.SECONDARY:
             raise HighScoreContractError("SECONDARY decision kind requires pending choice")
+
+    def _validate_secondary_slots(self, slot_ids):
+        if set(slot_ids) != set(self.state.pending_choice.candidate_instance_ids):
+            raise HighScoreContractError("secondary card slot mapping must cover every candidate")
 
     def to_dict(self) -> dict[str, Any]:
         return _jsonable(asdict(self))
@@ -745,6 +886,7 @@ class CandidateValue:
     value: ValueSummary
     probability_mass: float
     rejection_reasons: tuple[str, ...] = ()
+    ranking_utility: float | None = None
 
 
 @dataclass(frozen=True)
@@ -757,6 +899,7 @@ class DecisionTrace:
     elapsed_ms: float
     candidate_values: tuple[CandidateValue, ...] = ()
     reason_codes: tuple[str, ...] = ()
+    value_scope: str = "FINAL_SCORE"
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,6 @@ from dataclasses import replace, dataclass
 
 from .kernel import KernelError, PythonNiaProKernel
 from .contracts import (
-    CardRef,
     ActionKind,
     GameAction,
     RiskProfile,
@@ -21,6 +20,7 @@ from .contracts import (
     DecisionRequest,
     DecisionResponse,
 )
+from .validation_cache import immutable_projection
 
 
 class SearchIncomplete(RuntimeError):
@@ -75,8 +75,19 @@ def _weighted_quantile(outcomes: tuple[_Outcome, ...], quantile: float) -> float
 def _summary(outcomes: tuple[_Outcome, ...]) -> ValueSummary:
     normalized = _normalize(outcomes)
     scores = [outcome.score for outcome in normalized]
+    # A score distribution must not change its mean when equal-score leaves
+    # are split into different stamina/genki groups. Sum probabilities by
+    # score first, then accumulate increments relative to an integer anchor.
+    # This also gives offset-normalized HIF DP the same tie ranking as the
+    # full reference tree, without rounding scores or adding a tie tolerance.
+    grouped = {}
+    for outcome in normalized:
+        grouped.setdefault(outcome.score, []).append(outcome.probability)
+    anchor = min(scores)
+    expected = anchor + math.fsum((score - anchor) * math.fsum(probabilities)
+                                  for score, probabilities in sorted(grouped.items()))
     return ValueSummary(
-        expected_final_score=sum(outcome.score * outcome.probability for outcome in normalized),
+        expected_final_score=expected,
         p10_final_score=_weighted_quantile(normalized, 0.10),
         worst_final_score=min(scores),
         best_final_score=max(scores),
@@ -102,6 +113,17 @@ _SLOTTED_CARD_ACTIONS = {
 }
 
 
+@immutable_projection
+def _semantic_deck_key(deck):
+    draw = tuple(card.semantic_key for card in deck.draw_pile)
+    if deck.knowledge is not DeckKnowledge.KNOWN_ORDER:
+        prefix = deck.known_top_count
+        draw = draw[:prefix] + tuple(sorted(draw[prefix:]))
+    unordered = lambda cards: tuple(sorted(card.semantic_key for card in cards))
+    return (deck.knowledge, deck.known_top_count, unordered(deck.hand), draw,
+            unordered(deck.discard), unordered(deck.removed), unordered(deck.held))
+
+
 class RobustHighScorePlanner:
     planner_name = "bounded-expectimax"
     planner_version = "1.0"
@@ -114,7 +136,8 @@ class RobustHighScorePlanner:
         self.config.validate()
         self._deadline = 0.0
         self._expanded_nodes = 0
-        self._memo: dict[tuple[tuple[object, ...], int], tuple[_Outcome, ...]] = {}
+        self._memo_hits = 0
+        self._memo: dict[tuple[tuple[object, ...], int | None], tuple[_Outcome, ...]] = {}
 
     def decide(self, request: DecisionRequest) -> DecisionResponse:
         started = time.perf_counter()
@@ -128,9 +151,9 @@ class RobustHighScorePlanner:
         if request.ruleset_id != self.kernel.ruleset_id:
             return self._stop("ruleset_mismatch", started)
 
-        self._deadline = started + self.config.timeout_ms / 1000.0
         self._expanded_nodes = 0
-        self._memo = {}
+        self._memo_hits = 0
+        self._initialize_search(request, started)
         try:
             actions = self.kernel.legal_actions(
                 request.state,
@@ -191,6 +214,11 @@ class RobustHighScorePlanner:
         response.validate()
         return response
 
+    def _initialize_search(self, request: DecisionRequest, started: float) -> None:
+        """Each decision owns its memo unless a specialized planner opts in."""
+        self._deadline = started + self.config.timeout_ms / 1000.0
+        self._memo = {}
+
     def _capability_response(self, request: DecisionRequest, started: float) -> DecisionResponse | None:
         capabilities = request.capabilities
         if capabilities.all_ready:
@@ -219,12 +247,15 @@ class RobustHighScorePlanner:
     ) -> tuple[_Outcome, ...]:
         self._check_budget()
         self._expanded_nodes += 1
-        branches = self.kernel.transition(state, action, plan_type=request.plan_type)
+        branches = self._transition(state, action, plan_type=request.plan_type)
         outcomes: list[_Outcome] = []
         for branch in branches:
             child = self._search_state(branch.state, request=request, depth=depth - 1)
             outcomes.extend(replace(outcome, probability=outcome.probability * branch.probability) for outcome in child)
         return _normalize(tuple(outcomes))
+
+    def _transition(self, state, action, *, plan_type):
+        return self.kernel.transition(state, action, plan_type=plan_type)
 
     def _search_state(
         self,
@@ -234,8 +265,12 @@ class RobustHighScorePlanner:
         depth: int,
     ) -> tuple[_Outcome, ...]:
         self._check_budget()
-        cache_key = (self._semantic_state_key(state), depth)
+        # A cached terminal solution is already complete regardless of how many
+        # actions led to this state. Only approximate depth leaves depend on
+        # the remaining horizon. Incomplete searches never populate this cache.
+        cache_key = (self._semantic_state_key(state), None if self.config.require_terminal_leaf else depth)
         if cache_key in self._memo:
+            self._memo_hits += 1
             return self._memo[cache_key]
         self._expanded_nodes += 1
         if state.terminal:
@@ -246,7 +281,9 @@ class RobustHighScorePlanner:
             if self.config.require_terminal_leaf:
                 raise SearchIncomplete("search_horizon_not_terminal")
             return (_Outcome(float(state.score), 1.0, state.stamina, state.genki),)
-        decision_kind = DecisionKind.SECONDARY if state.pending_choice is not None else DecisionKind.CARD
+        decision_kind = (DecisionKind.SECONDARY if state.pending_choice is not None
+                         else DecisionKind.LIVE if request.decision_kind is DecisionKind.LIVE
+                         or request.drink_slots else DecisionKind.CARD)
         actions = self.kernel.legal_actions(state, plan_type=request.plan_type, decision_kind=decision_kind)
         actions = self._merge_equivalent_actions(state, actions)
         if not actions:
@@ -257,6 +294,9 @@ class RobustHighScorePlanner:
             candidates.append((action, outcomes, ()))
         _action, selected, _reasons = self._select(candidates, request.utility)
         self._memo[cache_key] = selected
+        sink = getattr(self, '_completed_action_sink', None)
+        if callable(sink) and self.config.require_terminal_leaf:
+            sink(state, _action, request)
         return selected
 
     @staticmethod
@@ -348,6 +388,11 @@ class RobustHighScorePlanner:
 
     @staticmethod
     def _attach_source_slot(action: GameAction, request: DecisionRequest) -> GameAction:
+        if action.kind is ActionKind.USE_DRINK and request.decision_kind is DecisionKind.LIVE:
+            slots = [slot for slot, drink_id in request.drink_slots if drink_id == action.drink_id]
+            if not slots:
+                raise SearchIncomplete("selected_drink_has_no_verified_source_slot")
+            return replace(action, source_slot=min(slots))
         if action.kind not in _SLOTTED_CARD_ACTIONS or action.card_instance_id is None:
             return action
         slots = dict(request.card_slots)
@@ -374,6 +419,10 @@ class RobustHighScorePlanner:
             if action.kind in _SLOTTED_CARD_ACTIONS and action.card_instance_id in cards:
                 card = cards[str(action.card_instance_id)]
                 key = (action.kind.value, *card.semantic_key, zones[str(action.card_instance_id)])
+                if state.hand_support:
+                    key += (next(((fact.enhancement_count, fact.projection_kind) for fact in state.hand_support
+                        if fact.instance_id == card.instance_id and fact.card_id == card.card_id
+                        and fact.turn == state.turn and zones[card.instance_id] == "hand"), 0),)
             else:
                 key = (action.kind.value, action.drink_id or action.target_id or "", False, "")
             representatives.setdefault(key, action)
@@ -381,6 +430,10 @@ class RobustHighScorePlanner:
 
     @staticmethod
     def _semantic_state_key(state: StrategyState) -> tuple[object, ...]:
+        if state.hand_support:
+            # The usual zone multiset drops physical identity. Known support
+            # belongs to one entity, including that entity's modifications.
+            return ("verified_hand_support", state)
         pending = state.pending_choice
         zone_by_id: dict[str, tuple[object, ...]] = {
             card.instance_id: (zone, *card.semantic_key)
@@ -392,14 +445,7 @@ class RobustHighScorePlanner:
                 ("held", state.deck.held),
             )
             for card in cards
-        }
-
-        def unordered(cards: tuple[CardRef, ...]) -> tuple[tuple[object, ...], ...]:
-            return tuple(sorted(card.semantic_key for card in cards))
-
-        draw = tuple(card.semantic_key for card in state.deck.draw_pile)
-        if state.deck.knowledge is not DeckKnowledge.KNOWN_ORDER:
-            draw = tuple(sorted(draw))
+        } if pending is not None or state.pending_after_card_ids else {}
         pending_key: tuple[object, ...] | None = None
         if pending is not None:
             pending_key = (
@@ -439,13 +485,17 @@ class RobustHighScorePlanner:
             state.parameter_gain_bonus_pct,
             state.concentration,
             state.good_condition_turns,
+            state.good_condition_fresh,
             state.excellent_condition_turns,
+            state.excellent_condition_fresh,
             state.good_impression_turns,
             state.motivation,
             state.statuses,
             state.scheduled_effects,
             state.persistent_effects_initialized,
             state.double_card_effects_remaining,
+            state.nullify_genki_turns,
+            state.nullify_genki_fresh,
             state.half_cost_turns,
             state.half_cost_fresh,
             state.double_cost_turns,
@@ -453,6 +503,7 @@ class RobustHighScorePlanner:
             state.stance_lock_turns,
             state.stance_lock_fresh,
             state.nullify_cost_cards,
+            state.cost_reduction,
             state.strength_times,
             state.preservation_times,
             state.full_power_times,
@@ -463,14 +514,13 @@ class RobustHighScorePlanner:
             state.enthusiasm_multiplier_buffs,
             state.full_power_charge_buffs,
             state.score_buffs,
+            state.concentration_effect_buffs,
+            state.concentration_addition_buffs,
             state.drinks,
             state.items,
+            state.memory_abilities,
             state.field_effects,
             state.future_score_multipliers,
-            state.deck.knowledge,
-            unordered(state.deck.hand),
-            draw,
-            unordered(state.deck.discard),
-            unordered(state.deck.removed),
-            unordered(state.deck.held),
+            state.turn_attributes,
+            *_semantic_deck_key(state.deck),
         )

@@ -17,19 +17,24 @@ from .kernel import (
     TransitionBranch,
     EffectValueSource,
     PythonNiaProKernel,
+    MemoryAbilityDefinition,
 )
 from .dataset import (
     DatasetSplit,
     DeckMutationKind,
     DeckMutationEvent,
     DynamicDeckSample,
+    ItemInventoryScenario,
     NiaProDynamicDeckGenerator,
+    NiaProItemLifecycleGenerator,
     deck_signature,
     split_for_deck_signature,
+    build_fixed_item_inventory_scenarios,
 )
 from .planner import PlannerConfig, SearchIncomplete, RobustHighScorePlanner
 from .contracts import (
     NIA_PRO_RULESET_ID,
+    HIF_SENSE_RULESET_ID,
     HIGH_SCORE_PROTOCOL_VERSION,
     Stance,
     CardRef,
@@ -82,6 +87,7 @@ from .evaluation import (
     EpisodeResult,
     PolicyMetrics,
     PairedComparison,
+    EpisodeSimulation,
     ImmediateScorePolicy,
     OfflineDecisionPolicy,
     PhaseAwareHighScorePolicy,
@@ -89,9 +95,12 @@ from .evaluation import (
     simulate_episode,
     classify_logic_route,
     compare_paired_results,
+    summarize_policy_results,
+    simulate_episode_with_trace,
 )
 
 __all__ = [
+    "HIF_SENSE_RULESET_ID",
     "HIGH_SCORE_PROTOCOL_VERSION",
     "FULL_POWER_ACTIVATION_THRESHOLD",
     "EFFECT_IR_VERSION",
@@ -136,6 +145,7 @@ __all__ = [
     "ConditionKind",
     "DrinkDefinition",
     "ItemDefinition",
+    "MemoryAbilityDefinition",
     "EffectCondition",
     "EffectKind",
     "EffectSpec",
@@ -155,9 +165,12 @@ __all__ = [
     "build_architecture_probe_report",
     "DatasetSplit",
     "DynamicDeckSample",
+    "ItemInventoryScenario",
     "DeckMutationKind",
     "DeckMutationEvent",
     "NiaProDynamicDeckGenerator",
+    "NiaProItemLifecycleGenerator",
+    "build_fixed_item_inventory_scenarios",
     "deck_signature",
     "split_for_deck_signature",
     "CompiledCardCatalog",
@@ -170,6 +183,7 @@ __all__ = [
     "compile_item_catalog",
     "compile_skill_card_catalog",
     "EpisodeResult",
+    "EpisodeSimulation",
     "LogicRoute",
     "PolicyMetrics",
     "PairedComparison",
@@ -178,6 +192,8 @@ __all__ = [
     "OfflineDecisionPolicy",
     "evaluate_policy",
     "simulate_episode",
+    "simulate_episode_with_trace",
     "compare_paired_results",
     "classify_logic_route",
+    "summarize_policy_results",
 ]

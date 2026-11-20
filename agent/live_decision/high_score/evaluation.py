@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 import random
 import statistics
 from enum import Enum
@@ -8,6 +9,7 @@ from typing import Mapping, Protocol
 from dataclasses import replace, dataclass
 
 from .kernel import (
+    RuleEvent,
     EffectKind,
     KernelError,
     CardDefinition,
@@ -127,6 +129,13 @@ class EpisodeResult:
 
 
 @dataclass(frozen=True)
+class EpisodeSimulation:
+    result: EpisodeResult
+    final_state: StrategyState
+    events: tuple[RuleEvent, ...]
+
+
+@dataclass(frozen=True)
 class PolicyMetrics:
     policy: str
     policy_version: str
@@ -188,16 +197,39 @@ _SLOTTED_CARD_ACTIONS = {
 
 class ImmediateScorePolicy:
     policy_name = "legal-immediate-score"
-    policy_version = "1.1"
+    policy_version = "1.5"
 
-    def __init__(self, kernel: PythonNiaProKernel, *, include_resource_potential: bool = False):
+    def __init__(self, kernel: PythonNiaProKernel, *, include_resource_potential: bool = False,
+                 timeout_ms: float | None = None, same_turn_setup_followup: bool = False,
+                 same_turn_score_horizon: bool = False):
+        if timeout_ms is not None and (not math.isfinite(timeout_ms) or timeout_ms <= 0):
+            raise ValueError("one-step decision timeout must be finite and positive")
         self.kernel = kernel
+        self.timeout_ms = timeout_ms
+        self.same_turn_setup_followup = same_turn_setup_followup
+        self.same_turn_score_horizon = same_turn_score_horizon
         self.include_resource_potential = include_resource_potential
         if include_resource_potential:
             self.policy_name = "one-step-state-potential"
 
     def decide(self, request: DecisionRequest) -> DecisionResponse:
-        started = 0.0  # wall time is measured by the evaluator
+        started = time.perf_counter()
+        candidates: list[tuple[float, GameAction, ValueSummary]] = []
+
+        def budget_stop() -> DecisionResponse | None:
+            elapsed = (time.perf_counter() - started) * 1000.0
+            if self.timeout_ms is None or elapsed < self.timeout_ms:
+                return None
+            # A slow kernel transition cannot be interrupted here. Reject its
+            # result as well as every partial comparison; never submit stale
+            # best-so-far intent just because this is the early-turn policy.
+            return DecisionResponse(
+                DecisionOutcome.STOP_TASK, "one_step_timeout", None, None,
+                DecisionTrace(self.policy_name, self.policy_version, self.kernel.ruleset_id,
+                              0, len(candidates), elapsed,
+                              reason_codes=("decision_budget_exhausted",)),
+            )
+
         try:
             request.validate()
             actions = self.kernel.legal_actions(
@@ -205,10 +237,27 @@ class ImmediateScorePolicy:
                 plan_type=request.plan_type,
                 decision_kind=request.decision_kind,
             )
-            candidates: list[tuple[float, GameAction, ValueSummary]] = []
             for action in actions:
-                branches = self.kernel.transition(request.state, action, plan_type=request.plan_type)
-                expected = sum(branch.probability * branch.state.score for branch in branches)
+                if stopped := budget_stop():
+                    return stopped
+                branches = None
+                project=getattr(self.kernel,'resource_evaluation_transition',None)
+                if (self.include_resource_potential and self.same_turn_score_horizon
+                        and project is not None and request.plan_type is PlanType.SENSE
+                        and action.kind is ActionKind.END_TURN):
+                    branches=project(request.state,action,plan_type=request.plan_type)
+                if branches is None:
+                    branches = self.kernel.transition(request.state, action, plan_type=request.plan_type)
+                if stopped := budget_stop():
+                    return stopped
+                # END_TURN also resolves next-turn schedules. Those points
+                # are outside an immediate card-action horizon: crediting
+                # them only to skipping makes independent delayed scores
+                # crowd out useful actions in the still-active turn.
+                scores = [float(request.state.score if self.same_turn_score_horizon
+                                and action.kind is ActionKind.END_TURN else branch.state.score)
+                          for branch in branches]
+                expected = sum(branch.probability * score for branch, score in zip(branches, scores))
                 if self.include_resource_potential:
                     expected += sum(
                         branch.probability
@@ -219,9 +268,43 @@ class ImmediateScorePolicy:
                         )
                         for branch in branches
                     )
-                scores = [float(branch.state.score) for branch in branches]
+                if (
+                    self.include_resource_potential and self.same_turn_setup_followup
+                    and action.kind is ActionKind.PLAY_CARD
+                    and len(branches) <= 8
+                    and all(branch.state.actions_remaining >= request.state.actions_remaining
+                            and branch.state.pending_choice is None for branch in branches)
+                ):
+                    # One free setup can draw several possible hands. Choose
+                    # the next action separately in each observed branch,
+                    # then weight those values; do not invent the draw order.
+                    # Admission is bounded before extra transitions start.
+                    continuations = [(branch, tuple(followup for followup in self.kernel.legal_actions(
+                        branch.state, plan_type=request.plan_type, decision_kind=DecisionKind.CARD,
+                    ) if followup.kind is ActionKind.PLAY_CARD)) for branch in branches]
+                    if sum(len(followups) for _, followups in continuations) <= 32:
+                        setup_value = 0.0
+                        for branch, followups in continuations:
+                            prepared = branch.state
+                            best = prepared.score + _resource_potential(prepared, request.plan_type, self.kernel.cards)
+                            for followup in followups:
+                                if stopped := budget_stop():
+                                    return stopped
+                                continued = self.kernel.transition(prepared, followup, plan_type=request.plan_type)
+                                if stopped := budget_stop():
+                                    return stopped
+                                if any(child.state.stamina < request.utility.minimum_stamina
+                                       or child.state.genki < request.utility.minimum_genki for child in continued):
+                                    continue
+                                best = max(best, sum(
+                                    child.probability * (child.state.score + _resource_potential(
+                                        child.state, request.plan_type, self.kernel.cards,
+                                    )) for child in continued
+                                ))
+                            setup_value += branch.probability * best
+                        expected = max(expected, setup_value)
                 value = ValueSummary(
-                    expected_final_score=sum(branch.probability * branch.state.score for branch in branches),
+                    expected_final_score=sum(branch.probability * score for branch, score in zip(branches, scores)),
                     p10_final_score=min(scores),
                     worst_final_score=min(scores),
                     best_final_score=max(scores),
@@ -246,9 +329,11 @@ class ImmediateScorePolicy:
                     ruleset_id=self.kernel.ruleset_id,
                     completed_depth=0,
                     expanded_nodes=0,
-                    elapsed_ms=started,
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0,
                 ),
             )
+        if stopped := budget_stop():
+            return stopped
         if not candidates:
             reason = "baseline_all_candidates_rejected" if actions else "baseline_no_legal_action"
             return DecisionResponse(
@@ -262,7 +347,7 @@ class ImmediateScorePolicy:
                     ruleset_id=self.kernel.ruleset_id,
                     completed_depth=1,
                     expanded_nodes=0,
-                    elapsed_ms=started,
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0,
                 ),
             )
         def candidate_key(item: tuple[float, GameAction, ValueSummary]) -> tuple[float, float, float, str, str]:
@@ -288,16 +373,23 @@ class ImmediateScorePolicy:
                     trace=None,
                 )
             action = replace(action, source_slot=slots[action.card_instance_id])
+        if action.kind is ActionKind.USE_DRINK and request.decision_kind is DecisionKind.LIVE:
+            slots = [slot for slot, drink_id in request.drink_slots if drink_id == action.drink_id]
+            if not slots:
+                return DecisionResponse(DecisionOutcome.STOP_TASK, "baseline_drink_slot_missing", None, None, None)
+            action = replace(action, source_slot=min(slots))
         trace = DecisionTrace(
             planner=self.policy_name,
             planner_version=self.policy_version,
             ruleset_id=self.kernel.ruleset_id,
             completed_depth=1,
             expanded_nodes=len(candidates),
-            elapsed_ms=started,
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
             candidate_values=tuple(
-                CandidateValue(action=item[1], value=item[2], probability_mass=1.0) for item in candidates
+                CandidateValue(action=item[1], value=item[2], probability_mass=1.0,
+                               ranking_utility=item[0]) for item in candidates
             ),
+            value_scope="ONE_STEP_SCORE",
         )
         response = DecisionResponse(DecisionOutcome.DECIDE, "one_step_complete", action, value, trace)
         response.validate()
@@ -306,7 +398,7 @@ class ImmediateScorePolicy:
 
 class PhaseAwareHighScorePolicy:
     policy_name = "phase-aware-expectimax"
-    policy_version = "1.23"
+    policy_version = "1.29"
 
     def __init__(
         self,
@@ -315,6 +407,8 @@ class PhaseAwareHighScorePolicy:
         exact_turns_remaining: int = 2,
         exact_config: PlannerConfig | None = None,
         maximum_exact_hand_size_for_multi_action: int = 3,
+        same_turn_setup_followup: bool = False,
+        same_turn_score_horizon: bool = False,
     ):
         if exact_turns_remaining < 1 or maximum_exact_hand_size_for_multi_action < 1:
             raise ValueError("phase-aware policy thresholds must be positive")
@@ -322,7 +416,10 @@ class PhaseAwareHighScorePolicy:
         self.exact_turns_remaining = exact_turns_remaining
         self.maximum_exact_hand_size_for_multi_action = maximum_exact_hand_size_for_multi_action
         self.exact = RobustHighScorePlanner(kernel, exact_config)
-        self.early = ImmediateScorePolicy(kernel, include_resource_potential=True)
+        self.early = ImmediateScorePolicy(kernel, include_resource_potential=True,
+                                          timeout_ms=self.exact.config.timeout_ms,
+                                          same_turn_setup_followup=same_turn_setup_followup,
+                                          same_turn_score_horizon=same_turn_score_horizon)
 
     def decide(self, request: DecisionRequest) -> DecisionResponse:
         if not request.capabilities.all_ready or request.ruleset_id != self.kernel.ruleset_id:
@@ -337,6 +434,7 @@ class PhaseAwareHighScorePolicy:
             EffectKind.SCHEDULE,
             EffectKind.TURNS_REMAINING,
             EffectKind.MOVE_RANDOM_TO_HAND,
+            EffectKind.MOVE_RANDOM_TO_TOP,
             EffectKind.EXCHANGE_HAND,
             EffectKind.FREE_PLAY_SELECTED,
             EffectKind.FREE_PLAY_ALL,
@@ -358,6 +456,7 @@ class PhaseAwareHighScorePolicy:
             EffectKind.HOLD_SELECTED,
             EffectKind.TURNS_REMAINING,
             EffectKind.MOVE_RANDOM_TO_HAND,
+            EffectKind.MOVE_RANDOM_TO_TOP,
             EffectKind.EXCHANGE_HAND,
             EffectKind.FREE_PLAY_SELECTED,
             EffectKind.FREE_PLAY_ALL,
@@ -473,6 +572,28 @@ class PhaseAwareHighScorePolicy:
                 if definition is not None
             )
         )
+        # Selecting several cards for the top of the deck expands permutations
+        # independently of hand width. It can also be reached after a draw/free
+        # play chain in the next turn, so a three-card hand is not a bound on
+        # this search. Choose the existing one-step strategy before searching;
+        # an incomplete exact search still never falls back after timing out.
+        reachable_cards = request.state.deck.hand
+        if request.state.turns_remaining > 1:
+            reachable_cards += request.state.deck.draw_pile + request.state.deck.discard
+        random_top_order_complexity = any(
+            effect.kind is EffectKind.MOVE_RANDOM_TO_TOP
+            and effect.amount > 1
+            and effect.card_selector is not None
+            and sum(
+                self.kernel._selector_matches(candidate, effect.card_selector)
+                for zone in effect.card_selector.zones
+                for candidate in zone_cards[zone.value]
+            ) >= self.maximum_exact_hand_size_for_multi_action
+            for card in reachable_cards
+            for definition in (self.kernel.cards.get(card.card_id),)
+            if definition is not None
+            for effect in _effect_tree(definition)
+        )
         if request.utility.baseline_p10 is None and (
             complex_card_root
             or complex_secondary
@@ -480,6 +601,7 @@ class PhaseAwareHighScorePolicy:
             or wide_composition_endgame
             or future_secondary_draw_complexity
             or future_expanding_draw_complexity
+            or random_top_order_complexity
         ):
             return self._early_decide(request, "phase_policy:exact_complexity_guard")
         return self.exact.decide(request)
@@ -503,15 +625,42 @@ def simulate_episode(
     *,
     maximum_decisions: int = 64,
 ) -> EpisodeResult:
+    return simulate_episode_with_trace(
+        sample,
+        policy,
+        kernel,
+        maximum_decisions=maximum_decisions,
+    ).result
+
+
+def simulate_episode_with_trace(
+    sample: DynamicDeckSample,
+    policy: OfflineDecisionPolicy,
+    kernel: PythonNiaProKernel,
+    *,
+    maximum_decisions: int = 64,
+) -> EpisodeSimulation:
     import time
 
     rng = random.Random(sample.seed)
     state = sample.request.state
     elapsed = 0.0
+    events: list[RuleEvent] = []
     for decision_index in range(maximum_decisions):
         if state.terminal:
-            return EpisodeResult(sample.episode_id, float(state.score), False, False, decision_index, elapsed, "terminal")
-        decision_kind = DecisionKind.SECONDARY if state.pending_choice is not None else DecisionKind.CARD
+            result = EpisodeResult(
+                sample.episode_id,
+                float(state.score),
+                False,
+                False,
+                decision_index,
+                elapsed,
+                "terminal",
+            )
+            return EpisodeSimulation(result, state, tuple(events))
+        decision_kind = (DecisionKind.SECONDARY if state.pending_choice is not None
+                         else DecisionKind.LIVE if sample.request.decision_kind is DecisionKind.LIVE
+                         else DecisionKind.CARD)
         slot_ids = (
             state.pending_choice.candidate_instance_ids if state.pending_choice is not None else tuple(card.instance_id for card in state.deck.hand)
         )
@@ -521,44 +670,34 @@ def simulate_episode(
             state=state,
             decision_kind=decision_kind,
             card_slots=tuple((instance_id, index) for index, instance_id in enumerate(slot_ids)),
+            drink_slots=(tuple(enumerate(state.drinks))
+                         if sample.request.decision_kind is DecisionKind.LIVE else ()),
         )
         started = time.perf_counter()
         response = policy.decide(request)
         elapsed += (time.perf_counter() - started) * 1000.0
         if response.outcome is not DecisionOutcome.DECIDE or response.action is None:
-            return EpisodeResult(
-                sample.episode_id,
-                float(state.score),
-                True,
-                False,
-                decision_index + 1,
-                elapsed,
-                response.reason,
+            result = EpisodeResult(
+                sample.episode_id, float(state.score), True, False,
+                decision_index + 1, elapsed, response.reason,
             )
+            return EpisodeSimulation(result, state, tuple(events))
         try:
             legal = kernel.legal_actions(state, plan_type=request.plan_type, decision_kind=decision_kind)
             action = _action_without_slot(response.action)
             if action not in legal:
-                return EpisodeResult(
-                    sample.episode_id,
-                    float(state.score),
-                    True,
-                    True,
-                    decision_index + 1,
-                    elapsed,
-                    "policy_returned_illegal_action",
+                result = EpisodeResult(
+                    sample.episode_id, float(state.score), True, True,
+                    decision_index + 1, elapsed, "policy_returned_illegal_action",
                 )
+                return EpisodeSimulation(result, state, tuple(events))
             branches = kernel.transition(state, action, plan_type=request.plan_type)
         except KernelError as error:
-            return EpisodeResult(
-                sample.episode_id,
-                float(state.score),
-                True,
-                True,
-                decision_index + 1,
-                elapsed,
-                f"transition_error:{error}",
+            result = EpisodeResult(
+                sample.episode_id, float(state.score), True, True,
+                decision_index + 1, elapsed, f"transition_error:{error}",
             )
+            return EpisodeSimulation(result, state, tuple(events))
         draw = rng.random()
         cumulative = 0.0
         selected = branches[-1]
@@ -567,8 +706,9 @@ def simulate_episode(
             if draw <= cumulative:
                 selected = branch
                 break
+        events.extend(selected.events)
         state = selected.state
-    return EpisodeResult(
+    result = EpisodeResult(
         sample.episode_id,
         float(state.score),
         True,
@@ -577,6 +717,7 @@ def simulate_episode(
         elapsed,
         "maximum_decisions_exceeded",
     )
+    return EpisodeSimulation(result, state, tuple(events))
 
 
 def evaluate_policy(
@@ -585,6 +726,13 @@ def evaluate_policy(
     kernel: PythonNiaProKernel,
 ) -> tuple[PolicyMetrics, tuple[EpisodeResult, ...]]:
     results = tuple(simulate_episode(sample, policy, kernel) for sample in samples)
+    return summarize_policy_results(policy, results), results
+
+
+def summarize_policy_results(
+    policy: OfflineDecisionPolicy,
+    results: tuple[EpisodeResult, ...],
+) -> PolicyMetrics:
     scores = [result.final_score for result in results]
     latencies = [result.latency_ms for result in results]
     count = len(results)
@@ -601,7 +749,7 @@ def evaluate_policy(
         latency_p50_ms=statistics.median(latencies) if latencies else 0.0,
         latency_p95_ms=_p95(latencies),
     )
-    return metrics, results
+    return metrics
 
 
 def compare_paired_results(

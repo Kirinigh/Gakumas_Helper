@@ -23,14 +23,13 @@ from datetime import datetime
 from collections.abc import Callable
 
 try:
-    from tools.deployment.public_pr_history import PR_MERGE, verify_public_pr
-
     from tools.deployment.privacy_gate import (
         PrivacyGateError,
         validate_tree,
         validate_relative_path,
         private_machine_markers,
     )
+    from tools.deployment.public_pr_history import PR_MERGE, verify_public_pr
 except ModuleNotFoundError:  # Direct script execution from tools/deployment.
     from privacy_gate import (
         PrivacyGateError,
@@ -91,6 +90,23 @@ FILE_ALLOWLIST = (
     "tools/sync_lang.py",
     "tools/sync_support_cards.py",
     "tools/task080_build_badge_reference.py",
+    "tools/task275/battle_advice_mock.py",
+    "tools/task275/gkms_continuous_policy.py",
+    "tools/task275/gkms_v2_observation.py",
+    "tools/task275_item_coverage.py",
+    "tools/task275_item_lifecycle_evaluate.py",
+    "tools/task280_b38_preflight.py",
+    "tools/task280_b38_rules.py",
+    "tools/task280_gkbench_hosted.py",
+    "tools/task280_gkbench_smoke.py",
+    "tools/task280_local_unclipped.py",
+    "tools/task280_official_coverage.py",
+    "tools/task280_shared_rules.py",
+    "tools/task280_uinet21_hosted.py",
+    "tools/task280_uiobs_bridge.py",
+    "tools/task285_cases.py",
+    "tools/task285_retrieval_review.py",
+    "tools/task285_seed_bench.py",
     "tools/task410_build_card_cost_reference.py",
     "tools/update_cards.py",
 )
@@ -111,8 +127,24 @@ DATA_ALLOWLIST = (
 )
 
 PUBLIC_TEST_ALLOWLIST = (
+    "tests/fixtures/live_decision/task275_anomaly_golden_v1.json",
     "tests/test_arena_grade.py",
     "tests/test_arena_stage_catalog.py",
+    "tests/test_battle_advice_mock.py",
+    "tests/test_gkms_v2_observation.py",
+    "tests/test_live_perception_evidence.py",
+    "tests/test_task275_genki_suppression.py",
+    "tests/test_task275_gkms_shadow_adapter.py",
+    "tests/test_task275_high_score.py",
+    "tests/test_task275_item_assets.py",
+    "tests/test_task275_item_lifecycle.py",
+    "tests/test_task280_b38_preflight.py",
+    "tests/test_task280_b38_rules.py",
+    "tests/test_task280_gkbench_smoke.py",
+    "tests/test_task280_official_coverage.py",
+    "tests/test_task280_uinet21_hosted.py",
+    "tests/test_task280_uiobs_bridge.py",
+    "tests/test_task285_seed_bench.py",
 )
 
 GENERATED_FILE_ALLOWLIST = (
@@ -770,9 +802,11 @@ def _render_startup_announcement(
 
 
 def _validate_snapshot(output: Path) -> dict[str, int]:
+    public_test_paths = {Path(path) for path in PUBLIC_TEST_ALLOWLIST}
+    public_test_ancestors = {parent for path in public_test_paths for parent in path.parents}
     for path in output.rglob("*"):
         relative = path.relative_to(output)
-        is_public_test_path = relative == Path("tests") or relative.as_posix() in PUBLIC_TEST_ALLOWLIST
+        is_public_test_path = relative in public_test_paths or relative in public_test_ancestors and path.is_dir()
         if not is_public_test_path and any(
             part.casefold() in FORBIDDEN_PATH_NAMES_CASEFOLD for part in relative.parts
         ):

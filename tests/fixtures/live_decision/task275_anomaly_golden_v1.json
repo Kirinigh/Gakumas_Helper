@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "dataset_id": "task275-anomaly-golden-v1",
+  "ruleset_id": "nia-pro-task275-probe-v25",
+  "provenance": "Synthetic ruleset probe states; no DMM screenshots and no claim of full game-rule coverage.",
+  "cards": [
+    {
+      "card_id": "an-conserve",
+      "name": "Conserve setup",
+      "plan": "ANOMALY",
+      "effects": [
+        {"kind": "STANCE", "stance": "CONSERVE_2"},
+        {"kind": "FULL_POWER", "amount": 2}
+      ]
+    },
+    {
+      "card_id": "an-release",
+      "name": "Release into aggressive",
+      "plan": "ANOMALY",
+      "effects": [
+        {"kind": "STANCE", "stance": "AGGRESSIVE_1"},
+        {"kind": "SCORE", "amount": 8}
+      ]
+    },
+    {
+      "card_id": "an-charge",
+      "name": "Full-power charge",
+      "plan": "ANOMALY",
+      "effects": [
+        {"kind": "FULL_POWER", "amount": 2}
+      ]
+    },
+    {
+      "card_id": "an-burst",
+      "name": "Full-power burst",
+      "plan": "ANOMALY",
+      "full_power_cost": 6,
+      "limited": true,
+      "effects": [
+        {"kind": "SCORE", "amount": 20}
+      ]
+    },
+    {
+      "card_id": "an-immediate",
+      "name": "Immediate score",
+      "plan": "ANOMALY",
+      "effects": [
+        {"kind": "SCORE", "amount": 15}
+      ]
+    },
+    {
+      "card_id": "an-draw",
+      "name": "Draw and continue",
+      "plan": "ANOMALY",
+      "limited": true,
+      "effects": [
+        {"kind": "EXTRA_ACTION", "amount": 1},
+        {"kind": "DRAW", "amount": 1}
+      ]
+    },
+    {
+      "card_id": "an-small",
+      "name": "Small score",
+      "plan": "ANOMALY",
+      "effects": [
+        {"kind": "SCORE", "amount": 5}
+      ]
+    }
+  ],
+  "drinks": [],
+  "cases": [
+    {
+      "case_id": "release-chain-beats-immediate",
+      "request": {
+        "plan_type": "ANOMALY",
+        "state": {
+          "turn": 1,
+          "turns_remaining": 1,
+          "score": 0,
+          "stamina": 20,
+          "max_stamina": 20,
+          "genki": 0,
+          "actions_remaining": 1,
+          "hand_limit": 0,
+          "score_multiplier": 1.0,
+          "stance": "CONSERVE_2",
+          "passion_buff": 2,
+          "passion_gain_bonus_pct": 25,
+          "deck": {
+            "knowledge": "KNOWN_COMPOSITION",
+            "all_cards": [
+              {"instance_id": "release-1", "card_id": "an-release"},
+              {"instance_id": "immediate-1", "card_id": "an-immediate"}
+            ],
+            "hand": ["release-1", "immediate-1"],
+            "draw_pile": []
+          }
+        }
+      },
+      "expected": {
+        "outcome": "DECIDE",
+        "action": {"kind": "PLAY_CARD", "card_instance_id": "release-1", "source_slot": 0},
+        "expected_final_score": 98,
+        "p10_final_score": 98
+      }
+    },
+    {
+      "case_id": "charge-enables-full-power-burst",
+      "request": {
+        "plan_type": "ANOMALY",
+        "state": {
+          "turn": 1,
+          "turns_remaining": 1,
+          "score": 0,
+          "stamina": 20,
+          "max_stamina": 20,
+          "genki": 0,
+          "actions_remaining": 2,
+          "hand_limit": 0,
+          "score_multiplier": 1.0,
+          "full_power": 4,
+          "deck": {
+            "knowledge": "KNOWN_COMPOSITION",
+            "all_cards": [
+              {"instance_id": "charge-1", "card_id": "an-charge"},
+              {"instance_id": "burst-1", "card_id": "an-burst"},
+              {"instance_id": "immediate-2", "card_id": "an-immediate"}
+            ],
+            "hand": ["charge-1", "burst-1", "immediate-2"],
+            "draw_pile": []
+          }
+        }
+      },
+      "expected": {
+        "outcome": "DECIDE",
+        "action": {"kind": "PLAY_CARD", "card_instance_id": "charge-1", "source_slot": 0},
+        "expected_final_score": 20,
+        "p10_final_score": 20
+      }
+    },
+    {
+      "case_id": "unknown-order-draw-uses-chance-branches",
+      "request": {
+        "plan_type": "ANOMALY",
+        "state": {
+          "turn": 1,
+          "turns_remaining": 1,
+          "score": 0,
+          "stamina": 20,
+          "max_stamina": 20,
+          "genki": 0,
+          "actions_remaining": 1,
+          "hand_limit": 0,
+          "score_multiplier": 1.0,
+          "full_power": 6,
+          "deck": {
+            "knowledge": "KNOWN_COMPOSITION",
+            "all_cards": [
+              {"instance_id": "draw-1", "card_id": "an-draw"},
+              {"instance_id": "immediate-3", "card_id": "an-immediate"},
+              {"instance_id": "burst-2", "card_id": "an-burst"},
+              {"instance_id": "small-1", "card_id": "an-small"}
+            ],
+            "hand": ["draw-1", "immediate-3"],
+            "draw_pile": ["burst-2", "small-1"]
+          }
+        }
+      },
+      "expected": {
+        "outcome": "DECIDE",
+        "action": {"kind": "PLAY_CARD", "card_instance_id": "draw-1", "source_slot": 0},
+        "expected_final_score": 17.5,
+        "p10_final_score": 15
+      }
+    },
+    {
+      "case_id": "p10-gate-rejects-all-candidates",
+      "request": {
+        "plan_type": "ANOMALY",
+        "utility": {"baseline_p10": 100},
+        "state": {
+          "turn": 1,
+          "turns_remaining": 1,
+          "score": 0,
+          "stamina": 20,
+          "max_stamina": 20,
+          "genki": 0,
+          "actions_remaining": 1,
+          "hand_limit": 0,
+          "score_multiplier": 1.0,
+          "deck": {
+            "knowledge": "KNOWN_ORDER",
+            "all_cards": [
+              {"instance_id": "immediate-4", "card_id": "an-immediate"}
+            ],
+            "hand": ["immediate-4"],
+            "draw_pile": []
+          }
+        }
+      },
+      "expected": {
+        "outcome": "STOP_TASK",
+        "action": null
+      }
+    },
+    {
+      "case_id": "transient-observation-reobserves-without-action",
+      "request": {
+        "plan_type": "ANOMALY",
+        "capabilities": {
+          "observation_valid": false,
+          "game_legal": true,
+          "model_supported": true,
+          "policy_eligible": true,
+          "execution_ready": true,
+          "reason_codes": ["transient:card_overlay"]
+        },
+        "state": {
+          "turn": 1,
+          "turns_remaining": 1,
+          "score": 0,
+          "stamina": 20,
+          "max_stamina": 20,
+          "genki": 0,
+          "actions_remaining": 1,
+          "hand_limit": 0,
+          "score_multiplier": 1.0,
+          "deck": {
+            "knowledge": "KNOWN_ORDER",
+            "all_cards": [
+              {"instance_id": "immediate-5", "card_id": "an-immediate"}
+            ],
+            "hand": ["immediate-5"],
+            "draw_pile": []
+          }
+        }
+      },
+      "expected": {
+        "outcome": "REOBSERVE",
+        "action": null
+      }
+    }
+  ]
+}
