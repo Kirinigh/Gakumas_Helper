@@ -39,6 +39,11 @@ except ModuleNotFoundError:  # Direct script execution from tools/deployment.
     )
     from public_pr_history import PR_MERGE, verify_public_pr
 
+HIF_ITEM_REFERENCE_DIRECTORY = "assets/data/hif_item_icons"
+HIF_DRINK_ICON_DIRECTORY = "assets/data/hif_drink_icons"
+HIF_DRINK_ICON_IDS = frozenset([*(str(number) for number in range(1, 29)), "pdrink_00-3-013"])
+HIF_DRINK_ICON_FILES = frozenset({"manifest.json", *(f"{item_id}.png" for item_id in HIF_DRINK_ICON_IDS)})
+
 DIRECTORY_ALLOWLIST = (
     "agent",
     "assets/lang",
@@ -97,6 +102,7 @@ FILE_ALLOWLIST = (
     "tools/task275_item_lifecycle_evaluate.py",
     "tools/task280_b38_preflight.py",
     "tools/task280_b38_rules.py",
+    "tools/task280_decision_box.py",
     "tools/task280_gkbench_hosted.py",
     "tools/task280_gkbench_smoke.py",
     "tools/task280_local_unclipped.py",
@@ -115,6 +121,7 @@ DATA_ALLOWLIST = (
     "arena_own_score_schema.json",
     "arena_winrate_schema.json",
     "card_selection_presets.yaml",
+    "customizations.json",
     "idols_cards.json",
     "live_decision_presets.yaml",
     "p_drinks.csv",
@@ -140,11 +147,13 @@ PUBLIC_TEST_ALLOWLIST = (
     "tests/test_task275_item_lifecycle.py",
     "tests/test_task280_b38_preflight.py",
     "tests/test_task280_b38_rules.py",
+    "tests/test_task280_decision_box.py",
     "tests/test_task280_gkbench_smoke.py",
     "tests/test_task280_official_coverage.py",
     "tests/test_task280_uinet21_hosted.py",
     "tests/test_task280_uiobs_bridge.py",
     "tests/test_task285_seed_bench.py",
+    "tests/test_task410_public_arena_regressions.py",
 )
 
 GENERATED_FILE_ALLOWLIST = (
@@ -674,6 +683,13 @@ def _rewrite_pyproject(path: Path, *, version: str, repository: str) -> None:
 
 def _is_allowlisted_public_file(relative: Path) -> bool:
     normalized = relative.as_posix()
+    if normalized.startswith(f"{HIF_DRINK_ICON_DIRECTORY}/"):
+        return normalized.removeprefix(f"{HIF_DRINK_ICON_DIRECTORY}/") in HIF_DRINK_ICON_FILES
+    if normalized.startswith(f"{HIF_ITEM_REFERENCE_DIRECTORY}/"):
+        member = normalized.removeprefix(f"{HIF_ITEM_REFERENCE_DIRECTORY}/")
+        return member in {"manifest.json", "crosswalk.json"} or bool(
+            re.fullmatch(r"official-art/[a-zA-Z0-9_-]+\.webp", member)
+        )
     if normalized in GENERATED_FILE_ALLOWLIST or normalized in FILE_ALLOWLIST:
         return True
     if normalized in PUBLIC_TEST_ALLOWLIST:
@@ -801,6 +817,55 @@ def _render_startup_announcement(
     return rendered.rstrip() + "\n"
 
 
+def _validate_hif_item_references(directory: Path) -> None:
+    try:
+        manifest = json.loads((directory / "manifest.json").read_bytes())
+        expected = manifest["rendered_sha256"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise PublicSnapshotError("invalid cultivation P-item reference manifest") from error
+    if not isinstance(expected, dict) or not expected or any(
+        re.fullmatch(r"[a-zA-Z0-9_-]+\.webp", name) is None
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None
+        for name, digest in expected.items()
+    ):
+        raise PublicSnapshotError("invalid cultivation P-item reference inventory")
+    images = directory / "official-art"
+    members = {path.name for path in images.iterdir() if path.is_file()} if images.is_dir() else set()
+    if members != expected.keys() or not (directory / "crosswalk.json").is_file():
+        raise PublicSnapshotError("cultivation P-item reference files differ from their manifest")
+    for name, digest in expected.items():
+        if hashlib.sha256((images / name).read_bytes()).hexdigest() != digest.lower():
+            raise PublicSnapshotError(f"cultivation P-item reference differs from its manifest: {name}")
+
+
+def _validate_hif_drink_icons(directory: Path) -> None:
+    try:
+        manifest = json.loads((directory / "manifest.json").read_bytes())
+        ids = manifest["ids"]
+        hashes = manifest["icon_sha256"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise PublicSnapshotError("invalid cultivation drink icon manifest") from error
+    if (
+        manifest.get("schema") != 1
+        or not isinstance(ids, list)
+        or len(ids) != len(HIF_DRINK_ICON_IDS)
+        or any(not isinstance(item_id, str) for item_id in ids)
+        or set(ids) != HIF_DRINK_ICON_IDS
+        or not isinstance(hashes, dict)
+        or hashes.keys() != HIF_DRINK_ICON_IDS
+    ):
+        raise PublicSnapshotError("invalid cultivation drink icon inventory")
+    members = {path.name for path in directory.iterdir() if path.is_file()}
+    if members != HIF_DRINK_ICON_FILES:
+        raise PublicSnapshotError("cultivation drink icon files differ from their manifest")
+    for item_id, digest in hashes.items():
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None:
+            raise PublicSnapshotError(f"invalid cultivation drink icon SHA-256: {item_id}")
+        if hashlib.sha256((directory / f"{item_id}.png").read_bytes()).hexdigest() != digest.lower():
+            raise PublicSnapshotError(f"cultivation drink icon differs from its manifest: {item_id}")
+
+
 def _validate_snapshot(output: Path) -> dict[str, int]:
     public_test_paths = {Path(path) for path in PUBLIC_TEST_ALLOWLIST}
     public_test_ancestors = {parent for path in public_test_paths for parent in path.parents}
@@ -815,6 +880,12 @@ def _validate_snapshot(output: Path) -> dict[str, int]:
             raise PublicSnapshotError(
                 f"public snapshot contains a file outside the public allowlist: {relative.as_posix()}"
             )
+    item_references = output / HIF_ITEM_REFERENCE_DIRECTORY
+    if item_references.exists():
+        _validate_hif_item_references(item_references)
+    drink_icons = output / HIF_DRINK_ICON_DIRECTORY
+    if drink_icons.exists():
+        _validate_hif_drink_icons(drink_icons)
     _reject_internal_task_identifiers(output)
     try:
         return validate_tree(
@@ -1273,6 +1344,9 @@ def build_public_snapshot(
         try:
             for relative in DIRECTORY_ALLOWLIST:
                 _copy_tree(exported, output, relative)
+            for relative in (HIF_ITEM_REFERENCE_DIRECTORY, HIF_DRINK_ICON_DIRECTORY):
+                if (exported / relative).exists():
+                    _copy_tree(exported, output, relative)
             for relative in FILE_ALLOWLIST:
                 _copy_file(exported, output, relative)
             for name in DATA_ALLOWLIST:

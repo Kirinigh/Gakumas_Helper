@@ -5,8 +5,9 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Any
 from collections import deque
+from dataclasses import replace
 
-from .reader import ArenaReaderError, ClickedSkillCard
+from .reader import _NATIVE_GENERIC_COST_CANDIDATE, ArenaReaderError, ClickedSkillCard
 
 
 class _FrameStep(Enum):
@@ -1160,6 +1161,8 @@ class SkillDetailSession:
                     "skill_card_cost_fallback_detail_image_missing",
                     "generic-cost fallback has no accepted detail image",
                 )
+            if self.resolved.detail_evidence_mode == _NATIVE_GENERIC_COST_CANDIDATE and self._confirm_native_cost_effects():
+                return _FrameStep.NEXT
             self.roi_text = self.backend._skill_card_title_anchored_effect_roi_text(
                 self.detail_image,
                 self.resolved.card_id,
@@ -1174,16 +1177,8 @@ class SkillDetailSession:
                 self.resolved.card_id,
                 (self.text, self.roi_text),
             )
-            combined_resolved = self.backend._resolve_clicked_card_text(
-                self.candidate_ids,
+            combined_resolved = self._resolve_cost_effect_text(
                 self.combined_text,
-                expected_customization_count=(self.expected_customization_count),
-                allow_zero_without_badge_count=(self.allow_zero_without_badge_count),
-                allow_auxiliary_badge_glyph=(self.auxiliary_badge_glyph_allowed),
-                generic_cost_fallback_policy=(self.generic_cost_fallback_policy),
-                allow_generic_cost_fallback=True,
-                generic_cost_coverage_context=(self.same_frame_effect_roi_context),
-                key=self.key,
             )
             if not self.backend._same_clicked_card_resolution(
                 self.resolved,
@@ -1198,6 +1193,38 @@ class SkillDetailSession:
             self.backend._card_detail_texts[self.key] = self.combined_text
             self.backend._increment("skill_card_cost_fallback_title_bound_roi_confirmations")
         return _FrameStep.NEXT
+
+    def _resolve_cost_effect_text(self, text):
+        return self.backend._resolve_clicked_card_text(
+            self.candidate_ids,
+            text,
+            expected_customization_count=self.expected_customization_count,
+            allow_zero_without_badge_count=self.allow_zero_without_badge_count,
+            allow_auxiliary_badge_glyph=self.auxiliary_badge_glyph_allowed,
+            generic_cost_fallback_policy=self.generic_cost_fallback_policy,
+            allow_generic_cost_fallback=True,
+            generic_cost_coverage_context=self.same_frame_effect_roi_context,
+            key=self.key,
+        )
+
+    def _confirm_native_cost_effects(self):
+        # Recheck the accepted frame's title-bound cached boxes. Whole optional
+        # fields need no confirmation crop, but observed fragments still do.
+        try:
+            native_text = self.backend._native_skill_card_omission_text(
+                self.detail_image, self.resolved.card_id, preserve_body_boundaries=True,
+            )
+            scoped_resolved = self._resolve_cost_effect_text(native_text)
+        except ArenaReaderError as error:
+            if error.code in {"skill_card_detail_id_changed", "skill_card_detail_domain_unconfirmed"}:
+                raise
+            return False
+        if not self.backend._same_clicked_card_resolution(self.resolved, scoped_resolved):
+            return False
+        self.resolved = replace(scoped_resolved, detail_evidence_mode="conservative_generic_cost_bound")
+        self.text = self.backend._card_detail_texts[self.key] = native_text
+        self.backend._increment("skill_card_cost_fallback_native_confirmations")
+        return True
 
     def _confirm_cost_assumption(self):
         if self.conservative_cost_assumption is not None:

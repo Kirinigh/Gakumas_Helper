@@ -1367,7 +1367,7 @@ class Task275HighScoreContractTests(unittest.TestCase):
 
     def test_item_catalog_is_atomic_plan_scoped_and_persistent(self) -> None:
         expected = {
-            PlanType.SENSE: (74, 140),
+            PlanType.SENSE: (76, 142),
             PlanType.LOGIC: (69, 159),
             PlanType.ANOMALY: (55, 105),
         }
@@ -1393,6 +1393,10 @@ class Task275HighScoreContractTests(unittest.TestCase):
         sense = compile_item_catalog(P_ITEMS, plan_type=PlanType.SENSE)
         self.assertIn("3", sense.items)
         self.assertEqual(sense.items["3"].persistent_effects[0].schedule_limit, 1)
+        for item_id in ("473", "474"):
+            with self.subTest(item_id=item_id):
+                self.assertEqual(sense.items[item_id].plan, PlanType.SENSE)
+                self.assertEqual(sense.items[item_id].persistent_effects[0].schedule_limit, 2)
         self.assertTrue(
             any(
                 "effect_not_compiled:" in reason

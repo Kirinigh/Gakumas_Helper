@@ -4,6 +4,14 @@ from typing import Any
 from dataclasses import asdict, dataclass
 
 BASE_FRAME_SIZE = (720, 1280)
+
+
+def normalize_upgrade_title(title: str) -> str:
+    """D-047: preserve the card name and collapse any upgrade suffix to one +."""
+    base = title.rstrip('+＋⁺')
+    return base + ('+' if len(base) != len(title) else '')
+
+
 LIVE_CARD_NAME_BOXES = (
     (40, 1090, 210, 38),
     (250, 1090, 225, 38),
@@ -19,6 +27,8 @@ class LiveUpgradeObservation:
     marker_count: int
     confidence: float
     box: tuple[int, int, int, int]
+    title_readable: bool = True
+    frame_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -26,7 +36,7 @@ class LiveUpgradeObservation:
 
 @dataclass(frozen=True)
 class LiveUpgradeConsensus:
-    """Fail-closed normal/+ result from three nearby Live frames."""
+    """Fail-closed normal/+ result with its exact visual observations."""
 
     accepted: bool
     upgraded: bool | None
@@ -120,6 +130,7 @@ def detect_live_upgrade_marker(
     *,
     box: tuple[int, int, int, int] | None = None,
     expanded: bool = False,
+    frame_id: str | None = None,
 ) -> LiveUpgradeObservation:
     """Detect one or more suffix ``+`` glyphs without depending on their colour.
 
@@ -134,15 +145,23 @@ def detect_live_upgrade_marker(
     # ``min`` is invariant to RGB/BGR ordering and keeps both black and blue ink.
     foreground = np.min(crop.astype(np.uint8), axis=2) < (190 if expanded else 180)
     components = _connected_components(foreground)
-    boundary_margin = 4 if expanded else 8
+    # A complete long title can end seven pixels before its frame (1872).
+    # Four pixels still separate the complete cross from the card boundary;
+    # its dimensions, centre and rightmost-ink checks remain mandatory.
+    boundary_margin = 4
 
     text_components = [
         item
         for item in components
         if item[4] >= 3
         and 3 <= item[3] <= 25
-        and item[1] >= 10
-        and item[0] + item[2] <= crop.shape[1] - boundary_margin
+        # Selected HIF titles have their glyph tops at y=7..9 in the title
+        # crop. They still delimit the suffix: excluding them can make an
+        # internal katakana cross shape look like the rightmost '+' marker.
+        and (expanded or item[1] >= 10)
+        # Clipped text still rules out an earlier internal cross as a suffix.
+        # Apply the boundary margin to marker candidates only, not to ink
+        # that proves the title continues behind the neighbouring card.
     ]
     rightmost_ink = max((left + width for left, _, width, _, _, _ in text_components), default=0)
     scores: list[float] = []
@@ -187,50 +206,57 @@ def detect_live_upgrade_marker(
         marker_count=len(scores),
         confidence=max(scores, default=1.0),
         box=scaled_box,
+        title_readable=bool(text_components),
+        frame_id=frame_id,
     )
 
 
 def resolve_live_upgrade_consensus(
-    images: Any,
+    image: Any,
     slot: int,
     *,
     box: tuple[int, int, int, int] | None = None,
     expanded: bool = False,
+    frame_id: str | None = None,
 ) -> LiveUpgradeConsensus:
-    """Collapse ``+``/``++``/``+++`` to one enhanced state over three frames."""
+    """Resolve one current frame; unclear title evidence stays unknown.
 
-    frames = tuple(images)
-    if len(frames) != 3:
-        raise ValueError("Live upgrade consensus requires exactly three frames")
-    observations = tuple(
-        detect_live_upgrade_marker(image, slot, box=box, expanded=expanded)
-        for image in frames
+    ``+``/``++``/``+++`` still collapse to the same binary enhanced state.
+    The result keeps the historical receipt shape, but it now contains exactly
+    one observation and never waits for a fixed three-frame vote.
+    """
+
+    observation = detect_live_upgrade_marker(
+        image,
+        slot,
+        box=box,
+        expanded=expanded,
+        frame_id=frame_id,
     )
-    plus_votes = sum(observation.upgraded for observation in observations)
-    normal_votes = len(observations) - plus_votes
-    if plus_votes >= 2:
+    observations = (observation,)
+    if observation.upgraded:
         return LiveUpgradeConsensus(
             True,
             True,
-            plus_votes,
-            normal_votes,
-            "plus_majority",
+            1,
+            0,
+            "plus_single_frame",
             observations,
         )
-    if plus_votes == 0:
+    if observation.title_readable:
         return LiveUpgradeConsensus(
             True,
             False,
             0,
-            normal_votes,
-            "normal_unanimous",
+            1,
+            "normal_single_frame",
             observations,
         )
     return LiveUpgradeConsensus(
         False,
         None,
-        plus_votes,
-        normal_votes,
-        "upgrade_frames_disagree",
+        0,
+        0,
+        "upgrade_title_unreadable",
         observations,
     )

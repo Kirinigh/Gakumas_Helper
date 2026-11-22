@@ -12,9 +12,10 @@ from typing import Any, Protocol
 from dataclasses import dataclass
 from collections.abc import Sequence
 
+from .grade import team_stage_total_anchors
 from .reader import ArenaPageState, ArenaReaderError, arena_page_allows_team_entry
 from .recovery import error_retry_box
-from ._reader_visual import _box, _support_bonus_dialog_headings, _support_bonus_overlay_visible
+from ._reader_visual import _box, _matching_ocr_items, _support_bonus_dialog_headings, _support_bonus_overlay_visible
 
 
 @dataclass
@@ -74,6 +75,79 @@ class ArenaPagePort(Protocol):
     def dismiss_known_blocking_overlay(self, image: Any, *, items: Sequence[Any] | None = None) -> Any: ...
     def dismiss_contest_details_items(self, image: Any, items: Sequence[Any]) -> Any: ...
     def retry_transient_communication_items(self, items: Sequence[Any]) -> Any: ...
+
+
+def _has_first_opponent_stage_total(
+    image: Any,
+    items: Sequence[Any],
+    exact_totals: Sequence[Any],
+) -> bool:
+    """Attribute the observed 截合力 misread to the first opponent score cell."""
+    stage_tabs = tuple(_matching_ocr_items(items, rf"^ステージ\s*{stage}$") for stage in (1, 2, 3))
+    candidate = _matching_ocr_items(items, r"^截合力$")
+    support = _matching_ocr_items(items, r"^サポートボーナス$")
+    start = _matching_ocr_items(items, r"^挑戦開始$")
+    if any(len(matches) != 1 for matches in (*stage_tabs, candidate, support, start)):
+        return False
+
+    height, width = image.shape[:2]
+    middle = width / 2
+    tabs = tuple(_box(matches[0]) for matches in stage_tabs)
+    first_tab, second_tab, third_tab = tabs
+    recovered = _box(candidate[0])
+    totals = (*map(_box, exact_totals), recovered)
+    support_box, start_box = _box(support[0]), _box(start[0])
+    if not all(
+        0 <= x < x + w <= width and 0 <= y < y + h <= height
+        for x, y, w, h in (*tabs, *totals, support_box, start_box)
+    ):
+        return False
+    tab_tops = [box[1] for box in tabs]
+    if not (
+        first_tab[0] + first_tab[2] < second_tab[0] < middle < second_tab[0] + second_tab[2] < third_tab[0]
+        and max(tab_tops) - min(tab_tops) <= min(box[3] for box in tabs) / 2
+        and support_box[0] + support_box[2] < start_box[0] < middle < start_box[0] + start_box[2]
+        and abs(support_box[1] - start_box[1]) <= max(support_box[3], start_box[3])
+    ):
+        return False
+
+    try:
+        opponent = team_stage_total_anchors(totals, own_team=False)
+    except ValueError:
+        return False
+    own = tuple(sorted(set(totals).difference(opponent), key=lambda box: box[1]))
+    tab_bottom = max(y + h for _, y, _, h in tabs)
+    footer_top = min(support_box[1], start_box[1])
+    if not (
+        opponent[0] == recovered and len(own) == 3
+        and all(x + w < middle for x, _, w, _ in own)
+        and all(x > middle for x, _, _, _ in opponent)
+        and all(tab_bottom < y < y + h < footer_top for _, y, _, h in totals)
+    ):
+        return False
+
+    numbers = tuple(map(_box, _matching_ocr_items(items, r"^[0-9]{1,7}$")))
+    for column, right_edge in ((own, middle), (opponent, width)):
+        xs, tops, widths, heights = zip(*column)
+        first_gap, second_gap = tops[1] - tops[0], tops[2] - tops[1]
+        if not (
+            max(xs) - min(xs) <= min(widths) / 2
+            and max(widths) <= 1.5 * min(widths)
+            and max(heights) <= 1.5 * min(heights)
+            and min(first_gap, second_gap) > 2 * max(heights)
+            and abs(first_gap - second_gap) <= min(heights)
+        ):
+            return False
+        for x, y, w, h in column:
+            score_count = sum(
+                0 <= score_x - (x + w) <= w and score_x < score_x + score_w <= right_edge
+                and 0 <= score_y < score_y + score_h <= height and h / 2 <= score_h <= 2 * h
+                and abs((2 * y + h) - (2 * score_y + score_h)) <= h
+                for score_x, score_y, score_w, score_h in numbers
+            )
+            if score_count != 1:
+                return False
+    return True
 
 
 class ArenaPageFlow:
@@ -419,6 +493,8 @@ class ArenaPageFlow:
         self,
         expected_total_counts: tuple[int, ...],
         timeout_seconds: float = 3.0,
+        *,
+        pre_start: bool = False,
     ) -> None:
         deadline = self.clock.monotonic() + timeout_seconds
         last_stage_count = 0
@@ -427,10 +503,17 @@ class ArenaPageFlow:
             image = self.port.capture()
             items = self.port.ocr(image, r".+")
             last_stage_count = len(self.port.matching_ocr_items(items, r"^ステージ\s*[123]$"))
-            last_total_count = len(self.port.matching_ocr_items(items, r"^総合力$"))
+            exact_totals = self.port.matching_ocr_items(items, r"^総合力$")
+            last_total_count = len(exact_totals)
             communication_dialog = self.port.retry_transient_communication_items(items)
-            if not communication_dialog and last_stage_count >= 3 and last_total_count in expected_total_counts:
-                return
+            if not communication_dialog and last_stage_count >= 3:
+                if last_total_count in expected_total_counts:
+                    return
+                if (
+                    pre_start and expected_total_counts == (6,) and last_stage_count == 3 and last_total_count == 5
+                    and _has_first_opponent_stage_total(image, items, exact_totals)
+                ):
+                    return
             self.port.sleep(0.25)
         raise ArenaReaderError(
             "stage_member_list_timeout",

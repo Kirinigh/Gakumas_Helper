@@ -1,0 +1,126 @@
+{
+  "ProduceHifAdvanceEntry": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "ProduceHifAdvance",
+    "custom_action_param": {
+      "schema_version": 1,
+      "mode": "off",
+      "preset": "hif-main-current-v1"
+    },
+    "on_error": [
+      "ProduceHifAdvanceStop"
+    ],
+    "next": [
+      "ProduceHifAdvanceStop"
+    ]
+  },
+  "ProduceHifAdvanceStop": {
+    "recognition": "DirectHit",
+    "action": "StopTask",
+    "next": []
+  },
+  "ProduceHifCandidatePoolSettings": {
+    "action": "DoNothing",
+    "attach": {
+      "preferred": "",
+      "order": "reroll,exclude"
+    }
+  },
+  "ProduceHifAdvanceClick": {
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "pre_delay": 0,
+    "post_delay": 0,
+    "next": []
+  },
+  "ProduceHifMainAttributeSettings": {
+    "action": "DoNothing"
+  },
+  "ProduceHifQualifierMemorySettings": {
+    "action": "DoNothing"
+  },
+  "ProduceHifSceneObserve": {
+    "recognition": "Custom",
+    "custom_recognition": "ProduceHifSceneObserve",
+    "action": "DoNothing",
+    "next": []
+  },
+  "ProduceHifDayText": {
+    "recognition": "OCR",
+    "roi": [
+      72,
+      80,
+      120,
+      50
+    ],
+    "expected": "[0-6]日",
+    "action": "DoNothing"
+  },
+  "ProduceHifBattleText": {
+    "recognition": "OCR",
+    "roi": [
+      0,
+      0,
+      720,
+      300
+    ],
+    "expected": "H[.．]?I[.．]?F[.．]?本戦(?:ラウンド|$)",
+    "action": "DoNothing"
+  },
+  "ProduceHifTitleText": {
+    "recognition": "OCR",
+    "roi": [
+      0,
+      0,
+      720,
+      200
+    ],
+    "expected": "H[.．]?I[.．]?F[.．]?本戦まで",
+    "action": "DoNothing"
+  },
+  "ProduceHifLessonText": {
+    "recognition": "OCR",
+    "roi": [
+      0,
+      1000,
+      720,
+      150
+    ],
+    "expected": "授業",
+    "action": "DoNothing"
+  },
+  "ProduceHifTrainingText": {
+    "recognition": "OCR",
+    "roi": [
+      0,
+      1000,
+      720,
+      150
+    ],
+    "expected": "公開",
+    "action": "DoNothing"
+  },
+  "ProduceHifOutingText": {
+    "recognition": "OCR",
+    "roi": [
+      0,
+      1000,
+      720,
+      150
+    ],
+    "expected": "お[出で]かけ",
+    "action": "DoNothing"
+  },
+  "ProduceHifConsultText": {
+    "recognition": "OCR",
+    "roi": [
+      0,
+      1000,
+      720,
+      150
+    ],
+    "expected": "相談",
+    "action": "DoNothing"
+  }
+}

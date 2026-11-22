@@ -9,10 +9,28 @@ _TRANSFORMS = ContextVar("high_score_state_transforms", default=None)
 
 
 @contextmanager
-def validation_session(check_budget=None):
-    token = _VALIDATED.set({})
+def validation_session(check_budget=None, *, reuse_parent=False):
+    """Optionally share an enclosing search's immutable catalogs/state caches.
+
+    Reuse is explicit: independent decisions and ordinary nested sessions keep
+    fresh caches. A reused child retains both its own and its parent's budget.
+    """
+    validated = _VALIDATED.get() if reuse_parent else None
+    transforms = _TRANSFORMS.get() if reuse_parent else None
+    if validated is not None and transforms is not None:
+        parent_check = _CHECK_BUDGET.get()
+        if parent_check is not None:
+            child_check = check_budget
+
+            def check_budget():
+                parent_check()
+                if child_check is not None:
+                    child_check()
+    else:
+        validated, transforms = {}, {}
+    token = _VALIDATED.set(validated)
     budget_token = _CHECK_BUDGET.set(check_budget)
-    transform_token = _TRANSFORMS.set({})
+    transform_token = _TRANSFORMS.set(transforms)
     try:
         yield
     finally:

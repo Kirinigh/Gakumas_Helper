@@ -242,6 +242,7 @@ class LocalCaptureStore:
         self._lock = _shared_root_lock(config.root)
         self._blocked_reason: str | None = None
         self._revoked = False
+        self._batch_inventory: dict[Path, os.stat_result] | None = None
 
     @property
     def blocked_reason(self) -> str | None:
@@ -328,11 +329,12 @@ class LocalCaptureStore:
         target = self.config.root / "sessions" / f"{session.session_id}.json"
         session_bytes = json.dumps(asdict(session), ensure_ascii=False, indent=2).encode("utf-8")
         try:
-            with self._storage_guard():
+            with self._storage_guard(), self._batch_inventory_scope() as inventory:
                 self._require_writable_locked()
                 self._cleanup_locked(incoming_bytes=len(session_bytes))
                 self._ensure_space(len(session_bytes))
                 self._atomic_write(target, session_bytes)
+                inventory[target] = target.stat()
                 self._cleanup_locked()
                 if (
                     not target.exists()
@@ -360,13 +362,29 @@ class LocalCaptureStore:
         capture_kind: str | None = None,
         suffix: str = ".bin",
     ) -> Path:
+        return self.write_images(
+            category, session, [(data, metadata)], capture_kind=capture_kind, suffix=suffix
+        )[0]
+
+    def write_images(
+        self,
+        category: str,
+        session: CaptureSession,
+        images: list[tuple[bytes, Mapping[str, Any] | None]],
+        *,
+        capture_kind: str | None = None,
+        suffix: str = ".bin",
+    ) -> list[Path]:
+        """Retain one bounded batch under the same lock and aggregate hard limits.
+
+        Diagnostic bursts reserve all bytes before writing, avoiding a complete
+        retention scan per frame. A failed batch rolls back every new artifact.
+        """
         self._require_enabled()
         if not isinstance(session, CaptureSession):
             raise TypeError("session must be a validated CaptureSession")
         if category not in self._CATEGORIES:
             raise ValueError(f"unknown capture category: {category}")
-        if not isinstance(data, bytes):
-            raise TypeError("capture data must be bytes")
         suffix = suffix.lower()
         if suffix not in _IMAGE_SUFFIXES:
             raise ValueError(f"unsupported image suffix: {suffix}")
@@ -378,55 +396,66 @@ class LocalCaptureStore:
             raise ValueError("failure_scene must use failure retention; other kinds must use normal retention")
         if capture_kind not in _MODE_CAPTURE_KINDS[self.config.mode]:
             raise CaptureDisabledError(f"capture kind {capture_kind} is disabled by mode {self.config.mode}")
-        metadata = dict(metadata or {})
-        reject_secret_fields(metadata)
 
-        target: Path | None = None
-        manifest: Path | None = None
+        if not isinstance(images, list) or not 1 <= len(images) <= 64:
+            raise ValueError("capture batch must contain one to 64 images")
+        validated = []
+        for data, metadata in images:
+            if not isinstance(data, bytes):
+                raise TypeError("capture data must be bytes")
+            metadata = dict(metadata or {})
+            reject_secret_fields(metadata)
+            validated.append((data, metadata))
+
+        artifacts: list[tuple[Path, bytes]] = []
+        targets: list[Path] = []
         try:
-            stamp = _utc(self._clock())
-            stem = f"{stamp.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex}"
-            target = self.config.root / "images" / category / session.session_id / f"{stem}{suffix}"
-            manifest = target.with_suffix(target.suffix + ".json")
-            manifest_payload = {
-                "schema_version": CAPTURE_SCHEMA_VERSION,
-                "session_id": session.session_id,
-                "captured_at": stamp.isoformat(),
-                "frame_version": session.frame_version,
-                "category": category,
-                "capture_kind": capture_kind,
-                "image_file": target.name,
-                "byte_size": len(data),
-                "metadata": metadata,
-            }
-            manifest_bytes = json.dumps(manifest_payload, ensure_ascii=False, indent=2).encode("utf-8")
-            incoming_total = len(data) + len(manifest_bytes)
-            with self._storage_guard():
+            for data, metadata in validated:
+                stamp = _utc(self._clock())
+                stem = f"{stamp.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex}"
+                target = self.config.root / "images" / category / session.session_id / f"{stem}{suffix}"
+                manifest = target.with_suffix(target.suffix + ".json")
+                manifest_payload = {
+                    "schema_version": CAPTURE_SCHEMA_VERSION,
+                    "session_id": session.session_id,
+                    "captured_at": stamp.isoformat(),
+                    "frame_version": session.frame_version,
+                    "category": category,
+                    "capture_kind": capture_kind,
+                    "image_file": target.name,
+                    "byte_size": len(data),
+                    "metadata": metadata,
+                }
+                manifest_bytes = json.dumps(manifest_payload, ensure_ascii=False, indent=2).encode("utf-8")
+                targets.append(target)
+                artifacts.extend(((target, data), (manifest, manifest_bytes)))
+            incoming_total = sum(len(data) for _, data in artifacts)
+            incoming_images = sum(len(data) for data, _ in validated)
+            with self._storage_guard(), self._batch_inventory_scope() as inventory:
                 self._require_writable_locked()
                 self._validate_session_sidecar(session)
                 self._cleanup_locked(
                     incoming_bytes=incoming_total,
                     incoming_category=category,
-                    incoming_image_bytes=len(data),
+                    incoming_image_bytes=incoming_images,
                     protected_session_id=session.session_id,
                 )
                 self._ensure_space(incoming_total)
-                self._atomic_write(target, data)
-                self._atomic_write(manifest, manifest_bytes)
+                for path, data in artifacts:
+                    self._atomic_write(path, data)
+                # Verify actual sizes, including earlier files, after every write finishes.
+                inventory.update((path, path.stat()) for path, _ in artifacts)
                 self._cleanup_locked(protected_session_id=session.session_id)
                 if (
-                    not target.exists()
-                    or not manifest.exists()
+                    any(not path.exists() for path, _ in artifacts)
                     or self._metadata_bytes() > self.config.total_metadata_bytes
                     or self._artifact_bytes() > self.config.total_artifact_bytes
                 ):
                     raise StorageSafetyError("new capture could not be retained within hard limits")
-                return target
+                return targets
         except Exception as error:
             rollback_errors: list[str] = []
-            for path in (target, manifest):
-                if path is None:
-                    continue
+            for path, _ in artifacts:
                 try:
                     path.unlink(missing_ok=True)
                 except OSError as rollback_error:
@@ -492,7 +521,7 @@ class LocalCaptureStore:
             files = self._image_files(category)
             cutoff = (now - timedelta(days=policy.max_age_days)).timestamp()
             for path in files:
-                if path.stat().st_mtime < cutoff:
+                if self._capture_stat(path).st_mtime < cutoff:
                     self._remove_capture(path)
             files = self._image_files(category)
             allowed = policy.max_bytes - (incoming_image_bytes if category == incoming_category else 0)
@@ -508,8 +537,8 @@ class LocalCaptureStore:
         for path in self._session_files():
             if path.stem == protected_session_id or path.stem in active_sessions:
                 continue
-            if path.stat().st_mtime < metadata_cutoff:
-                path.unlink(missing_ok=True)
+            if self._capture_stat(path).st_mtime < metadata_cutoff:
+                self._unlink_capture_file(path)
         self._remove_orphan_manifests()
         self._trim_metadata_to_limit(
             self.config.total_metadata_bytes - incoming_metadata_bytes,
@@ -601,6 +630,34 @@ class LocalCaptureStore:
         if free - incoming_bytes < self.config.minimum_free_bytes:
             raise OSError("insufficient free disk space for a bounded capture")
 
+    @contextmanager
+    def _batch_inventory_scope(self) -> Iterator[dict[Path, os.stat_result]]:
+        """Reuse one inventory only while a batch owns the existing quota lock."""
+        self._batch_inventory = {
+            path: path.stat()
+            for name in ("images", "sessions", "frozen")
+            for path in _files_under(self.config.root / name)
+        }
+        try:
+            yield self._batch_inventory
+        finally:
+            self._batch_inventory = None
+
+    def _capture_files(self, root: Path, pattern: str = "*") -> list[Path]:
+        if self._batch_inventory is None:
+            return [path for path in root.rglob(pattern) if path.is_file()]
+        return [path for path in self._batch_inventory if path.is_relative_to(root) and path.match(pattern)]
+
+    def _capture_stat(self, path: Path) -> os.stat_result:
+        if self._batch_inventory is not None and path in self._batch_inventory:
+            return self._batch_inventory[path]
+        return path.stat()
+
+    def _unlink_capture_file(self, path: Path) -> None:
+        path.unlink(missing_ok=True)
+        if self._batch_inventory is not None:
+            self._batch_inventory.pop(path, None)
+
     def _image_files(self, category: str | None = None) -> list[Path]:
         base = self.config.root / "images"
         roots = [base / category] if category else [base / item for item in self._CATEGORIES]
@@ -609,10 +666,10 @@ class LocalCaptureStore:
             if root.exists():
                 files.extend(
                     path
-                    for path in root.rglob("*")
-                    if path.is_file() and not path.name.endswith(".json") and ".tmp-" not in path.name
+                    for path in self._capture_files(root)
+                    if not path.name.endswith(".json") and ".tmp-" not in path.name
                 )
-        return sorted(files, key=lambda path: (path.stat().st_mtime, str(path)))
+        return sorted(files, key=lambda path: (self._capture_stat(path).st_mtime, str(path)))
 
     def _manifest_files(self) -> list[Path]:
         root = self.config.root / "images"
@@ -621,22 +678,21 @@ class LocalCaptureStore:
         return sorted(
             (
                 path
-                for path in root.rglob("*.json")
-                if path.is_file()
-                and not path.name.endswith(".annotation.json")
+                for path in self._capture_files(root, "*.json")
+                if not path.name.endswith(".annotation.json")
                 and ".tmp-" not in path.name
             ),
-            key=lambda path: (path.stat().st_mtime, str(path)),
+            key=lambda path: (self._capture_stat(path).st_mtime, str(path)),
         )
 
     def _session_files(self) -> list[Path]:
         return sorted(
             (
                 path
-                for path in _files_under(self.config.root / "sessions")
+                for path in self._capture_files(self.config.root / "sessions")
                 if path.suffix.lower() == ".json" and ".tmp-" not in path.name
             ),
-            key=lambda path: (path.stat().st_mtime, str(path)),
+            key=lambda path: (self._capture_stat(path).st_mtime, str(path)),
         )
 
     def _metadata_files(self) -> list[Path]:
@@ -649,41 +705,41 @@ class LocalCaptureStore:
         return sorted(
             (
                 path
-                for path in root.rglob("*.annotation.json")
-                if path.is_file() and ".tmp-" not in path.name
+                for path in self._capture_files(root, "*.annotation.json")
+                if ".tmp-" not in path.name
             ),
-            key=lambda path: (path.stat().st_mtime, str(path)),
+            key=lambda path: (self._capture_stat(path).st_mtime, str(path)),
         )
 
     def _frozen_files(self) -> list[Path]:
         return sorted(
             (
                 path
-                for path in _files_under(self.config.root / "frozen")
+                for path in self._capture_files(self.config.root / "frozen")
                 if path.suffix.lower() == ".json" and ".tmp-" not in path.name
             ),
-            key=lambda path: (path.stat().st_mtime, str(path)),
+            key=lambda path: (self._capture_stat(path).st_mtime, str(path)),
         )
 
     def _artifact_files(self) -> list[Path]:
         return self._image_files() + self._metadata_files()
 
     def _artifact_bytes(self) -> int:
-        return sum(path.stat().st_size for path in self._artifact_files())
+        return sum(self._capture_stat(path).st_size for path in self._artifact_files())
 
     def _metadata_bytes(self) -> int:
-        return sum(path.stat().st_size for path in self._metadata_files())
+        return sum(self._capture_stat(path).st_size for path in self._metadata_files())
 
     def _trim_to_image_limit(self, files: list[Path], limit: int) -> None:
         if limit < 0:
             for path in files:
                 self._remove_capture(path)
             return
-        total = sum(path.stat().st_size for path in files)
+        total = sum(self._capture_stat(path).st_size for path in files)
         for path in files:
             if total <= limit:
                 break
-            size = path.stat().st_size
+            size = self._capture_stat(path).st_size
             self._remove_capture(path)
             total -= size
 
@@ -715,25 +771,24 @@ class LocalCaptureStore:
         active_sessions = {path.parent.name for path in self._image_files()}
         for session in self._session_files():
             if session.stem != protected_session_id and session.stem not in active_sessions:
-                session.unlink(missing_ok=True)
+                self._unlink_capture_file(session)
 
     def _remove_orphan_manifests(self) -> None:
         for manifest in self._manifest_files():
             image = manifest.with_suffix("")
             if not image.exists():
-                manifest.unlink(missing_ok=True)
-                manifest.with_suffix(manifest.suffix + ".annotation.json").unlink(missing_ok=True)
+                self._unlink_capture_file(manifest)
+                self._unlink_capture_file(manifest.with_suffix(manifest.suffix + ".annotation.json"))
         for annotation in self._annotation_files():
             manifest = annotation.with_name(annotation.name.removesuffix(".annotation.json"))
             if not manifest.exists() or not manifest.with_suffix("").exists():
-                annotation.unlink(missing_ok=True)
+                self._unlink_capture_file(annotation)
 
-    @staticmethod
-    def _remove_capture(path: Path) -> None:
+    def _remove_capture(self, path: Path) -> None:
         manifest = path.with_suffix(path.suffix + ".json")
-        path.unlink(missing_ok=True)
-        manifest.unlink(missing_ok=True)
-        manifest.with_suffix(manifest.suffix + ".annotation.json").unlink(missing_ok=True)
+        self._unlink_capture_file(path)
+        self._unlink_capture_file(manifest)
+        self._unlink_capture_file(manifest.with_suffix(manifest.suffix + ".annotation.json"))
 
     @staticmethod
     def _atomic_write(path: Path, data: bytes) -> None:

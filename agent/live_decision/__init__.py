@@ -34,6 +34,7 @@ from .selection import (
     live_select_label_box,
     build_live_title_views,
     remaining_live_card_clicks,
+    classify_live_runtime_frame,
     resolve_live_title_consensus,
     resolve_live_selected_slot_consensus,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "build_live_card_views",
     "build_live_title_views",
     "classify_live_card_views",
+    "classify_live_runtime_frame",
     "live_card_from_task100_prediction",
     "live_select_label_box",
     "remaining_live_card_clicks",

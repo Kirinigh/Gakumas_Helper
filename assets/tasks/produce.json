@@ -30,6 +30,218 @@
     }
   ],
   "option": {
+    "HIF 主属性": {
+      "type": "select",
+      "label": "$HIF 主属性",
+      "description": "$HIF 主属性说明",
+      "default_case": "preset",
+      "cases": [
+        {"name": "preset", "label": "$HIF 预设优先级", "pipeline_override": {"ProduceHifMainAttributeSettings": {"attach": {"attribute": null}}}},
+        {"name": "Vo", "label": "Vo", "pipeline_override": {"ProduceHifMainAttributeSettings": {"attach": {"attribute": "Vo"}}}},
+        {"name": "Da", "label": "Da", "pipeline_override": {"ProduceHifMainAttributeSettings": {"attach": {"attribute": "Da"}}}},
+        {"name": "Vi", "label": "Vi", "pipeline_override": {"ProduceHifMainAttributeSettings": {"attach": {"attribute": "Vi"}}}}
+      ]
+    },
+    "HIF 选拔回忆": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "hif_memory_stats",
+          "label": "$HIF 选拔回忆",
+          "description": "$HIF 选拔回忆说明",
+          "default": "",
+          "pipeline_type": "string",
+          "verify": "^(?:[1-9][0-9]{2,3}(?:,[1-9][0-9]{2,3}){2})?$",
+          "pattern_msg": "$HIF 选拔回忆说明"
+        }
+      ],
+      "pipeline_override": {
+        "ProduceHifQualifierMemorySettings": {
+          "attach": {"stats": "{hif_memory_stats}"}
+        }
+      }
+    },
+    "HIF 候选牌优先级": {
+      "type": "input",
+      "inputs": [
+        {"name": "hif_preferred_cards", "label": "候选牌优先 ID（逗号分隔，留空沿用原策略）", "default": "", "pipeline_type": "string", "verify": "^(?:[1-9][0-9]*(?:,[1-9][0-9]*)*)?$"},
+        {"name": "hif_pool_order", "label": "免费候选池顺序", "default": "reroll,exclude", "pipeline_type": "string", "verify": "^(?:reroll,exclude|exclude,reroll)$"}
+      ],
+      "pipeline_override": {"ProduceHifCandidatePoolSettings": {"attach": {
+        "preferred": "{hif_preferred_cards}", "order": "{hif_pool_order}"
+      }}}
+    },
+    "HIF 推进模式": {
+      "type": "select",
+      "default_case": "HIF 关闭",
+      "label": "$HIF 推进模式",
+      "description": "$HIF 推进说明",
+      "cases": [
+        {
+          "name": "HIF 关闭",
+          "label": "$HIF 关闭",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "off",
+                "preset": "hif-main-current-v1"
+              }
+            }
+          }
+        },
+        {
+          "name": "HIF 只读观察",
+          "label": "$HIF 只读观察",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "observe",
+                "preset": "hif-main-current-v1"
+              }
+            }
+          }
+        },
+        {
+          "name": "HIF 非战斗推进",
+          "label": "$HIF 非战斗推进",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "advance",
+                "preset": "hif-main-current-v1"
+              }
+            }
+          },
+          "option": [
+            "HIF 中场定制-继承策略"
+          ]
+        },
+        {
+          "name": "HIF 快速继续",
+          "label": "$HIF 快速继续",
+          "description": "$HIF 战斗策略说明",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "advance",
+                "preset": "hif-main-current-v1",
+                "battle_policy": "fast"
+              }
+            }
+          },
+          "option": [
+            "HIF 中场定制-快速策略"
+          ]
+        }
+      ]
+    },
+    "HIF 中场定制-继承策略": {
+      "type": "select",
+      "label": "$HIF 中场定制",
+      "description": "$HIF 中场定制说明",
+      "default_case": "HIF 定制继承",
+      "cases": [
+        {
+          "name": "HIF 定制继承",
+          "label": "$HIF 定制继承",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "advance",
+                "preset": "hif-main-current-v1",
+                "customization_enabled": null
+              }
+            }
+          }
+        },
+        {
+          "name": "HIF 定制关闭",
+          "label": "$HIF 定制关闭",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "advance",
+                "preset": "hif-main-current-v1",
+                "customization_enabled": false
+              }
+            }
+          }
+        },
+        {
+          "name": "HIF 定制启用",
+          "label": "$HIF 定制启用",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "advance",
+                "preset": "hif-main-current-v1",
+                "customization_enabled": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "HIF 中场定制-快速策略": {
+      "type": "select",
+      "label": "$HIF 中场定制",
+      "description": "$HIF 中场定制说明",
+      "default_case": "HIF 定制继承",
+      "cases": [
+        {
+          "name": "HIF 定制继承",
+          "label": "$HIF 定制继承",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "advance",
+                "preset": "hif-main-current-v1",
+                "battle_policy": "fast",
+                "customization_enabled": null
+              }
+            }
+          }
+        },
+        {
+          "name": "HIF 定制关闭",
+          "label": "$HIF 定制关闭",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "advance",
+                "preset": "hif-main-current-v1",
+                "battle_policy": "fast",
+                "customization_enabled": false
+              }
+            }
+          }
+        },
+        {
+          "name": "HIF 定制启用",
+          "label": "$HIF 定制启用",
+          "pipeline_override": {
+            "ProduceHifAdvanceEntry": {
+              "custom_action_param": {
+                "schema_version": 1,
+                "mode": "advance",
+                "preset": "hif-main-current-v1",
+                "battle_policy": "fast",
+                "customization_enabled": true
+              }
+            }
+          }
+        }
+      ]
+    },
     "Live 决策": {
       "type": "select",
       "default_case": "关闭（上游兼容）",
@@ -255,6 +467,58 @@
             "启用试镜难度降低",
             "试镜手动接管"
           ]
+        },
+        {
+          "name": "HIF（提前支持）",
+          "label": "$HIF（提前支持）",
+          "option": [
+            "HIF 主属性",
+            "HIF 选拔回忆",
+            "HIF 候选牌优先级",
+            "HIF 推进模式"
+          ],
+          "pipeline_override": {
+            "LocalDataConfigureProduce": {
+              "next": [
+                "ProduceHifAdvanceEntry"
+              ]
+            },
+            "ProduceMoveCards": {
+              "recognition": {
+                "type": "TemplateMatch",
+                "param": {
+                  "roi": [
+                    0,
+                    1100,
+                    720,
+                    180
+                  ],
+                  "template": [
+                    "produce/move_1.png",
+                    "produce/move_2.png"
+                  ]
+                }
+              }
+            },
+            "ProduceRecognitionSkipRound": {
+              "recognition": {
+                "type": "TemplateMatch",
+                "param": {
+                  "roi": [
+                    590,
+                    720,
+                    130,
+                    120
+                  ],
+                  "template": [
+                    "produce/skip_round.png",
+                    "produce/skip_round_1.png",
+                    "produce/skip_round_2.png"
+                  ]
+                }
+              }
+            }
+          }
         }
       ],
       "label": "$培育难度"

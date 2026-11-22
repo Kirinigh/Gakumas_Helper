@@ -67,6 +67,10 @@ class ArenaTaskLog:
             if state is not None:
                 state.enabled = True
 
+    def active_run_ids(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(run.run_id for run in self._runs.values())
+
     def background(self, context, message, logger):
         with self._lock:
             state = self.current(context)

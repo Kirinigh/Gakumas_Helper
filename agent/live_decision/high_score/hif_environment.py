@@ -30,7 +30,8 @@ class SampledHifKernel(HifSenseKernel):
 
     def __init__(self, kernel, rng):
         super().__init__(kernel.cards, kernel.drinks, kernel.items,
-                         memory_abilities=kernel.memory_abilities, support_definition=kernel.support_definition)
+                         memory_abilities=kernel.memory_abilities,
+                         plan_type=kernel.plan_type, support_definition=kernel.support_definition)
         self._rng = rng
         self._boundaries = []
         self.last_boundary = None

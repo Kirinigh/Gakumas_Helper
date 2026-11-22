@@ -65,6 +65,7 @@ class GenericCostAmbiguityResolution:
     generic_customization_id: int
     unenhanced_customizations: Mapping[str, int]
     enhanced_customizations: Mapping[str, int]
+    uses_independent_optional_absence: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,14 @@ _NUMERIC_EFFECT_LABEL_GUARDS = {
            for longer in _NUMERIC_EFFECT_LABELS)
 }
 _ADDED_NUMERIC_INTEGER = re.compile(r"-?[0-9]+(?!\d|[.,．，。]\d)")
+_ADDED_TARGET_GROWTH_MARKER = re.compile(
+    r"コア値増加|(?:手札|保留|すべて|全て)[^\u241e]{0,20}スキルカードのスコア"
+)
+_ADDED_TARGET_DIRECTIONS = {
+    "hand": re.compile(r"手札(?:にある|の)(?:スキルカードの)?スコア"),
+    "held": re.compile(r"保留(?:にある|の)(?:スキルカードの)?スコア"),
+    "all": re.compile(r"(?:すべて|全て)のスキルカードのスコア"),
+}
 
 
 def _normalise_text(value: object) -> str:
@@ -348,6 +357,25 @@ def _added_score_formula_is_visible(compact: str, label: str, percent: int) -> b
             raise ArenaCatalogError("malformed added score formula effect")
         visible = True
     return visible
+
+
+def _added_target_growth_contract(definition: Mapping[str, Any]) -> tuple[str, tuple[int, ...]] | None:
+    if (
+        any(definition.get(key) not in (None, "") for key in ("conditions", "cost", "effects", "limit"))
+        or definition.get("forceInitialHand") not in (None, "", False)
+    ):
+        return None
+    maximum = int(definition["max"])
+    parsed = tuple(
+        re.fullmatch(
+            r"target:(all|hand|held)\{g\.score\+=([1-9][0-9]*);?\};?",
+            _normalise_text(_selected_level_patch(definition.get("actions"), level)),
+        )
+        for level in range(1, maximum + 1)
+    )
+    if not all(parsed) or len({match[1] for match in parsed}) != 1 or len({match[2] for match in parsed}) != maximum:
+        return None
+    return parsed[0][1], tuple(int(match[2]) for match in parsed)
 
 
 def _all_integer_increments(value: object, field: str) -> tuple[int, ...]:
@@ -668,6 +696,109 @@ class ArenaEntityCatalog:
                         f"marker {occurrence.group()!r}, payload {tail[:32]!r}, "
                         f"allowed_values={values!r}, suffix={suffix!r}"
                     )
+
+    def _validate_partial_optional_effects(self, card_id: int, detail_text: str) -> None:
+        """Treat a visible fragment as incomplete until another view supplies its value."""
+        domains, _ = self._added_numeric_effect_domains(card_id)
+        signed_domains = {
+            field: values for field, values in domains.items() if _ADDED_NUMERIC_EFFECT_LABELS[field][0].endswith("+")
+        }
+        if not signed_domains:
+            return
+        views = tuple(dict.fromkeys(view.strip() for view in detail_text.split(_OCR_EFFECT_VIEW_BOUNDARY) if view.strip()))
+        compact_views = tuple(_normalise_effect_text(view) for view in views)
+        translation = str.maketrans(_TEXT_NORMALIZATION_REPLACEMENTS)
+        for field, values in signed_domains.items():
+            marker, suffix = _ADDED_NUMERIC_EFFECT_LABELS[field]
+            label = _numeric_effect_label_pattern(marker[:-1])
+            bare_label = r"(?:スコア?|コア)" if field == "score" else label
+            bare = re.compile(
+                rf"(?:^|(?<=[\s{_OCR_NUMERIC_TOKEN_BOUNDARY}])){bare_label}[ \t]*"
+                rf"(?=$|[\r\n{_OCR_NUMERIC_TOKEN_BOUNDARY}])(?!\s*\+)"
+            )
+            unsigned = re.compile(rf"{label}([−-]?[0-9]+(?:[.,][0-9]+)?)")
+            for index, (view, compact) in enumerate(zip(views, compact_views, strict=True)):
+                recognized_numbers = set(unsigned.findall(compact))
+                if not recognized_numbers and not bare.search(view.translate(translation)):
+                    continue
+                complete = {
+                    str(value)
+                    for other_index, other in enumerate(compact_views)
+                    if other_index != index
+                    for value in values
+                    if _contains_exact_integer_token(other, marker, value, suffix)
+                }
+                if len(complete) != 1 or recognized_numbers - complete:
+                    raise ArenaCatalogError(
+                        f"malformed added numeric effect: card {card_id}, field {field}, "
+                        f"view {index} has an unresolved fragment for {marker[:-1]!r}"
+                    )
+
+    def _independent_optional_absences(
+        self, card_id: int, matchers: Mapping[int, Any], compact: str,
+    ) -> frozenset[int]:
+        """Return zero levels for entirely unseen, independently rendered additions."""
+        card = self._cards_by_id[card_id]
+        base_program = ";".join(_normalise_text(card.get(key)) for key in ("actions", "effects", "conditions", "cost"))
+        domains, _ = self._added_numeric_effect_domains(card_id)
+        absent: set[int] = set()
+        target_growth: dict[int, tuple[str, tuple[int, ...], Any]] = {}
+        for customization_id, matcher in matchers.items():
+            definition = self._customizations[customization_id]
+            addition = _added_action_contract(definition)
+            formula = _added_score_formula_contract(definition)
+            action = _normalise_text(definition.get("actions"))
+            if "target:" in action and "g.score+=" not in base_program:
+                target = _added_target_growth_contract(definition)
+                if target is not None:
+                    target_growth[customization_id] = (*target, matcher)
+            if not matcher(compact, 0):
+                continue
+            if addition is not None and addition[2] == "literal_addition" and addition[1] > 0:
+                if addition[0] in domains or (addition[0] == "cardUsesRemaining" and "cardUsesRemaining" not in base_program):
+                    absent.add(customization_id)
+            elif formula is not None and not re.search(rf"score\+={formula[0]}(?:\*|[;}}]|$)", base_program):
+                absent.add(customization_id)
+            elif action == "upgradeHand" and self._upgrade_hand_detail_signature(card, "") is False:
+                absent.add(customization_id)
+            elif definition.get("forceInitialHand") is True and card.get("forceInitialHand") is not True:
+                if "試験・ステージ開始時手" in compact:
+                    raise ArenaCatalogError(f"card {card_id} detail has an unreadable initial-hand field")
+                absent.add(customization_id)
+        if target_growth:
+            self._validate_partial_target_growth(card_id, compact, target_growth)
+            if not _ADDED_TARGET_GROWTH_MARKER.search(compact):
+                absent.update(target_growth)
+        return frozenset(absent)
+
+    @staticmethod
+    def _validate_partial_target_growth(
+        card_id: int, compact: str, targets: Mapping[int, tuple[str, tuple[int, ...], Any]],
+    ) -> None:
+        views = tuple(dict.fromkeys(view for view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY) if view))
+        readings = []
+        for view in views:
+            directions = {direction for direction, marker in _ADDED_TARGET_DIRECTIONS.items() if marker.search(view)}
+            valid = {
+                (identifier, direction, value)
+                for identifier, (direction, values, matcher) in targets.items()
+                if not directions or direction in directions
+                for level, value in enumerate(values, 1)
+                if matcher(view, level)
+            }
+            numbers = set(re.findall(r"コア値増加\+?([−-]?[0-9]+(?:[.,][0-9]+)?)", view))
+            readings.append((view, directions, valid, numbers))
+        for index, (view, directions, valid, numbers) in enumerate(readings):
+            if not _ADDED_TARGET_GROWTH_MARKER.search(view):
+                continue
+            if len({identifier for identifier, _, _ in valid}) != len(valid):
+                raise ArenaCatalogError(f"card {card_id} detail has conflicting added target growth values")
+            if valid and directions <= {direction for _, direction, _ in valid} and numbers <= {str(value) for _, _, value in valid}:
+                continue
+            others = set().union(*(entry[2] for i, entry in enumerate(readings) if i != index))
+            if (len(others) != 1 or directions - {direction for _, direction, _ in others}
+                    or numbers - {str(value) for _, _, value in others}):
+                raise ArenaCatalogError(f"card {card_id} detail has an unreadable added target growth field")
 
     def _fixed_enthusiasm_effect_values(self, card_id: int) -> tuple[int, ...]:
         card = self._cards_by_id.get(card_id, {})
@@ -2379,6 +2510,7 @@ class ArenaEntityCatalog:
         that need other evidence.
         """
         self._validate_added_numeric_effects(card_id, detail_text)
+        self._validate_partial_optional_effects(card_id, detail_text)
 
         legal_groups = self.legal_customization_groups(
             card_id,
@@ -2536,6 +2668,7 @@ class ArenaEntityCatalog:
             effect_roi_text = ""
         self._validate_added_numeric_effects(card_id, full_detail_text)
         self._validate_added_numeric_effects(card_id, effect_roi_text)
+        self._validate_partial_optional_effects(card_id, _OCR_EFFECT_VIEW_BOUNDARY.join((full_detail_text, effect_roi_text)))
 
         legal_groups = self.legal_customization_groups(
             card_id,
@@ -3541,6 +3674,7 @@ class ArenaEntityCatalog:
         effect_roi_text: str | None,
         effect_roi_title_bound: bool,
         effect_roi_observation_count: int,
+        native_only: bool = False,
     ) -> bool:
         """Prove one omitted target-growth row from provenance-bound OCR views.
 
@@ -3562,35 +3696,11 @@ class ArenaEntityCatalog:
         """
 
         definition = self._customizations[customization_id]
-        if any(
-            _normalise_text(definition.get(field))
-            for field in ("conditions", "cost", "effects")
-        ):
+        if not _added_target_growth_contract(definition):
             return False
-        if definition.get("limit") not in (None, ""):
-            return False
-        if definition.get("forceInitialHand") not in (None, "", False):
-            return False
-
-        targets: set[str] = set()
-        increments: set[int] = set()
         maximum = int(definition["max"])
-        for level in range(1, maximum + 1):
-            selected = _normalise_text(
-                _selected_level_patch(definition.get("actions"), level)
-            )
-            match = re.fullmatch(
-                r"target:(all|hand|held)\{g\.score\+=([1-9][0-9]*);?\};?",
-                selected,
-            )
-            if match is None:
-                return False
-            targets.add(match.group(1))
-            increments.add(int(match.group(2)))
-        if len(targets) != 1 or len(increments) != maximum:
-            return False
 
-        views = self._covered_optional_row_detail_views(
+        views = self._native_optional_row_detail_view(card, combined_detail_text) if native_only else self._covered_optional_row_detail_views(
             card,
             combined_detail_text=combined_detail_text,
             full_detail_text=full_detail_text,
@@ -3612,7 +3722,7 @@ class ArenaEntityCatalog:
             # shared suffix.  Losing only that word must not turn a real
             # positive row into a hand/held zero, so any growth marker blocks
             # the covered-absence certificate before target-specific matching.
-            if "コア値増加+" in compact:
+            if _ADDED_TARGET_GROWTH_MARKER.search(compact):
                 return False
             if not matcher(compact, 0):
                 return False
@@ -3641,6 +3751,7 @@ class ArenaEntityCatalog:
         effect_roi_text: str | None,
         effect_roi_title_bound: bool,
         effect_roi_observation_count: int,
+        native_only: bool = False,
     ) -> bool:
         """Certify an absent literal/formula score row in a covered scalar body.
 
@@ -3742,7 +3853,7 @@ class ArenaEntityCatalog:
             )
         elif card.get("unique"):
             body_patterns.append("重複不可")
-        views = self._covered_optional_row_detail_views(
+        views = self._native_optional_row_detail_view(card, combined_detail_text) if native_only else self._covered_optional_row_detail_views(
             card,
             combined_detail_text=combined_detail_text,
             full_detail_text=full_detail_text,
@@ -3802,6 +3913,13 @@ class ArenaEntityCatalog:
                             if protected_formula_tail.search(tail):
                                 return False
         return True
+
+    @staticmethod
+    def _native_optional_row_detail_view(card: Mapping[str, Any], text: str) -> tuple[str, ...]:
+        title = _normalise_skill_card_title_text(card.get("name"))
+        if title and _OCR_EFFECT_VIEW_BOUNDARY not in text and title in _normalise_skill_card_title_text(text):
+            return (text,)
+        return ()
 
     def _covered_view_merge_zero_signature_is_visible(
         self,
@@ -4164,6 +4282,7 @@ class ArenaEntityCatalog:
         Unsupported or non-unique cards fail closed.
         """
         self._validate_added_numeric_effects(card_id, detail_text)
+        self._validate_partial_optional_effects(card_id, detail_text)
 
         if isinstance(expected_count, bool) or not isinstance(expected_count, int) or expected_count < 0:
             raise ArenaCatalogError("expected customization count must be a non-negative integer")
@@ -4215,15 +4334,10 @@ class ArenaEntityCatalog:
             )
         ]
 
-        # Prefer a group proved by visible customized values. Missing text is
-        # unknown, not evidence for level zero: full-screen contest OCR can
-        # omit one effect row while preserving the other rows. The trusted
-        # badge count and finite catalog close the remaining degrees of
-        # freedom. A matcher that also accepts level zero is non-discriminating
-        # and contributes no positive constraint. The strict path is retained
-        # for catalog effects whose stable UI representation is intentionally
-        # an omitted/unchanged row, but the backend confirms all multi-solution
-        # results from a fresh frame before they can enter an engine payload.
+        # Badge completion may constrain unrendered or baseline-dependent
+        # carriers. An independently rendered addition absent from the detail
+        # cannot become positive merely to fill the badge count.
+        absent = self._independent_optional_absences(card_id, matchers, compact)
         positive_levels: dict[int, frozenset[int]] = {}
         for customization_id in available:
             matcher = matchers[customization_id]
@@ -4238,7 +4352,7 @@ class ArenaEntityCatalog:
         positive_candidates = [
             group
             for group in legal_groups
-            if all(
+            if not absent.intersection(map(int, group)) and all(
                 not positive_levels[customization_id]
                 or group.get(str(customization_id), 0)
                 in positive_levels[customization_id]
@@ -4416,6 +4530,7 @@ class ArenaEntityCatalog:
         groups are not cached; a failed solve never starts a badge-count search.
         """
         self._validate_added_numeric_effects(card_id, detail_text)
+        self._validate_partial_optional_effects(card_id, detail_text)
         available = self.available_customization_ids(card_id)
         if not available:
             raise ArenaCatalogError(f"card {card_id} has no positive detail group")
@@ -4698,6 +4813,8 @@ class ArenaEntityCatalog:
         self._validate_added_numeric_effects(card_id, detail_text)
         self._validate_added_numeric_effects(card_id, full_detail_text or "")
         self._validate_added_numeric_effects(card_id, effect_roi_text or "")
+        observation_text = _OCR_EFFECT_VIEW_BOUNDARY.join((detail_text, full_detail_text or "", effect_roi_text or ""))
+        self._validate_partial_optional_effects(card_id, observation_text)
 
         if observed_badge_count is not None and (
             isinstance(observed_badge_count, bool)
@@ -4807,12 +4924,21 @@ class ArenaEntityCatalog:
                 f"card {card_id} badge count {observed_badge_count} is outside the two generic-cost states"
             )
 
-        # Missing non-cost rows are not generally reclassified as zero.  Every
-        # positive level must have a visible positive signature.  A zero level
-        # needs either an explicitly rendered baseline or the narrow covered
-        # optional-row proof above.  This keeps the bounded assumption strictly
-        # on the generic-cost bit.
+        # Unseen independent additions are absent. Baseline modifiers still
+        # need a rendered baseline or their established scoped proof.
         representative = by_generic_level[0]
+        observed = _normalise_effect_text(observation_text)
+        absent = self._independent_optional_absences(card_id, matchers, observed)
+        uses_independent_optional_absence = False
+        native_only = full_detail_text is None and effect_roi_text is None
+        coverage_kwargs = {
+            "resolved": representative,
+            "combined_detail_text": detail_text,
+            "full_detail_text": full_detail_text,
+            "effect_roi_text": effect_roi_text,
+            "effect_roi_title_bound": effect_roi_title_bound,
+            "effect_roi_observation_count": effect_roi_observation_count,
+        }
         for customization_id in available:
             if customization_id == generic_id:
                 continue
@@ -4830,35 +4956,26 @@ class ArenaEntityCatalog:
                     card,
                     customization_id,
                     compact,
-                ) or self._covered_target_growth_zero_signature_is_visible(
-                    card,
-                    customization_id,
-                    resolved=representative,
-                    combined_detail_text=detail_text,
-                    full_detail_text=full_detail_text,
-                    effect_roi_text=effect_roi_text,
-                    effect_roi_title_bound=effect_roi_title_bound,
-                    effect_roi_observation_count=(
-                        effect_roi_observation_count
-                    ),
-                ) or self._covered_direct_score_zero_signature_is_visible(
-                    card,
-                    customization_id,
-                    resolved=representative,
-                    combined_detail_text=detail_text,
-                    full_detail_text=full_detail_text,
-                    effect_roi_text=effect_roi_text,
-                    effect_roi_title_bound=effect_roi_title_bound,
-                    effect_roi_observation_count=effect_roi_observation_count,
-                ) or self._covered_view_merge_zero_signature_is_visible(
-                    card,
-                    customization_id,
-                    resolved=representative,
-                    combined_detail_text=detail_text,
-                    full_detail_text=full_detail_text,
-                    effect_roi_text=effect_roi_text,
-                    effect_roi_title_bound=effect_roi_title_bound,
-                    effect_roi_observation_count=effect_roi_observation_count,
+                )
+                definition = self._customizations[customization_id]
+                addition = _added_action_contract(definition)
+                independent_field = (
+                    (addition is not None and addition[0] != "score")
+                    or definition.get("forceInitialHand") is True
+                )
+                if not visible and customization_id in absent and independent_field:
+                    uses_independent_optional_absence = visible = True
+                if not visible and (
+                    self._covered_target_growth_zero_signature_is_visible(
+                        card, customization_id, **coverage_kwargs, native_only=native_only,
+                    ) or self._covered_direct_score_zero_signature_is_visible(
+                        card, customization_id, **coverage_kwargs, native_only=native_only,
+                    )
+                ):
+                    uses_independent_optional_absence |= native_only
+                    visible = True
+                visible = visible or self._covered_view_merge_zero_signature_is_visible(
+                    card, customization_id, **coverage_kwargs,
                 )
             if not visible:
                 raise ArenaCatalogError(
@@ -4867,10 +4984,21 @@ class ArenaEntityCatalog:
                     "covered optional-row zero proof"
                 )
 
+        if uses_independent_optional_absence:
+            title = _normalise_skill_card_title_text(card.get("name"))
+            if not title or title not in _normalise_skill_card_title_text(detail_text):
+                raise ArenaCatalogError(f"card {card_id} detail lacks the exact title anchor for optional effects")
+            if not any(
+                self._detail_coverage_anchor_present(card, representative, anchor, compact)
+                for anchor in self._detail_coverage_anchors(card, representative)
+            ):
+                raise ArenaCatalogError(f"card {card_id} detail lacks a recognized body anchor for optional effects")
+
         return GenericCostAmbiguityResolution(
             generic_customization_id=generic_id,
             unenhanced_customizations=dict(by_generic_level[0]),
             enhanced_customizations=dict(by_generic_level[1]),
+            uses_independent_optional_absence=uses_independent_optional_absence,
         )
 
     def _validate_customization_index(self) -> None:

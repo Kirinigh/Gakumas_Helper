@@ -30,11 +30,17 @@
 
 ## 从源码运行离线评测
 
-在公开源码根目录使用项目的 Python 环境运行。两个示例使用合成局面和固定种子，无需客户端、账号或第三方数据。
+在公开源码根目录使用项目的 Python 环境运行。示例使用合成局面和固定种子，无需客户端、账号或第三方数据。
 
 ```powershell
 python -m tools.task280_gkbench_smoke --local-seed 280
 python -m tools.task285_seed_bench --worlds 4 --planning-worlds 4 --output benchmark.json.gz
+python -m tools.task280_local_unclipped --arm draw-first --output local-episode.json.gz
+python -m tools.task285_seed_bench --continuation prior --two-round --output two-round.json.gz
 ```
 
 第一个示例校验公开动作绑定与规则回放。第二个示例在相同裁判种子上比较即时得分策略、独立采样规划和首步诊断组，并在报告中分别记录终局分数、非法动作和配对差值。诊断组只用于分析模拟中的随机状态影响。
+
+单局耗时诊断记录超过 5 秒及 6050 毫秒的决策。局面使用独立的整局时限，`--arm prior` 可运行同一局面的对照策略。两轮评测按首轮体力缺口和剩余的实体瓶位构建第二轮局面，使用独立于首轮的裁判种子，按首轮登记分加第二轮原分计算配对结果。两个命令均需指定新的输出文件，报告中的得分用于核对合成规则和评测过程。
+
+离线整局运行器也可接入 `tools.task280_decision_box.open_decision_box()`。`uinet-1.1` 和 `uinet-2.1` 接收调用方提供的模型、考试上下文及已确认的出牌历史，`strong` 接收调用方提供的策略工厂。二次取牌可显式配置策略工厂。三档测试均使用合成替身，覆盖公开观测投影、合法动作绑定和实际离线规则回执。

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Protocol
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 
 from arena_winrate import (
@@ -17,6 +18,7 @@ from arena_winrate import (
 )
 from card_selection.model import isolate_card_candidates
 from arena_winrate._reader_visual import _text
+from arena_winrate.badge_reference import CardIdentityCache
 from arena_winrate._card_detector_input import prepare_card_detector_input
 
 
@@ -43,7 +45,8 @@ class CardLayoutReaderPort(Protocol):
     _card_content_generation_diagnostics: Any
 
     def _card_content_generation_signatures(
-        self, image: Any, rows: dict[int, tuple[tuple[int, int, int, int], ...]]
+        self, image: Any, rows: dict[int, tuple[tuple[int, int, int, int], ...]],
+        *, identity_caches: defaultdict[tuple[int, int], CardIdentityCache] | None = ...,
     ) -> tuple[dict[int, tuple[tuple[str, Any], ...]], dict[int, tuple[dict[str, Any], ...]]]: ...
 
     _card_count_frames: Any
@@ -238,6 +241,8 @@ class CardLayoutReader:
         self,
         image: Any,
         rows: dict[int, tuple[tuple[int, int, int, int], ...]],
+        *,
+        identity_caches: defaultdict[tuple[int, int], CardIdentityCache] | None = None,
     ) -> tuple[
         dict[int, tuple[tuple[str, Any], ...]],
         dict[int, tuple[dict[str, Any], ...]],
@@ -246,14 +251,12 @@ class CardLayoutReader:
         signatures: dict[int, tuple[tuple[str, Any], ...]] = {}
         identities: dict[int, tuple[dict[str, Any], ...]] = {}
         for group_index, row in rows.items():
-            measured = tuple(
-                gallery.content_signature_with_identity(
-                    image,
-                    box,
-                    **self.port._skill_card_scope_kwargs(slot_index),
-                )
-                for slot_index, box in enumerate(row)
-            )
+            measured = []
+            for slot_index, box in enumerate(row):
+                kwargs = self.port._skill_card_scope_kwargs(slot_index)
+                if identity_caches is not None:
+                    kwargs["identity_cache"] = identity_caches[group_index, slot_index]
+                measured.append(gallery.content_signature_with_identity(image, box, **kwargs))
             signatures[group_index] = tuple((visual_group, query) for visual_group, query, _ in measured)
             identities[group_index] = tuple(identity for _, _, identity in measured)
         return signatures, identities
@@ -281,6 +284,7 @@ class CardLayoutReader:
         rows_by_group: dict[int, list[tuple[tuple[int, int, int, int], ...]]] = {index: [] for index in groups}
         content_by_group: dict[int, list[tuple[tuple[str, Any], ...]]] = {index: [] for index in groups}
         identity_by_group: dict[int, list[tuple[dict[str, Any], ...]]] = {index: [] for index in groups}
+        identity_caches: defaultdict[tuple[int, int], CardIdentityCache] = defaultdict(CardIdentityCache)
         monotonic_started = self.clock.monotonic()
         deadline = monotonic_started + timeout_seconds
         absolute_deadline = monotonic_started + maximum_timeout_seconds
@@ -328,6 +332,7 @@ class CardLayoutReader:
             except ArenaReaderError as error:
                 last_error = str(error)
                 last_failure_code = "skill_card_layout_incomplete"
+                identity_caches.clear()
                 frames.clear()
                 capture_times.clear()
                 for values in rows_by_group.values():
@@ -341,6 +346,7 @@ class CardLayoutReader:
                 content, identities = self.port._card_content_generation_signatures(
                     image,
                     observed,
+                    identity_caches=identity_caches,
                 )
                 self.port._add_timing(
                     "card_content_stability_check",
@@ -364,6 +370,7 @@ class CardLayoutReader:
                 if geometry_shifted or content_shifted:
                     if geometry_shifted:
                         self.port._increment("skill_card_layout_geometry_drift_resets")
+                    identity_caches.clear()
                     frames.clear()
                     capture_times.clear()
                     for values in rows_by_group.values():

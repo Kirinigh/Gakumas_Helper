@@ -1,3 +1,4 @@
+from .hif import HifSenseKernel
 from .probe import ArchitectureGate, build_architecture_probe_report
 from .golden import GoldenCase, GoldenSuite, GoldenExpectation, load_golden_suite
 from .kernel import (
@@ -100,6 +101,7 @@ from .evaluation import (
 )
 
 __all__ = [
+    "HifSenseKernel",
     "HIF_SENSE_RULESET_ID",
     "HIGH_SCORE_PROTOCOL_VERSION",
     "FULL_POWER_ACTIVATION_THRESHOLD",

@@ -1,7 +1,7 @@
 """Offline regressions for hand, P-item and drink observations using synthetic frames."""
 
-from types import SimpleNamespace
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import cv2
@@ -9,11 +9,12 @@ import numpy as np
 import pytest
 
 from agent.card_selection.types import CandidateBox, CardPrediction
+from agent.live_decision import drink_panel
 from agent.live_decision.catalog import SkillCardEntry, SkillCardFeatureCatalog
 from agent.live_decision.hif_visual import hif_select_label_rois, hif_current_title_family, locate_hif_selected_detail_title
 from agent.live_decision.item_panel import read_item_panel, item_counter_consensus, read_explicit_item_counter
 from agent.live_decision.drink_icons import EXAM_CENTERS, DrinkIconRecognizer
-from agent.live_decision.drink_panel import DrinkDetailEvidence, observe_drink_inventory
+from agent.live_decision.status_panel import StatusInspectionError
 
 
 def test_selected_title_rejects_two_panels_and_rois_reject_shifted_hand():
@@ -80,20 +81,26 @@ def test_weak_card_image_uses_only_current_complete_compatible_title(fault):
         read_ocr.assert_not_called()
 
 
+def _ocr_context(rows):
+    return SimpleNamespace(run_recognition=Mock(return_value=SimpleNamespace(hit=True, filtered_results=rows)))
+
+
 def test_explicit_item_badge_zero_requires_valid_read_and_agreement():
     image = np.zeros((50, 50, 3), np.uint8)
     cv2.circle(image, (25, 25), 15, (135, 135, 135), -1)
     cv2.putText(image, "0", (19, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-    read_ocr = Mock(return_value=[SimpleNamespace(box=(4, 4, 11, 11), text="０", score=0.987)])
-    zero = read_explicit_item_counter(read_ocr, image, (0, 0, 50, 50), use_limit=3)
-    assert item_counter_consensus((zero, zero, zero)).value == 0
+    context = _ocr_context([SimpleNamespace(box=(4, 4, 11, 11), text="０", score=0.987)])
+    zero = read_explicit_item_counter(context, image, (0, 0, 50, 50), use_limit=3)
+    assert item_counter_consensus((zero,)).value == 0
     with pytest.raises(ValueError, match="consensus"):
-        item_counter_consensus((zero, zero, replace(zero, value=1)))
+        item_counter_consensus((zero, replace(zero, value=1)))
     with pytest.raises(ValueError, match="consensus"):
-        item_counter_consensus((zero,))
+        item_counter_consensus(())
+    with pytest.raises(ValueError, match="invalid"):
+        item_counter_consensus((replace(zero, confidence=0.90),))
     with pytest.raises(ValueError, match="missing or ambiguous"):
-        read_explicit_item_counter(read_ocr, np.zeros_like(image), (0, 0, 50, 50), use_limit=3)
-    assert read_ocr.call_count == 1
+        read_explicit_item_counter(context, np.zeros_like(image), (0, 0, 50, 50), use_limit=3)
+    assert context.run_recognition.call_count == 1
 
 
 def test_item_overview_retains_missing_counter_and_rejects_duplicate_name():
@@ -105,67 +112,101 @@ def test_item_overview_retains_missing_counter_and_rejects_duplicate_name():
         SimpleNamespace(box=(230, 1127, 81, 20), text="閉じる", score=0.97),
     ]
     item = SimpleNamespace(box=(240, 132, 140, 25), text="検証用アイテム", score=0.98)
-    observed = read_item_panel(lambda *_: (*markers, item), image)
+    observed = read_item_panel(_ocr_context((*markers, item)), image)
     assert observed.rows[0].name == item.text
     assert observed.rows[0].used_count is None and observed.rows[0].use_limit is None
     with pytest.raises(ValueError, match="name is missing or ambiguous"):
-        read_item_panel(lambda *_: (*markers, item, item), image)
+        read_item_panel(_ocr_context((*markers, item, item)), image)
 
 
-def _drink_frames():
-    frames = tuple(np.zeros((1280, 720, 3), np.uint8) for _ in range(3))
+def test_drink_template_resolves_one_current_frame_with_complete_catalog():
+    frame = np.zeros((1280, 720, 3), np.uint8)
     rng = np.random.default_rng(90)
     icons = {key: rng.integers(0, 256, (56, 56, 4), dtype=np.uint8) for key in ("a", "b")}
     for icon in icons.values():
         icon[..., 3] = 255
     x, y = EXAM_CENTERS[0]
-    for frame in frames:
-        frame[y - 28 : y + 28, x - 28 : x + 28] = icons["a"][..., :3]
-    return frames, icons
-
-
-def test_drink_template_only_resolves_with_complete_catalog_and_three_frames():
-    frames, icons = _drink_frames()
-    accepted = DrinkIconRecognizer(icons, catalog_ids=icons)(frames, (0,), client_size=(720, 1280))
+    crop = frame[y - 28 : y + 28, x - 28 : x + 28]
+    crop[:] = icons["a"][..., :3]
+    recognizer = DrinkIconRecognizer(icons, catalog_ids=icons)
+    accepted = recognizer.read_slots(frame, client_size=(720, 1280))
     assert accepted[0]["drink_id"] == "a"
-    incomplete = DrinkIconRecognizer(icons, catalog_ids=(*icons, "c"))(frames, (0,), client_size=(720, 1280))
+    incomplete = DrinkIconRecognizer(icons, catalog_ids=(*icons, "c")).read_slots(frame, client_size=(720, 1280))
+    assert incomplete[0]["reason"] == "incomplete_icon_catalog"
     assert incomplete[0]["drink_id"] is None
-    x, y = EXAM_CENTERS[0]
-    frames[-1][y - 28 : y + 28, x - 28 : x + 28] = icons["b"][..., :3]
-    unstable = DrinkIconRecognizer(icons, catalog_ids=icons)(frames, (0,), client_size=(720, 1280))
-    assert unstable[0]["drink_id"] is None
+    crop[:] = cv2.addWeighted(icons["a"][..., :3], 0.5, icons["b"][..., :3], 0.5, 0)
+    weak = recognizer.read_slots(frame, client_size=(720, 1280))
+    assert weak[0]["reason"] == "weak_icon"
+    assert weak[0]["drink_id"] is None
 
 
-@pytest.mark.parametrize("fault", [None, "no_scope", "empty_slot", "conflict", "wrong_slot", "stale", "changed"])
-def test_drink_detail_only_accepts_authorized_slot_and_independent_unchanged_return(fault):
-    frames, _ = _drink_frames()
-    ids = ("a", "b", "c")
+@pytest.mark.parametrize("fault", [None, "no_scope", "empty_slot", "conflict", "denied", "stale", "changed", "low_confidence"])
+def test_drink_detail_requires_authorized_open_cancel_and_unchanged_return(fault, monkeypatch):
+    frames = {name: np.zeros((1280, 720, 3), np.uint8) for name in ("hud", "before", "detail", "cancel", "after")}
+    frame_ids = {id(frame): name for name, frame in frames.items()}
+    capture = iter(frames.values())
+
+    def frame_id(frame):
+        return frame_ids[id(frame)]
+
+    def post_screencap():
+        frame = next(capture)
+        return SimpleNamespace(wait=lambda: SimpleNamespace(get=lambda: frame))
+
+    def checkpoint(evidence, *, single_frame):
+        assert single_frame is True
+        frame, = evidence
+        return dict(families=(), fields={}, frame_ids=(frame_id(frame),))
+
     occupied = ((27, 1165, 70, 70), None, None, None)
-    empty = ((27, 1165, 36, 45) if fault == "conflict" else None, (129, 1177, 36, 45), (214, 1177, 36, 45), (300, 1177, 36, 45))
-    callback = Mock(
-        return_value=DrinkDetailEvidence(
-            1 if fault == "wrong_slot" else 0,
-            "a",
-            0.99,
-            ids,
-            ids if fault == "stale" else ("d", "e", "f"),
-            fault != "changed",
+    shifted = ((30, 1165, 70, 70), None, None, None)
+    empty = tuple(dict(box=(x, 1177, 36, 45), confidence=1.0) for x in (44, 129, 214, 300))
+    monkeypatch.setattr(drink_panel, "drink_slot_targets", lambda _, frame:
+                        shifted if fault == "changed" and frame is frames["after"] else occupied)
+    monkeypatch.setattr(drink_panel, "empty_drink_slot_targets", lambda *_: empty if fault == "conflict" else (None, *empty[1:]))
+    monkeypatch.setattr(drink_panel, "read_drink_detail", lambda *_, **__: dict(
+        name="A", name_ink_box=(90, 330, 100, 30), cancel_box=(20, 980, 140, 40), available=True,
+        confidence=0.90 if fault == "low_confidence" else 0.99))
+    if fault == "stale":
+        monkeypatch.setattr(drink_panel, "frame_captured_at", lambda *_: drink_panel.time.perf_counter() - 2)
+    monkeypatch.setattr("utils.maa_input.verify_maa_input_endpoints", lambda *_, **__: {})
+    direct_click = Mock(side_effect=AssertionError("direct input instead of scoped navigation"))
+    controller = SimpleNamespace(info={}, post_click=direct_click, post_screencap=post_screencap,
+                                 set_screenshot_target_long_side=lambda size: size == 1280)
+    context = SimpleNamespace(tasker=SimpleNamespace(controller=controller))
+    navigate = Mock(return_value=fault != "denied")
+
+    def observe():
+        return drink_panel.observe_complete_drink_inventory(
+            context, capture_frames=lambda: (next(capture),), checkpoint=checkpoint, frame_identifier=frame_id,
+            metadata=(dict(id="a", name="A", plan="free"),), template=None, plan="sense", run_id="fixture", revision=4,
+            single_frame_hud=True, hud_detail_slot={"no_scope": None, "empty_slot": 1}.get(fault, 0),
+            hud_detail_navigate=None if fault == "no_scope" else navigate,
         )
-    )
-    result = observe_drink_inventory(
-        frames,
-        (occupied,) * 3,
-        (empty,) * 3,
-        client_size=(720, 1280),
-        frame_ids=ids,
-        catalog_ids=("a", "b"),
-        authorized_slot={"no_scope": None, "empty_slot": 1}.get(fault, 0),
-        read_detail=callback,
-    )
-    assert result[0].drink_id == ("a" if fault is None else None)
-    assert result[0].state == ("UNKNOWN" if fault == "conflict" else "OCCUPIED")
-    assert all(slot.state == "EMPTY" for slot in result[1:])
-    if fault in {"no_scope", "empty_slot", "conflict"}:
-        callback.assert_not_called()
+
+    if fault is None:
+        result, = observe()
+        assert result["full_drink_state_ready"] is True
+        assert result["returned_unchanged"] is True
+        assert result["drinks"] == ("a",)
+        assert result["frame_ids"] == ("after",)
+        assert result["slots"][0]["source"] == "scoped_opening_detail"
+        assert [slot["state"] for slot in result["slots"][1:]] == ["EMPTY"] * 3
     else:
-        callback.assert_called_once_with(slot=0, frame_ids=ids)
+        with pytest.raises(StatusInspectionError) as error:
+            observe()
+        result, = error.value.events
+        assert result["accepted"] is False
+        assert result["slots"][0]["drink_id"] is None
+        assert result["slots"][0]["state"] == ("UNKNOWN" if fault == "conflict" else "OCCUPIED")
+
+    phases = [call.kwargs["phase"] for call in navigate.call_args_list]
+    if fault in {"no_scope", "empty_slot", "conflict", "stale"}:
+        assert phases == []
+    elif fault == "denied":
+        assert phases == ["open"]
+    else:
+        assert phases == ["open", "cancel"]
+    assert all(call.kwargs["slot"] == 0 and call.kwargs["run_id"] == "fixture" and call.kwargs["revision"] == 4
+               for call in navigate.call_args_list)
+    direct_click.assert_not_called()

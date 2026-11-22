@@ -6,6 +6,7 @@ from dataclasses import replace, dataclass
 
 from .kernel import KernelError, PythonNiaProKernel
 from .contracts import (
+    CardRef,
     ActionKind,
     GameAction,
     RiskProfile,

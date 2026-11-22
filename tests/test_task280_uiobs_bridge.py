@@ -1,3 +1,4 @@
+import time
 from types import SimpleNamespace
 from dataclasses import replace
 
@@ -5,8 +6,10 @@ import pytest
 from test_task275_gkms_shadow_adapter import CONTEXT, kernel, initial, request  # noqa: F401
 
 from tools import task280_uiobs_bridge as bridge
+from tools.task285_cases import load_case
+from tools.task285_seed_bench import RoutePolicy, SyntheticPrior
 from tools.task280_gkbench_hosted import _card_key
-from tools.task280_local_unclipped import summarize
+from tools.task280_local_unclipped import summarize, run_local_case
 from tools.task275.gkms_v2_observation import build_v2_observation
 from agent.live_decision.high_score.contracts import PlanType, ActionKind, GameAction
 from agent.live_decision.high_score.hif_environment import HifEnvironment
@@ -20,6 +23,25 @@ def public_observation():
         'deck': [{'id': 'one', 'u': 0}, {'id': 'two', 'u': 1}], 'hold': [], 'lost': [],
         'status': [], 'ench': [], 'timers': [], 'costs': [], 'pcount': [], 'legal': [['play', 0], ['end']],
     }
+
+
+def test_unclipped_runner_records_real_terminal_or_deadline():
+    case = load_case('synthetic-draw')
+    calls = []
+
+    def continuation(opening, request, *, planning_seed, deadline):
+        calls.append((opening.name, request.state.deck.knowledge, planning_seed, deadline))
+        return RoutePolicy(SyntheticPrior(), opening.routes[0])
+
+    for allowance, score in ((5., 90), (-1., None)):
+        deadline = time.perf_counter() + allowance
+        result = run_local_case(case, continuation, arm='synthetic', environment_seed=280,
+                                planning_seed=880280, deadline=deadline)
+        assert calls[-1][0] == case.name
+        assert calls[-1][2:] == (880280, deadline)
+        assert result['summary']['score'] == score
+        assert result['episode']['terminal'] == (score is not None)
+        assert result['summary']['decisions'] == (0 if score is None else 2)
 
 
 def test_public_comparison_uses_card_bags_and_rejects_unmapped_search_state():

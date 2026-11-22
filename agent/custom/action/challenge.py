@@ -63,8 +63,8 @@ from arena_winrate.maa_challenge_actions import (
     ArenaChallengeVerifyRefreshAction,
     ArenaChallengeRetryCurrentBattleAction,
     challenge_result_saved,
-    resume_pending_challenge,
     restore_challenge_action_next,
+    finish_current_challenge_return,
     recover_skipped_challenge_result,
 )
 
@@ -478,7 +478,7 @@ def _select_challenge_index(
 
 @AgentServer.custom_action("ChallengeResetOwnScorePreparation")
 class ChallengeResetOwnScorePreparation(CustomAction):
-    """Clear a marker left by an earlier task before any entry fallback."""
+    """Release local state from earlier tasks before normal arena entry."""
 
     @_report_unexpected_errors
     def run(
@@ -486,16 +486,23 @@ class ChallengeResetOwnScorePreparation(CustomAction):
         context: Context,
         argv: CustomAction.RunArg,
     ) -> bool:
+        del argv
         try:
             if _resolved_challenge_params(context).get("mode", "win_rate") == "win_rate":
                 arena_task_log.enable(context)
         except Exception:
-            logger.exception("竞技场日志模式尚未解析；继续原待办恢复")
-        if not resume_pending_challenge(
-            context, argv,
-            entry_recovery=lambda: _ArenaEntryRecoveryBackend(context).recover_entry(resolve_pending_result=False),
-        ):
-            return _stop_with_error(context, "上次竞技场对局尚未恢复，任务已中断")
+            logger.exception("竞技场日志模式尚未解析")
+        state = arena_task_log.current(context)
+        try:
+            cancellation_for(context).check()
+            retired = ArenaChallengeRecordStore().retire_previous_task(
+                state.run_id if state is not None else None,
+                active_run_ids=arena_task_log.active_run_ids(),
+            )
+        except (ArenaChallengeFlowError, OSError) as error:
+            return _stop_with_error(context, "无法清理先前竞技场任务的待办记录，已停止", error)
+        if retired is not None:
+            logger.info(f"已解除先前竞技场任务的本地待办标记: {retired}")
         reset_failed_arena_component_checks()
         reset_prepared_own_score_cache(OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE))
         logger.info("已清除上一任务可能遗留的竞技场己方缓存准备状态")
@@ -575,11 +582,14 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
             return True
         return False
 
-    def recover_entry(self, *, resolve_pending_result: bool = True) -> None:
+    def recover_entry(self) -> None:
         started = time.monotonic()
         deadline = started + 8.0
         self._entry_deadline = deadline
         returns = 0
+        navigation_reads = 0
+        loading_reads = 0
+        loading_deadline = None
         home_entry_sent = False
         hub_entry_sent = False
         home_return_sent = False
@@ -590,8 +600,8 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
         succeeded = False
         last_page = "unknown"
         try:
-            for frame_index in range(64):
-                if frame_index >= 6 and not title_seen:
+            for _ in range(64):
+                if navigation_reads >= 6 and not title_seen:
                     break
                 self._check_cancelled()
                 if time.monotonic() >= deadline:
@@ -599,6 +609,31 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                 image = self._capture()
                 items = self._ocr(image, r".+")
                 matches = lambda pattern: self._matching_ocr_items(items, pattern)
+                now = time.monotonic()
+                if now >= deadline:
+                    break
+                if matches(r"(?i)^\s*NOW\s*LOADING[.\s…]*$"):
+                    # The previous member page can still be visible behind
+                    # loading. Reobserve before applying any page/action gate.
+                    last_page = "loading"
+                    loading_reads += 1
+                    self._runtime_counts["arena_entry_loading_frames"] = self._runtime_counts.get("arena_entry_loading_frames", 0) + 1
+                    if loading_deadline is None:
+                        loading_deadline = min(deadline, now + 5.0)
+                    if loading_reads >= 12 or now >= loading_deadline:
+                        raise ArenaReaderError(
+                            "arena_entry_loading_timeout",
+                            "entry recovery did not leave the loading screen within its recovery budget",
+                        )
+                    if self._retry_transient_communication_items(items):
+                        last_page = "communication"
+                    remaining = loading_deadline - time.monotonic()
+                    if remaining > 0:
+                        self._sleep(min(0.25, remaining))
+                    continue
+                loading_reads = 0
+                loading_deadline = None
+                navigation_reads += 1
                 result_page = bool(
                     matches(r"^(?:WIN|LOSE|LOSS|VICTORY|DEFEAT|勝利|敗北)$")
                     or self._recognize("ChallengeNext", image)
@@ -608,23 +643,10 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                     break
                 if result_page:
                     last_page = "result"
-                    if not resolve_pending_result:
-                        # The outer pending owner saves/advances this result.
-                        # Navigation must not recursively resume that owner.
-                        succeeded = True
-                        return
-                    store = ArenaChallengeRecordStore()
-                    if store.load_pending() is None:
-                        raise ArenaReaderError(
-                            "arena_entry_result_unowned",
-                            "result page has no matching pending battle; no Back was sent",
-                        )
-                    # The existing result path owns its own durable retry budget
-                    # and only leaves after saving. Never Back from this branch.
-                    if not resume_pending_challenge(self.context, store=store):
-                        raise ArenaReaderError("arena_entry_result_recovery_failed", "pending result recovery did not finish")
-                    succeeded = True
-                    return
+                    raise ArenaReaderError(
+                        "arena_entry_result_unowned",
+                        "arena entry reached a result page outside the active battle flow",
+                    )
                 if self._retry_transient_communication_items(items):
                     last_page = "communication"
                     self._sleep(0.25)
@@ -677,7 +699,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                 # its existing middle-button recognition; the bottom tab is
                 # not itself proof that we have already entered the arena.
                 rating = matches(r"^レ[ー-]ト\s*Pt(?:\s*[0-9]+)?$")
-                hub = len(matches(r"^[PＰ]\s*ランキング$")) == len(rating) == 1
+                hub = len(matches(r"^(?:[RＲ]\s*)?[PＰ]\s*ランキング$")) == len(rating) == 1
                 if hub:
                     last_page = "activity_hub"
                     if not hub_entry_sent:
@@ -692,6 +714,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                                 left, top, width, height = roi
                                 rx, ry, rw, rh = rating[0].box
                                 bx, by, bw, bh = entry[0].box
+                                overlap = min(rx + rw, bx + bw) - max(rx, bx)
                                 same_section = (
                                     width > 0 and height > 0 and rw > 0 and rh > 0 and bw > 0 and bh > 0
                                     and left <= rx and rx + rw <= left + width
@@ -699,8 +722,7 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                                     and left <= bx and bx + bw <= left + width
                                     and top <= by and by + bh <= top + height
                                     and ry + rh <= by
-                                    and bx <= rx + rw / 2 <= bx + bw
-                                    and rx <= bx + bw / 2 <= rx + rw
+                                    and overlap >= min(rw, bw) / 2
                                 )
                                 if same_section:
                                     self._check_cancelled()
@@ -813,8 +835,6 @@ class ChallengePrepareOwnScore(CustomAction):
         params = _resolved_challenge_params(context)
         if params.get("mode", "win_rate") != "win_rate":
             return True
-        if not resume_pending_challenge(context):
-            return False
 
         auto_recalculate = params.get("auto_recalculate_own", False)
         if not isinstance(auto_recalculate, bool):
@@ -908,8 +928,6 @@ class ChallengeAuto(CustomAction):
             params = _resolved_challenge_params(context)
         except (TypeError, ValueError) as error:
             return _stop_with_error(context, "竞技场任务参数无效，已安全停止", error)
-        if params.get("mode", "win_rate") == "win_rate" and not resume_pending_challenge(context):
-            return False
 
         mode_allowed = [
             "fixed",
@@ -926,6 +944,8 @@ class ChallengeAuto(CustomAction):
                 context,
                 f"竞技场任务模式 {mode!r} 无效，仅允许 {mode_allowed}，已安全停止",
             )
+        if mode == "win_rate" and ArenaChallengeRecordStore().load_pending() is not None:
+            return _stop_with_error(context, "当前竞技场对局尚未完成，未选择新对手")
 
         if mode == "fixed":
             index = params.get("index", 1)
@@ -1455,13 +1475,6 @@ class ArenaChallengeRetryCurrentBattle(ArenaChallengeRetryCurrentBattleAction):
         return super().run(context, argv)
 
 
-@AgentServer.custom_action("ArenaChallengeResumePending")
-class ArenaChallengeResumePending(CustomAction):
-    @_report_unexpected_errors
-    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
-        return resume_pending_challenge(context, argv)
-
-
 def _challenge_recognized_click(context: Context, argv: CustomAction.RunArg) -> bool:
     """Keep Maa's original recognized target without recapturing or re-OCR."""
     cancellation_for(context).check()
@@ -1519,10 +1532,21 @@ class ArenaChallengeLeaveResult(CustomAction):
             return False
         restore_challenge_action_next(context, argv)
         store = ArenaChallengeRecordStore()
-        if store.load_pending() is not None and not challenge_result_saved(store):
-            if recover_skipped_challenge_result(context, argv, store=store):
-                return True
-            return _stop_with_error(context, "竞技场结果尚未保存，保留当前页面继续结果恢复")
-        if store.load_pending() is not None and getattr(argv, "node_name", "") == "ChallengeError":
-            return resume_pending_challenge(context, argv, store)
+        pending = store.load_pending()
+        on_error_page = getattr(argv, "node_name", "") == "ChallengeError"
+        if on_error_page:
+            state = arena_task_log.current(context)
+            if pending is not None and (state is None or pending.get("origin_run_id") != state.run_id):
+                return _stop_with_error(context, "当前竞技场任务无法确认该结算页面的对局归属")
+            if pending is None and _resolved_challenge_params(context).get("mode", "win_rate") == "win_rate":
+                return _stop_with_error(context, "当前竞技场任务没有可恢复的结算记录")
+        if pending is not None:
+            if not challenge_result_saved(store):
+                if on_error_page and pending.get("start_reservation_required") is True and not pending.get("battle_started"):
+                    return _stop_with_error(context, "当前竞技场对局尚未开始，未处理该结算页面")
+                if recover_skipped_challenge_result(context, argv, store=store):
+                    return True
+                return _stop_with_error(context, "竞技场结果尚未保存，保留当前页面继续结果恢复")
+            if on_error_page:
+                return finish_current_challenge_return(context, store)
         return _challenge_recognized_click(context, argv)

@@ -1145,6 +1145,22 @@ class ArenaChallengeRecordStore:
         self._write_atomic(self.pending_path, record)
         return record
 
+    def retire_previous_task(self, keep_run_id: str | None, *, active_run_ids: Sequence[str] = ()) -> str | None:
+        """Drop only a previous task's pending marker when starting a new task."""
+        pending = self.load_pending()
+        if pending is None:
+            return None
+        owner = pending.get("origin_run_id")
+        if keep_run_id is not None and owner == keep_run_id:
+            return None
+        if owner is not None and owner in active_run_ids:
+            raise ArenaChallengeFlowError("another active task owns the arena challenge")
+        capture_id = pending.get("capture_id")
+        if not isinstance(capture_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", capture_id):
+            raise ArenaChallengeFlowError("previous challenge capture_id is missing or unsafe")
+        self._unlink_pending()
+        return capture_id
+
     def abort(self, capture_id: str) -> None:
         pending = self.load_pending()
         if pending is None:

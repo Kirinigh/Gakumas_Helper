@@ -166,6 +166,9 @@ class TeamTarget:
         return self.opponent_position is None
 
 
+_NATIVE_GENERIC_COST_CANDIDATE = "conservative_generic_cost_native_candidate"
+
+
 @dataclass(frozen=True)
 class ClickedSkillCard:
     card_id: int

@@ -6,7 +6,42 @@ from dataclasses import dataclass
 DMM_TOTAL_TURNS = 9
 DMM_LATER_AUDITION_TURNS = 12
 DMM_SELF_RANK_ANCHORS = (294, 367, 450, 520, 591, 662)
-DMM_STAMINA_BAR_INNER_WIDTH = 118
+DMM_STAMINA_BAR_BOX = (506, 183, 142, 15)
+DMM_STAMINA_BAR_INNER_WIDTH = DMM_STAMINA_BAR_BOX[2]
+
+
+def calibrated_live_client_size(size):
+    """Resolve a native size to its fixed rendering profile, without drift.
+
+    The small HIF window can round either client edge by one physical pixel.
+    Maa still captures/clicks in the existing 720x1280 normalized coordinates.
+    This profile only chooses recognition assets; it never resizes a window.
+    """
+    if not isinstance(size, tuple) or len(size) != 2 or any(type(v) is not int for v in size):
+        return None
+    if size == (720, 1280):
+        return size
+    # Native 474: at 144 DPI, Maa's logical client is 721x1282 while
+    # the physical client is 1082x1923. Its own long-side normalization
+    # produces the same 720x1280 layout. Bind input to the observed logical
+    # dimensions; this mapping never converts or sends native coordinates.
+    if all(abs(v-base) <= 1 for v,base in zip(size, (721, 1282), strict=True)):
+        return (720, 1280)
+    if all(abs(v-base) <= 1 for v,base in zip(size, (480, 853), strict=True)):
+        return (480, 853)
+    # Both observed small clients deliver a 720x1280 Maa screenshot. Use
+    # small-window recognition assets; Maa maps clicks to its own client.
+    if size in ((359, 638), (360, 640)):
+        return (480, 853)
+    # A disconnected display can move the existing 540x960 window between
+    # DPI contexts, rounding both client edges together. Native 1302 proves
+    # the existing 720 glyph profile after full-frame HIF normalization;
+    # the capture adapter separately binds and maps Maa's 721/722px image.
+    # Native 1920 also records 541x962 at 144 DPI with a complete 720x1280
+    # capture. Admit that observed rounding, not arbitrary aspect-ratio drift.
+    if size in ((540, 960), (541, 961), (541, 962), (542, 962)):
+        return (720, 1280)
+    return None
 
 
 def _bgr_to_opencv_hsv(image: Any) -> tuple[Any, Any, Any]:
@@ -121,24 +156,35 @@ def locate_dmm_self_rank(image: Any) -> dict[str, Any]:
 
 
 def infer_dmm_max_stamina(image: Any, stamina: int) -> dict[str, Any]:
-    """Infer maximum stamina from the calibrated green bar fill geometry."""
+    """Diagnose maximum stamina from the bar's saturated green/blue extent.
+
+    The blue shield layer is rendered over the green stamina bar.  This helper
+    intentionally measures their saturated union and remains diagnostic until
+    partial-stamina frames with a positive shield prove that the overlay never
+    extends the stamina boundary.
+    """
 
     try:
         import numpy as np
 
-        if stamina <= 0 or image.shape[0] < 207 or image.shape[1] < 645:
+        x, y, width, height = DMM_STAMINA_BAR_BOX
+        if (
+            stamina <= 0
+            or image.shape[0] < y + height
+            or image.shape[1] < x + width
+        ):
             raise ValueError("stamina or frame is outside the calibrated layout")
         _hue, saturation, value = _bgr_to_opencv_hsv(
-            np.ascontiguousarray(image[175:207, 505:645])
+            np.ascontiguousarray(image[y : y + height, x : x + width])
         )
         mask = (saturation >= 80) & (value >= 100)
         columns = mask.sum(axis=0)
-        if int(columns[13]) < 7:
+        if int(columns[0]) < 5:
             raise ValueError("stamina fill did not start at the calibrated anchor")
-        fill_end = 13
+        fill_end = 0
         while fill_end + 1 < len(columns) and int(columns[fill_end + 1]) >= 7:
             fill_end += 1
-        fill_width = fill_end - 13 + 1
+        fill_width = fill_end + 1
         candidate = round(stamina * DMM_STAMINA_BAR_INNER_WIDTH / fill_width)
         expected_width = stamina * DMM_STAMINA_BAR_INNER_WIDTH / candidate
         residual = abs(fill_width - expected_width)
@@ -152,37 +198,3 @@ def infer_dmm_max_stamina(image: Any, stamina: int) -> dict[str, Any]:
         }
     except (AttributeError, ImportError, TypeError, ValueError, ZeroDivisionError):
         return {"accepted": False, "value": None, "confidence": 0.0}
-
-
-def calibrated_live_client_size(size):
-    """Resolve a native size to its fixed rendering profile, without drift.
-
-    The small HIF window can round either client edge by one physical pixel.
-    Maa still captures/clicks in the existing 720x1280 normalized coordinates.
-    This profile only chooses recognition assets; it never resizes a window.
-    """
-    if not isinstance(size, tuple) or len(size) != 2 or any(type(v) is not int for v in size):
-        return None
-    if size == (720, 1280):
-        return size
-    # Native 474: at 144 DPI, Maa's logical client is 721x1282 while
-    # the physical client is 1082x1923. Its own long-side normalization
-    # produces the same 720x1280 layout. Bind input to the observed logical
-    # dimensions; this mapping never converts or sends native coordinates.
-    if all(abs(v-base) <= 1 for v,base in zip(size, (721, 1282), strict=True)):
-        return (720, 1280)
-    if all(abs(v-base) <= 1 for v,base in zip(size, (480, 853), strict=True)):
-        return (480, 853)
-    # Both observed small clients deliver a 720x1280 Maa screenshot. Use
-    # small-window recognition assets; Maa maps clicks to its own client.
-    if size in ((359, 638), (360, 640)):
-        return (480, 853)
-    # A disconnected display can move the existing 540x960 window between
-    # DPI contexts, rounding both client edges together. Native 1302 proves
-    # the existing 720 glyph profile after full-frame HIF normalization;
-    # the capture adapter separately binds and maps Maa's 721/722px image.
-    # Native 1920 also records 541x962 at 144 DPI with a complete 720x1280
-    # capture. Admit that observed rounding, not arbitrary aspect-ratio drift.
-    if size in ((540, 960), (541, 961), (541, 962), (542, 962)):
-        return (720, 1280)
-    return None

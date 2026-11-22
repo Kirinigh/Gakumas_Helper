@@ -42,6 +42,7 @@ from .contracts import (
     EffectSourceKind,
     ScheduledEffectRef,
     TurnResolutionStage,
+    VerifiedHandSupport,
     EffectTriggerContext,
     ResolutionContinuation,
     CardEffectsContinuation,
@@ -344,6 +345,8 @@ def _resolution_continuation(raw: dict[str, Any]) -> ResolutionContinuation:
             remaining_effect_passes=int(raw["remaining_effect_passes"]),
             condition_stance=Stance(str(raw["condition_stance"])),
             condition_full_power=float(raw["condition_full_power"]),
+            support_tier=raw.get("support_tier", 0),
+            projection_kind=raw.get("projection_kind", "verified_effects"),
         )
     if kind is ResolutionKind.SCHEDULED_EFFECTS:
         return ScheduledEffectsContinuation(
@@ -567,6 +570,7 @@ def _state(raw: dict[str, Any]) -> StrategyState:
         field_effects=tuple(str(value) for value in raw.get("field_effects", [])),
         future_score_multipliers=tuple(float(value) for value in raw.get("future_score_multipliers", [])),
         turn_attributes=tuple(raw.get("turn_attributes", [])),
+        hand_support=tuple(VerifiedHandSupport(**fact) for fact in raw.get("hand_support", [])),
         cost_reduction=raw.get("cost_reduction", 0),
     )
 

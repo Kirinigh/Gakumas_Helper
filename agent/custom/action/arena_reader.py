@@ -14,6 +14,7 @@ import unicodedata
 from typing import Any, Protocol, NamedTuple
 from pathlib import Path
 from threading import Lock
+from collections import defaultdict
 from collections.abc import Mapping, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
@@ -55,6 +56,7 @@ from arena_winrate._reader_io import IoReader
 from card_selection.embedding import OnnxCardEmbedder
 from arena_winrate.cancellation import cancellation_for
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
+from arena_winrate.badge_reference import CardIdentityCache
 from arena_winrate._arena_page_flow import ArenaPageFlow, PageRecoveryState, RecoveryPageObservation
 from arena_winrate._detail_identity import (
     DetailIdentityTransaction,
@@ -1363,9 +1365,12 @@ class MaaArenaReaderBackend:
     _unique_reference_business_id = staticmethod(_reader_visual._unique_reference_business_id)
 
     def _card_content_generation_signatures(
-        self, image: Any, rows: dict[int, tuple[tuple[int, int, int, int], ...]]
+        self, image: Any, rows: dict[int, tuple[tuple[int, int, int, int], ...]],
+        *, identity_caches: defaultdict[tuple[int, int], CardIdentityCache] | None = None,
     ) -> tuple[dict[int, tuple[tuple[str, Any], ...]], dict[int, tuple[dict[str, Any], ...]]]:
-        return self._component_card_layout_reader()._card_content_generation_signatures(image, rows)
+        return self._component_card_layout_reader()._card_content_generation_signatures(
+            image, rows, identity_caches=identity_caches,
+        )
 
     def _capture_stable_card_groups(
         self,
@@ -2072,10 +2077,13 @@ class MaaArenaReaderBackend:
         self,
         expected_total_counts: tuple[int, ...],
         timeout_seconds: float = 3.0,
+        *,
+        pre_start: bool = False,
     ) -> None:
         return ArenaPageFlow(_ArenaPageFlowPort(self), time, logger).wait_for_stage_member_list(
             expected_total_counts,
             timeout_seconds=timeout_seconds,
+            pre_start=pre_start,
         )
 
     def _stage_total_anchors(self, image: Any) -> tuple[tuple[int, int, int, int], ...]:

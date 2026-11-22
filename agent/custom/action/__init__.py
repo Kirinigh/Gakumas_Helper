@@ -1,3 +1,4 @@
+from .hif import ProduceHifAdvance
 from .shop import *
 from .Counter import *
 from .produce import *
@@ -9,6 +10,7 @@ from .live_decision import *
 from .card_selection import *
 
 __all__ = [
+    "ProduceHifAdvance",
     "ShoppingCoinGachaAuto",
     "ShoppingDailyExchangeMoneyAuto",
     "ShoppingDailyExchangeAPAuto",

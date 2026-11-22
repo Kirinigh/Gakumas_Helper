@@ -4,6 +4,7 @@ import re
 import csv
 from pathlib import Path
 from dataclasses import dataclass
+from collections.abc import Mapping
 
 _NUMBER = r"(-?\d+(?:\.\d+)?)"
 
@@ -18,6 +19,12 @@ class SkillCardEntry:
     stamina_cost: int
     conditions: str
     actions: str
+    cost_expression: str = ""
+
+    @property
+    def stamina_transaction_supported(self) -> bool:
+        """S0 can prove stamina/shield payment, not focus or motivation costs."""
+        return not self.cost_expression.strip() or re.fullmatch(r"cost-=\d+", self.cost_expression.strip()) is not None
 
 
 class SkillCardFeatureCatalog:
@@ -44,6 +51,7 @@ class SkillCardFeatureCatalog:
                     stamina_cost=int(cost_match.group(1)) if cost_match else 0,
                     conditions=str(row.get("conditions", "")),
                     actions=str(row.get("actions", "")),
+                    cost_expression=str(row.get("cost", "")),
                 )
         if not entries:
             raise ValueError("skill-card catalog is empty")
@@ -80,9 +88,16 @@ class SkillCardFeatureCatalog:
                 return base.card_id
         return None
 
-    def features(self, card_id: str, *, turns_remaining: int) -> dict[str, float]:
+    def features(
+        self,
+        card_id: str,
+        *,
+        turns_remaining: int,
+        statuses: Mapping[str, float] | None = None,
+    ) -> dict[str, float]:
         entry = self.entries[card_id]
         actions = entry.actions
+        status_stacks = dict(statuses or {})
 
         def total(pattern: str) -> float:
             return sum(float(value) for value in re.findall(pattern, actions))
@@ -93,8 +108,18 @@ class SkillCardFeatureCatalog:
         status_gain = total(r"fullPowerCharge\+=" + _NUMBER) * 1.5
         status_gain += total(r"(?:concentration|goodConditionTurns|motivation)\+=" + _NUMBER) * 0.5
         status_gain += actions.count("setStance(strength)") * 4.0
-        status_gain += actions.count("setStance(preservation)") * 3.0
+        preservation_levels = [
+            int(value or "1")
+            for value in re.findall(r"setStance\(preservation(\d*)\)", actions)
+        ]
+        if card_id in {"849", "850"} and status_stacks.get("stance:strength", 0.0) <= 0:
+            preservation_levels = []
+        status_gain += sum(preservation_levels) * 3.0
         multiplier_synergy = actions.count("scoreTimes") * 4.0
+        multiplier_synergy += sum(
+            max(0.0, float(value) - 1.0) * 4.0
+            for value in re.findall(r"enthusiasmMultiplier=" + _NUMBER, actions)
+        )
         multiplier_synergy += actions.count("target:active") * 2.0
         multiplier_synergy += actions.count("at:cardUsed") * 2.0
         multiplier_synergy += actions.count("goodConditionTurns") * 1.5
@@ -102,6 +127,10 @@ class SkillCardFeatureCatalog:
         draw_value += actions.count("holdSelected") * 2.0
         risk = max(0, entry.stamina_cost - 5) * 0.5
         risk += 0.5 if entry.conditions else 0.0
+
+        if card_id in {"849", "850"}:
+            score_gain *= 1.0 + max(0.0, status_stacks.get("card:849:score_times", 0.0))
+            stamina_recovery += max(0.0, status_stacks.get("card:849:genki_bonus", 0.0)) * 0.25
 
         if turns_remaining <= 3:
             score_gain *= 1.8

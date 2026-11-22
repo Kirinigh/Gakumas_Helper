@@ -35,7 +35,7 @@ from .contracts import (
     TurnResolutionContinuation,
 )
 from .state_copy import replace
-from ..status_rules import (
+from ..status_panel import (
     memory_use_counts,
     _normalize_status_text,
     status_panel_consensus,
@@ -56,7 +56,8 @@ class ObservedHifMemory:
     count_source: str
 
 
-def compile_observed_hif_memories(known_pages, current_pages, card_catalog, *, known_run_id, current_run_id):
+def compile_observed_hif_memories(known_pages, current_pages, card_catalog, *, known_run_id, current_run_id,
+                                  plan_type=PlanType.SENSE):
     """Compile only observed trigger/effect text and D-067 confirmed counters.
 
     This produces memory definitions, not a ready StrategyState. Item/source
@@ -76,7 +77,7 @@ def compile_observed_hif_memories(known_pages, current_pages, card_catalog, *, k
         # can name an unowned card whose play effects the kernel cannot compile;
         # that does not make its identity or the separate memory effect unknown.
         found = [card for card in card_catalog.entries.values()
-                 if card.plan in {'sense','free'} and _normalize_status_text(card.name) == name]
+                 if card.plan in {plan_type.value.lower(), 'free'} and _normalize_status_text(card.name) == name]
         if len(found) != 1:
             raise ValueError('memory card name is not uniquely registered')
         return found[0]
@@ -112,13 +113,20 @@ def compile_observed_hif_memories(known_pages, current_pages, card_catalog, *, k
             raise ValueError('unsupported observed memory effect')
         definition = MemoryAbilityDefinition(ability_id,match[1]+'使用後',(
             EffectSpec(EffectKind.SCHEDULE,delay_turns=0,schedule_phase=SchedulePhase.AFTER_CARD_USED,
-                       schedule_limit=row.count,scheduled_effects=effects),),PlanType.SENSE)
+                       schedule_limit=row.count,scheduled_effects=effects),),plan_type)
         definition.validate()
         if description in definitions or any(old.ability_id == ability_id for old in definitions.values()):
             raise ValueError('observed memory identity is duplicated')
         definitions[description] = definition
     return tuple(ObservedHifMemory(definitions[row['description_key']],row['remaining_uses'],row['source'])
                  for row in counts)
+
+
+def build_hif_policy(kernel: "HifSenseKernel"):
+    """Shared joint search; no hand-width fallback to one-step values."""
+    from .hif_budget import HifSearchBudget, TieredHifPlanner
+
+    return TieredHifPlanner(kernel, HifSearchBudget(allow_slow=True))
 
 
 class HifSenseKernel(HifSupportPlanningMixin, PythonNiaProKernel):
@@ -296,7 +304,8 @@ class HifSenseKernel(HifSupportPlanningMixin, PythonNiaProKernel):
                                for child in children)):
                     return None
         projection=_HifScalarProjection(self.cards,self.drinks,self.items,
-            memory_abilities=self.memory_abilities, support_definition=self.support_definition)
+            memory_abilities=self.memory_abilities, plan_type=self.plan_type,
+            support_definition=self.support_definition)
         return projection.transition(state,action,plan_type=plan_type)
 
     def terminal_score_resources(self, state, action, *, plan_type):
@@ -502,14 +511,18 @@ class HifSenseKernel(HifSupportPlanningMixin, PythonNiaProKernel):
         items: Mapping[str, ItemDefinition] | None = None,
         *,
         memory_abilities: Mapping[str, MemoryAbilityDefinition] | None = None,
+        plan_type: PlanType = PlanType.SENSE,
         support_definition: Callable[[CardDefinition, int], CardDefinition] | None = None,
     ):
-        super().__init__(cards, drinks, items, ruleset_id=HIF_SENSE_RULESET_ID, memory_abilities=memory_abilities)
+        self.plan_type = plan_type
         self.support_definition = support_definition
+        ruleset_id = (HIF_SENSE_RULESET_ID if plan_type is PlanType.SENSE
+                      else f'hif-{plan_type.value.lower()}-task275-v1')
+        super().__init__(cards, drinks, items, ruleset_id=ruleset_id, memory_abilities=memory_abilities)
 
     def _validate_registered_state(self, state: StrategyState, *, plan_type: PlanType) -> None:
-        if plan_type is not PlanType.SENSE:
-            raise KernelError("hif_first_slice_requires_sense")
+        if plan_type is not self.plan_type:
+            raise KernelError("HIF request plan does not match the opening")
         if state.max_stamina <= 0:
             raise KernelError("hif_maximum_stamina_required")
         if len(state.future_score_multipliers) != max(0, state.turns_remaining - 1):
@@ -544,6 +557,7 @@ class _HifTurnBoundary(HifSenseKernel):
     def __init__(self, kernel, before_turn):
         self.cards, self.drinks, self.items = kernel.cards, kernel.drinks, kernel.items
         self.memory_abilities, self.ruleset_id = kernel.memory_abilities, kernel.ruleset_id
+        self.plan_type = kernel.plan_type
         self.support_definition = kernel.support_definition
         self._before_turn = before_turn
 

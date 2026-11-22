@@ -7,7 +7,7 @@ one resolved catalog group; it never infers absence or temporary enhancements.
 import re
 from dataclasses import replace
 
-from .kernel import EffectKind
+from .kernel import EffectKind, CardCostKind
 from .catalog_v2 import _compile_condition, _compile_action_sequence
 
 _GROWTH = {
@@ -65,6 +65,7 @@ def compile_observed_customizations(base, card_row, customization_rows, levels):
            or not 1 <= value <= int(rows[key]['max']) for key, value in levels.items()):
         raise ValueError('observed customization group is not legal')
     effects = list(base.effects)
+    stamina_cost = base.stamina_cost
     condition, limited = base.condition, base.limited
     for key in allowed:
         if key not in levels:
@@ -80,19 +81,40 @@ def compile_observed_customizations(base, card_row, customization_rows, levels):
         if row.get('effects'):
             statement = _level_effect(str(row['effects']).strip(), level)
             match = re.fullmatch(r'at:prestage\s*\{\s*target:this\s*\{\s*g\.(\w+)\+=(\d+)\s*}\s*}', statement)
-            kind = _GROWTH.get(match[1]) if match else None
-            if kind is None:
-                raise ValueError('customization growth is not compiled')
-            targets = [i for i, effect in enumerate(effects) if effect.kind is kind]
-            if (len(targets) != 1 or any(
-                nested.kind is kind for effect in effects + list(base.persistent_effects)
-                for nested in effect.scheduled_effects
-            )):
-                raise ValueError('customization growth needs one direct effect carrier')
-            index, = targets
-            if effects[index].value_source is not None:
-                raise ValueError('customization state-scaled growth is not compiled')
-            effects[index] = replace(effects[index], amount=effects[index].amount + int(match[2]))
+            if match and match[1] == 'cost':
+                ordinary = re.fullmatch(r'cost-=(\d+)', str(card_row.get('cost', '')))
+                if (base.cost_kind is not CardCostKind.NORMAL or base.full_power_cost
+                        or ordinary is None or int(ordinary[1]) != base.stamina_cost):
+                    raise ValueError('customization cost growth needs one fixed ordinary cost')
+                # The catalog uses negative payment: cost-=3 plus g.cost+=2
+                # pays one. Definitions store positive cost magnitudes.
+                stamina_cost = max(0, stamina_cost - int(match[2]))
+            elif match and match[1] == 'typedCost':
+                # 1739 observes both fixed Sense resource costs. The source
+                # resolver subtracts typedCost growth from payment, floored at
+                # zero; it changes neither the resource kind nor card effects.
+                typed = re.fullmatch(r'(concentration|goodConditionTurns)-=(\d+)',
+                                     str(card_row.get('cost', '')))
+                kinds = {'concentration': CardCostKind.CONCENTRATION,
+                         'goodConditionTurns': CardCostKind.GOOD_CONDITION}
+                if (typed is None or base.cost_kind is not kinds[typed[1]]
+                        or base.full_power_cost or int(typed[2]) != base.stamina_cost):
+                    raise ValueError('customization typed growth needs one fixed Sense resource cost')
+                stamina_cost = max(0, stamina_cost - int(match[2]))
+            else:
+                kind = _GROWTH.get(match[1]) if match else None
+                if kind is None:
+                    raise ValueError('customization growth is not compiled')
+                targets = [i for i, effect in enumerate(effects) if effect.kind is kind]
+                if (len(targets) != 1 or any(
+                    nested.kind is kind for effect in effects + list(base.persistent_effects)
+                    for nested in effect.scheduled_effects
+                )):
+                    raise ValueError('customization growth needs one direct effect carrier')
+                index, = targets
+                if effects[index].value_source is not None:
+                    raise ValueError('customization state-scaled growth is not compiled')
+                effects[index] = replace(effects[index], amount=effects[index].amount + int(match[2]))
         if row.get('actions'):
             appended = _compile_action_sequence(str(row['actions']))
             if appended is None:
@@ -100,6 +122,6 @@ def compile_observed_customizations(base, card_row, customization_rows, levels):
             effects.extend(appended)
     suffix = ','.join(f'{key}={levels[key]}' for key in sorted(levels, key=int))
     result = replace(base, card_id=f'{base.card_id}@{suffix}', canonical_card_id=base.card_id,
-                     effects=tuple(effects), condition=condition, limited=limited)
+                     effects=tuple(effects), stamina_cost=stamina_cost, condition=condition, limited=limited)
     result.validate()
     return result

@@ -879,10 +879,27 @@ class GenericCostReferenceGallery:
             and digit_class_margin is not None
             and digit_class_margin >= self.minimum_digit_margin
         )
+        five_stem_certified = (
+            not digit_certified
+            and kind == "cost"
+            and set(allowed) == {3, 5}
+            and candidate_value == cutout_candidate_value == symbol_candidate_value == digit_candidate_value == 5
+            and best_error <= self.maximum_mask_error
+            and margin >= self.minimum_class_margin
+            and cutout_best_error is not None
+            and cutout_best_error <= self.maximum_cutout_error
+            and digit_best_error is not None
+            and digit_best_error <= self.maximum_digit_error
+            # The fixed renderer draws a continuous left stem from the upper
+            # cap to the middle of 5. The upper curve of 3 leaves a gap here.
+            # Test continuity on the normalized digit, after sign isolation.
+            and digit_query is not None
+            and int(np.all(digit_query[2:10, :7], axis=0).sum()) >= 3
+        )
         if best_error > self.maximum_high_error:
             status = "MASK_ERROR_TOO_HIGH"
             value = None
-        elif symbol_query is not None and not digit_certified:
+        elif symbol_query is not None and not (digit_certified or five_stem_certified):
             status = "DIGIT_EVIDENCE_NOT_CERTIFIED"
             value = None
         elif symbol_query is not None:
@@ -960,6 +977,7 @@ class GenericCostReferenceGallery:
                 if digit_query is not None
                 else ""
             ),
+            evidence_mode="five_upper_left_stem" if five_stem_certified else "",
         )
 
     def classify_symbol_descriptor(

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 from collections import Counter
 from dataclasses import field, asdict, dataclass
 
@@ -900,6 +901,31 @@ class DecisionTrace:
     candidate_values: tuple[CandidateValue, ...] = ()
     reason_codes: tuple[str, ...] = ()
     value_scope: str = "FINAL_SCORE"
+
+
+@dataclass(frozen=True)
+class HifActionIntent(ABC):
+    """Native battle intent with its policy trace and no measured score summary."""
+
+    action: GameAction | None
+    reason: str
+    trace: DecisionTrace
+    value: ClassVar[None] = None
+
+    @property
+    @abstractmethod
+    def protocol_version(self) -> str:
+        """Version of the strategy's recorded native intent."""
+
+    @property
+    def has_action_intent(self) -> bool:
+        return self.action is not None
+
+    def to_dict(self) -> dict[str, Any]:
+        outcome = DecisionOutcome.DECIDE if self.has_action_intent else DecisionOutcome.STOP_TASK
+        return dict(_jsonable(asdict(self)), value=self.value, outcome=outcome.value,
+                    protocol_version=self.protocol_version, has_action_intent=self.has_action_intent,
+                    execution_authorized=False)
 
 
 @dataclass(frozen=True)

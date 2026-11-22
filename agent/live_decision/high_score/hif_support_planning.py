@@ -5,9 +5,124 @@ here. A definition captured by a suspended card stays on its existing frame.
 """
 from __future__ import annotations
 
+import json
+import math
+
 from .kernel import RuleEvent, EffectKind, PythonNiaProKernel
 from .contracts import EffectSourceKind, VerifiedHandSupport
 from .state_copy import replace
+
+
+def replay_visible_hand_projection(bundle, event):
+    """Recompute a saved current-hand estimate from complete title evidence."""
+    from dataclasses import asdict
+
+    from .contracts import _jsonable
+    from ..contracts import LiveState
+    from .live_policy import BoundHifOpeningPolicy
+    from .hif_mcts_cache import exact_state
+
+    def same(left, right):
+        def canonical(value):
+            if isinstance(value, dict) and 'bound_state' in value:
+                value = dict(value, bound_state=asdict(exact_state(value['bound_state'])))
+            return _jsonable(value)
+
+        return json.dumps(canonical(left), sort_keys=True, allow_nan=False) == json.dumps(
+            canonical(right), sort_keys=True, allow_nan=False)
+
+    if (not isinstance(event, dict) or event.get('source') != 'hif_current_turn_ordinary_plus_v1'
+            or (event.get('run_id'), event.get('revision')) != (bundle.run_id, bundle.revision)
+            or exact_state(event.get('bound_state')) != bundle.state
+            or not same(event.get('inventory_keys'), bundle.inventory_keys)):
+        raise ValueError('ordinary_plus_projection_source_changed')
+    policy = BoundHifOpeningPolicy(bundle, action_order=())
+    restored = policy.bind_visible_hand(LiveState.from_dict(event.get('visible_state')),
+        identity_events=event.get('identity_events', ()))
+    if policy.ordinary_plus_projection is None or not same(event, policy.ordinary_plus_projection):
+        raise ValueError('ordinary_plus_projection_evidence_changed')
+    return restored
+
+
+def observed_plus_hand(bundle, live, identity_events):
+    """Replay the observer's existing title/instance evidence, never its effects.
+
+    Retained hand readers deliberately report the permanent ID. Their complete
+    blue-title receipt can supply a current ordinary-plus estimate separately.
+    No pixel acquisition, selection or new input authority occurs here.
+    """
+    relevant = {'initial_observation', 'hif_complete_title_identity',
+                'retained_complete_hand_identity', 'hif_temporary_support_identity'}
+    events = tuple(event for event in identity_events if event.get('phase') in relevant)
+    initial = [event for event in events if event.get('phase') == 'initial_observation']
+    proofs = [event for event in events if event.get('phase') == 'hif_temporary_support_identity']
+    changed = [slot for slot, (observed, ref) in enumerate(zip(live.hand, bundle.state.deck.hand, strict=True))
+               if observed.card_id == bundle.kernel.cards[ref.card_id].upgrade_card_id and not ref.upgraded]
+    if not proofs and not changed:
+        return live, events
+    if len(initial) != 1:
+        raise ValueError('ordinary_plus_estimate_requires_original_identity_batch')
+    origin = initial[0]
+    frame_ids = origin.get('frame_ids', ())
+    boxes = origin.get('candidate_boxes', ())
+    if (origin.get('geometry_stable') is not True or origin.get('identity_source_accepted') is not True
+            or len(frame_ids) != 3 or len(set(frame_ids)) != 3
+            or any(not isinstance(value, str) or not value for value in frame_ids)
+            or len(boxes) != 3 or any(len(frame) != len(live.hand) for frame in boxes)):
+        raise ValueError('ordinary_plus_estimate_identity_batch_incomplete')
+    hand = list(live.hand)
+    seen = set()
+    for proof in proofs:
+        slot = proof.get('slot')
+        if type(slot) is not int or not 0 <= slot < len(hand) or slot in seen:
+            raise ValueError('ordinary_plus_estimate_identity_slot_ambiguous')
+        seen.add(slot)
+        ref = bundle.state.deck.hand[slot]
+        ordinary = bundle.kernel.cards[ref.card_id]
+        visible = bundle.kernel.cards.get(ordinary.upgrade_card_id)
+        if (proof.get('source') != 'bound_rightmost_blue_support_identity'
+                or (proof.get('run_id'), proof.get('revision'), proof.get('observed_turn'))
+                    != (bundle.run_id, bundle.revision, bundle.state.turn)
+                or (proof.get('card_instance_id'), proof.get('card_id')) != (ref.instance_id, ref.card_id)
+                or ref.upgraded or (ref.instance_id, ref.card_id, ()) not in bundle.inventory_keys
+                or visible is None or proof.get('visible_card_id') != visible.card_id
+                or visible.base_card_id != ordinary.base_card_id or visible.name != ordinary.name+'+'
+                or proof.get('effects_verified') is not False or proof.get('submission_authorized') is not False
+                or hand[slot].card_id not in (ref.card_id, visible.card_id)
+                or not hand[slot].identity_accepted):
+            raise ValueError('ordinary_plus_estimate_identity_source_changed')
+        observations = proof.get('observations', ())
+        if len(observations) != 3 or [row.get('frame_id') for row in observations] != list(frame_ids):
+            raise ValueError('ordinary_plus_estimate_title_frames_changed')
+        for index, row in enumerate(observations):
+            title = row.get('title', {})
+            box, plate = title.get('box', ()), row.get('title_plate', ())
+            card_box = boxes[index][slot]
+            confidence = title.get('score')
+            if (row.get('slot') != slot or title.get('text') != visible.name
+                    or type(confidence) not in (int, float) or not math.isfinite(confidence)
+                    or not .95 <= confidence <= 1
+                    or any(len(value) != 4 or any(type(number) is not int for number in value)
+                           or min(value[2:]) <= 0 for value in (box, plate, card_box))
+                    or not card_box[0] <= box[0] < box[0]+box[2] <= card_box[0]+card_box[2]
+                    or not 1090 <= box[1] <= 1120 or not 14 <= box[3] <= 32
+                    or not plate[0]-5 <= box[0] < box[0]+box[2] <= plate[0]+plate[2]+5
+                    or row.get('suffix_color') != 'blue'
+                    or row.get('marker', {}).get('upgraded') is not True):
+                raise ValueError('ordinary_plus_estimate_complete_title_changed')
+        hand[slot] = replace(hand[slot], card_id=visible.card_id, upgraded=True)
+    for slot in set(changed)-seen:
+        ref = bundle.state.deck.hand[slot]
+        # Existing opening receipts independently retain their complete title.
+        opening = [proof for proof in bundle.opening_skill_support
+                   if proof.get('card_instance_id') == ref.instance_id]
+        full = [event for event in events if event.get('phase') == 'hif_complete_title_identity'
+                and event.get('accepted') is True and event.get('frame_ids') == list(frame_ids)
+                and len(event.get('card_ids', ())) == len(hand)
+                and event['card_ids'][slot] == hand[slot].card_id]
+        if not opening and len(full) != 1:
+            raise ValueError('ordinary_plus_estimate_requires_complete_current_title')
+    return replace(live, hand=tuple(hand)), events
 
 
 def clean_hand_support(state):
@@ -51,9 +166,46 @@ def uses_hand_support_for_strategy(fact: VerifiedHandSupport) -> bool:
     return fact.card_id != '816'
 
 
+def verified_hand_support_fact(bundle, receipt):
+    """Recheck the existing complete receipt for its original held instance.
+
+    The native producer/transaction wiring is intentionally outside this slice.
+    Identity-only opening receipts cannot become complete-effect facts.
+    """
+    from .skill_support import supported_definition
+    from ..hif_skill_support import verify_selected_skill_support_observations
+
+    if (not isinstance(receipt, dict) or receipt.get('accepted') is not True
+            or receipt.get('effects_verified') is not True
+            or (receipt.get('run_id'), receipt.get('revision')) != (bundle.run_id, bundle.revision)):
+        raise ValueError('hand_support_requires_complete_current_effect_receipt')
+    slot = receipt.get('selected_slot')
+    if type(slot) is not int or not 0 <= slot < len(bundle.state.deck.hand):
+        raise ValueError('hand_support_requires_one_bound_instance')
+    card = bundle.state.deck.hand[slot]
+    if card.instance_id != receipt.get('card_instance_id'):
+        raise ValueError('hand_support_instance_changed')
+    checked = verify_selected_skill_support_observations(
+        receipt.get('observations', ()), bundle=bundle, selected_slot=slot,
+        selection_evidence=receipt.get('selection_evidence', {}))
+    if checked.get('accepted') is not True or json.dumps(checked, sort_keys=True) != json.dumps(receipt, sort_keys=True):
+        raise ValueError('hand_support_complete_effect_receipt_changed')
+    definition = supported_definition(bundle.kernel.cards[card.card_id],
+                                      enhancement_count=checked.get('enhancement_count'))
+    if (definition.stamina_cost != checked.get('printed_cost')
+            or definition.cost_kind.value != checked.get('cost_kind')):
+        raise ValueError('hand_support_printed_cost_changed')
+    return VerifiedHandSupport(card.instance_id, card.card_id, bundle.state.turn,
+                               checked['enhancement_count'])
+
+
 class HifSupportPlanningMixin:
     def _supported_definition(self, ordinary, tier):
-        if ordinary is None or self.support_definition is None:
+        if self.support_definition is None:
+            from .skill_support import supported_definition
+
+            return supported_definition(ordinary, enhancement_count=tier)
+        if ordinary is None:
             raise ValueError('verified_support_catalog_not_available_offline')
         supported = self.support_definition(ordinary, tier)
         if (supported.card_id, supported.plan) != (ordinary.card_id, ordinary.plan):

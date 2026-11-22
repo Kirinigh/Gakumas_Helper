@@ -1,0 +1,467 @@
+"""Project the verified local battle state and physical actions to UIObs.
+
+This module loads no model and performs no input, capture, download or rollout.
+It reuses the caller's production kernel for legality. Unsupported observations
+and secondary choices have no model input; they remain with local planning.
+
+Ordinary forms are resolved from this installation's model tables.
+"""
+from __future__ import annotations
+
+import math
+from typing import Any, Sequence
+from collections import Counter
+from dataclasses import asdict, replace, dataclass
+
+from agent.live_decision.high_score.kernel import RuleEvent, KernelError
+from agent.live_decision.high_score.contracts import (
+    Stance,
+    CardRef,
+    PlanType,
+    ActionKind,
+    GameAction,
+    DecisionKind,
+    DeckKnowledge,
+    StrategyState,
+    DecisionRequest,
+    ScheduledEffectRef,
+    HighScoreContractError,
+)
+
+from .gkms_master_forms import PLAN_CODES, drink_id, card_form
+from .gkms_master_enchants import project_enchant
+
+UINET_REVISION = '1201b841828d9874b604f7d48f7b00ddf3b71d95'
+MASTER_REVISION = '571dbb62601e78998cddeacdbce3ea1bc672d7fc'
+
+
+class ShadowMappingError(ValueError):
+    """A specific missing mapping or invalid/stale proposal, never an END."""
+
+
+def _require(condition, reason):
+    if not condition:
+        raise ShadowMappingError(reason)
+
+
+@dataclass(frozen=True)
+class ExamContext:
+    """Observed whole-round metadata; the state supplies current resources."""
+
+    produce: str
+    step: str | None
+    plan: int
+    turn_types: tuple[int, ...]
+    permil: tuple[int, int, int]
+    criteria: tuple[int, int, int]
+    idol: str
+    source: str
+
+    def observation(self, state: StrategyState, plan_type: PlanType):
+        tower = self.produce == 'tower'
+        _require(bool(self.source and self.idol) and type(self.plan) is int
+                 and self.plan == PLAN_CODES[plan_type.value], 'exam_context_unverified')
+        _require((tower and self.step is None)
+                 or (self.produce in {'produce-007', 'produce-008'}
+                     and self.step in {'AUDITION_MID1', 'AUDITION_MID2', 'AUDITION_FINAL'}),
+                 'exam_context_unverified')
+        _require(self.turn_types and all(type(x) is int and x in (1, 2, 3) for x in self.turn_types),
+                 'exam_turn_types_invalid')
+        _require(len(self.permil) == len(self.criteria) == 3
+                 and all(type(x) is int and x > 0 for x in self.permil)
+                 and all(type(x) is int and (x == 0 if tower else x > 0) for x in self.criteria),
+                 'exam_multipliers_or_criteria_invalid')
+        _require(state.turn + state.turns_remaining - 1 == len(self.turn_types),
+                 'exam_limit_or_extra_turn_unmapped')
+        expected = self.turn_types[state.turn - 1:]
+        names = {1: 'vocal', 2: 'dance', 3: 'visual'}
+        _require(tuple(names[x] for x in expected) == state.turn_attributes,
+                 'exam_state_turn_attributes_mismatch')
+        multipliers = tuple(self.permil[x - 1] / 1000 for x in expected)
+        actual = (state.score_multiplier, *state.future_score_multipliers)
+        _require(len(actual) == len(multipliers)
+                 and all(math.isclose(a, b, rel_tol=0, abs_tol=1e-9)
+                         for a, b in zip(actual, multipliers)), 'exam_state_multipliers_mismatch')
+        # Hiro's tower fields carry no audition phase, plan category or criteria.
+        # The actual plan above still determines the kernel's legal actions.
+        return dict(produce=self.produce, step=self.step, plan=0 if tower else self.plan, idol=self.idol,
+                    turn=state.turn, limit=len(self.turn_types), types=list(self.turn_types),
+                    permil=list(self.permil), crit=list(self.criteria))
+
+
+@dataclass(frozen=True)
+class TurnPlayHistory:
+    """Complete ordered history tied to exactly one immutable local state.
+
+At a saved opening construct this with played=() only after confirming the
+accepted opening had zero submitted cards. For a later saved root supply the
+complete accepted chain; actions_remaining is never used to infer plays.
+"""
+
+    state: StrategyState
+    played: tuple[CardRef, ...]
+    source: str
+    played_support: tuple[int | None, ...] = ()
+    expired_start_effects: tuple[ScheduledEffectRef, ...] = ()
+
+    def validate(self, state):
+        _require(bool(self.source), 'played_history_source_missing')
+        _require(self.state == state, 'played_history_state_mismatch')
+        owned = {card.instance_id for card in state.deck.all_cards}
+        _require(all(card.instance_id in owned for card in self.played), 'played_history_unknown_instance')
+        _require(not self.played_support or len(self.played_support) == len(self.played),
+                 'played_history_support_length_mismatch')
+
+    def advance(self, action: GameAction, after: StrategyState, events: Sequence[RuleEvent], *, cards):
+        """Consume complete HifStep events, including turn-start Encore replays.
+
+        The local kernel emits phase-qualified TRIGGER_SCHEDULED before a replay;
+        a new-turn phase or system refill distinguishes it from end-turn effects.
+        Created cards and explicit upgrades are reconstructed in event order.
+        Growth with an intermediate use but no per-event magnitude is rejected;
+        it does not occur in either frozen inventory and is never filled from
+        a later card version. Multiple effect passes count one physical play.
+        """
+        self.validate(self.state)
+        action.validate()
+        after.validate()
+        markers = {'CONSUME_ACTION', 'FREE_PLAY', 'PAID_PLAY', 'FREE_PLAY_RANDOM'}
+        if action.kind is ActionKind.PLAY_CARD:
+            _require(sum(event.event_type == 'CONSUME_ACTION'
+                         and event.source_id == action.card_instance_id for event in events) == 1,
+                     'played_history_action_event_missing_or_duplicate')
+        _require(after.turn in {self.state.turn, self.state.turn + 1}, 'played_history_turn_gap')
+        for kind, marker in ((ActionKind.FREE_PLAY, 'FREE_PLAY'), (ActionKind.PAID_PLAY, 'PAID_PLAY')):
+            if action.kind is kind:
+                allowed = {marker, 'PAID_PLAY_UNUSABLE_DISCARD'} if kind is ActionKind.PAID_PLAY else {marker}
+                _require(sum(event.event_type in allowed and event.source_id == action.card_instance_id
+                             for event in events) == 1, 'played_history_secondary_play_event_missing')
+        ledger = {card.instance_id: card for card in self.state.deck.all_cards}
+        after_cards = {card.instance_id: card for card in after.deck.all_cards}
+        played = list(self.played)
+        support = list(self.played_support or (None,) * len(played))
+        active_support = {fact.instance_id: fact for fact in self.state.hand_support if fact.turn == self.state.turn}
+        last_modification = {}
+        for index, event in enumerate(events):
+            if event.event_type == 'CARD_MODIFICATION':
+                for target in (event.detail or '').split('|'):
+                    last_modification[target] = index
+        unknown_versions = set()
+        advanced = after.turn != self.state.turn
+        ended = False
+        entered = False
+        phase = None
+        new_phases = {'BEFORE_START_OF_TURN', 'START_OF_TURN', 'AFTER_START_OF_TURN', 'TURN', 'EVERY_TURN'}
+        for index, event in enumerate(events):
+            if event.event_type == 'END_TURN':
+                _require(not ended, 'played_history_multiple_turn_boundaries')
+                ended, phase = True, None
+            if event.event_type == 'TRIGGER_SCHEDULED':
+                phase = (event.detail or '').rsplit(':', 1)[-1]
+            start = (event.event_type == 'TRIGGER_SCHEDULED' and phase in new_phases
+                     or event.event_type == 'DRAW' and event.source_id == 'system')
+            if advanced and ended and not entered and start:
+                played.clear()
+                support.clear()
+                active_support.clear()
+                entered = True
+            if event.event_type == 'ADD_CARD_TO_DECK':
+                cid, separator, instance_id = (event.detail or '').partition(':')
+                instance_id = instance_id.split(':position:', 1)[0]
+                _require(separator and instance_id not in ledger and instance_id in after_cards,
+                         'played_history_created_card_event_invalid')
+                # This is the exact constructor in kernel._add_card_to_deck.
+                ledger[instance_id] = CardRef(instance_id, cid)
+            elif event.event_type == 'UPGRADE_HAND':
+                for target in (event.detail or '').split('|'):
+                    card = ledger.get(target)
+                    definition = cards.get(card.card_id) if card is not None else None
+                    upgrade_id = definition.upgrade_card_id if definition is not None else None
+                    _require(bool(upgrade_id and upgrade_id in cards), 'played_history_upgrade_unmapped')
+                    ledger[target] = replace(card, card_id=upgrade_id, upgraded=True)
+            elif event.event_type == 'CARD_MODIFICATION':
+                for target in (event.detail or '').split('|'):
+                    _require(target in ledger and target in after_cards, 'played_history_growth_instance_missing')
+                    if last_modification[target] != index:
+                        unknown_versions.add(target)
+                    else:
+                        # All numerical changes have happened by this point;
+                        # retain the separately reconstructed upgrade identity.
+                        values = {key: getattr(after_cards[target], key) for key in _GROWTH_FIELDS}
+                        ledger[target] = replace(ledger[target], **values)
+                        unknown_versions.discard(target)
+            if event.event_type in markers:
+                _require(not (advanced and ended and not entered and phase is None),
+                         'played_history_turn_boundary_ambiguous')
+                instance_id = event.source_id
+                _require(instance_id in ledger and instance_id not in unknown_versions,
+                         f'played_history_card_version_unverified:{instance_id}')
+                card = ledger[instance_id]
+                played.append(card)
+                fact = active_support.pop(instance_id, None)
+                support.append(fact.enhancement_count if fact and fact.card_id == card.card_id else None)
+        if advanced:
+            _require(ended, 'played_history_turn_event_missing')
+            if not entered:
+                played.clear()
+                support.clear()
+        _require(ledger == after_cards, 'played_history_unlogged_card_mutation')
+        residues = list(self.expired_start_effects if not advanced else ())
+        active = Counter((ref.source_id, ref.card_id, ref.definition_effect_index)
+                         for ref in after.scheduled_effects if ref.remaining_uses != 0)
+        triggered = Counter((e.source_id, e.detail) for e in events if e.event_type == 'TRIGGER_SCHEDULED')
+        for ref in self.state.scheduled_effects:
+            key = ref.source_id, ref.card_id, ref.definition_effect_index
+            detail = f'{ref.card_id}:{ref.definition_effect_index}:START_OF_TURN'
+            if (advanced and ref.trigger_phase.value == 'START_OF_TURN' and not ref.persistent
+                    and ref.remaining_uses == 1 and triggered[ref.source_id, detail] and not active[key]):
+                residues.append(replace(ref, remaining_uses=0, last_fired_turn=after.turn))
+                triggered[ref.source_id, detail] -= 1
+        return TurnPlayHistory(after, tuple(played), self.source, tuple(support), tuple(residues))
+
+_GROWTH_FIELDS = ('score_bonus', 'genki_bonus', 'stamina_cost_delta', 'typed_cost_delta', 'score_repeat_bonus')
+
+
+def _compression(evidence, field, value, reason, source):
+    if evidence is not None:
+        evidence.append(dict(local_field=field, value=value, reason=reason, source=source))
+
+
+def _card(card: CardRef, *, kernel, support_count=None):
+    _require(type(card.upgraded) is bool, f'card_upgrade_unverified:{card.card_id}')
+    definition = kernel.cards.get(card.card_id)
+    form = card_form(definition, card.upgraded)
+    _require(form is not None, f'card_form_unmapped:{card.card_id}')
+    identifier, upgrade, _ = form
+    _require(not any(getattr(card, field) for field in _GROWTH_FIELDS),
+             f'card_growth_unmapped:{card.card_id}')
+    if support_count is not None:
+        plus = kernel.cards.get(definition.upgrade_card_id)
+        plus_form = card_form(plus, True)
+        _require(upgrade == 0 and support_count == 1 and plus_form is not None
+                 and plus_form[0] == identifier, f'hand_support_tier_unmapped:{card.card_id}:{support_count}')
+        upgrade = 1
+    return {'id': identifier, 'u': upgrade}
+
+
+def _statuses(state):
+    result = []
+    for field, kind in (('concentration', 'lesson_buff'), ('good_impression_turns', 'review'),
+                        ('motivation', 'aggressive'), ('cost_reduction', 'stamina_consumption_down_fix')):
+        value = getattr(state, field)
+        if value:
+            result.append([kind, value, -1])
+    for field, kind, unit in (('full_power', 'full_power_point', 1), ('passion', 'enthusiastic', 1),
+                              ('passion_buff', 'enthusiastic_add', 1),
+                              ('passion_gain_bonus_pct', 'enthusiastic_gain_permil', 10)):
+        value = getattr(state, field)
+        _require(math.isfinite(value) and value >= 0, f'status_value_invalid:{field}')
+        if value:
+            result.append([kind, value * unit, -1])
+    if state.good_condition_turns:
+        result.append(['parameter_buff', state.good_condition_turns, state.good_condition_turns])
+    for field, kind in (('excellent_condition_turns', 'parameter_buff_multiple'),
+                        ('half_cost_turns', 'stamina_consumption_down'),
+                        ('double_cost_turns', 'stamina_consumption_add'),
+                        ('nullify_genki_turns', 'block_restriction'), ('stance_lock_turns', 'stance_lock')):
+        if getattr(state, field):
+            result.append([kind, 1, getattr(state, field)])
+    for field, kind, unit in (('score_buffs', 'lesson_parameter_multiple', 1),
+                              ('concentration_effect_buffs', 'lesson_buff_multiple', 1),
+                              ('concentration_addition_buffs', 'lesson_buff_gain_fix', 1),
+                              ('enthusiasm_bonus_buffs', 'enthusiastic_add', 1),
+                              ('enthusiasm_multiplier_buffs', 'enthusiastic_gain_permil', 1000)):
+        for modifier in getattr(state, field):
+            _require(math.isfinite(modifier.amount), f'status_value_invalid:{field}')
+            result.append([kind, modifier.amount * unit,
+                           -1 if modifier.remaining_turns is None else modifier.remaining_turns])
+    return result
+
+
+_STANCES = {
+    Stance.NEUTRAL: (None, 0),
+    Stance.CONSERVE_1: ('Preservation', 1),
+    Stance.CONSERVE_2: ('OverPreservation', 2),
+    Stance.AGGRESSIVE_1: ('Concentration', 1),
+    Stance.AGGRESSIVE_2: ('Concentration', 2),
+    Stance.LEISURE: ('Leisurely', 1),
+    Stance.FULL_POWER: ('FullPower', 1),
+}
+_ANOMALY_HISTORY = ('previous_stance', 'cumulative_full_power', 'strength_times', 'preservation_times',
+                    'full_power_times', 'leisure_times', 'stance_changed_by_direct_effect_times')
+
+
+_MODEL_COMPRESSION = (
+    'UIObs has no scheduled-effect source identity, event counter, last-fired marker or freshness bit.',
+    'The fixed featurizer omits some trigger conjunctions, target-card searches and nested effects.',
+    'Deck zones are bags; no hidden draw order is supplied or inferred.',
+)
+
+
+@dataclass(frozen=True)
+class ActionBinding:
+    token: tuple
+    action: GameAction
+
+
+@dataclass(frozen=True)
+class ShadowObservation:
+    status: str
+    request: DecisionRequest
+    observation: dict[str, Any] | None = None
+    bindings: tuple[ActionBinding, ...] = ()
+    reason_codes: tuple[str, ...] = ()
+    compression_notes: tuple[str, ...] = _MODEL_COMPRESSION
+    compression_evidence: tuple[dict[str, Any], ...] = ()
+
+    def bind_action(self, model_action: Sequence, *, request: DecisionRequest, kernel) -> GameAction:
+        """Validate a model token against this exact root and recheck local legality."""
+        _require(self.status == 'supported', 'model_proposal_without_supported_observation')
+        _require(request == self.request, 'model_proposal_stale_request')
+        request.validate()
+        _require(isinstance(model_action, (list, tuple)) and len(model_action) in (1, 2),
+                 'model_action_shape_invalid')
+        token = tuple(model_action)
+        _require(token == ('end',) or (len(token) == 2 and token[0] in ('play', 'drink')
+                 and type(token[1]) is int and token[1] >= 0), 'model_action_kind_or_index_invalid')
+        matches = [binding.action for binding in self.bindings if binding.token == token]
+        _require(len(matches) == 1, 'model_action_not_in_supplied_legal_set')
+        action = matches[0]
+        legal = kernel.legal_actions(request.state, plan_type=request.plan_type, decision_kind=request.decision_kind)
+        _require(replace(action, source_slot=None) in tuple(replace(x, source_slot=None) for x in legal),
+                 'model_action_no_longer_locally_legal')
+        return action
+
+
+def build_shadow_observation(request: DecisionRequest, kernel, context: ExamContext,
+                             history: TurnPlayHistory | None) -> ShadowObservation:
+    """Return supported UIObs, an explicit local-only phase, or a precise gap.
+
+    Use the agent.live_decision types consistently. No partially filled UIObs is
+    exposed after an error, and no unknown action ever becomes ['end'].
+    """
+    try:
+        _require(isinstance(request, DecisionRequest), 'request_type_namespace_mismatch')
+        request.validate()
+        state = request.state
+        if state.terminal:
+            return ShadowObservation('local_only', request, reason_codes=('terminal',))
+        if (request.decision_kind is DecisionKind.SECONDARY or state.pending_choice
+                or state.resolution_stack or state.pending_after_card_ids):
+            return ShadowObservation('local_only', request, reason_codes=('secondary_or_unfinished_resolution',))
+        _require(request.decision_kind is DecisionKind.LIVE, 'ordinary_live_required')
+        _require(state.deck.knowledge is DeckKnowledge.KNOWN_COMPOSITION, 'observed_composition_required')
+        _require(state.persistent_effects_initialized, 'persistent_effect_lifecycle_missing')
+        _require(history is not None, 'played_history_missing')
+        history.validate(state)
+        if request.plan_type is not PlanType.ANOMALY:
+            _require(state.stance is Stance.NEUTRAL and state.previous_stance is Stance.NEUTRAL,
+                     'exam_stance_plan_mismatch')
+            for field in ('full_power', 'passion', 'passion_buff', 'passion_gain_bonus_pct', 'stance_lock_turns',
+                          'enthusiasm_bonus_buffs', 'enthusiasm_multiplier_buffs', *_ANOMALY_HISTORY[1:]):
+                _require(not getattr(state, field), f'state_semantic_mapping_unverified:{field}')
+        for field in ('parameter_gain_bonus_pct', 'full_power_charge_buffs', 'statuses', 'field_effects'):
+            _require(not getattr(state, field), f'state_semantic_mapping_unverified:{field}')
+        if '428' in state.items:
+            from agent.live_decision.high_score.kernel import ItemDefinition
+            from agent.live_decision.high_score.opening_items import STAGE_START_ITEM_NAME
+
+            # This is the opening assembler's observed-only definition. Its
+            # generated cards are already in the complete deck; it has no
+            # remaining effect to encode or apply a second time.
+            _require(kernel.items.get('428') == ItemDefinition(
+                '428', STAGE_START_ITEM_NAME, (), PlanType.SENSE)
+                and not any(ref.source_id == 'item:428' for ref in state.scheduled_effects),
+                'stage_start_item_not_resolved')
+        # The kernel validates the registered inventory for this plan. UIObs
+        # represents the effects that are still active via statuses and enchants.
+        evidence = []
+        for field in _ANOMALY_HISTORY:
+            value = getattr(state, field)
+            if value and value is not Stance.NEUTRAL:
+                _compression(evidence, field, value.value if isinstance(value, Stance) else value,
+                    'The host retains stance history and counters for legality and rule transitions. '
+                    'UIObs encodes only the current stance and its step.', 'GKMS obs.py; encode.py:global_num')
+        for field, raw in (
+                ('nullify_cost_cards', 'ExamSearchPlayCardStaminaConsumptionChange'),
+                ('double_card_effects_remaining', 'ExamCardSearchEffectPlayCountBuff')):
+            if getattr(state, field):
+                _compression(evidence, field, getattr(state, field),
+                    'The local count is known and determines legal costs/effect passes. The fixed '
+                    'UIObs status vocabulary and enchant schema have no matching count input.',
+                    f'ProduceExamEffectType_{raw}@{MASTER_REVISION}; GKMS obs.py:STATUS_KINDS; encode.py')
+        for field in ('good_condition_fresh', 'excellent_condition_fresh', 'half_cost_fresh',
+                      'double_cost_fresh', 'nullify_genki_fresh', 'stance_lock_fresh'):
+            if getattr(state, field):
+                _compression(evidence, field, True, 'UIObs stores remaining turns without a fresh bit.', 'GKMS encode.py:st_num')
+        for field in ('score_buffs', 'concentration_effect_buffs', 'concentration_addition_buffs',
+                      'enthusiasm_bonus_buffs', 'enthusiasm_multiplier_buffs'):
+            fresh = [asdict(value) for value in getattr(state, field) if value.fresh]
+            if fresh:
+                _compression(evidence, field + '.fresh', fresh,
+                             'UIObs stores each known amount and lifetime without layer freshness.', 'GKMS encode.py:st_num')
+        for card in state.deck.all_cards:
+            _card(card, kernel=kernel)
+        exam = context.observation(state, request.plan_type)
+        slots = dict(request.card_slots)
+        _require(set(slots) == {card.instance_id for card in state.deck.hand}
+                 and all(type(slot) is int and slot >= 0 for slot in slots.values()),
+                 'hand_slot_binding_incomplete')
+        hand = sorted(state.deck.hand, key=lambda card: slots[card.instance_id])
+        hand_index = {card.instance_id: i for i, card in enumerate(hand)}
+        drinks = sorted(request.drink_slots)
+        wire_drinks = [drink_id(kernel.drinks.get(drink)) for _, drink in drinks]
+        _require(all(wire_drinks), 'drink_inventory_unmapped')
+        legal = kernel.legal_actions(state, plan_type=request.plan_type, decision_kind=request.decision_kind)
+        bindings = []
+        for action in legal:
+            if action.kind is ActionKind.PLAY_CARD:
+                _require(action.card_instance_id in hand_index, 'legal_play_has_no_hand_binding')
+                bindings.append(ActionBinding(('play', hand_index[action.card_instance_id]),
+                    replace(action, source_slot=slots[action.card_instance_id])))
+            elif action.kind is ActionKind.USE_DRINK:
+                matches = [(i, slot) for i, (slot, drink) in enumerate(drinks) if drink == action.drink_id]
+                _require(bool(matches), 'legal_drink_has_no_bottle_binding')
+                bindings.extend(ActionBinding(('drink', i), replace(action, source_slot=slot)) for i, slot in matches)
+            elif action.kind is ActionKind.END_TURN:
+                bindings.append(ActionBinding(('end',), action))
+            else:
+                raise ShadowMappingError(f'ordinary_legal_action_unmapped:{action.kind.value}')
+        order = {'play': 0, 'drink': 1, 'end': 2}
+        bindings.sort(key=lambda item: (order[item.token[0]], item.token[1:] or (-1,)))
+        _require(bindings and len({binding.token for binding in bindings}) == len(bindings),
+                 'legal_action_mapping_empty_or_ambiguous')
+        playable = {binding.action.card_instance_id for binding in bindings if binding.token[0] == 'play'}
+        numbers = dict(score=state.score, stamina=state.stamina, max_stamina=state.max_stamina,
+                       block=state.genki, playable=state.actions_remaining, plays=len(history.played))
+        _require(all(type(value) is int and value >= 0 for value in numbers.values()), 'num_integer_required')
+        _require(not history.expired_start_effects, 'expired_start_effect_model_mapping_unavailable')
+        enchants = []
+        for ref in state.scheduled_effects:
+            if ref.remaining_uses == 0 or ref.remaining_turns == 0:
+                continue
+            known, row = project_enchant(ref, state, history, kernel)
+            _require(known, f'scheduled_effect_model_mapping_unavailable:{ref.source_kind.value}:{ref.card_id}')
+            if row is not None:
+                enchants.append(row)
+        support = {fact.instance_id: fact.enhancement_count for fact in state.hand_support if fact.turn == state.turn}
+        observation = dict(v='uiobs.v1', exam=exam, num=numbers, stance=list(_STANCES[state.stance]),
+            status=_statuses(state), ench=enchants,
+            hand=[dict(_card(card, kernel=kernel, support_count=support.get(card.instance_id)),
+                       p=int(card.instance_id in playable)) for card in hand],
+            deck=[_card(card, kernel=kernel) for card in state.deck.draw_pile],
+            grave=[_card(card, kernel=kernel) for card in state.deck.discard],
+            hold=[_card(card, kernel=kernel) for card in state.deck.held],
+            lost=[_card(card, kernel=kernel) for card in state.deck.removed],
+            played=[_card(card, kernel=kernel, support_count=tier) for card, tier in zip(
+                history.played, history.played_support or (None,) * len(history.played), strict=True)],
+            drinks=wire_drinks, legal=[list(binding.token) for binding in bindings])
+        notes = _MODEL_COMPRESSION
+        if state.deck.known_top_count:
+            notes += ('The explicitly known deck prefix is not representable by the external bag encoder.',)
+            _compression(evidence, 'deck.known_top_count', state.deck.known_top_count,
+                         'The encoder treats draw-zone input as a bag.', 'GKMS encode.py:ZONES')
+        return ShadowObservation('supported', request, observation, tuple(bindings), compression_notes=notes,
+                                 compression_evidence=tuple(evidence))
+    except (ShadowMappingError, HighScoreContractError, KernelError) as error:
+        return ShadowObservation('unsupported', request, reason_codes=(str(error),))

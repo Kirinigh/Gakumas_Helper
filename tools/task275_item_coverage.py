@@ -25,7 +25,7 @@ from agent.p_item_recognition.reference import (  # noqa: E402
 P_ITEMS = ROOT / "assets/data/p_items.csv"
 P_ITEM_REFERENCE_ROOT = ROOT / "assets/resource/base/model/embedding/p_item_reference"
 PINNED_GAKUMAS_TOOLS_REVISION = "3e9e8ebdc929dedd32cdd8d8911e5d8a905f76b6"
-PINNED_P_ITEMS_LF_SHA256 = "CDE85AE7CD857207E73044F9E1063DBACD04399E00CAF1CD91C4A6A32F9714C5"
+PINNED_P_ITEMS_LF_SHA256 = "CD3EF151DCF57ED1F4D5F34B8DBFC2A35C2EA61F24CB0E393C28F4C7D8777430"
 LEGACY_SCOPE = "sourceType != produce"
 PUBLISHED_SCOPE = (
     "450 immutable inherited PNGs plus six current native-bound published complete UI references; "
@@ -261,6 +261,12 @@ def build_report() -> dict[str, object]:
             "license": "BSD-3-Clause",
             "upstream_file": "packages/gakumas-data/csv/p_items.csv",
             "upstream_sha256": "110CEAEDBCD044BFBAF68190CE5FA9DB24F58485377ACE45D3A08EAD2F6E3DBB",
+            "supplement": {
+                "item_ids": ["473", "474"],
+                "commit": "6c3d00648c32ea72a05086a18c63ab62e0d0c7e5",
+                "upstream_file": "packages/gakumas-data/json/p_items.json",
+                "upstream_sha256": "61C4FB67EDDBBADF4D4C839535A356EDC2B7693532529D02587FEC5E3B2B3BE1",
+            },
             "normalization": (
                 "source_sha256 uses UTF-8 with LF-normalised line endings; checkout_source_sha256 records the platform checkout bytes."
             ),

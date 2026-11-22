@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import hashlib
+from copy import deepcopy
 from typing import Any
 from pathlib import Path
+from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 
 
@@ -63,6 +65,45 @@ def _temporary_reference_enabled(manifest: Any, payload: Any) -> Any | None:
     ):
         raise BadgeReferenceError("temporary placeholder IDs disagree with disabled references")
     return enabled
+
+
+@dataclass(frozen=True, slots=True)
+class _IdentityGroupRanking:
+    names: tuple[str, ...]
+    row_order: Any
+    starts: Any
+
+    @classmethod
+    def from_groups(cls, groups: dict[str, Any]) -> _IdentityGroupRanking:
+        import numpy as np
+
+        # A stable sort of family minima must resolve equal errors by name.
+        names = tuple(sorted(groups))
+        members = tuple(groups[name] for name in names)
+        starts = np.cumsum([0, *(len(rows) for rows in members[:-1])])
+        return cls(names, np.concatenate(members), starts)
+
+
+class CardIdentityCache:
+    """One slot's most recent identity match within a stability capture."""
+
+    def __init__(self) -> None:
+        self._key: tuple[BadgeReferenceGallery, frozenset[int] | None, bytes] | None = None
+        self._match: tuple[str, dict[str, Any]] | None = None
+
+    def resolve(
+        self, gallery: BadgeReferenceGallery, query: Any, eligible_card_ids: frozenset[int] | None,
+    ) -> tuple[str, dict[str, Any]]:
+        scope = None if eligible_card_ids is None else frozenset(eligible_card_ids)
+        pixels = query.tobytes()
+        key = self._key
+        match = self._match
+        if match is None or key is None or key[0] is not gallery or key[1] != scope or key[2] != pixels:
+            match = gallery._resolve_identity_query(query, scope)
+            self._key = (gallery, scope, pixels)
+            self._match = match
+        visual_group, identity = match
+        return visual_group, deepcopy(identity)
 
 
 class BadgeReferenceGallery:
@@ -131,6 +172,7 @@ class BadgeReferenceGallery:
             group: np.asarray(indices, dtype=np.int32)
             for group, indices in groups.items()
         }
+        self._group_ranking = _IdentityGroupRanking.from_groups(self._group_indices)
         self._provisional_candidates: dict[str, tuple[int, ...]] = {}
         for source_id, target_id in provisional_shared_pairs:
             source_rows = np.flatnonzero(self.business_ids == source_id)
@@ -147,6 +189,7 @@ class BadgeReferenceGallery:
                 raise BadgeReferenceError("provisional shared references must have identical pixels and family")
             self._provisional_candidates[group] = tuple(sorted({source_id, target_id}))
         self._eligible_scopes: dict[frozenset[int], tuple[Any, Any, dict[str, Any]]] = {}
+        self._eligible_rankings: dict[frozenset[int], _IdentityGroupRanking] = {}
 
     def _eligible_scope(self, eligible_card_ids: frozenset[int]):
         import numpy as np
@@ -170,6 +213,7 @@ class BadgeReferenceGallery:
             self.top_coarse[indices].astype(np.int16),
             {group: np.asarray(members, dtype=np.int32) for group, members in groups.items()},
         )
+        self._eligible_rankings[key] = _IdentityGroupRanking.from_groups(cached[2])
         self._eligible_scopes[key] = cached
         return cached
 
@@ -222,20 +266,19 @@ class BadgeReferenceGallery:
 
         if eligible_card_ids is None:
             reference_indices, selected_group_indices = self._active_indices, self._group_indices
+            ranking = self._group_ranking
         else:
             reference_indices, _, selected_group_indices = self._eligible_scope(eligible_card_ids)
-        ranked_groups = sorted(
-            (
-                (float(np.min(errors[indices])), group)
-                for group, indices in selected_group_indices.items()
-            ),
-            key=lambda item: (item[0], item[1]),
-        )
-        top_error, top_group = ranked_groups[0]
+            ranking = self._eligible_rankings[frozenset(eligible_card_ids)]
+        group_errors = np.minimum.reduceat(errors[ranking.row_order], ranking.starts).astype(float, copy=False)
+        ranked_groups = np.argsort(group_errors, kind="stable")
+        top_index = ranked_groups[0]
+        top_error = float(group_errors[top_index])
+        top_group = ranking.names[top_index]
         group_margin = (
             float("inf")
             if len(ranked_groups) < 2
-            else ranked_groups[1][0] - top_error
+            else float(group_errors[ranked_groups[1]]) - top_error
         )
         if top_error > self.maximum_zero_coarse_error:
             return {
@@ -254,14 +297,12 @@ class BadgeReferenceGallery:
         candidate_groups = (
             ranked_groups[:1]
             if low_confidence_identity or group_margin >= self.minimum_group_margin
-            else tuple(
-                item
-                for item in ranked_groups
-                if item[0] - top_error <= self.minimum_group_margin
-            )
+            else ranked_groups[group_errors[ranked_groups] - top_error <= self.minimum_group_margin]
         )
         measured = []
-        for candidate_error, candidate_group in candidate_groups:
+        for candidate_index in candidate_groups:
+            candidate_error = float(group_errors[candidate_index])
+            candidate_group = ranking.names[candidate_index]
             group_indices = selected_group_indices[candidate_group]
             reference_index = int(
                 reference_indices[group_indices[int(np.argmin(errors[group_indices]))]]
@@ -322,6 +363,7 @@ class BadgeReferenceGallery:
         box: tuple[int, int, int, int],
         *,
         eligible_card_ids: frozenset[int] | None = None,
+        identity_cache: CardIdentityCache | None = None,
     ) -> tuple[str, Any, dict[str, Any]]:
         """Return temporal pixels and coarse identity from one shared pass."""
 
@@ -343,25 +385,40 @@ class BadgeReferenceGallery:
             (16, 8),
             interpolation=cv2.INTER_AREA,
         ).astype(np.int16)
-        if eligible_card_ids is None:
-            reference_indices, references = self._active_indices, self._active_top_coarse.astype(np.int16)
+        if identity_cache is None:
+            visual_group, identity = self._resolve_identity_query(identity_query, eligible_card_ids)
         else:
-            reference_indices, references, _ = self._eligible_scope(eligible_card_ids)
-        errors = np.mean(
-            np.abs(references - identity_query),
-            axis=(1, 2, 3),
-        )
-        reference_index = int(reference_indices[np.argmin(errors)])
+            visual_group, identity = identity_cache.resolve(self, identity_query, eligible_card_ids)
         content_query = cv2.resize(
             live,
             (16, 16),
             interpolation=cv2.INTER_AREA,
         ).astype(np.uint8)
+        return visual_group, content_query, identity
+
+    def _resolve_identity_query(
+        self, query: Any, eligible_card_ids: frozenset[int] | None,
+    ) -> tuple[str, dict[str, Any]]:
+        import numpy as np
+
+        if eligible_card_ids is None:
+            reference_indices, references = self._active_indices, self._active_top_coarse.astype(np.int16)
+        else:
+            reference_indices, references, _ = self._eligible_scope(eligible_card_ids)
+        errors = self._identity_errors(references, query)
+        reference_index = int(reference_indices[np.argmin(errors)])
         return (
             self.visual_group_ids[reference_index],
-            content_query,
             self._identity_result_from_errors(errors, eligible_card_ids),
         )
+
+    @staticmethod
+    def _identity_errors(references: Any, query: Any) -> Any:
+        import numpy as np
+
+        differences = references - query
+        np.abs(differences, out=differences)
+        return np.mean(differences, axis=(1, 2, 3))
 
     def measure_identity(
         self,
@@ -392,10 +449,7 @@ class BadgeReferenceGallery:
         ).astype(np.int16)
         references = (self._active_top_coarse.astype(np.int16) if eligible_card_ids is None
                       else self._eligible_scope(eligible_card_ids)[1])
-        errors = np.mean(
-            np.abs(references - query),
-            axis=(1, 2, 3),
-        )
+        errors = self._identity_errors(references, query)
         return self._identity_result_from_errors(errors, eligible_card_ids)
 
 

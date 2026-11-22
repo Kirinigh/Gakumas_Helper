@@ -88,8 +88,9 @@ class GkmsContinuousPolicy:
     """One offline episode with caller-provided ordinary and secondary policies."""
 
     def __init__(self, kernel, model, context, initial, *, source, planning_seed,
-                 deadline, secondary_factory=None, opening_hand_order=None):
+                 deadline, secondary_factory=None, opening_hand_order=None, observation_builder=None):
         self.kernel, self.model, self.context = kernel, model, context
+        self.observation_builder = observation_builder
         self.history = TurnPlayHistory(initial, (), source)
         self.hand_order = ObservedHandOrder(opening_hand_order if opening_hand_order is not None
                                            else (c.instance_id for c in initial.deck.hand))
@@ -144,7 +145,10 @@ class GkmsContinuousPolicy:
                 stage = time.perf_counter()
                 observed_request = self.hand_order.request(request)
                 entry['observed_card_slots'] = observed_request.card_slots
-                projection = build_shadow_observation(observed_request, self.kernel, self.context, self.history)
+                build_observation = (
+                    build_shadow_observation if self.observation_builder is None else self.observation_builder
+                )
+                projection = build_observation(observed_request, self.kernel, self.context, self.history)
                 elapsed = (time.perf_counter() - stage) * 1000
                 self.timing['mapping_ms'] += elapsed
                 entry.update(mapping_ms=elapsed, mapping_status=projection.status,

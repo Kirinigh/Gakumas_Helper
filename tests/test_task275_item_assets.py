@@ -25,7 +25,7 @@ class Task275ItemAssetAuditTests(unittest.TestCase):
         self.assertEqual(report["schema_version"], 2)
         self.assertEqual(
             report["source_sha256"],
-            "CDE85AE7CD857207E73044F9E1063DBACD04399E00CAF1CD91C4A6A32F9714C5",
+            "CD3EF151DCF57ED1F4D5F34B8DBFC2A35C2EA61F24CB0E393C28F4C7D8777430",
         )
         self.assertEqual(
             asset["reuse_status"],
@@ -34,11 +34,11 @@ class Task275ItemAssetAuditTests(unittest.TestCase):
         self.assertFalse(asset["runtime_ready"])
         self.assertFalse(asset["non_produce_domain_exact_match"])
         self.assertEqual(asset["gallery_business_id_count"], 456)
-        self.assertEqual(asset["non_produce_business_id_count"], 420)
+        self.assertEqual(asset["non_produce_business_id_count"], 422)
         self.assertEqual(asset["missing_non_produce_item_ids"], [])
-        self.assertEqual(len(asset["unknown_gallery_item_ids"]), 36)
-        self.assertEqual(asset["stage_business_id_count"], 368)
-        self.assertEqual(asset["recognition_asset_stage_business_id_count"], 343)
+        self.assertEqual(len(asset["unknown_gallery_item_ids"]), 34)
+        self.assertEqual(asset["stage_business_id_count"], 370)
+        self.assertEqual(asset["recognition_asset_stage_business_id_count"], 345)
         self.assertIn(
             "nia_pro_live_item_roi_not_calibrated",
             asset["runtime_blockers"],
@@ -49,9 +49,9 @@ class Task275ItemAssetAuditTests(unittest.TestCase):
         )
 
         plans = {plan["plan_type"]: plan for plan in asset["plans"]}
-        # The published gallery extension is ahead of the offline semantic CSV.
+        # The catalog includes Sense IDs 473 and 474, already present in the gallery.
         expected = {
-            "SENSE": (74, 70, ["3", "4", "274", "275"]),
+            "SENSE": (76, 72, ["3", "4", "274", "275"]),
             "LOGIC": (69, 65, ["5", "6", "276", "277"]),
             "ANOMALY": (55, 51, ["166", "167", "278", "279"]),
         }

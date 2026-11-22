@@ -17,7 +17,7 @@ class LiveSelectionError(ValueError):
 
 @dataclass(frozen=True)
 class LiveSelectionConsensus:
-    """Three-frame proof of either no SELECT or one stable selected slot."""
+    """Observed absence of SELECT or its unique physical slot."""
 
     accepted: bool
     selected_slot: int | None
@@ -36,6 +36,22 @@ class LiveTitleView:
     box: tuple[int, int, int, int]
     suffix_complete: bool
     selected: bool
+
+
+def classify_live_runtime_frame(
+    *,
+    health_hit: bool,
+    playable_hit: bool,
+    secondary_hit: bool,
+    popup_hit: bool,
+) -> str:
+    """Classify one frame without treating missing or contradictory evidence as exit."""
+
+    if secondary_hit or popup_hit or health_hit != playable_hit:
+        return "STOP"
+    if health_hit and playable_hit:
+        return "PLAYABLE"
+    return "UNKNOWN"
 
 
 def _validate_box(
@@ -58,6 +74,7 @@ def build_live_title_views(
     candidates: Iterable[Any],
     *,
     selected_slot: int | None = None,
+    hif_layout: bool = False,
 ) -> tuple[LiveTitleView, ...]:
     """Build title ROIs for one-to-five cards or one SELECT-expanded card.
 
@@ -74,6 +91,9 @@ def build_live_title_views(
         raise LiveSelectionError("Live title views require one to five cards")
     if selected_slot is not None and selected_slot not in range(len(cards)):
         raise LiveSelectionError("selected Live slot is outside the current hand")
+    if hif_layout and (frame_shape[:2] != (1280, 720)
+                       or any(card.box[2:] != (190, 250) for card in cards)):
+        raise LiveSelectionError("HIF title layout requires normalized physical card footprints")
 
     views = []
     for index, card in enumerate(cards):
@@ -89,6 +109,8 @@ def build_live_title_views(
             )
             complete = True
             selected = True
+            if hif_layout:
+                box = (x, y + height - 36, width, 36)
         else:
             full_right = min(x + width - inset, frame_width)
             visible_right = (
@@ -104,6 +126,14 @@ def build_live_title_views(
             )
             complete = len(cards) <= 3 or index + 1 == len(cards)
             selected = False
+            if hif_layout:
+                # HIF's title fills the physical card width. An additional
+                # inset here plus the marker reader's own border margin can
+                # erase a valid suffix near the right edge of a long title.
+                full_right = min(x + width, frame_width)
+                visible_right = (min(full_right, cards[index + 1].box[0] - 2)
+                                 if index + 1 < len(cards) else full_right)
+                box = (x, y + height - 36, visible_right - x, 36)
         _validate_box(box, frame_width, frame_height)
         views.append(
             LiveTitleView(
@@ -138,12 +168,13 @@ def live_select_label_box(
 
 def resolve_live_selected_slot_consensus(
     selected_slots: Iterable[Iterable[int]],
+    *, single_frame: bool = False,
 ) -> LiveSelectionConsensus:
     """Distinguish stable unselected, stable selected, and ambiguous evidence."""
 
     observations = tuple(tuple(sorted(set(slots))) for slots in selected_slots)
-    if len(observations) != 3:
-        raise LiveSelectionError("Live SELECT consensus requires exactly three frames")
+    if len(observations) != (1 if single_frame else 3):
+        raise LiveSelectionError("Live SELECT observation count does not match the requested read")
     if any(len(slots) > 1 for slots in observations):
         return LiveSelectionConsensus(
             accepted=False,
@@ -184,15 +215,19 @@ def remaining_live_card_clicks(
 
 
 def resolve_live_title_consensus(
-    images: Any, view: LiveTitleView
+    image: Any,
+    view: LiveTitleView,
+    *,
+    frame_id: str | None = None,
 ) -> LiveUpgradeConsensus:
-    """Resolve a title while keeping covered no-marker results fail-closed."""
+    """Resolve one current title frame; covered or unreadable suffixes stay unknown."""
 
     consensus = resolve_live_upgrade_consensus(
-        images,
+        image,
         view.slot,
         box=view.box,
         expanded=view.selected,
+        frame_id=frame_id,
     )
     if (consensus.upgraded is True or view.suffix_complete) and view.selected:
         return LiveUpgradeConsensus(
@@ -213,3 +248,80 @@ def resolve_live_title_consensus(
         reason="live_upgrade_suffix_occluded",
         observations=consensus.observations,
     )
+
+
+def live_selection_geometry_evidence(
+    candidates: tuple[Any, ...],
+) -> dict[str, Any]:
+    """Describe SELECT expansion, including the observed two-card HIF row."""
+
+    hif_pair = len(candidates) in (1,2) and all(
+        abs(card.box[0] - anchor) <= 8 and 830 <= card.box[1] <= 890
+        and 180 <= card.box[2] <= 205 and 240 <= card.box[3] <= 310
+        for card, anchor in zip(candidates, (265,) if len(candidates)==1 else (157, 374)))
+    hif_five = len(candidates) == 5 and all(
+        abs(card.box[0] - anchor) <= 10 and 830 <= card.box[1] <= 900
+        and 170 <= card.box[2] <= 205 and 230 <= card.box[3] <= 310
+        for card, anchor in zip(candidates, (18, 142, 265, 388, 512)))
+    if (len(candidates) not in {3, 4} and not hif_pair and not hif_five) or tuple(
+        card.slot for card in candidates
+    ) != tuple(range(len(candidates))):
+        return {
+            "available": False,
+            "ambiguous": False,
+            "raised_slots": (),
+            "selected_slot": None,
+        }
+    tops = sorted(int(card.box[1]) for card in candidates)
+    heights = sorted(int(card.box[3]) for card in candidates)
+    if any(height <= 0 for height in heights):
+        return {
+            "available": True,
+            "ambiguous": True,
+            "raised_slots": (),
+            "selected_slot": None,
+        }
+    row_top = 884 if len(candidates)==1 else tops[len(tops) // 2]
+    typical_height = heights[len(heights) // 2]
+    minimum_raise = max(18.0, typical_height * 0.07)
+    raised_slots = tuple(
+        card.slot
+        for card in candidates
+        if row_top - int(card.box[1]) >= minimum_raise
+    )
+    ambiguous = len(raised_slots) > 1 or (
+        not raised_slots and tops[-1] - tops[0] >= minimum_raise
+    )
+    return {
+        "available": True,
+        "ambiguous": ambiguous,
+        "raised_slots": raised_slots,
+        "selected_slot": (
+            raised_slots[0] if len(raised_slots) == 1 and not ambiguous else None
+        ),
+    }
+
+
+def same_live_candidate_geometry(
+    expected: tuple[Any, ...],
+    observed: tuple[Any, ...],
+) -> bool:
+    if len(expected) != len(observed):
+        return False
+    for before, current in zip(expected, observed, strict=True):
+        before_x, before_y, before_width, before_height = before.box
+        current_x, current_y, current_width, current_height = current.box
+        before_center = (before_x + before_width / 2.0, before_y + before_height / 2.0)
+        current_center = (
+            current_x + current_width / 2.0,
+            current_y + current_height / 2.0,
+        )
+        if abs(before_center[0] - current_center[0]) > max(14.0, before_width * 0.12):
+            return False
+        if abs(before_center[1] - current_center[1]) > max(18.0, before_height * 0.10):
+            return False
+        if not 0.70 <= current_width / before_width <= 1.35:
+            return False
+        if not 0.70 <= current_height / before_height <= 1.35:
+            return False
+    return True

@@ -19,6 +19,7 @@ from arena_winrate import (
     stable_generic_cost_value,
 )
 
+from .reader import _NATIVE_GENERIC_COST_CANDIDATE
 from ._detail_effect_ocr import _SkillDetailTextWithNumericFragments
 
 
@@ -590,7 +591,11 @@ class CardCustomizationsReader:
                     "applied_customizations": dict(customizations),
                 }
                 resolution_source = "generic_cost_conservative_fallback"
-                detail_evidence_mode = "conservative_generic_cost_bound"
+                detail_evidence_mode = (
+                    _NATIVE_GENERIC_COST_CANDIDATE
+                    if pair.uses_independent_optional_absence and generic_cost_coverage_context is None
+                    else "conservative_generic_cost_bound"
+                )
             elif expected_customization_count is None:
                 detail_evidence_mode = "unconstrained"
                 customizations = None
