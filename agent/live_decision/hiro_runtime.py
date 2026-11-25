@@ -1,5 +1,6 @@
 """Load the pinned Hiro implementation used by the Maa policy route."""
 
+import os
 import sys
 from pathlib import Path
 from functools import cache
@@ -10,19 +11,31 @@ from importlib.util import module_from_spec, spec_from_file_location
 
 from agent.utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
 
-HIRO_REVISION = '8380622a467cc30296c91b79dba4348166ef8d12'
+HIRO_REVISION = 'a7df5a9be782765d3c6282566157fbd3f80b99ee'
+HIRO_MASTER_REVISION = 'edc305aac3ac0204806c96164ce36fb795ba81e1'
 _RUNTIME_OWNER = RLock()
+
+
+def hiro_runtime_root():
+    return resolve_runtime_path(Path('.local/task275-rust/runtime') / HIRO_REVISION,
+                                Path('data/idol_road/rust_gnrpa') / HIRO_REVISION)
 
 
 @cache
 def hiro_source():
-    installed = Path('data/idol_road/rust_gnrpa') / HIRO_REVISION / 'src'
-    frozen = Path('.local/task275-rust') / ('hiro-gakumas-hero-' + HIRO_REVISION) / 'src'
-    entry = Path('hiro/exec/exam.py')
-    exam = resolve_runtime_path(frozen / entry, installed / entry)
+    runtime = hiro_runtime_root()
+    source = runtime / 'src'
+    exam = source / 'hiro/exec/exam.py'
     if not exam.is_file():
         raise ImportError(f'Hiro {HIRO_REVISION} exam source unavailable: {exam}')
-    source = exam.parents[2]
+    os.environ['GAKUMAS_PLAYER'] = str(runtime / 'vendor/gakumas-player')
+    os.environ['GAKUMAS_MASTER_COMMIT'] = HIRO_MASTER_REVISION
+    os.environ['HIRO_TOWER_BINDINGS'] = str(runtime / 'tower_bindings.json')
+    os.environ['GAKUMAS_EXAM_RS_CACHE'] = str(runtime / 'native-master')
+    if not os.environ.get('HIRO_ASSET_SOURCE'):
+        os.environ['HIRO_ASSET_SOURCE'] = 'agent.live_decision.hiro_master_assets:mounted_asset_source'
+    os.environ['HIRO_KAA_GAME_DATA'] = str(runtime / 'resources/game_data')
+    os.environ['HIRO_BUNDLED_ASSETS'] = str(runtime / 'assets/pack')
     if str(source) not in sys.path:
         sys.path.insert(0, str(source))
     package = import_module('hiro')
@@ -48,16 +61,7 @@ def hiro_module(name):
 
 
 def hiro_route_file(relative):
-    root = hiro_source().parent
-    installed = root / relative
-    if installed.is_file():
-        return installed
-    # The verified local UI and CLI helpers are optional to the shared exam
-    # runtime. Development can exercise the exact same files before packaging.
-    reference = resolve_runtime_path(
-        Path('.local/task600-nonbattle/hiro-offline-' + HIRO_REVISION[:8]) / relative,
-        Path('data/idol_road/rust_gnrpa') / HIRO_REVISION / relative,
-    )
+    reference = hiro_runtime_root() / relative
     if not reference.is_file():
         raise FileNotFoundError(f'Hiro {HIRO_REVISION} route file is unavailable: {relative}')
     return reference

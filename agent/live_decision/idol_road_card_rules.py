@@ -6,7 +6,6 @@ import math
 import zlib
 import hashlib
 import sqlite3
-from pathlib import Path
 from functools import lru_cache
 from contextlib import closing
 from collections import deque, defaultdict
@@ -15,8 +14,9 @@ from dataclasses import replace, dataclass
 from numpy import float32
 
 from agent.master_data import shared_master_rows
-from agent.utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
 
+from .hiro_runtime import HIRO_MASTER_REVISION as _MASTER
+from .hiro_runtime import hiro_runtime_root
 from .high_score.kernel import (
     RuleEvent,
     EffectKind,
@@ -42,9 +42,7 @@ from .high_score.contracts import (
 )
 from .high_score.state_copy import register_copy_record
 
-_HIRO = '8380622a467cc30296c91b79dba4348166ef8d12'
-_MASTER = 'd31baf6608ee4553091f28446f628cd3ad66ff01'
-_MASTER_SHA256 = '50141992bc9f6617290f536b291c0890b11fbdd4b1d326d111db84d2561108a6'
+_MASTER_SHA256 = 'df07a2299138735d4847430bbb4db2f158408221da4fed0d24fbb1e4fb613395'
 _FAMILIES = {
     172: ('p_card-02-men-3_004', 'produce'),
     516: ('p_card-02-act-1_037', 'produce'),
@@ -88,9 +86,7 @@ def _tower_catalog_rows(table, pattern):
     shared = shared_master_rows('tower-runtime', (table,), revision=_MASTER, pattern=pattern)
     if shared is not None:
         return tuple(shared[table])
-    relative = Path(_HIRO) / 'vendor/gakumas-player/data/master' / _MASTER / 'catalog.sqlite'
-    path = resolve_runtime_path(Path('.local/task275-rust/runtime') / relative,
-                                Path('data/idol_road/rust_gnrpa') / relative)
+    path = hiro_runtime_root() / 'vendor/gakumas-player/data/master' / _MASTER / 'catalog.sqlite'
     if not path.is_file():
         return ()
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
@@ -202,9 +198,7 @@ def _links(row):
 
 @lru_cache(maxsize=1)
 def _native_master():
-    relative = Path(_HIRO) / 'native-master' / f'master-{_MASTER}.json'
-    path = resolve_runtime_path(Path('.local/task275-rust/runtime') / relative,
-                                Path('data/idol_road/rust_gnrpa') / relative)
+    path = hiro_runtime_root() / 'native-master' / f'master-{_MASTER}.json'
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != _MASTER_SHA256:
         raise ValueError('idol_road_native_card_rules_revision_mismatch')

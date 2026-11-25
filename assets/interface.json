@@ -1,7 +1,7 @@
 {
   "interface_version": 2,
   "name": "MaaGakumasu",
-  "version": "v0.9.0",
+  "version": "v0.9.1",
   "github": "https://github.com/Kirinigh/Gakumas_Helper",
   "contact": "QQ群: 799823681",
   "icon": "./logo.ico",
@@ -1422,7 +1422,19 @@
           "label": "$4 小时",
           "pipeline_override": {
             "WorkChooseShowTime": {
-              "expected": "4"
+              "custom_recognition_param": {
+                "expected": "4",
+                "replace": [
+                  [
+                    "时",
+                    "時"
+                  ],
+                  [
+                    "间",
+                    "間"
+                  ]
+                ]
+              }
             }
           }
         },
@@ -1431,7 +1443,19 @@
           "label": "$8 小时",
           "pipeline_override": {
             "WorkChooseShowTime": {
-              "expected": "8"
+              "custom_recognition_param": {
+                "expected": "8",
+                "replace": [
+                  [
+                    "时",
+                    "時"
+                  ],
+                  [
+                    "间",
+                    "間"
+                  ]
+                ]
+              }
             }
           }
         },
@@ -1440,7 +1464,19 @@
           "label": "$12 小时",
           "pipeline_override": {
             "WorkChooseShowTime": {
-              "expected": "12"
+              "custom_recognition_param": {
+                "expected": "12",
+                "replace": [
+                  [
+                    "时",
+                    "時"
+                  ],
+                  [
+                    "间",
+                    "間"
+                  ]
+                ]
+              }
             }
           }
         }
@@ -1482,7 +1518,19 @@
           "label": "$4 小时",
           "pipeline_override": {
             "WorkChooseLiveTime": {
-              "expected": "4"
+              "custom_recognition_param": {
+                "expected": "4",
+                "replace": [
+                  [
+                    "时",
+                    "時"
+                  ],
+                  [
+                    "间",
+                    "間"
+                  ]
+                ]
+              }
             }
           }
         },
@@ -1491,7 +1539,19 @@
           "label": "$8 小时",
           "pipeline_override": {
             "WorkChooseLiveTime": {
-              "expected": "8"
+              "custom_recognition_param": {
+                "expected": "8",
+                "replace": [
+                  [
+                    "时",
+                    "時"
+                  ],
+                  [
+                    "间",
+                    "間"
+                  ]
+                ]
+              }
             }
           }
         },
@@ -1500,7 +1560,19 @@
           "label": "$12 小时",
           "pipeline_override": {
             "WorkChooseLiveTime": {
-              "expected": "12"
+              "custom_recognition_param": {
+                "expected": "12",
+                "replace": [
+                  [
+                    "时",
+                    "時"
+                  ],
+                  [
+                    "间",
+                    "間"
+                  ]
+                ]
+              }
             }
           }
         }
@@ -2091,31 +2163,160 @@
       "label": "$启用领取任务"
     },
     "偶像之路目标偶像": {
-      "type": "input",
+      "type": "select",
       "label": "$偶像之路目标偶像",
       "description": "$偶像之路目标偶像说明",
-      "inputs": [
+      "default_case": "current",
+      "cases": [
         {
-          "name": "idol_road_idol",
-          "label": "$偶像之路目标偶像",
-          "default": "",
-          "pipeline_type": "string"
-        }
-      ],
-      "pipeline_override": {
-        "IdolRoadNavigate": {
-          "enabled": true,
-          "action": {
-            "type": "Custom",
-            "param": {
-              "custom_action": "IdolRoadNavigate",
+          "name": "current",
+          "label": "$偶像之路当前偶像",
+          "pipeline_override": {}
+        },
+        {
+          "name": "花海咲季",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
               "custom_action_param": {
-                "idol": "{idol_road_idol}"
+                "idol": "花海咲季"
+              }
+            }
+          }
+        },
+        {
+          "name": "月村手毬",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "月村手毬"
+              }
+            }
+          }
+        },
+        {
+          "name": "藤田ことね",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "藤田ことね"
+              }
+            }
+          }
+        },
+        {
+          "name": "有村麻央",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "有村麻央"
+              }
+            }
+          }
+        },
+        {
+          "name": "葛城リーリヤ",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "葛城リーリヤ"
+              }
+            }
+          }
+        },
+        {
+          "name": "倉本千奈",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "倉本千奈"
+              }
+            }
+          }
+        },
+        {
+          "name": "紫雲清夏",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "紫雲清夏"
+              }
+            }
+          }
+        },
+        {
+          "name": "篠澤広",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "篠澤広"
+              }
+            }
+          }
+        },
+        {
+          "name": "姫崎莉波",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "姫崎莉波"
+              }
+            }
+          }
+        },
+        {
+          "name": "花海佑芽",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "花海佑芽"
+              }
+            }
+          }
+        },
+        {
+          "name": "秦谷美鈴",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "秦谷美鈴"
+              }
+            }
+          }
+        },
+        {
+          "name": "十王星南",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "十王星南"
+              }
+            }
+          }
+        },
+        {
+          "name": "雨夜燕",
+          "pipeline_override": {
+            "IdolRoadNavigate": {
+              "enabled": true,
+              "custom_action_param": {
+                "idol": "雨夜燕"
               }
             }
           }
         }
-      }
+      ]
     },
     "偶像之路自动回忆": {
       "type": "switch",

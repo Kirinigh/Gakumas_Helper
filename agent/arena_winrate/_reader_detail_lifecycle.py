@@ -29,6 +29,8 @@ from arena_winrate.recognition_probe import RecognitionProbe
 from arena_winrate._card_detail_state import CardBox, CardKey, CardDetailState, ClosedCardDetail, card_detail_state
 from arena_winrate._detail_capture_evidence import _FullFrameOcrEvidence
 
+from agent.live_decision.simd_ocr import without_vulkan_cold_wait
+
 
 class DetailLifecycleIoPort(Protocol):
     """Live input/capture operations, retaining the existing cancellation guards."""
@@ -418,6 +420,7 @@ class DetailLifecycleReader:
             )
         return frames
 
+    @without_vulkan_cold_wait()
     def _open_skill_card_once(
         self,
         target: TeamTarget,

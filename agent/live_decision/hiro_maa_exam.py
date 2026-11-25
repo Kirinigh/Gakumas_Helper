@@ -11,6 +11,7 @@ from .exam_loop import ExamResult, ExamNoProgress, ExamReobserved, ExamSettlemen
 from .hiro_runtime import hiro_module, hiro_binding
 from .hif_card_retry import read_exam_select_markers
 from .hif_upstream_ui import upstream_drink_actions
+from .hiro_maa_device import hiro_maa_ocr
 from .high_score.contracts import ActionKind, DecisionKind
 
 
@@ -419,7 +420,10 @@ def run_maa_exam(host, box, legal, *, label):
     brain = SimpleNamespace(profile=None, new_memory=lambda name: memory(exam=name), commit=lambda *_: None)
     recorder = SimpleNamespace(log=lambda event, **data: host.log(dict(event=event, **{
         key: value for key, value in data.items() if key != 'image'})))
-    with hiro_binding(binding):
+    strategy = hiro_module('strategy')
+    # The Maa task selects the advisor and owns live observation and receipts.
+    with (hiro_binding(binding), hiro_maa_ocr(lambda image: host.ocr(image)),
+          _perception(strategy, _current=strategy.Strategy())):
         execute, persistent_select, wait_change = exam._execute, exam._select_retap, exam._wait_change
         animation = exam._anim_tap
         with _perception(exam, Frame=bridge.recognize, _lite_sig=bridge.signature, _roi_texts=bridge.texts,

@@ -52,7 +52,7 @@
   },
   "AwardGiftClick": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           580,
@@ -60,15 +60,18 @@
           135,
           80
         ],
-        "expected": [
-          "プレゼント"
-        ],
-        "replace": [
-          [
-            "ル",
-            "レ"
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": [
+            "プレゼント"
+          ],
+          "replace": [
+            [
+              "ル",
+              "レ"
+            ]
           ]
-        ]
+        }
       }
     },
     "action": {
@@ -160,7 +163,7 @@
   },
   "AwardMissionClick": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           590,
@@ -168,10 +171,13 @@
           130,
           75
         ],
-        "expected": [
-          "ミッション"
-        ],
-        "replace": []
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": [
+            "ミッション"
+          ],
+          "replace": []
+        }
       }
     },
     "action": {

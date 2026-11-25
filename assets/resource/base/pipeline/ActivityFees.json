@@ -35,7 +35,7 @@
   },
   "ActivityFeeClick": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           0,
@@ -43,19 +43,22 @@
           160,
           130
         ],
-        "expected": [
-          "活動費"
-        ],
-        "replace": [
-          [
-            "费",
-            "費"
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": [
+            "活動費"
           ],
-          [
-            "动",
-            "動"
+          "replace": [
+            [
+              "费",
+              "費"
+            ],
+            [
+              "动",
+              "動"
+            ]
           ]
-        ]
+        }
       }
     },
     "action": {

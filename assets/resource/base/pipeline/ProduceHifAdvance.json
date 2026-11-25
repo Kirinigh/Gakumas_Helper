@@ -20,6 +20,73 @@
     "action": "StopTask",
     "next": []
   },
+  "ProduceHiroCultivationAfterStart": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "ProduceRunHiroCultivation",
+    "on_error": [
+      "ProduceHifAdvanceStop"
+    ],
+    "next": [
+      "ProduceEntryFlag",
+      "[JumpBack]ProduceNext"
+    ]
+  },
+  "ProduceHiroCampaignEntry": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "ProduceRunHiroCampaign",
+    "on_error": [
+      "ProduceHifAdvanceStop"
+    ],
+    "next": [
+      "ProduceHifAdvanceStop"
+    ]
+  },
+  "ProduceHiroFormationSettings": {
+    "action": "DoNothing"
+  },
+  "ProduceHiroRewardSettings": {
+    "action": "DoNothing",
+    "attach": {
+      "policy": "hiro"
+    }
+  },
+  "ProduceHifQualifierBattleSettings": {
+    "action": "DoNothing"
+  },
+  "ProduceHiroHifFinalsSettings": {
+    "action": "DoNothing",
+    "attach": {
+      "battle_policy": "uinet-2.1"
+    }
+  },
+  "ProduceHifQualifierPrepareEntry": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "ProduceHifQualifierPrepare",
+    "on_error": [
+      "ProduceHifAdvanceStop"
+    ],
+    "next": [
+      "ProduceHifAdvanceStop"
+    ]
+  },
+  "ProduceHifQualifierPreparationSettings": {
+    "action": "DoNothing",
+    "attach": {
+      "support_set": "1",
+      "memory_set": "1",
+      "attribute": "Da",
+      "memory_cards": ""
+    }
+  },
+  "ProduceHifAutoFormationSettings": {
+    "action": "DoNothing",
+    "attach": {
+      "auto": false
+    }
+  },
   "ProduceHifCandidatePoolSettings": {
     "action": "DoNothing",
     "attach": {
@@ -45,6 +112,11 @@
     "custom_recognition": "ProduceHifSceneObserve",
     "action": "DoNothing",
     "next": []
+  },
+  "ProduceHifCurrentIntervalOCR": {
+    "recognition": "OCR",
+    "expected": ".+",
+    "action": "DoNothing"
   },
   "ProduceHifDayText": {
     "recognition": "Custom",
@@ -143,57 +215,5 @@
       "expected": "相談"
     },
     "action": "DoNothing"
-  },
-  "ProduceHiroCultivationAfterStart": {
-    "recognition": "DirectHit",
-    "action": "Custom",
-    "custom_action": "ProduceRunHiroCultivation",
-    "on_error": [
-      "ProduceHifAdvanceStop"
-    ],
-    "next": [
-      "ProduceEntryFlag",
-      "[JumpBack]ProduceNext"
-    ]
-  },
-  "ProduceHiroCampaignEntry": {
-    "recognition": "DirectHit",
-    "action": "Custom",
-    "custom_action": "ProduceRunHiroCampaign",
-    "on_error": [
-      "ProduceHifAdvanceStop"
-    ],
-    "next": [
-      "ProduceHifAdvanceStop"
-    ]
-  },
-  "ProduceHiroFormationSettings": {
-    "action": "DoNothing"
-  },
-  "ProduceHiroHifFinalsSettings": {
-    "action": "DoNothing",
-    "attach": {
-      "battle_policy": "uinet-2.1"
-    }
-  },
-  "ProduceHifQualifierPrepareEntry": {
-    "recognition": "DirectHit",
-    "action": "Custom",
-    "custom_action": "ProduceHifQualifierPrepare",
-    "on_error": [
-      "ProduceHifAdvanceStop"
-    ],
-    "next": [
-      "ProduceHifAdvanceStop"
-    ]
-  },
-  "ProduceHifQualifierPreparationSettings": {
-    "action": "DoNothing",
-    "attach": {
-      "support_set": "1",
-      "memory_set": "1",
-      "attribute": "Da",
-      "memory_cards": ""
-    }
   }
 }

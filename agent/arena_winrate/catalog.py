@@ -4751,6 +4751,19 @@ class ArenaEntityCatalog:
             )
         return next(iter(unique.values()))
 
+    def has_complete_skill_card_effect_view(self, card_id: int, body: str) -> bool:
+        """Check that one legal effect group and its baseline action rows are visible."""
+        try:
+            resolved = self.resolve_effective_customizations_unconstrained(card_id, body)
+        except ArenaCatalogError:
+            return False
+        card = self._cards_by_id[card_id]
+        anchors = self._detail_coverage_anchors(card, resolved)
+        compact = _normalise_effect_text(body)
+        return bool(anchors) and all(
+            self._detail_coverage_anchor_present(card, resolved, anchor, compact) for anchor in anchors
+        )
+
     def resolve_generic_cost_ambiguity(
         self,
         card_id: int,

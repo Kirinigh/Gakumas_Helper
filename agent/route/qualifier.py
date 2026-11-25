@@ -554,6 +554,8 @@ def run_native_qualifier(context, argv, options):
     from .hiro_hif import finish_hiro_qualifier
     from .bootstrap import _endpoint, _product_paths, _instance_endpoint
     from .ownership import write_hif_record, locked_hif_record
+    from .hiro_product import prepare_auto_qualifier
+    from .hiro_formation import auto_formation_selected
 
     if (not isinstance(context, Context) or not isinstance(argv, CustomAction.RunArg)
             or argv.node_name != 'ProduceHifQualifierPrepareEntry' or argv.custom_action_name != 'ProduceHifQualifierPrepare'
@@ -618,8 +620,11 @@ def run_native_qualifier(context, argv, options):
                 report = dict(finish_hiro_qualifier(ui, frame), paid_start=False)
             else:
                 if label(frame, 'プロデュース', top=920, bottom=1070):
-                    report = prepare_qualifier(ui, plan, SkillCardFeatureCatalog.load(data),
-                        gallery=gallery, value=value, first=frame)
+                    if auto_formation_selected(context):
+                        report = prepare_auto_qualifier(context, ui, options, report)
+                    else:
+                        report = prepare_qualifier(ui, plan, SkillCardFeatureCatalog.load(data),
+                            gallery=gallery, value=value, first=frame)
                     if run_exams:
                         frame = start_qualifier_exams(ui, report)
                 if run_exams:

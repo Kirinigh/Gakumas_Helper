@@ -111,12 +111,15 @@
   },
   "StartUpLoginBonus": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
-        "expected": [
-          "LOGIN",
-          "BONUS"
-        ]
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": [
+            "LOGIN",
+            "BONUS"
+          ]
+        }
       }
     },
     "action": {

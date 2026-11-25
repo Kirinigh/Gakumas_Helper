@@ -2,10 +2,12 @@
   "WorkClick": {
     "recognition": {
       "param": {
-        "expected": [
-          "工作"
-        ],
-        "replace": []
+        "custom_recognition_param": {
+          "expected": [
+            "工作"
+          ],
+          "replace": []
+        }
       }
     }
   }

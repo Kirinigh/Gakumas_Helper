@@ -2,10 +2,12 @@
   "AwardGiftClick": {
     "recognition": {
       "param": {
-        "expected": [
-          "礼物"
-        ],
-        "replace": []
+        "custom_recognition_param": {
+          "expected": [
+            "礼物"
+          ],
+          "replace": []
+        }
       }
     },
     "action": {
@@ -22,10 +24,12 @@
   "AwardMissionClick": {
     "recognition": {
       "param": {
-        "expected": [
-          "任务"
-        ],
-        "replace": []
+        "custom_recognition_param": {
+          "expected": [
+            "任务"
+          ],
+          "replace": []
+        }
       }
     },
     "action": {

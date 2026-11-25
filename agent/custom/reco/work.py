@@ -38,7 +38,11 @@ class WorkChooseTimeAuto(CustomRecognition):
 
         now = datetime.now()
         hours = choose_work_duration(now)
-        overridden = context.override_pipeline({target_node: {"expected": str(hours)}})
+        recognition = context.get_node_data(target_node)["recognition"]
+        params = recognition["param"]["custom_recognition_param"]
+        overridden = context.override_pipeline({target_node: {
+            "custom_recognition_param": {**params, "expected": str(hours)},
+        }})
         kind = kinds.get(kind)
         logger.info(f"自动工作时长: 当前 {now:%H:%M}, 设置{kind}时长 {hours} 小时")
         if not overridden:

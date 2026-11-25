@@ -90,5 +90,6 @@ def play_cultivation_exam(context, entry, algorithm, *, log, battle_type=None):
             raise resume_blocked('Maa exam returned without a settlement')
         log(dict(event='cultivation_exam_result', produce=entry.produce, idol=entry.idol, label=label,
                  rank=result.rank, score=result.score, algorithm=algorithm))
+        return result
 
     return play

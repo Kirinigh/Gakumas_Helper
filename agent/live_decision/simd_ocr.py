@@ -8,16 +8,35 @@ import base64
 import shutil
 import logging
 import subprocess
+from time import monotonic
 from queue import Empty, Queue
 from types import SimpleNamespace
 from pathlib import Path
-from functools import cache
-from threading import Lock, Thread
+from functools import cache, partial
+from threading import Lock, Timer, Thread
+from contextlib import contextmanager
+from contextvars import ContextVar
+from concurrent.futures import Future
 
 import cv2
 import numpy as np
 
 from agent.utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
+
+VULKAN_COLD_TIMEOUT_SECONDS = 1.0
+VULKAN_WARMUP_TIMEOUT_SECONDS = 5.0
+_wait_for_vulkan_cold = ContextVar("wait_for_vulkan_cold", default=True)
+_vulkan_setup_lock = Lock()
+
+
+@contextmanager
+def without_vulkan_cold_wait():
+    """Keep the first Vulkan exchange off a caller's observation deadline."""
+    token = _wait_for_vulkan_cold.set(False)
+    try:
+        yield
+    finally:
+        _wait_for_vulkan_cold.reset(token)
 
 
 class OcrWorker:
@@ -57,18 +76,27 @@ class OcrWorker:
         self.replies = Queue()
         self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         encoding='utf-8', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if not self.available:
+            raise RuntimeError('OCR worker is unavailable')
         Thread(target=self._receive, args=(self.process.stdout, self.replies), daemon=True).start()
         if self._read(10).get('ready') is not True:
             raise RuntimeError('OCR worker is not ready')
 
     def _close_process(self):
-        if self.process is not None:
-            if self.process.poll() is None:
-                self.process.kill()
-            self.process.wait()
-            self.process.stdin.close()
-            self.process.stdout.close()
-            self.process = None
+        process = self.process
+        if process is None:
+            return
+        self.process = None
+        try:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+        finally:
+            for stream in (process.stdin, process.stdout):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
     def close(self):
         with self.lock:
@@ -84,6 +112,8 @@ class OcrWorker:
             try:
                 if self.process is None:
                     self._start()
+                    if not self.available:
+                        raise RuntimeError('OCR worker is unavailable')
                 self.process.stdin.write(json.dumps(request) + '\n')
                 self.process.stdin.flush()
                 return self._read(3)
@@ -131,8 +161,127 @@ class SimdOcr(OcrWorker):
         return tuple(sorted(rows, key=lambda row: (row.box[axes[0]], row.box[axes[1]])))
 
 
-@cache
+class VulkanOcr(SimdOcr):
+    """Bound the whole GPU exchange, including OS calls and pipe writes."""
+
+    def __init__(self, command):
+        super().__init__(command)
+        self._dispatch_lock = Lock()
+        self._pending = None
+        self._warm = False
+        self._exchange_deadline = None
+
+    def _read(self, timeout):
+        deadline = self._exchange_deadline
+        # Ready and reply consume the same elapsed-time budget, including during prewarm.
+        return super()._read(max(0.0, deadline - monotonic()) if deadline is not None else timeout)
+
+    def _kill_process(self):
+        process = self.process
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.kill()
+            except OSError:
+                pass
+
+    def close(self):
+        self.available = False
+        self._kill_process()
+        if self.lock.acquire(blocking=False):
+            try:
+                self._close_process()
+            finally:
+                self.lock.release()
+
+    def _expire(self, pending):
+        with self._dispatch_lock:
+            if self._pending is not pending:
+                return
+            self.available = False
+            self._pending = None
+            pending.set_exception(RuntimeError('Vulkan OCR exchange timed out'))
+        # Cleanup can itself wait on the OS. The CPU fallback must be free to run.
+        Thread(target=self.close, daemon=True).start()
+
+    def _exchange(self, pending, timer, deadline, operation):
+        rows, error = (), None
+        self._exchange_deadline = deadline
+        try:
+            rows = operation()
+        except Exception as caught:
+            error = caught
+        finally:
+            self._exchange_deadline = None
+        timer.cancel()
+        if monotonic() >= deadline:
+            self._expire(pending)
+            return
+
+        fatal = isinstance(error, (OSError, RuntimeError, KeyError))
+        with self._dispatch_lock:
+            if self._pending is not pending:
+                return
+            self._pending = None
+            if error is None:
+                self._warm = True
+                pending.set_result(rows)
+            else:
+                if fatal:
+                    self.available = False
+                pending.set_exception(error)
+        if fatal:
+            self.close()
+
+    def _submit(self, timeout, operation):
+        deadline = monotonic() + timeout
+        pending = Future()
+        self._pending = pending
+        timer = Timer(timeout, self._expire, args=(pending,))
+        timer.daemon = True
+        timer.start()
+        Thread(target=self._exchange, args=(pending, timer, deadline, operation), daemon=True).start()
+        return pending, deadline
+
+    def _prewarm(self):
+        # Exercise both .NET OCR paths without access to a game frame.
+        image = np.full((1280, 720, 3), 255, dtype=np.uint8)
+        cv2.putText(image, "OCR 123", (180, 132), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 2)
+        super().read(image)
+        super().read(image, roi=(160, 94, 220, 55), only_rec=True)
+        return ()
+
+    def prewarm(self):
+        with self._dispatch_lock:
+            if self.available and self._pending is None and not self._warm:
+                self._submit(VULKAN_WARMUP_TIMEOUT_SECONDS, self._prewarm)
+
+    def read(self, image, **params):
+        with self._dispatch_lock:
+            if not self.available or self._pending is not None:
+                return ()
+            cold = not self._warm
+            timeout = VULKAN_COLD_TIMEOUT_SECONDS if cold else 3.0
+            pending, deadline = self._submit(timeout, partial(super().read, image, **params))
+        if cold and not _wait_for_vulkan_cold.get():
+            return ()
+        try:
+            return pending.result(timeout=max(0.0, deadline - monotonic()))
+        except TimeoutError:
+            self._expire(pending)
+            return pending.result()
+
+
 def configured_simd_ocr(backend='cpu'):
+    if backend != 'vulkan':
+        return _configured_simd_ocr(backend)
+    # The cache alone permits duplicate first calls from different threads.
+    with _vulkan_setup_lock:
+        return _configured_simd_ocr(backend)
+
+
+@cache
+def _configured_simd_ocr(backend):
     model = os.getenv('GKH_SIMD_OCR_MODEL', 'small')
     if model not in ('small', 'medium'):
         return None
@@ -140,8 +289,17 @@ def configured_simd_ocr(backend='cpu'):
                                   Path('data/ocr/GkhSimdOcr.dll'))
     dotnet = shutil.which('dotnet')
     if helper.is_file() and dotnet:
-        return SimdOcr((dotnet, str(helper.resolve()), backend, model))
+        worker_type = VulkanOcr if backend == 'vulkan' else SimdOcr
+        return worker_type((dotnet, str(helper.resolve()), backend, model))
     return None
+
+
+def prewarm_vulkan_ocr():
+    """Schedule the shared GPU worker before either automation starts reading frames."""
+    if os.getenv('GKH_SIMD_OCR', 'auto') in ('auto', 'vulkan'):
+        worker = configured_simd_ocr('vulkan')
+        if worker is not None:
+            worker.prewarm()
 
 
 def read_optional_simd_ocr(image, params, *, prefer_gpu=False, index=0, accept=bool):

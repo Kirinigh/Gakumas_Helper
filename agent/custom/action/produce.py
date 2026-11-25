@@ -740,7 +740,7 @@ class ProduceCardsAuto(CustomAction):
             logger.error(f'培育考试停止 {error}')
             return False
 
-    def _run_recommended_exam(self, context, *, result_reader=None, authorize=None):
+    def _run_recommended_exam(self, context, *, result_reader=None, authorize=None, capture=None):
         from live_decision.exam_hud import read_lesson_goal, read_exam_ranking
         from live_decision.exam_loop import (
             LESSON_END_DELAY,
@@ -774,6 +774,10 @@ class ProduceCardsAuto(CustomAction):
                 authorize()
             context.tasker.controller.post_click(*point).wait()
 
+        if capture is None:
+            def capture():
+                return context.tasker.controller.post_screencap().wait().get()
+
         def snapshot(image, hand, current_lesson):
             if getattr(image, 'shape', ()) != (1280, 720, 3):
                 return None
@@ -790,7 +794,7 @@ class ProduceCardsAuto(CustomAction):
             if context.tasker.stopping:
                 logger.info("任务中断")
                 return "finished"
-            image = context.tasker.controller.post_screencap().wait().get()
+            image = capture()
             playing = self._is_playing_card(context, image)
             stalled = time.monotonic() - last_progress >= EXAM_STALL_TIMEOUT
             if not playing:

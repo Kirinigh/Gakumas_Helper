@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from typing import Any, Protocol
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from arena_winrate import ArenaReaderError
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded, cancellation_for
 from arena_winrate._reader_visual import _text
 from arena_winrate._detail_capture_evidence import _FullFrameOcrEvidence
+
+from agent.live_decision.ocr_nodes import OcrRows, read_ocr_node
 
 
 class IoReaderPort(Protocol):
@@ -26,7 +28,9 @@ class IoReaderPort(Protocol):
 
     def _check_cancelled(self) -> None: ...
     def _click(self, box: tuple[int, int, int, int], *, settle_seconds: float = ...) -> None: ...
-    def _full_frame_ocr_evidence_for(self, image: Any) -> _FullFrameOcrEvidence: ...
+    def _full_frame_ocr_evidence_for(
+        self, image: Any, *, accept: Callable[[Sequence[Any]], bool] | None = ...,
+    ) -> _FullFrameOcrEvidence: ...
     def _increment(self, name: str) -> None: ...
 
     _member_long_press_seconds: Any
@@ -106,19 +110,41 @@ class IoReader:
         *,
         roi: tuple[int, int, int, int] | None = None,
         only_rec: bool = False,
+        accept: Callable[[Sequence[Any]], bool] | None = None,
     ) -> list[Any]:
         if expected == r".+" and roi is None and not only_rec:
-            evidence = self.port._full_frame_ocr_evidence_for(image)
+            options = {"accept": accept} if accept is not None else {}
+            evidence = self.port._full_frame_ocr_evidence_for(image, **options)
             return list(evidence.filtered_items) if evidence.hit else []
-        detail_kwargs: dict[str, Any] = {}
+        override: dict[str, Any] = {"recognition": "OCR", "expected": expected, "order_by": "Vertical"}
+        detail_kwargs = {}
         if roi is not None:
+            override["roi"] = list(roi)
             detail_kwargs["roi"] = roi
         if only_rec:
+            override["only_rec"] = True
             detail_kwargs["only_rec"] = True
-        detail = self.port._ocr_detail(image, expected, **detail_kwargs)
-        if not detail or not detail.hit:
-            return []
-        return list(detail.filtered_results or detail.all_results or [])
+
+        def native_read():
+            detail = self.port._ocr_detail(image, expected, **detail_kwargs)
+            if not detail or not detail.hit:
+                return OcrRows(())
+            return OcrRows(tuple(detail.filtered_results or detail.all_results or ()))
+
+        if accept is None:
+            if expected == r"^ステージ\s*[123]$":
+                accept = lambda rows: len({_text(row).strip()[-1:] for row in rows}) == 3
+            elif expected in (r"^[0-9]{1,6}$", r"^リハーサル$", r"^閉じる$"):
+                accept = lambda rows: len(rows) == 1
+            else:
+                accept = bool
+        self.port._check_cancelled()
+        result = read_ocr_node(
+            getattr(self.port, "context", None), image, "ArenaReaderOCR", override=override,
+            accept=accept, prefer_gpu=True, native_read=native_read,
+        )
+        self.port._check_cancelled()
+        return list(result.rows)
 
     def _ocr_detail(
         self,
@@ -152,8 +178,10 @@ class IoReader:
         image: Any,
         *,
         spatial_reading_order: bool = False,
+        accept: Callable[[Sequence[Any]], bool] | None = None,
     ) -> str:
-        evidence = self.port._full_frame_ocr_evidence_for(image)
+        options = {"accept": accept} if accept is not None else {}
+        evidence = self.port._full_frame_ocr_evidence_for(image, **options)
         if not evidence.hit:
             raise ArenaReaderError("ocr_empty", "full-screen OCR returned no text")
         items = list(evidence.all_items)

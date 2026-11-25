@@ -31,7 +31,8 @@ def _read_hiro_memory(campaign, device):
 
 
 def run_hiro_hif_campaign(device, read_ocr, *, skin, enter, play_exam, log,
-                          main_attr=None, standalone_memory=None, save_frame=None, opening_submitted=None):
+                          main_attr=None, standalone_memory=None, save_frame=None, opening_submitted=None,
+                          reward_policy='hiro'):
     """Run Hiro's qualifier → confirmed memory → finals campaign in Maa.
 
     enter receives the current runtime, segment and Hiro's verified memory
@@ -48,7 +49,8 @@ def run_hiro_hif_campaign(device, read_ocr, *, skin, enter, play_exam, log,
         try:
             run_hiro_cultivation(device, read_ocr, mode=mode, skin=skin, main_attr=main_attr,
                 enter=lambda rt: enter(rt, mode, memory), play_exam=play_exam, log=log, save_frame=save_frame,
-                opening_submitted=(lambda: opening_submitted(mode)) if opening_submitted is not None else None)
+                opening_submitted=(lambda: opening_submitted(mode)) if opening_submitted is not None else None,
+                reward_policy=reward_policy)
         except (loop.ResumeBlocked, device_errors.DeviceError) as error:
             log(dict(event='hiro_hif_segment_stopped', mode=mode, reason=str(error)))
             return 3
@@ -74,7 +76,9 @@ def run_hiro_hif_campaign(device, read_ocr, *, skin, enter, play_exam, log,
         scope.enter_context(_replace(campaign, 'subprocess', SimpleNamespace(call=lambda *a, **kw: 0)))
         scope.enter_context(_replace(campaign, 'run', segment))
         scope.enter_context(_replace(campaign, '_probe', probe))
-        return campaign.main(args)
+        # Hiro's public CLI also applies its own close-game setting at exit.
+        # Maa owns the game window, so run only the cultivation orchestration.
+        return campaign._main(args)
 
 
 def finish_hiro_qualifier(ui, frame):

@@ -1,68 +1,15 @@
 """The active Maa task as a Hiro device."""
 
-import json
 import time
-import sqlite3
 from types import SimpleNamespace
 from pathlib import Path
 from contextlib import contextmanager
 from importlib.util import find_spec
 
+import cv2
+
+from .simd_ocr import read_optional_simd_ocr
 from .hiro_runtime import hiro_module, hiro_binding, hiro_route_file
-
-
-def _mounted_master():
-    from .high_score.tower_gnrpa import load_native_tower
-
-    _, upstream = load_native_tower()
-    master = upstream.master()
-    db = sqlite3.connect(':memory:')
-    tables = ('Character', 'IdolCard', 'MemoryAbility', 'ProduceCard', 'ProduceCardCustomize',
-              'ProduceDrink', 'ProduceExamEffect', 'ProduceItem', 'SupportCard')
-    for table in tables:
-        rows = master.rows(table)
-        if not rows:
-            continue
-        columns = list(dict.fromkeys(key for row in rows for key in row))
-        names = ', '.join(f'"{column}"' for column in columns)
-        placeholders = ', '.join('?' for _ in columns)
-        db.execute(f'CREATE TABLE "{table}" ({names})')
-        db.executemany(f'INSERT INTO "{table}" VALUES ({placeholders})', (
-            tuple(json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value
-                  for value in (row.get(key) for key in columns)) for row in rows))
-    return db
-
-
-@contextmanager
-def _master_source():
-    """Use the same pinned master as Maa's exam host when KAA DB is absent."""
-    assets = hiro_module('vision.assets').source()
-    original = getattr(assets, 'master_db', None)
-    if original is None or original() is not None:
-        yield
-        return
-    catalog = hiro_module('state.catalog')
-    cached = getattr(catalog._LOCAL, 'catalog', None)
-    db = None
-
-    def master_db():
-        nonlocal db
-        if db is None:
-            db = _mounted_master()
-        return db
-
-    assets.master_db = master_db
-    catalog._LOCAL.catalog = None
-    clear = hiro_module('master').clear
-    clear()
-    try:
-        yield
-    finally:
-        assets.master_db = original
-        catalog._LOCAL.catalog = cached
-        clear()
-        if db is not None:
-            db.close()
 
 
 class HiroMaaDevice:
@@ -143,36 +90,58 @@ class HiroMaaDevice:
 
 
 @contextmanager
+def hiro_maa_ocr(read_ocr):
+    """Bind the upstream box and single-line OCR paths inside a Hiro device scope."""
+    ocr = hiro_module('vision.ocr')
+    simd = hiro_module('vision.simd_ocr')
+    digits = hiro_module('vision.digits')
+
+    def read_bgr(img, *, scale, only_rec=False):
+        height, width = img.shape[:2]
+        if img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        scale = min(scale, 2000 / max(height, width))
+        if scale != 1:
+            img = cv2.resize(img, (max(1, round(width * scale)), max(1, round(height * scale))),
+                             interpolation=cv2.INTER_CUBIC if scale > 1 else cv2.INTER_AREA)
+        rows = read_optional_simd_ocr(img, {'only_rec': True}) if only_rec else ()
+        sx, sy = width / img.shape[1], height / img.shape[0]
+        return [(row.text, row.score, (round(x * sx), round(y * sy),
+                                      round((x + w) * sx), round((y + h) * sy)))
+                for row in rows or read_ocr(img) for x, y, w, h in [row.box]]
+
+    old = ocr.engine, simd.simd_engine, digits._dddd
+    try:
+        ocr.engine = lambda: 'simd'
+        worker = SimpleNamespace(read=read_bgr)
+        simd.simd_engine = lambda: worker
+        if find_spec('ddddocr') is None:
+            # The installed Maa agent supplies OCR. Mark the optional
+            # reader as absent so the original vote cannot count it.
+            digits._dddd = lambda: SimpleNamespace(classification=lambda _: '')
+        yield
+    finally:
+        ocr.engine, simd.simd_engine, digits._dddd = old
+
+
+@contextmanager
 def hiro_maa_route(device, read_ocr, *, session=None, clock=time.monotonic, sleep=time.sleep):
     """Run the original page handlers with the current Maa OCR and UI templates."""
     pack = hiro_route_file(Path('assets/pack/ui/templates.json')).parent
     ui = hiro_module('vision.ui_templates')
-    ocr = hiro_module('vision.ocr')
     pages = hiro_module('vision.classify')
-    digits = hiro_module('vision.digits')
     rt = hiro_module('runtime.loop').Runtime(raw_device=device, classify=pages.classify,
                                             session=session, clock=clock, sleep=sleep)
 
-    def read_bgr(img, scale, languages):
-        return [(row.text, row.score,
-                 tuple(round(v / scale) for v in (x, y, x + width, y + height)))
-                for row in read_ocr(img) for x, y, width, height in [row.box]]
-
-    with hiro_binding(rt), _master_source():
-        old = ui.PACK, pages.PACK, ocr.engine, ocr._rapid_raw, digits._dddd
+    with hiro_binding(rt), hiro_maa_ocr(read_ocr):
+        old = ui.PACK, pages.PACK
         caches = (ui._catalog, ui._pixels, ui.tpl)
         try:
             ui.PACK = pages.PACK = pack
-            ocr.engine = lambda: 'rapidocr'
-            ocr._rapid_raw = read_bgr
-            if find_spec('ddddocr') is None:
-                # The installed Maa agent supplies OCR. Mark the optional
-                # reader as absent so the original vote cannot count it.
-                digits._dddd = lambda: SimpleNamespace(classification=lambda _: '')
             for cache in caches:
                 cache.cache_clear()
             yield rt
         finally:
-            ui.PACK, pages.PACK, ocr.engine, ocr._rapid_raw, digits._dddd = old
+            ui.PACK, pages.PACK = old
             for cache in caches:
                 cache.cache_clear()

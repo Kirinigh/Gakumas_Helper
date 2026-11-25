@@ -2,15 +2,11 @@
 
 import os
 import re
-import sys
 from types import SimpleNamespace
-from pathlib import Path
 from importlib import import_module
 
-from agent.utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
-
 from .contracts import DecisionKind
-from ..hiro_runtime import HIRO_REVISION
+from ..hiro_runtime import hiro_module, hiro_runtime_root
 from .gkms_shadow_adapter import TurnPlayHistory, _card, build_shadow_observation
 from .gkms_continuous_policy import _tower_legal_projection
 
@@ -22,20 +18,13 @@ class RustTowerStageBindingMissing(ValueError):
 def load_native_tower():
     if os.environ.get('GAKUMAS_EXAM_NATIVE') == '0':
         raise ValueError('idol_road_rust_backend_disabled')
-    runtime = resolve_runtime_path(Path('.local/task275-rust/runtime') / HIRO_REVISION,
-                                   Path('data/idol_road/rust_gnrpa') / HIRO_REVISION)
+    runtime = hiro_runtime_root()
     if not runtime.is_dir():
         raise ValueError('idol_road_rust_runtime_missing')
-    source = str(runtime / 'src')
-    if source not in sys.path:
-        sys.path.insert(0, source)
-    os.environ['GAKUMAS_PLAYER'] = str(runtime / 'vendor/gakumas-player')
-    os.environ['HIRO_TOWER_BINDINGS'] = str(runtime / 'tower_bindings.json')
-    os.environ['GAKUMAS_EXAM_RS_CACHE'] = str(runtime / 'native-master')
     try:
+        hiro_module('sim')
+        tables = hiro_module('bench_bridge.tower')
         rust = import_module('gakumas_exam_rs')
-        import_module('hiro.sim')
-        tables = import_module('hiro.bench_bridge.tower')
     except (ImportError, OSError) as error:
         raise ValueError(f'idol_road_rust_backend_unavailable:{error}') from error
     if not callable(getattr(rust, 'Exam', None)):

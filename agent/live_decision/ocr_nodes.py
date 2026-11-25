@@ -53,16 +53,25 @@ def _native_node_rows(context, image, node, override, all_results):
 
 
 def read_ocr_node(context, image, node, *, override=None, accept=bool, all_results=False,
-                  prefer_gpu=False, order="simd"):
+                  prefer_gpu=False, order="simd", native_read=None, accept_fallback=None):
     """Keep the original Maa parameters and return a single engine's rows for a frame."""
+    if native_read is None:
+        def native_read():
+            return _native_node_rows(context, image, node, override, all_results)
+
     if order == "native":
-        return _native_node_rows(context, image, node, override, all_results)
+        return native_read()
     if order == "native-first":
-        native = _native_node_rows(context, image, node, override, all_results)
+        native = native_read()
         if accept(native.rows):
             return native
-    simd = _simd_node_rows(context, image, node, override or {}, accept=accept,
+    validate = accept
+    if order == "native-first" and accept_fallback is not None:
+        def validate(rows):
+            return accept(rows) and accept_fallback(native.rows, rows)
+
+    simd = _simd_node_rows(context, image, node, override or {}, accept=validate,
                            all_results=all_results, prefer_gpu=prefer_gpu)
     if simd is not None:
         return simd
-    return native if order == "native-first" else _native_node_rows(context, image, node, override, all_results)
+    return native if order == "native-first" else native_read()

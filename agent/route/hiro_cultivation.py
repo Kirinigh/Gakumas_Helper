@@ -67,6 +67,14 @@ def maa_next_nodes(context, name):
     return tuple(target['name'] if isinstance(target, dict) else target for target in targets)
 
 
+def selected_reward_policy(context):
+    settings = (context.get_node_data('ProduceHiroRewardSettings') or {}).get('attach') or {}
+    policy = settings.get('policy', 'hiro')
+    if policy not in ('hiro', 'recommended'):
+        raise ValueError('unknown cultivation reward policy')
+    return policy
+
+
 @contextmanager
 def _replace(module, name, value):
     original = getattr(module, name)
@@ -85,6 +93,7 @@ class _Trace:
         self.mode = mode
         self.seq = 0
         self.r1_recorded = False
+        self.exam_retries = {}
 
     def next_seq(self):
         self.seq += 1
@@ -116,7 +125,7 @@ class _Trace:
                           events=events))
 
 
-def _new_runtime(rt, trace, *, mode, difficulty, skin, main_attr, play_exam, fallback, log, retry):
+def _new_runtime(rt, trace, *, mode, difficulty, skin, main_attr, play_exam, fallback, log, retry, reward_policy):
     play = hiro_module('runtime.play')
     nia = hiro_module('runtime.nia_sample')
     hif = hiro_module('produce.hif')
@@ -124,7 +133,7 @@ def _new_runtime(rt, trace, *, mode, difficulty, skin, main_attr, play_exam, fal
     rt.session = session
 
     def battle(_brain, label, _recorder, ended, *, session, advisor):
-        play_exam(rt, label, session, ended)
+        return play_exam(rt, label, session, ended)
 
     if mode == 'hajime':
         hajime = hiro_module('runtime.hajime')
@@ -146,8 +155,13 @@ def _new_runtime(rt, trace, *, mode, difficulty, skin, main_attr, play_exam, fal
         def _r1_done_in_trace(self):
             return trace.r1_recorded
 
-        def _retry_if_failed(self, label):
-            return retry and super()._retry_if_failed(label)
+        def _retry_if_failed(self, label, **kwargs):
+            return retry and super()._retry_if_failed(label, **kwargs)
+
+        def _retries_so_far(self, label):
+            # Hiro's CLI counts previous Step notes on disk. The Maa trace
+            # avoids those files and retains the confirmed retry event instead.
+            return trace.exam_retries.get(label, 0)
 
     class Recorder:
         dir = trace.dir
@@ -156,6 +170,9 @@ def _new_runtime(rt, trace, *, mode, difficulty, skin, main_attr, play_exam, fal
         def log(event, *, image=None, **data):
             if event == 'finals_round_result' and data.get('exam') == 'r1' and data.get('page_kind') == 'round_result':
                 trace.r1_recorded = True
+            if event == 'exam_retry':
+                label = data['exam']
+                trace.exam_retries[label] = trace.exam_retries.get(label, 0) + 1
             log(dict(event=event, **data))
 
     Core.session = session
@@ -165,6 +182,19 @@ def _new_runtime(rt, trace, *, mode, difficulty, skin, main_attr, play_exam, fal
     Core.lessons_done = 0
     Core.main_attr = main_attr
     core = Core(scenario='main' if mode == 'main' else 'qualify', idol=skin)
+    if reward_policy == 'recommended':
+        original = core.deciders.select_card
+        contracts = hiro_module('contracts')
+
+        def select_card(state, *, change=False):
+            choices = state.page_fields.get('candidates') or ()
+            target = state.page_fields.get('recommended')
+            if not change and type(target) is int and 0 <= target < len(choices):
+                return contracts.Decision(contracts.Action.activate_effect(target), '游戏推荐奖励卡',
+                                          'recommended', 1.0, decider='select_card')
+            return original(state, change=change)
+
+        core.deciders.select_card = select_card
     rt.handlers = hiro_module('produce.handlers').make_handlers(core)
     rt.advance = play.advance
     rt.idle_stop_s = play.IDLE_STOP_S
@@ -185,7 +215,8 @@ def _new_runtime(rt, trace, *, mode, difficulty, skin, main_attr, play_exam, fal
             original = nia.make_advance(classifier)
 
             def advance(runtime, frame, hit):
-                if fallback and fallback(runtime, frame, hit):
+                if (fallback and hit.name == 'unknown' and not nia._connecting(frame.img)
+                        and fallback(runtime, frame, hit)):
                     return True
                 return original(runtime, frame, hit)
 
@@ -195,7 +226,7 @@ def _new_runtime(rt, trace, *, mode, difficulty, skin, main_attr, play_exam, fal
 
 def run_hiro_cultivation(device, read_ocr, *, mode, skin, difficulty=None, main_attr=None, enter=None,
                          play_exam, log, fallback=None, save_frame=None, retry=True,
-                         opening_submitted=None, clock=time.monotonic, sleep=time.sleep):
+                         opening_submitted=None, reward_policy='hiro', clock=time.monotonic, sleep=time.sleep):
     """Enter a mode and use its original handlers through settlement.
 
     The caller owns the confirmed opening and its AP receipt. After Hiro
@@ -203,6 +234,8 @@ def run_hiro_cultivation(device, read_ocr, *, mode, skin, difficulty=None, main_
     """
     if mode not in ('qualify', 'main', 'hajime', 'nia'):
         raise ValueError('unknown Hiro cultivation mode')
+    if reward_policy not in ('hiro', 'recommended'):
+        raise ValueError('unknown cultivation reward policy')
     play = hiro_module('runtime.play')
     finish = hiro_module('runtime.finish')
     date = hiro_module('loop.date_change')
@@ -215,10 +248,15 @@ def run_hiro_cultivation(device, read_ocr, *, mode, skin, difficulty=None, main_
         scope.enter_context(_replace(hiro_module('produce.ops'), 'CALIB_DIR', None))
         scope.enter_context(_replace(hiro_module('produce.deck_review'), 'SAVE_DIR', None))
         scope.enter_context(_replace(hiro_module('produce.schedule_probe'), 'enabled', lambda: False))
+        # The client's settings above choose the cultivation policy. Hiro's
+        # standalone strategy file must not override it or activate a plugin.
+        scope.enter_context(_replace(hiro_module('brain.plugin_gate'), 'produce_decide',
+                                     lambda *args, **kwargs: (None, None)))
+        scope.enter_context(_replace(hiro_module('runtime.retry_handoff'), 'enabled', lambda: False))
         scope.enter_context(_replace(nia, '_save_stop_frame', lambda rt, sampler, frame, hit:
             trace.save('failure_scene', trace.next_seq(), frame.img) if trace.save else None))
         battle = _new_runtime(rt, trace, mode=mode, difficulty=difficulty, skin=skin, main_attr=main_attr,
-                              play_exam=play_exam, fallback=fallback, log=log, retry=retry)
+                              play_exam=play_exam, fallback=fallback, log=log, retry=retry, reward_policy=reward_policy)
         scope.enter_context(_replace(hiro_module('produce.hif'), 'run_exam', battle))
         started = enter is None
         for attempt in range(play.MAX_DATE_CHANGES + 1):

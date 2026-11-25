@@ -7,7 +7,7 @@ from dataclasses import replace
 from agent.live_decision.hiro_runtime import hiro_module
 from agent.live_decision.cultivation_maa_exam import CultivationEntry, CultivationMaaExam
 
-from .hiro_exam import play_cultivation_exam, recover_exam_interrupt
+from .hiro_exam import _during_exam_capture, play_cultivation_exam, recover_exam_interrupt
 from .qualifier import Screen
 from .qualifier_result import read_qualifier_result
 
@@ -25,6 +25,7 @@ class HifMaaExam(CultivationMaaExam):
         produce, phase = _HIF_STAGES[label]
         super().__init__(context, verify_input, entry=replace(entry, produce=produce, round_key=phase), **kwargs)
         self.label, self.session = label, session
+        self.result_exam = None
 
     def bind_opening(self, image):
         exam = super().bind_opening(image)
@@ -64,7 +65,8 @@ class HifMaaExam(CultivationMaaExam):
         if self.label.startswith('qualify-'):
             rows = [dict(text=row.text, box=row.box, score=row.score) for row in self.ocr(image)]
             result = read_qualifier_result(Screen(image, rows, time.monotonic()))
-            if result is not None and result['exam'] == int(self.label[-1]):
+            if result is not None:
+                self.result_exam = f"qualify-{result['exam']}"
                 return dict(result, rank=None)
         else:
             from .hiro_hif import _read_ocr
@@ -80,31 +82,63 @@ class HifMaaExam(CultivationMaaExam):
                     return dict(score=score, rank=result.get('rank'))
         return None
 
+    def run_cultivation(self):
+        result = super().run_cultivation()
+        if self.result_exam and self.result_exam != self.label:
+            # Hiro uses the resolved qualifier label for retry and advancement.
+            self.session.state.exam_session.label = self.result_exam
+            self.log(dict(event='hiro_qualifier_result_label', expected=self.label, actual=self.result_exam))
+        return result
+
     def exam_label(self, exam):
         return self.label
 
 
-def play_hif_exam(context, device, idol, *, log, play_finals=None):
+def play_hif_exam(context, device, idol, *, log, play_finals=None, qualifier_policy='uinet-2.1'):
     """Dispatch selection exams and the chosen finals policy."""
     from custom.action.produce import ProduceCardsAuto
 
-    battle = play_cultivation_exam(context, CultivationEntry('produce-007', idol, None),
-                                  'uinet-2.1', log=log, battle_type=HifMaaExam)
+    entry = CultivationEntry('produce-007', idol, None)
+    qualifier = None if qualifier_policy == 'recommended' else play_cultivation_exam(
+        context, entry, qualifier_policy, log=log, battle_type=HifMaaExam)
+    finals = play_finals or play_cultivation_exam(context, entry, 'uinet-2.1', log=log, battle_type=HifMaaExam)
+
+    def recommended(rt, label, *, result_reader=None):
+        blocked = hiro_module('runtime.loop').ResumeBlocked
+        try:
+            result = ProduceCardsAuto()._run_recommended_exam(
+                context, result_reader=result_reader, authorize=device.authorise,
+                capture=_during_exam_capture(rt, device.screenshot))
+        except (OSError, RuntimeError, TypeError, ValueError, KeyError) as error:
+            raise blocked(str(error)) from error
+        if not result:
+            raise blocked(f'HIF {label} result was unreadable')
+        return result
 
     def play(rt, label, session, ended):
         produce = session.state.produce or {}
         log(dict(event='hiro_exam_deck', label=label, segment=session.trace.mode,
                  through_step=session.trace.seq, cards=deepcopy(produce.get('deck'))))
         if label.startswith('lesson-'):
-            # HIF public courses retain the existing in-game recommended
-            # policy; qualifier and finals grades use the UINet factory.
-            if not ProduceCardsAuto()._run_recommended_exam(context, authorize=device.authorise):
-                raise hiro_module('runtime.loop').ResumeBlocked('HIF public course result was unreadable')
+            # Public courses keep the in-game recommended policy independent of the exams.
+            recommended(rt, label)
             return
         if play_finals is not None and label in ('r1', 'r2'):
-            play_finals(rt, int(label[-1]))
+            return finals(rt, int(label[-1]))
+        if qualifier is None and label.startswith('qualify-'):
+            from .hiro_hif import _read_ocr
+
+            def result_reader(image):
+                rows = [dict(text=row.text, box=row.box, score=row.score) for row in _read_ocr(context, image)]
+                result = read_qualifier_result(Screen(image, rows, rt.clock()))
+                return result if result and result['exam'] == int(label[-1]) else None
+
+            result = recommended(rt, label, result_reader=result_reader)
+            log(dict(event='cultivation_exam_result', produce=entry.produce, idol=idol, label=label,
+                     score=result['score'], rank=None, algorithm='recommended'))
             return
-        battle(rt, label, session, ended)
+        battle = finals if label in ('r1', 'r2') else qualifier
+        return battle(rt, label, session, ended)
 
     return play
 

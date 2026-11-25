@@ -5,20 +5,7 @@
       "entry": "Produce",
       "option": [
         "培育难度",
-        "培育偶像",
-        "培育次数",
-        "使用体力药",
-        "使用道具",
-        "跳过选择偶像",
-        "启用自动支援卡",
-        "启用自动回忆",
-        "启用关注租借",
-        "启用培育失败重试",
-        "跳过准备阶段",
-        "智能选卡",
-        "Live 决策",
-        "跟随老师的建议",
-        "本地画面采集"
+        "培育偶像"
       ],
       "resource": [
         "官服",
@@ -150,19 +137,6 @@
           }
         },
         {
-          "name": "HIF 只读观察",
-          "label": "$HIF 只读观察",
-          "pipeline_override": {
-            "ProduceHifAdvanceEntry": {
-              "custom_action_param": {
-                "schema_version": 1,
-                "mode": "observe",
-                "preset": "hif-main-current-v1"
-              }
-            }
-          }
-        },
-        {
           "name": "HIF 非战斗推进",
           "label": "$HIF 非战斗推进",
           "pipeline_override": {
@@ -173,28 +147,91 @@
                 "preset": "hif-main-current-v1"
               }
             }
-          },
+          }
+        },
+        {
+          "name": "HIF 高分继续",
+          "label": "$HIF 高分继续",
+          "description": "$HIF 高分说明",
           "option": [
-            "HIF 中场定制-继承策略"
-          ]
+            "Hiro 培育选卡",
+            "使用体力药",
+            "使用道具"
+          ],
+          "pipeline_override": {
+            "LocalDataConfigureProduce": {
+              "next": [
+                "ProduceHiroCampaignEntry"
+              ]
+            },
+            "ProduceHiroCampaignEntry": {
+              "custom_action_param": {
+                "hif": true,
+                "hif_segment": "main"
+              }
+            },
+            "ProduceHiroHifFinalsSettings": {
+              "attach": {
+                "battle_policy": "strong-reference-trial"
+              }
+            }
+          }
         },
         {
           "name": "HIF 快速继续",
           "label": "$HIF 快速继续",
-          "description": "$HIF 战斗策略说明",
+          "description": "$HIF 快速说明",
+          "option": [
+            "Hiro 培育选卡",
+            "使用体力药",
+            "使用道具"
+          ],
           "pipeline_override": {
-            "ProduceHifAdvanceEntry": {
+            "LocalDataConfigureProduce": {
+              "next": [
+                "ProduceHiroCampaignEntry"
+              ]
+            },
+            "ProduceHiroCampaignEntry": {
               "custom_action_param": {
-                "schema_version": 1,
-                "mode": "advance",
-                "preset": "hif-main-current-v1",
+                "hif": true,
+                "hif_segment": "main"
+              }
+            },
+            "ProduceHiroHifFinalsSettings": {
+              "attach": {
                 "battle_policy": "fast"
               }
             }
-          },
+          }
+        },
+        {
+          "name": "HIF UINet 2.1",
+          "label": "$HIF UINet 2.1",
+          "description": "$HIF UINet 2.1 说明",
           "option": [
-            "HIF 中场定制-快速策略"
-          ]
+            "Hiro 培育选卡",
+            "使用体力药",
+            "使用道具"
+          ],
+          "pipeline_override": {
+            "LocalDataConfigureProduce": {
+              "next": [
+                "ProduceHiroCampaignEntry"
+              ]
+            },
+            "ProduceHiroCampaignEntry": {
+              "custom_action_param": {
+                "hif": true,
+                "hif_segment": "main"
+              }
+            },
+            "ProduceHiroHifFinalsSettings": {
+              "attach": {
+                "battle_policy": "uinet-2.1"
+              }
+            }
+          }
         }
       ]
     },
@@ -517,7 +554,18 @@
           "name": "初",
           "option": [
             "「初」难度",
-            "初／NIA 出牌策略"
+            "初／NIA 出牌策略",
+            "培育次数",
+            "使用体力药",
+            "使用道具",
+            "跳过选择偶像",
+            "启用自动支援卡",
+            "启用自动回忆",
+            "启用关注租借",
+            "启用培育失败重试",
+            "跳过准备阶段",
+            "跟随老师的建议",
+            "本地画面采集"
           ]
         },
         {
@@ -526,7 +574,18 @@
             "「NIA」难度",
             "启用试镜难度降低",
             "试镜手动接管",
-            "初／NIA 出牌策略"
+            "初／NIA 出牌策略",
+            "培育次数",
+            "使用体力药",
+            "使用道具",
+            "跳过选择偶像",
+            "启用自动支援卡",
+            "启用自动回忆",
+            "启用关注租借",
+            "启用培育失败重试",
+            "跳过准备阶段",
+            "跟随老师的建议",
+            "本地画面采集"
           ]
         },
         {
@@ -534,57 +593,22 @@
           "label": "$HIF（提前支持）",
           "option": [
             "HIF 主属性",
-            "HIF 选拔回忆",
-            "HIF 候选牌优先级",
-            "HIF 推进模式"
+            "HIF 推进模式",
+            "本地画面采集"
           ],
           "pipeline_override": {
             "LocalDataConfigureProduce": {
               "next": [
                 "ProduceHifAdvanceEntry"
               ]
-            },
-            "ProduceMoveCards": {
-              "recognition": {
-                "type": "TemplateMatch",
-                "param": {
-                  "roi": [
-                    0,
-                    1100,
-                    720,
-                    180
-                  ],
-                  "template": [
-                    "produce/move_1.png",
-                    "produce/move_2.png"
-                  ]
-                }
-              }
-            },
-            "ProduceRecognitionSkipRound": {
-              "recognition": {
-                "type": "TemplateMatch",
-                "param": {
-                  "roi": [
-                    590,
-                    720,
-                    130,
-                    120
-                  ],
-                  "template": [
-                    "produce/skip_round.png",
-                    "produce/skip_round_1.png",
-                    "produce/skip_round_2.png"
-                  ]
-                }
-              }
             }
           }
         },
         {
           "name": "HIF 選抜試験",
-          "label": "HIF 選抜試験（编成准备）",
+          "label": "$HIF 编成准备入口",
           "option": [
+            "HIF 编成方式",
             "HIF 選抜試験编成"
           ],
           "pipeline_override": {
@@ -597,29 +621,42 @@
         },
         {
           "name": "HIF 選抜試験自动",
-          "label": "HIF 選抜試験（自动开局、考试并领回忆）",
+          "label": "$HIF 仅选拔入口",
           "option": [
-            "HIF 選抜試験编成"
+            "HIF 编成方式",
+            "HIF 選抜試験编成",
+            "Hiro 培育选卡",
+            "HIF 选拔出牌策略",
+            "使用体力药",
+            "使用道具",
+            "本地画面采集"
           ],
           "pipeline_override": {
-            "Produce": {
+            "LocalDataConfigureProduce": {
               "next": [
-                "ProduceHifQualifierPrepareEntry"
+                "ProduceHiroCampaignEntry"
               ]
             },
-            "ProduceHifQualifierPrepareEntry": {
+            "ProduceHiroCampaignEntry": {
               "custom_action_param": {
-                "run_exams": true
+                "hif": true,
+                "hif_segment": "qualify"
               }
             }
           }
         },
         {
           "name": "HIF Hiro 全流程",
-          "label": "HIF Hiro 全流程（选拔＋本战）",
+          "label": "$HIF 完整培育入口",
           "option": [
+            "HIF 编成方式",
             "HIF 選抜試験编成",
-            "HIF Hiro 本战策略"
+            "Hiro 培育选卡",
+            "HIF 选拔出牌策略",
+            "HIF Hiro 本战策略",
+            "使用体力药",
+            "使用道具",
+            "本地画面采集"
           ],
           "pipeline_override": {
             "LocalDataConfigureProduce": {
@@ -5711,11 +5748,12 @@
     },
     "HIF Hiro 本战策略": {
       "type": "select",
-      "label": "HIF 本战出牌策略",
+      "label": "$HIF 本战出牌策略",
       "default_case": "UINet 2.1",
       "cases": [
         {
           "name": "UINet 2.1",
+          "label": "$HIF UINet 2.1",
           "pipeline_override": {
             "ProduceHiroHifFinalsSettings": {
               "attach": {
@@ -5726,6 +5764,8 @@
         },
         {
           "name": "快速",
+          "label": "$HIF 快速继续",
+          "description": "$HIF 快速说明",
           "pipeline_override": {
             "ProduceHiroHifFinalsSettings": {
               "attach": {
@@ -5736,6 +5776,8 @@
         },
         {
           "name": "高分参考",
+          "label": "$HIF 高分继续",
+          "description": "$HIF 高分说明",
           "pipeline_override": {
             "ProduceHiroHifFinalsSettings": {
               "attach": {
@@ -5753,6 +5795,9 @@
       "cases": [
         {
           "name": "游戏推荐",
+          "option": [
+            "卡片选择优先级"
+          ],
           "pipeline_override": {}
         },
         {
@@ -5800,12 +5845,16 @@
       "cases": [
         {
           "name": "现有开局",
+          "option": [
+            "Hiro 培育选卡"
+          ],
           "pipeline_override": {}
         },
         {
           "name": "Hiro 全流程",
           "option": [
-            "Hiro 培育编成"
+            "Hiro 培育编成",
+            "Hiro 培育选卡"
           ],
           "pipeline_override": {
             "LocalDataConfigureProduce": {
@@ -5854,53 +5903,29 @@
     },
     "HIF 選抜試験编成": {
       "type": "input",
+      "label": "$HIF 选拔编成设置",
+      "description": "$HIF 选拔编成设置说明",
       "inputs": [
         {
           "name": "qualifier_support_set",
-          "label": "支援编成号",
+          "label": "$HIF 支援编成号",
           "default": "1",
           "pipeline_type": "string",
           "verify": "^(?:[1-9]|1[0-9]|20)$"
         },
         {
           "name": "qualifier_memory_set",
-          "label": "回忆编成号",
+          "label": "$HIF 回忆编成号",
           "default": "1",
           "pipeline_type": "string",
           "verify": "^(?:[1-9]|1[0-9]|20)$"
         },
         {
           "name": "qualifier_rental_attr",
-          "label": "租借主属性（Vo／Da／Vi）",
+          "label": "$HIF 编成属性",
           "default": "Da",
           "pipeline_type": "string",
           "verify": "^(?:Vo|Da|Vi)$"
-        },
-        {
-          "name": "qualifier_memory_cards",
-          "label": "回忆卡 ID（按槽序，留空沿用套组）",
-          "default": "",
-          "pipeline_type": "string",
-          "verify": "^(?:[1-9][0-9]*(?:,[1-9][0-9]*){0,3})?$"
-        },
-        {
-          "name": "qualifier_support_cards",
-          "label": "支援卡 ID（最多五张，留空沿用套组）",
-          "default": "",
-          "pipeline_type": "string",
-          "verify": "^(?:s_card-[a-zA-Z0-9_-]+(?:,s_card-[a-zA-Z0-9_-]+){0,4})?$"
-        },
-        {
-          "name": "qualifier_support_gallery",
-          "label": "本机支援图目录（Hiro support 格式）",
-          "default": "",
-          "pipeline_type": "string"
-        },
-        {
-          "name": "qualifier_support_effects",
-          "label": "本机支援效果 JSON（留空按属性和等级选租借）",
-          "default": "",
-          "pipeline_type": "string"
         }
       ],
       "pipeline_override": {
@@ -5908,14 +5933,115 @@
           "attach": {
             "support_set": "{qualifier_support_set}",
             "memory_set": "{qualifier_memory_set}",
-            "attribute": "{qualifier_rental_attr}",
-            "memory_cards": "{qualifier_memory_cards}",
-            "support_cards": "{qualifier_support_cards}",
-            "support_gallery": "{qualifier_support_gallery}",
-            "support_effects": "{qualifier_support_effects}"
+            "attribute": "{qualifier_rental_attr}"
           }
         }
       }
+    },
+    "Hiro 培育选卡": {
+      "type": "select",
+      "label": "$Hiro 培育选卡",
+      "description": "$Hiro 培育选卡说明",
+      "default_case": "hiro",
+      "cases": [
+        {
+          "name": "hiro",
+          "label": "$Hiro 原版优先度",
+          "pipeline_override": {
+            "ProduceHiroRewardSettings": {
+              "attach": {
+                "policy": "hiro"
+              }
+            }
+          }
+        },
+        {
+          "name": "recommended",
+          "label": "$游戏推荐奖励卡",
+          "pipeline_override": {
+            "ProduceHiroRewardSettings": {
+              "attach": {
+                "policy": "recommended"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "HIF 选拔出牌策略": {
+      "type": "select",
+      "label": "$HIF 选拔出牌策略",
+      "description": "$HIF 选拔出牌说明",
+      "default_case": "default",
+      "cases": [
+        {
+          "name": "default",
+          "label": "$按所选模式默认"
+        },
+        {
+          "name": "recommended",
+          "label": "$培育游戏推荐出牌",
+          "pipeline_override": {
+            "ProduceHifQualifierBattleSettings": {
+              "attach": {
+                "algorithm": "recommended"
+              }
+            }
+          }
+        },
+        {
+          "name": "uinet-1.1",
+          "label": "UINet 1.1",
+          "pipeline_override": {
+            "ProduceHifQualifierBattleSettings": {
+              "attach": {
+                "algorithm": "uinet-1.1"
+              }
+            }
+          }
+        },
+        {
+          "name": "uinet-2.1",
+          "label": "UINet 2.1",
+          "pipeline_override": {
+            "ProduceHifQualifierBattleSettings": {
+              "attach": {
+                "algorithm": "uinet-2.1"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "HIF 编成方式": {
+      "type": "select",
+      "label": "$HIF 选拔编成方式",
+      "default_case": "游戏套组",
+      "cases": [
+        {
+          "name": "游戏套组",
+          "label": "$HIF 游戏套组",
+          "pipeline_override": {
+            "ProduceHifAutoFormationSettings": {
+              "attach": {
+                "auto": false
+              }
+            }
+          }
+        },
+        {
+          "name": "自动编成",
+          "label": "$HIF 自动编成",
+          "description": "$HIF 自动编成说明",
+          "pipeline_override": {
+            "ProduceHifAutoFormationSettings": {
+              "attach": {
+                "auto": true
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

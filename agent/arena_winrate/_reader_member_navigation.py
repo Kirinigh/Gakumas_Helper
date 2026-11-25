@@ -7,7 +7,7 @@ import json
 from typing import Any, NoReturn, Protocol
 from collections import Counter
 from dataclasses import asdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from arena_winrate import (
     TeamTarget,
@@ -74,7 +74,7 @@ class MemberNavigationReaderPort(Protocol):
     _member_slot_observations: Any
 
     def _note_confirmed_detail_name(self, card_id: int) -> None: ...
-    def _ocr(self, image: Any, expected: str, *, roi: tuple[int, int, int, int] | None = ..., only_rec: bool = ...) -> list[Any]: ...
+    def _ocr(self, image: Any, expected: str, *, roi: tuple[int, int, int, int] | None = ..., only_rec: bool = ..., accept: Callable[[Sequence[Any]], bool] | None = ...) -> list[Any]: ...
 
     _pending_stage_preview: Any
     _page_recovery_state: PageRecoveryState
@@ -462,28 +462,27 @@ class MemberNavigationReader:
         for attempt in range(4):
             image = self.port._capture()
             height, width = image.shape[:2]
-            observations = self.port._ocr(
-                image,
-                r".+",
-                roi=(0, 0, width, int(height * 0.25)),
-            )
-            label_items: dict[str, list[Any]] = {}
-            for item in observations:
-                label = _text(item)
-                if label in {"ボーカル", "ダンス", "ビジュアル", "体力"}:
-                    label_items.setdefault(label, []).append(item)
-            label_boxes: tuple[tuple[int, int, int, int], ...] = ()
-            if any(len(items) != 1 for items in label_items.values()):
-                failure = "parameter labels were duplicated"
-            else:
+            def parameter_labels(rows):
+                label_items: dict[str, list[Any]] = {}
+                for item in rows:
+                    label = _text(item)
+                    if label in {"ボーカル", "ダンス", "ビジュアル", "体力"}:
+                        label_items.setdefault(label, []).append(item)
+                if any(len(items) != 1 for items in label_items.values()):
+                    return (), "parameter labels were duplicated"
                 try:
-                    label_boxes = infer_parameter_label_boxes(
+                    return infer_parameter_label_boxes(
                         {label: _box(items[0]) for label, items in label_items.items()},
                         frame_height=height,
-                    )
+                    ), ""
                 except ValueError as error:
-                    failure = f"parameter labels yielded {sorted(label_items)!r}: {error}"
-                    label_boxes = ()
+                    return (), f"parameter labels yielded {sorted(label_items)!r}: {error}"
+
+            observations = self.port._ocr(
+                image, r".+", roi=(0, 0, width, int(height * 0.25)),
+                accept=lambda rows: bool(parameter_labels(rows)[0]),
+            )
+            label_boxes, failure = parameter_labels(observations)
             if label_boxes:
                 values: list[int] = []
                 failure = ""

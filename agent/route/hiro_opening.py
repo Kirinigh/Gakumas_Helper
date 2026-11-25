@@ -32,7 +32,7 @@ class HiroOpening:
         self.costs, self.persist, self.refill = costs, persist, refill
         self.starts = {}
 
-    def enter(self, rt, mode, *, skin, difficulty=None, memory=(), formation=None, setup=None):
+    def enter(self, rt, mode, *, skin, difficulty=None, memory=(), formation=None, setup=None, verify_idol=None):
         opening = hiro_module('runtime.opening')
         nav = hiro_module('runtime.nav')
         blocked = hiro_module('runtime.loop').ResumeBlocked
@@ -65,6 +65,8 @@ class HiroOpening:
             if mode in self.starts:
                 raise blocked('The charged start was already submitted')
             try:
+                if verify_idol is not None:
+                    verify_idol(current)
                 quote = start_ap_quote(current, self.costs[mode])
             except ValueError as error:
                 raise blocked(str(error)) from error
@@ -84,12 +86,23 @@ class HiroOpening:
             scope.enter_context(_replace(rt.raw_device, 'tap', tap))
             scope.enter_context(_replace(nav, 'find', find_button))
             scope.enter_context(_replace(opening, '_finals_button', find_finals_button))
+            if mode == 'qualify' and 'main' not in self.costs:
+                choose_mode = opening.choose_mode
+
+                def choose_qualifier(runtime, segment, **kwargs):
+                    return choose_mode(runtime, segment, **dict(kwargs, extra_ap=0))
+
+                scope.enter_context(_replace(opening, 'choose_mode', choose_qualifier))
             if not self.refill:
                 scope.enter_context(_replace(hiro_module('loop.ap_refill'), 'refill', stop_refill))
             if setup is not None:
-                scope.enter_context(setup(rt))
+                plan = scope.enter_context(setup(rt))
+                if plan is not None:
+                    prepare['plan'] = plan
             if mode == 'main':
                 opening.new_produce(rt, mode, expect_memory=memory, **prepare)
+                if verify_idol is not None and mode not in self.starts:
+                    raise blocked('已有本战在培育中，请使用「继续存档」。')
             elif mode == 'qualify':
                 opening.new_produce(rt, mode, **prepare)
             else:

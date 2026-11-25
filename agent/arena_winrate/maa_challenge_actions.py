@@ -12,6 +12,9 @@ from utils import logger as user_logger
 from maa.context import Context
 from maa.custom_action import CustomAction
 
+from agent.live_decision.simd_ocr import without_vulkan_cold_wait
+from agent.live_decision.ocr_nodes import read_ocr_node
+
 from .reader import ArenaPageState, classify_arena_page
 from .recovery import error_retry_box
 from .task_log import arena_task_log, diagnostic_logger, report_action_failure
@@ -21,6 +24,7 @@ from .challenge_flow import (
     ArenaChallengeFlowError,
     ArenaChallengeRecordStore,
     contest_day_key,
+    _result_winner_rows,
     battle_outcome_tap_box,
     classify_post_challenge_page,
     result_observations_complete,
@@ -83,23 +87,49 @@ def _post_click(context, *args, **kwargs):
     return context.tasker.controller.post_click(*args, **kwargs)
 
 
-def _full_ocr(context: Context, image):
+def _full_ocr(context: Context, image, *, accept, accept_fallback=None):
     cancellation_for(context).check()
-    detail = context.run_recognition(
-        "ArenaReaderOCR",
-        image,
-        pipeline_override={
-            "ArenaReaderOCR": {
-                "recognition": "OCR",
-                "expected": r".+",
-                "order_by": "Vertical",
-            }
-        },
+    rejected = []
+
+    def accept_simd(rows):
+        cancellation_for(context).check()
+        if not accept(rows):
+            rejected.append(rows)
+            return False
+        return accept_fallback is None or all(accept_fallback(previous, rows) for previous in rejected)
+
+    observed = read_ocr_node(
+        context, image, "ArenaReaderOCR",
+        override={"recognition": "OCR", "expected": r".+", "order_by": "Vertical"},
+        all_results=True, accept=accept_simd, prefer_gpu=True,
     )
     cancellation_for(context).check()
-    if not detail or not detail.hit:
-        return ()
-    return tuple(detail.all_results or detail.filtered_results or ())
+    return observed.rows
+
+
+def _result_rows_ready(rows):
+    return (
+        _connection_pending(rows)
+        or _communication_retry_box(rows) is not None
+        or result_observations_complete(serialise_result_observations(rows))
+    )
+
+
+def _result_ocr_fallback_agrees(previous_rows, fallback_rows):
+    fallback = serialise_result_observations(fallback_rows)
+    if not result_observations_complete(fallback):
+        return True
+    previous = serialise_result_observations(previous_rows)
+    outcome, _, banner = _result_winner_rows(previous["ocr_observations"])
+    if banner is None or outcome == fallback["outcome"]:
+        return True
+    x, y, width, height = banner["box"]
+    left, top, banner_width, banner_height = fallback["winner_evidence"]["overall"]["box"]
+    # An isolated side mark can be the first row in a partial read.
+    return not (
+        left <= x + width / 2 <= left + banner_width
+        and top <= y + height / 2 <= top + banner_height
+    )
 
 
 def challenge_result_saved(store: ArenaChallengeRecordStore | None = None) -> bool:
@@ -143,6 +173,20 @@ def _same_start_preview(rows):
     return (sum(text == "挑戦開始" for text in texts) == 1
             and sum(re.fullmatch(r"ステージ\s*[123]", text) is not None for text in texts) == 3
             and sum(text == "サポートボーナス" for text in texts) == 1)
+
+
+def _challenge_progress_rows_ready(rows, frame_size):
+    return (
+        _result_rows_ready(rows)
+        or _same_start_preview(rows)
+        or battle_outcome_tap_box(rows, frame_size=frame_size) is not None
+        or any(str(getattr(row, "text", "")).strip() == "レート報酬" for row in rows)
+    )
+
+
+def _read_challenge_progress(context, image):
+    height, width = getattr(image, "shape", (1280, 720))[:2]
+    return _full_ocr(context, image, accept=lambda rows: _challenge_progress_rows_ready(rows, (width, height)))
 
 
 def _ready_battle_control(context, image):
@@ -222,7 +266,7 @@ def _wait_started_connection(context, argv, store, pending, image, rows):
             cancellation_for(context).check()
             time.sleep(.1)
         image = _capture(context)
-        rows = _full_ocr(context, image)
+        rows = _read_challenge_progress(context, image)
 
 
 def recognize_pending_outcome(context, image, store=None):
@@ -236,13 +280,14 @@ def recognize_pending_outcome(context, image, store=None):
     capture_id = str(pending["capture_id"])
     if store.recorded_result_path(capture_id) is not None:
         return None
-    rows = _full_ocr(context, image)
     shape = getattr(image, "shape", (1280, 720))
-    box = battle_outcome_tap_box(rows, frame_size=(shape[1], shape[0]))
+    frame_size = (shape[1], shape[0])
+    rows = _full_ocr(context, image, accept=lambda rows: battle_outcome_tap_box(rows, frame_size=frame_size) is not None)
+    box = battle_outcome_tap_box(rows, frame_size=frame_size)
     if box is not None:
         logger.info(json.dumps({
             "event": "arena_challenge_outcome_page_ready", "capture_id": capture_id,
-            "extra_captures": 0, "ocr_calls": 1, "tap_box": list(box),
+            "extra_captures": 0, "tap_box": list(box),
         }, ensure_ascii=False, sort_keys=True))
     return None if box is None else {"box": box, "capture_id": capture_id}
 
@@ -311,7 +356,7 @@ def recover_skipped_challenge_result(
         return False
     capture_id = str(pending.get("capture_id", ""))
     image = _capture(context) if image is None else image
-    rows = _full_ocr(context, image) if rows is None else rows
+    rows = _read_challenge_progress(context, image) if rows is None else rows
     texts = tuple(str(getattr(row, "text", "")).strip() for row in rows)
     # Communication dialogs and the intermediate TAP page keep their own retry.
     shape = getattr(image, "shape", (1280, 720))
@@ -566,6 +611,7 @@ class ArenaChallengeRecordResultAction(CustomAction):
             return True
 
     @report_action_failure("竞技场结果尚未完整保存，任务已中断", user_logger)
+    @without_vulkan_cold_wait()
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         try:
             restore_challenge_action_next(context, argv)
@@ -589,7 +635,10 @@ class ArenaChallengeRecordResultAction(CustomAction):
                     break
                 try:
                     image = _capture(context)
-                    rows = _full_ocr(context, image)
+                    rows = _full_ocr(
+                        context, image, accept=_result_rows_ready,
+                        accept_fallback=_result_ocr_fallback_agrees,
+                    )
                     result = serialise_result_observations(rows)
                 except Exception as error:
                     image, rows = None, ()
@@ -677,7 +726,7 @@ class ArenaChallengeRetryCurrentBattleAction(CustomAction):
             if getattr(argv, "node_name", None) == "ChallengeOutcomeContinue" and not unresolved:
                 raise ArenaChallengeFlowError("recorded battle cannot use the normal outcome continuation")
             image = _capture(context)
-            rows = _full_ocr(context, image)
+            rows = _read_challenge_progress(context, image)
             start_transition = getattr(argv, "node_name", None) in _START_TRANSITION_NODES
             if start_transition:
                 image, rows, continued = _wait_started_connection(
@@ -743,6 +792,7 @@ class ArenaChallengeVerifyRefreshAction(CustomAction):
         )
 
     @report_action_failure("竞技场返回确认未完成，任务已中断", user_logger)
+    @without_vulkan_cold_wait()
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         del argv
         if not _administrator_process():
@@ -813,38 +863,47 @@ class ArenaChallengeVerifyRefreshAction(CustomAction):
                     or ()
                 )
             )
-            texts = ()
+
+            def read_page_state(rows):
+                texts = tuple(str(getattr(item, "text", "")).strip() for item in rows)
+                arena_state = ArenaPageState.AMBIGUOUS
+                if not (results or close_results or finish_results):
+                    arena_state = classify_arena_page(
+                        rehearsal_count=sum(text == "リハーサル" for text in texts),
+                        opponent_count=0,
+                        stage_label_count=sum(
+                            re.fullmatch(r"ステージ\s*[123]", text) is not None
+                            for text in texts
+                        ),
+                        stage_total_count=sum(text == "総合力" for text in texts),
+                        exhausted_notice_count=sum(
+                            text == "本日の挑戦権を消費しました" for text in texts
+                        ),
+                    )
+                page_state = classify_post_challenge_page(
+                    opponent_count=len(results),
+                    close_count=len(close_results),
+                    ocr_texts=texts,
+                    reward_close_clicks=reward_close_clicks,
+                    finish_count=len(finish_results),
+                    finish_resend_clicks=finish_resend_clicks,
+                    finish_resend_authorized=True,
+                    arena_main_exhausted=(
+                        arena_state is ArenaPageState.OPPONENTS_UNAVAILABLE
+                    ),
+                )
+                return page_state, arena_state
+
+            rows = ()
             if close_results or not (results or finish_results):
-                texts = tuple(
-                    str(getattr(item, "text", "")).strip()
-                    for item in _full_ocr(context, image)
-                )
-            arena_state = ArenaPageState.AMBIGUOUS
-            if not (results or close_results or finish_results):
-                arena_state = classify_arena_page(
-                    rehearsal_count=sum(text == "リハーサル" for text in texts),
-                    opponent_count=0,
-                    stage_label_count=sum(
-                        re.fullmatch(r"ステージ\s*[123]", text) is not None
-                        for text in texts
-                    ),
-                    stage_total_count=sum(text == "総合力" for text in texts),
-                    exhausted_notice_count=sum(
-                        text == "本日の挑戦権を消費しました" for text in texts
+                rows = _full_ocr(
+                    context, image,
+                    accept=lambda evidence: (
+                        _connection_pending(evidence)
+                        or read_page_state(evidence)[0] in {"RETURNED", "CLOSE_REWARD"}
                     ),
                 )
-            page_state = classify_post_challenge_page(
-                opponent_count=len(results),
-                close_count=len(close_results),
-                ocr_texts=texts,
-                reward_close_clicks=reward_close_clicks,
-                finish_count=len(finish_results),
-                finish_resend_clicks=finish_resend_clicks,
-                finish_resend_authorized=True,
-                arena_main_exhausted=(
-                    arena_state is ArenaPageState.OPPONENTS_UNAVAILABLE
-                ),
-            )
+            page_state, arena_state = read_page_state(rows)
             observed_at = time.monotonic()
             last_return_evidence = {
                 "opponent_count": len(results),

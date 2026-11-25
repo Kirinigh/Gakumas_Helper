@@ -417,6 +417,11 @@ def _enchant(ref, state, evidence, *, kernel=None):
 
 def _statuses(state):
     result = []
+    for status in state.statuses:
+        _require(status.status_id == 'anti_debuff' and type(status.stacks) is int
+                 and status.stacks > 0 and status.remaining_turns is None,
+                 f'state_semantic_mapping_unverified:statuses:{status.status_id}')
+        result.append(['anti_debuff', status.stacks, -1])
     for field, kind in (('concentration', 'lesson_buff'), ('good_impression_turns', 'review'),
                         ('motivation', 'aggressive'), ('cost_reduction', 'stamina_consumption_down_fix')):
         value = getattr(state, field)
@@ -535,7 +540,7 @@ def build_shadow_observation(request: DecisionRequest, kernel, context: ExamCont
             for field in ('full_power', 'passion', 'passion_buff', 'passion_gain_bonus_pct', 'stance_lock_turns',
                           'enthusiasm_bonus_buffs', 'enthusiasm_multiplier_buffs', *_ANOMALY_HISTORY[1:]):
                 _require(not getattr(state, field), f'state_semantic_mapping_unverified:{field}')
-        for field in ('parameter_gain_bonus_pct', 'full_power_charge_buffs', 'statuses', 'field_effects'):
+        for field in ('parameter_gain_bonus_pct', 'full_power_charge_buffs', 'field_effects'):
             _require(not getattr(state, field), f'state_semantic_mapping_unverified:{field}')
         if '428' in state.items:
             from agent.live_decision.high_score.kernel import ItemDefinition

@@ -9,7 +9,9 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol, NamedTuple
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+
+from agent.live_decision.ocr_nodes import OcrRows, read_ocr_node
 
 from .catalog import ArenaCatalogError
 from ._reader_visual import _text
@@ -102,6 +104,26 @@ def frame_evidence_field(name: str) -> property:
         setattr(frame_evidence_state(owner), name, value)
 
     return property(get, set_)
+
+
+def read_skill_detail_capture_text(port, image, phase, key, validate):
+    """Route a card capture only when its transaction supplies candidate IDs."""
+    options = {}
+    if callable(getattr(getattr(port, "context", None), "get_node_data", None)):
+        confirmed = port._card_detail_open_ids.get(key) if phase == "reread" else None
+        ids = (confirmed,) if confirmed is not None else port._skill_detail_visual_ids(key)
+        if ids:
+            port._check_cancelled()
+
+            def accept(rows):
+                port._check_cancelled()
+                return validate(image, rows, ids)
+
+            options["accept"] = accept
+    text = port._with_full_frame_ocr_kind("detail_capture", port._full_ocr_text, image, **options)
+    if options:
+        port._check_cancelled()
+    return text
 
 
 class _EvidenceClock(Protocol):
@@ -235,7 +257,9 @@ class DetailCaptureEvidence:
             else:
                 del self.port._full_frame_ocr_kind_hint
 
-    def _full_frame_ocr_evidence_for(self, image: Any) -> _FullFrameOcrEvidence:
+    def _full_frame_ocr_evidence_for(
+        self, image: Any, *, accept: Callable[[Sequence[Any]], bool] | None = None,
+    ) -> _FullFrameOcrEvidence:
         """Recognize a frozen frame once while keeping fresh frames isolated."""
 
         cached = self.port._cached_full_frame_ocr_evidence(image)
@@ -248,30 +272,34 @@ class DetailCaptureEvidence:
             cache = {}
             self.port._full_frame_ocr_evidence = cache
         started = self.clock.perf_counter()
-        detail = self.port._run_recognition(
-            "ArenaReaderOCR",
-            image,
-            pipeline_override={
-                "ArenaReaderOCR": {
-                    "recognition": "OCR",
-                    "expected": r".+",
-                    "order_by": "Vertical",
-                }
-            },
-        )
-        hit = bool(detail and detail.hit)
-        filtered_items = tuple(detail.filtered_results or detail.all_results or ()) if hit else ()
-        all_items = tuple(detail.all_results or detail.filtered_results or ()) if hit else ()
-        evidence = _FullFrameOcrEvidence(
-            image,
-            str(getattr(self.port, "_full_frame_ocr_kind_hint", "generic")),
-            hit,
-            filtered_items,
-            all_items,
-            getattr(detail, "reco_id", None),
-        )
+        kind = str(getattr(self.port, "_full_frame_ocr_kind_hint", "generic"))
+        override = {"recognition": "OCR", "expected": r".+", "order_by": "Vertical"}
+        evidence = None
+
+        def native_read():
+            nonlocal evidence
+            detail = self.port._run_recognition(
+                "ArenaReaderOCR", image, pipeline_override={"ArenaReaderOCR": override},
+            )
+            hit = bool(detail and detail.hit)
+            filtered = tuple(detail.filtered_results or detail.all_results or ()) if hit else ()
+            raw = tuple(detail.all_results or detail.filtered_results or ()) if hit else ()
+            evidence = _FullFrameOcrEvidence(image, kind, hit, filtered, raw, getattr(detail, "reco_id", None))
+            return OcrRows(raw)
+
+        if accept is None:
+            native_read()
+        else:
+            rows = read_ocr_node(
+                getattr(self.port, "context", None), image, "ArenaReaderOCR", override=override,
+                accept=accept, all_results=True, prefer_gpu=True, native_read=native_read,
+            ).rows
+            if evidence is None:
+                filtered = tuple(row for row in rows if row.score >= 0.3)
+                evidence = _FullFrameOcrEvidence(image, kind, True, filtered or rows, rows)
+                self.port._increment(f"{kind}_simd_ocr_acceptances")
         cache[id(image)] = evidence
-        self.port._observe_recognition_probe(image, all_items, reco_id=getattr(detail, "reco_id", None))
+        self.port._observe_recognition_probe(image, evidence.all_items, reco_id=evidence.reco_id)
         # Retain enough member-local entries for both accepted source groups,
         # their detail confirmations and transformed ROI views without holding
         # captures beyond the member transaction.

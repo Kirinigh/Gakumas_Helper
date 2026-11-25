@@ -1,0 +1,20 @@
+--- a/src/exam.rs
++++ b/src/exam.rs
+@@ -1220,6 +1232,9 @@ impl Exam {
+         let i = self.hand.iter().position(|&x| x == card).unwrap();
+         self.hand.remove(i);
+         self.playing = Some(card);
++        // Previous-card fields skip the active play. Include it before
++        // pre-cost condition counters and all card effects read the log.
++        self.play_log.push(card);
+         self.remaining_actions -= 1;
+         let mut cmds = vec![];
+         self.increment_play_counts(card, ctx);
+@@ -1472,7 +1487,6 @@ impl Exam {
+         self.exam_card_play_count += 1;
+         self.turn_card_play_count += 1;
+         self.cards[card].play_count += 1;
+-        self.play_log.push(card);
+         let pe = self.card_play_after_enchants(card, ctx);
+         let mut after = self.fire(&pe);
+         let ev = [card];

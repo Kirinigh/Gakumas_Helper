@@ -87,7 +87,9 @@ class ProduceHifQualifierPrepare(CustomAction):
             if result['status'] == 'settled':
                 logger.info("選抜試験已完成结算。")
             elif result['status'] == 'prepared':
-                count = len(result['memory_inventory']['entries'])
+                count = result.get('formation_inventory', {}).get('memories')
+                if count is None:
+                    count = len(result.get('memory_inventory', {}).get('entries', ()))
                 logger.info(f"選抜試験编成已准备，读取回忆 {count} 份。已到开始确认。")
             else:
                 logger.warning(f"選抜試験停止，状态 {result['status']}，已登记 {len(result.get('exams', []))} 场。")
@@ -105,7 +107,13 @@ class ProduceRunHiroCultivation(CustomAction):
 
         from agent.route.hiro_hif import _read_ocr
         from agent.route.hiro_exam import play_cultivation_exam
-        from agent.route.hiro_cultivation import nia_fallback, _capture_sink, maa_next_nodes, run_hiro_cultivation
+        from agent.route.hiro_cultivation import (
+            nia_fallback,
+            _capture_sink,
+            maa_next_nodes,
+            run_hiro_cultivation,
+            selected_reward_policy,
+        )
         from agent.live_decision.hiro_runtime import hiro_module, hiro_route_file
         from agent.live_decision.hiro_maa_device import HiroMaaDevice
 
@@ -152,7 +160,7 @@ class ProduceRunHiroCultivation(CustomAction):
                 mode=mode, difficulty=difficulty, skin=entry.idol,
                 play_exam=play_cultivation_exam(context, entry, algorithm, log=report),
                 log=report, fallback=nia_fallback(context, authorize) if mode == 'nia' else None,
-                save_frame=_capture_sink(report), retry=retry)
+                save_frame=_capture_sink(report), retry=retry, reward_policy=selected_reward_policy(context))
             report(dict(event='hiro_cultivation_settled', produce=entry.produce))
             return False  # StopTask owns both settlement and interrupted routes.
         except (ImportError, KeyError, OSError, RuntimeError, StopIteration, TypeError, ValueError) as error:
@@ -171,7 +179,9 @@ class ProduceRunHiroCampaign(CustomAction):
 
             params = argv.custom_action_param
             params = json.loads(params) if isinstance(params, str) else params
-            result = run_hiro_product(context, argv, campaign=bool((params or {}).get('hif')), log=report)
+            settings = params or {}
+            result = run_hiro_product(context, argv, campaign=bool(settings.get('hif')),
+                                      hif_segment=settings.get('hif_segment'), log=report)
             logger.info(f"Hiro 全程培育 {result['status']}，编号 {result['run_id']}")
         except (ImportError, KeyError, OSError, RuntimeError, StopIteration, TypeError, ValueError) as error:
             logger.error(f'Hiro 全程培育停止：{error}')

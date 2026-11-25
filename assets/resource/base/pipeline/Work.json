@@ -35,7 +35,7 @@
   },
   "WorkClick": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           0,
@@ -43,15 +43,18 @@
           140,
           140
         ],
-        "expected": [
-          "お仕事"
-        ],
-        "replace": [
-          [
-            "书",
-            "お"
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": [
+            "お仕事"
+          ],
+          "replace": [
+            [
+              "书",
+              "お"
+            ]
           ]
-        ]
+        }
       }
     },
     "action": {
@@ -239,7 +242,7 @@
   },
   "WorkChooseShowTime": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           36,
@@ -247,17 +250,20 @@
           650,
           250
         ],
-        "expected": "4時間",
-        "replace": [
-          [
-            "时",
-            "時"
-          ],
-          [
-            "间",
-            "間"
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": "4時間",
+          "replace": [
+            [
+              "时",
+              "時"
+            ],
+            [
+              "间",
+              "間"
+            ]
           ]
-        ]
+        }
       }
     },
     "action": {
@@ -270,7 +276,7 @@
   },
   "WorkChooseLiveTime": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           36,
@@ -278,17 +284,20 @@
           650,
           250
         ],
-        "expected": "4時間",
-        "replace": [
-          [
-            "时",
-            "時"
-          ],
-          [
-            "间",
-            "間"
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": "4時間",
+          "replace": [
+            [
+              "时",
+              "時"
+            ],
+            [
+              "间",
+              "間"
+            ]
           ]
-        ]
+        }
       }
     },
     "action": {
@@ -358,17 +367,20 @@
   },
   "WorkAlready": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
-        "expected": [
-          "お仕事中"
-        ],
-        "replace": [
-          [
-            "书",
-            "お"
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": [
+            "お仕事中"
+          ],
+          "replace": [
+            [
+              "书",
+              "お"
+            ]
           ]
-        ]
+        }
       }
     },
     "action": {

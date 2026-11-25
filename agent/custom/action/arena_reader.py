@@ -1464,8 +1464,10 @@ class MaaArenaReaderBackend:
     def _with_full_frame_ocr_kind(self, kind: str, operation: Any, *args: Any, **kwargs: Any) -> Any:
         return self._component_detail_capture_evidence()._with_full_frame_ocr_kind(kind, operation, *args, **kwargs)
 
-    def _full_frame_ocr_evidence_for(self, image: Any) -> _FullFrameOcrEvidence:
-        return self._component_detail_capture_evidence()._full_frame_ocr_evidence_for(image)
+    def _full_frame_ocr_evidence_for(
+        self, image: Any, *, accept: Callable[[Sequence[Any]], bool] | None = None,
+    ) -> _FullFrameOcrEvidence:
+        return self._component_detail_capture_evidence()._full_frame_ocr_evidence_for(image, accept=accept)
 
     _skill_card_title_row_has_neutral_ink = staticmethod(_reader_visual._skill_card_title_row_has_neutral_ink)
 
@@ -2011,8 +2013,12 @@ class MaaArenaReaderBackend:
     def _recognize(self, entry: str, image: Any) -> list[Any]:
         return self._component_io_reader()._recognize(entry, image)
 
-    def _ocr(self, image: Any, expected: str, *, roi: tuple[int, int, int, int] | None = None, only_rec: bool = False) -> list[Any]:
-        return self._component_io_reader()._ocr(image, expected, roi=roi, only_rec=only_rec)
+    def _ocr(
+        self, image: Any, expected: str, *,
+        roi: tuple[int, int, int, int] | None = None, only_rec: bool = False,
+        accept: Callable[[Sequence[Any]], bool] | None = None,
+    ) -> list[Any]:
+        return self._component_io_reader()._ocr(image, expected, roi=roi, only_rec=only_rec, accept=accept)
 
     _matching_ocr_items = staticmethod(_reader_visual._matching_ocr_items)
 
@@ -2023,8 +2029,11 @@ class MaaArenaReaderBackend:
 
     _spatial_ocr_text = staticmethod(_reader_visual._spatial_ocr_text)
 
-    def _full_ocr_text(self, image: Any, *, spatial_reading_order: bool = False) -> str:
-        return self._component_io_reader()._full_ocr_text(image, spatial_reading_order=spatial_reading_order)
+    def _full_ocr_text(
+        self, image: Any, *, spatial_reading_order: bool = False,
+        accept: Callable[[Sequence[Any]], bool] | None = None,
+    ) -> str:
+        return self._component_io_reader()._full_ocr_text(image, spatial_reading_order=spatial_reading_order, accept=accept)
 
     _p_item_detail_panel_rows = staticmethod(_reader_visual._p_item_detail_panel_rows)
 
@@ -2086,8 +2095,8 @@ class MaaArenaReaderBackend:
             pre_start=pre_start,
         )
 
-    def _stage_total_anchors(self, image: Any) -> tuple[tuple[int, int, int, int], ...]:
-        return self._component_arena_navigation_reader()._stage_total_anchors(image)
+    def _stage_total_anchors(self, image: Any, *, own_team: bool | None = None) -> tuple[tuple[int, int, int, int], ...]:
+        return self._component_arena_navigation_reader()._stage_total_anchors(image, own_team=own_team)
 
     def _team_stage_total_anchors(self, target: TeamTarget, image: Any) -> tuple[tuple[int, int, int, int], ...]:
         return self._component_arena_navigation_reader()._team_stage_total_anchors(target, image)

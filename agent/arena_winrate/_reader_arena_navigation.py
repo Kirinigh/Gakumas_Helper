@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Protocol
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from arena_winrate import (
     TeamTarget,
@@ -45,7 +45,7 @@ class ArenaNavigationReaderPort(Protocol):
 
     _matching_ocr_items: Any
 
-    def _ocr(self, image: Any, expected: str, *, roi: tuple[int, int, int, int] | None = ..., only_rec: bool = ...) -> list[Any]: ...
+    def _ocr(self, image: Any, expected: str, *, roi: tuple[int, int, int, int] | None = ..., only_rec: bool = ..., accept: Callable[[Sequence[Any]], bool] | None = ...) -> list[Any]: ...
     def _ocr_detail(self, image: Any, expected: str, *, roi: tuple[int, int, int, int] | None = ..., only_rec: bool = ...) -> Any: ...
 
     _pending_stage_preview: Any
@@ -57,7 +57,7 @@ class ArenaNavigationReaderPort(Protocol):
     def _recover_arena_main(self, *, maximum_steps: int, error_code: str, require_opponents: bool,
                            initial_observation: RecoveryPageObservation | None = None) -> None: ...
     def _sleep(self, seconds: float) -> None: ...
-    def _stage_total_anchors(self, image: Any) -> tuple[tuple[int, int, int, int], ...]: ...
+    def _stage_total_anchors(self, image: Any, *, own_team: bool | None = ...) -> tuple[tuple[int, int, int, int], ...]: ...
     def _team_stage_total_anchors(self, target: TeamTarget, image: Any) -> tuple[tuple[int, int, int, int], ...]: ...
     def _wait_for_stage_member_list(
         self, expected_total_counts: tuple[int, ...], timeout_seconds: float = ..., *, pre_start: bool = ...,
@@ -427,10 +427,19 @@ class ArenaNavigationReader:
         if len(results) < 3:
             raise ArenaReaderError("stage_navigation_missing", f"found only {len(results)} stage anchors")
 
-    def _stage_total_anchors(self, image: Any) -> tuple[tuple[int, int, int, int], ...]:
+    def _stage_total_anchors(self, image: Any, *, own_team: bool | None = None) -> tuple[tuple[int, int, int, int], ...]:
+        def accept(rows):
+            if own_team is None:
+                return bool(rows)
+            try:
+                team_stage_total_anchors(tuple(_box(item) for item in rows), own_team=own_team)
+            except ValueError:
+                return False
+            return True
+
         return tuple(
             sorted(
-                (_box(item) for item in self.port._ocr(image, r"^総合力$")),
+                (_box(item) for item in self.port._ocr(image, r"^総合力$", accept=accept)),
                 key=lambda box: (box[1], box[0]),
             )
         )
@@ -440,7 +449,7 @@ class ArenaNavigationReader:
         target: TeamTarget,
         image: Any,
     ) -> tuple[tuple[int, int, int, int], ...]:
-        totals = self.port._stage_total_anchors(image)
+        totals = self.port._stage_total_anchors(image, own_team=target.is_own_team)
         try:
             return team_stage_total_anchors(totals, own_team=target.is_own_team)
         except ValueError as error:
@@ -460,33 +469,34 @@ class ArenaNavigationReader:
         *,
         observations: Sequence[Any] | None = None,
     ) -> tuple[ArenaPageState, tuple[int, int, int, int, int]]:
-        items = self.port._ocr(image, r".+") if observations is None else observations
-        rehearsal_count = len(self.port._matching_ocr_items(items, r"^リハーサル$"))
         opponent_count = len(self.port._recognize("ArenaReaderOpponentCards", image))
-        stage_label_count = len(self.port._matching_ocr_items(items, r"^ステージ\s*[123]$"))
-        stage_total_count = len(self.port._matching_ocr_items(items, r"^総合力$"))
-        exhausted_notice_count = len(self.port._matching_ocr_items(items, r"^本日の挑戦権を消費しました$"))
-        counts = (
-            rehearsal_count,
-            opponent_count,
-            stage_label_count,
-            stage_total_count,
-            exhausted_notice_count,
-        )
-        if _support_bonus_dialog_headings(image, items):
-            # A popup can leave background page anchors/template matches
-            # visible. It cannot prove that the underlying page is usable.
-            return ArenaPageState.AMBIGUOUS, counts
-        return (
-            classify_arena_page(
+
+        def classify(items):
+            rehearsal_count = len(self.port._matching_ocr_items(items, r"^リハーサル$"))
+            stage_label_count = len(self.port._matching_ocr_items(items, r"^ステージ\s*[123]$"))
+            stage_total_count = len(self.port._matching_ocr_items(items, r"^総合力$"))
+            exhausted_notice_count = len(self.port._matching_ocr_items(items, r"^本日の挑戦権を消費しました$"))
+            counts = (rehearsal_count, opponent_count, stage_label_count, stage_total_count, exhausted_notice_count)
+            if _support_bonus_dialog_headings(image, items):
+                return ArenaPageState.AMBIGUOUS, counts
+            return classify_arena_page(
                 rehearsal_count=rehearsal_count,
                 opponent_count=opponent_count,
                 stage_label_count=stage_label_count,
                 stage_total_count=stage_total_count,
                 exhausted_notice_count=exhausted_notice_count,
-            ),
-            counts,
-        )
+            ), counts
+
+        if observations is None:
+            if callable(getattr(getattr(self.port, "context", None), "get_node_data", None)):
+                def accept(rows):
+                    filtered = tuple(row for row in rows if row.score >= 0.3)
+                    return classify(filtered)[0] is not ArenaPageState.AMBIGUOUS
+
+                observations = self.port._ocr(image, r".+", accept=accept)
+            else:
+                observations = self.port._ocr(image, r".+")
+        return classify(observations)
 
     def _read_grade(
         self,

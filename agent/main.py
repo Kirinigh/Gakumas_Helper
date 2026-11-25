@@ -425,8 +425,15 @@ def update_pip_config(version) -> bool:
 
 def agent():
     try:
-        import custom
         from utils import logger
+        try:
+            from agent.live_decision.simd_ocr import prewarm_vulkan_ocr
+
+            prewarm_vulkan_ocr()
+        except (ImportError, OSError, RuntimeError) as error:
+            logger.warning(f"Vulkan OCR 预热未安排，继续启动 Agent: {error}")
+
+        import custom
         from maa.library import Library
         from maa.toolkit import Toolkit
         from arena_winrate import DEFAULT_OWN_SCORE_CACHE, OwnScoreCacheStore

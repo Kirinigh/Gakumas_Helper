@@ -7,6 +7,8 @@ from typing import Any
 from collections import deque
 from dataclasses import replace
 
+from agent.live_decision.simd_ocr import without_vulkan_cold_wait
+
 from .reader import _NATIVE_GENERIC_COST_CANDIDATE, ArenaReaderError, ClickedSkillCard
 
 
@@ -122,6 +124,7 @@ class SkillDetailSession:
         self.target = target
         self.timeout_seconds = timeout_seconds
 
+    @without_vulkan_cold_wait()
     def run(self) -> ClickedSkillCard:
         """Resolve the accepted overlay text, rereading only while effects settle."""
 

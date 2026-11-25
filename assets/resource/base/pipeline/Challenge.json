@@ -78,7 +78,7 @@
   },
   "ChallengeEnter": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           426,
@@ -86,10 +86,13 @@
           213,
           157
         ],
-        "expected": [
-          "コンテスト"
-        ],
-        "replace": []
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": [
+            "コンテスト"
+          ],
+          "replace": []
+        }
       }
     },
     "action": {
@@ -668,7 +671,7 @@
   "ChallengeUnformation": {
     "enabled": true,
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           25,
@@ -676,7 +679,10 @@
           280,
           70
         ],
-        "expected": "メモリー未編成"
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": "メモリー未編成"
+        }
       }
     },
     "pre_wait_freezes": 200,
@@ -709,7 +715,7 @@
   },
   "ChallengeFormation": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           510,
@@ -717,10 +723,13 @@
           190,
           80
         ],
-        "expected": [
-          "ユニット編成"
-        ],
-        "replace": []
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": [
+            "ユニット編成"
+          ],
+          "replace": []
+        }
       }
     },
     "action": {
@@ -733,7 +742,7 @@
   },
   "ChallengeFormationAuto": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           340,
@@ -741,10 +750,13 @@
           190,
           140
         ],
-        "expected": [
-          "おまかせ"
-        ],
-        "replace": []
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": [
+            "おまかせ"
+          ],
+          "replace": []
+        }
       }
     },
     "action": {
