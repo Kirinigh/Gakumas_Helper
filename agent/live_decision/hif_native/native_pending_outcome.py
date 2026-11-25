@@ -50,21 +50,22 @@ def retry_index(dispatch_source):
     receipt = dispatch_source.get('native_unconsumed_retry')
     if receipt is None:
         return 0
-    if (receipt.get('version') != 1 or receipt.get('retry_index') != 1
+    if (receipt.get('version') != 1 or receipt.get('retry_index') not in (1, 2, 3)
             or not receipt.get('observation_source') or not receipt.get('dispatch_source')):
         raise ValueError('pending retry accounting is incomplete')
-    return 1
+    return receipt['retry_index']
 
 
-def prepare_unconsumed_retry(checkpoint, result, runtime):
-    """Rebind the saved intention after proof, at most once for that intention."""
+def prepare_unconsumed_retry(checkpoint, result, runtime, *, recovery=None):
+    """Rebind after proof, or choose Hiro's SKIP on the third observed miss."""
     from .native_handoff_policy import restore_policy
     from .native_inprocess_resume import promote_verified_settlement
 
     if checkpoint.get('pending') is not True or not is_unconsumed_observation(result):
         raise ValueError('pending retry requires a freshly reconciled dispatched checkpoint')
     source = checkpoint['dispatch_source']
-    if retry_index(source):
+    index = retry_index(source)
+    if index >= (3 if recovery is not None else 1):
         return None
     event, bundle = result['settlement'], checkpoint['bundle']
     state = verify_unconsumed(bundle, checkpoint['expected'], checkpoint['event'], checkpoint['action'],
@@ -80,8 +81,9 @@ def prepare_unconsumed_retry(checkpoint, result, runtime):
     from .native_handoff_policy import phase
     if phase(policy) != 'pending_intent' or policy._pending is None:
         raise ValueError('unconsumed retry lost its completed original intention')
-    retry = dict(version=1, retry_index=1, observation_source=result['id'], dispatch_source=source['id'])
+    forced = recovery is not None and recovery.record(no_effect=True)
+    retry = dict(version=1, retry_index=index + 1, observation_source=result['id'], dispatch_source=source['id'])
     return dict(checkpoint, bundle=rebound, state=rebound.state, event=event, row=result,
         policy=policy, cache_report=report, pending=False, reconciled_unconsumed=True,
-        unsubmitted_intent=True, unconsumed_retry=retry,
+        unsubmitted_intent=True, unconsumed_retry=retry, forced_skip=forced,
         receipt=dict(checkpoint['receipt'], source=result['id'], boundary_kind='not_consumed'))

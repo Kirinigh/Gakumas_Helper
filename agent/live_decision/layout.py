@@ -19,8 +19,10 @@ def calibrated_live_client_size(size):
     """
     if not isinstance(size, tuple) or len(size) != 2 or any(type(v) is not int for v in size):
         return None
-    if size == (720, 1280):
-        return size
+    # MaaCLI observed a 719x1279 client at 96 DPI and normalized it to
+    # the same complete 720x1280 frame as the nominal client.
+    if size in ((720, 1280), (719, 1279)):
+        return (720, 1280)
     # Native 474: at 144 DPI, Maa's logical client is 721x1282 while
     # the physical client is 1082x1923. Its own long-side normalization
     # produces the same 720x1280 layout. Bind input to the observed logical

@@ -11,3 +11,11 @@ def resolve_runtime_path(source_relative: Path, installed_relative: Path) -> Pat
     root = Path(__file__).resolve().parents[2]
     candidates = root / source_relative, root / installed_relative
     return next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+
+
+def resolve_packaged_runtime_path(source_relative: Path, installed_relative: Path) -> Path:
+    """Use only the package's runtime assets once the installed interface is present."""
+    root = Path(__file__).resolve().parents[2]
+    if (root / 'interface.json').is_file():
+        return root / installed_relative
+    return resolve_runtime_path(source_relative, installed_relative)

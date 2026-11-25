@@ -24,3 +24,5 @@ assets/resource/base/model/embedding/arena_card/preserved_base/** -text whitespa
 assets/resource/base/model/embedding/arena_badge_reference/preserved_base/** -text whitespace=cr-at-eol
 assets/resource/base/model/detect/arena_cards_*.onnx -text
 assets/data/p_item_detail_text.json -text whitespace=cr-at-eol
+
+*.onnx binary

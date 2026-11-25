@@ -284,6 +284,7 @@ class ArenaOwnScoreRecalculate(CustomAction):
                 component.bundle_dir,
                 timeout_seconds=config.timeout_seconds,
                 cancel_check=cancellation_for(context).check,
+                load_catalog=lambda: _own_score_cache_catalog(context, component.bundle_dir),
             )
             cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
             reset_prepared_own_score_cache(cache_store)
@@ -872,6 +873,7 @@ class ChallengePrepareOwnScore(CustomAction):
                 component.bundle_dir,
                 timeout_seconds=config.timeout_seconds,
                 cancel_check=cancellation_for(context).check,
+                load_catalog=lambda: _own_score_cache_catalog(context, component.bundle_dir),
             )
             cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
             return bool(_prepare_daily_own_score_cache(
@@ -1098,6 +1100,7 @@ class ChallengeAuto(CustomAction):
                     component.bundle_dir,
                     timeout_seconds=config.timeout_seconds,
                     cancel_check=cancellation_for(context).check,
+                    load_catalog=lambda: _own_score_cache_catalog(context, component.bundle_dir),
                 )
                 cache_store = OwnScoreCacheStore(DEFAULT_OWN_SCORE_CACHE)
                 if mode == "win_rate_recalculate_own":

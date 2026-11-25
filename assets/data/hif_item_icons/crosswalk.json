@@ -1786,5 +1786,334 @@
   {
     "business_id": 474,
     "asset_name": "img_general_pitem_3-340"
+  },
+  {
+    "business_id": "pitem_02-3-321-0",
+    "asset_name": "img_general_pitem_3-321",
+    "name": "頂点の輝き",
+    "plan": "logic",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_02-3-321-1",
+    "asset_name": "img_general_pitem_3-321",
+    "name": "頂点の輝き+",
+    "plan": "logic",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_01-1-100-0",
+    "asset_name": "img_general_pitem_1-100",
+    "name": "従者の必需品",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-1-100-1",
+    "asset_name": "img_general_pitem_1-100",
+    "name": "従者の必需品+",
+    "plan": "sense",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_01-2-171-0",
+    "asset_name": "img_general_pitem_2-171",
+    "name": "お返しの髪飾り",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-2-171-1",
+    "asset_name": "img_general_pitem_2-171",
+    "name": "お返しの髪飾り+",
+    "plan": "sense",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_01-3-115-0",
+    "asset_name": "img_general_pitem_3-115",
+    "name": "「Pっち」",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-115-1",
+    "asset_name": "img_general_pitem_3-115",
+    "name": "「Pっち」+",
+    "plan": "sense",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_01-3-186-0",
+    "asset_name": "img_general_pitem_3-186",
+    "name": "はつぼしメダル（橙）",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-187-0",
+    "asset_name": "img_general_pitem_3-187",
+    "name": "ガラスはつみ（橙）",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-305-0",
+    "asset_name": "img_general_pitem_3-305",
+    "name": "ぴったしコレクション",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-341-0",
+    "asset_name": "img_general_pitem_3-341",
+    "name": "夏の足音",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-341-1",
+    "asset_name": "img_general_pitem_3-341",
+    "name": "夏の足音+",
+    "plan": "sense",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_01-3-342-0",
+    "asset_name": "img_general_pitem_3-342",
+    "name": "勇気の標",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-342-1",
+    "asset_name": "img_general_pitem_3-342",
+    "name": "勇気の標+",
+    "plan": "sense",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_01-3-344-0",
+    "asset_name": "img_general_pitem_3-344",
+    "name": "憧れの標",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-344-1",
+    "asset_name": "img_general_pitem_3-344",
+    "name": "憧れの標+",
+    "plan": "sense",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_01-3-346-0",
+    "asset_name": "img_general_pitem_3-346",
+    "name": "天性の才能",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-346-1",
+    "asset_name": "img_general_pitem_3-346",
+    "name": "天性の才能+",
+    "plan": "sense",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_01-3-349-0",
+    "asset_name": "img_general_pitem_3-349",
+    "name": "世界を魅了する姿",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-349-1",
+    "asset_name": "img_general_pitem_3-349",
+    "name": "世界を魅了する姿+",
+    "plan": "sense",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_01-3-393-0",
+    "asset_name": "img_general_pitem_3-393",
+    "name": "なにかが変わる予感",
+    "plan": "sense",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_01-3-393-1",
+    "asset_name": "img_general_pitem_3-393",
+    "name": "なにかが変わる予感+",
+    "plan": "sense",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_02-3-071-1",
+    "asset_name": "img_general_pitem_3-071",
+    "name": "あたしだけの一番星+",
+    "plan": "logic",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_02-3-188-0",
+    "asset_name": "img_general_pitem_3-188",
+    "name": "はつぼしメダル（白）",
+    "plan": "logic",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_02-3-189-0",
+    "asset_name": "img_general_pitem_3-189",
+    "name": "ガラスはつみ（白）",
+    "plan": "logic",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_02-3-336-0",
+    "asset_name": "img_general_pitem_3-336",
+    "name": "星々を統べる輝き",
+    "plan": "logic",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_02-3-336-1",
+    "asset_name": "img_general_pitem_3-336",
+    "name": "星々を統べる輝き+",
+    "plan": "logic",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_02-3-343-0",
+    "asset_name": "img_general_pitem_3-343",
+    "name": "可能性の標",
+    "plan": "logic",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_02-3-343-1",
+    "asset_name": "img_general_pitem_3-343",
+    "name": "可能性の標+",
+    "plan": "logic",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_02-3-348-0",
+    "asset_name": "img_general_pitem_3-348",
+    "name": "規格外の魅力",
+    "plan": "logic",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_02-3-348-1",
+    "asset_name": "img_general_pitem_3-348",
+    "name": "規格外の魅力+",
+    "plan": "logic",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_03-3-068-0",
+    "asset_name": "img_general_pitem_3-068",
+    "name": "アイドルパワー測定機",
+    "plan": "anomaly",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_03-3-190-0",
+    "asset_name": "img_general_pitem_3-190",
+    "name": "はつぼしメダル（黒）",
+    "plan": "anomaly",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_03-3-191-0",
+    "asset_name": "img_general_pitem_3-191",
+    "name": "ガラスはつみ（黒）",
+    "plan": "anomaly",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_03-3-303-0",
+    "asset_name": "img_general_pitem_3-303",
+    "name": "夜空を従える花",
+    "plan": "anomaly",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_03-3-303-1",
+    "asset_name": "img_general_pitem_3-303",
+    "name": "夜空を従える花+",
+    "plan": "anomaly",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_03-3-334-0",
+    "asset_name": "img_general_pitem_3-334",
+    "name": "夢見る輝き",
+    "plan": "anomaly",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_03-3-334-1",
+    "asset_name": "img_general_pitem_3-334",
+    "name": "夢見る輝き+",
+    "plan": "anomaly",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_03-3-337-0",
+    "asset_name": "img_general_pitem_3-337",
+    "name": "ヒーローの輝き",
+    "plan": "anomaly",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_03-3-337-1",
+    "asset_name": "img_general_pitem_3-337",
+    "name": "ヒーローの輝き+",
+    "plan": "anomaly",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_03-3-339-0",
+    "asset_name": "img_general_pitem_3-339",
+    "name": "夏を編んだ影",
+    "plan": "anomaly",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_03-3-339-1",
+    "asset_name": "img_general_pitem_3-339",
+    "name": "夏を編んだ影+",
+    "plan": "anomaly",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_03-3-345-0",
+    "asset_name": "img_general_pitem_3-345",
+    "name": "止まない嵐",
+    "plan": "anomaly",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_03-3-345-1",
+    "asset_name": "img_general_pitem_3-345",
+    "name": "止まない嵐+",
+    "plan": "anomaly",
+    "upgraded": true
+  },
+  {
+    "business_id": "pitem_03-3-347-0",
+    "asset_name": "img_general_pitem_3-347",
+    "name": "小悪魔の色気",
+    "plan": "anomaly",
+    "upgraded": false
+  },
+  {
+    "business_id": "pitem_03-3-347-1",
+    "asset_name": "img_general_pitem_3-347",
+    "name": "小悪魔の色気+",
+    "plan": "anomaly",
+    "upgraded": true
   }
 ]

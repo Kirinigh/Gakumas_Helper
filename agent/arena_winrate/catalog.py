@@ -12,6 +12,7 @@ from collections import Counter, defaultdict
 from dataclasses import replace, dataclass
 from collections.abc import Mapping, Sequence
 
+from .card_cost import GenericCostReferenceError, majority_generic_cost_value
 from ._reader_evidence import _DetailIdentityProof
 from ._p_item_detail_text import PItemDetailTextIndex, PItemDetailTextResult
 from ._p_item_eligibility import ArenaPItemEligibility
@@ -475,10 +476,21 @@ def _initial_scalar_detail_text(
     return _card_used_detail_section(compact, require_boundary=require_boundary)
 
 
-def _growth_increment(value: object, field: str, level: int) -> int | None:
-    selected = _selected_level_patch(value, level)
-    match = re.search(rf"g\.{re.escape(field)}\+=(-?[0-9]+)", selected)
-    return int(match.group(1)) if match else None
+def _stance_triggered_score_growth(definition: Mapping[str, Any]) -> tuple[str, tuple[int, ...]] | None:
+    """Identify conditional self-growth separately from the initial score."""
+    effects = definition.get("effects")
+    levels = tuple(
+        re.fullmatch(
+            r"at:stanceChanged\{if:(isDirectEffect&isStrength|stance==fullPower)\{"
+            r"target:this\{g\.score\+=([1-9][0-9]*);?\};?\};?\};?",
+            _normalise_text(_selected_level_patch(effects, level)),
+        )
+        for level in range(1, int(definition["max"]) + 1)
+    )
+    if not levels or any(match is None for match in levels) or len({match[1] for match in levels}) != 1:
+        return None
+    stance = "強気" if levels[0][1] == "isDirectEffect&isStrength" else "全力"
+    return stance, tuple(int(match[2]) for match in levels)
 
 
 def _direct_prestage_target_this_increment(
@@ -734,10 +746,10 @@ class ArenaEntityCatalog:
                         f"view {index} has an unresolved fragment for {marker[:-1]!r}"
                     )
 
-    def _independent_optional_absences(
+    def _check_independent_optional_effects(
         self, card_id: int, matchers: Mapping[int, Any], compact: str,
     ) -> frozenset[int]:
-        """Return zero levels for entirely unseen, independently rendered additions."""
+        """Validate partial rows and identify wholly unseen independent additions."""
         card = self._cards_by_id[card_id]
         base_program = ";".join(_normalise_text(card.get(key)) for key in ("actions", "effects", "conditions", "cost"))
         domains, _ = self._added_numeric_effect_domains(card_id)
@@ -2091,12 +2103,13 @@ class ArenaEntityCatalog:
         )
 
     def maximum_customization_count(self, card_id: int) -> int:
-        """Return the largest badge count representable for one card."""
+        """Return the largest legal badge count for one card."""
 
-        return sum(
-            int(self._customizations[customization_id]["max"])
-            for customization_id in self.available_customization_ids(card_id)
-        )
+        available = self.available_customization_ids(card_id)
+        catalog_maximum = sum(int(self._customizations[item]["max"]) for item in available)
+        rarity = self._cards_by_id[card_id].get("rarity")
+        rarity_maximum = {"R": 3, "SR": 2, "SSR": 2, "L": 2}.get(rarity) if isinstance(rarity, str) else None
+        return min(catalog_maximum, rarity_maximum) if rarity_maximum is not None else catalog_maximum
 
     def legal_customization_groups(
         self,
@@ -2108,6 +2121,8 @@ class ArenaEntityCatalog:
 
         if isinstance(expected_count, bool) or not isinstance(expected_count, int) or expected_count < 0:
             raise ArenaCatalogError("expected customization count must be a non-negative integer")
+        if expected_count > self.maximum_customization_count(card_id):
+            return ()
         available = self.available_customization_ids(card_id)
         if not available:
             return ({},) if expected_count == 0 else ()
@@ -2159,10 +2174,7 @@ class ArenaEntityCatalog:
             available = self.available_customization_ids(card_id)
             if not available:
                 continue
-            maximum_total = sum(
-                int(self._customizations[customization_id]["max"])
-                for customization_id in available
-            )
+            maximum_total = self.maximum_customization_count(card_id)
             unsupported = tuple(
                 customization_id
                 for customization_id in available
@@ -2277,7 +2289,7 @@ class ArenaEntityCatalog:
         maximum = int(definition["max"])
         for field in scalar_fields:
             if any(
-                _growth_increment(definition.get("effects"), field, level)
+                _direct_prestage_target_this_increment(definition.get("effects"), field, level)
                 is not None
                 for level in range(1, maximum + 1)
             ):
@@ -2452,26 +2464,21 @@ class ArenaEntityCatalog:
         card_id: int,
         *,
         resolved: Mapping[str, int],
-        frame_values: Sequence[int],
+        frame_values: Sequence[int | None],
     ) -> str:
-        """Require three stable card-face reads to agree with one legal group."""
+        """Require a majority of stable card-face reads to match the legal group."""
 
         hypotheses = self.generic_cost_hypotheses(card_id)
         if hypotheses is None:
             raise ArenaCatalogError(
                 f"card {card_id} has no generic-cost customization to certify"
             )
-        if len(frame_values) != 3 or any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in frame_values
-        ):
-            raise ArenaCatalogError(
-                "generic-cost evidence requires three non-negative integer reads"
-            )
-        if len(set(frame_values)) != 1:
-            raise ArenaCatalogError(
-                f"generic-cost evidence disagreed across stable frames: {tuple(frame_values)!r}"
-            )
+        if any(value is not None and value not in hypotheses for value in frame_values):
+            raise ArenaCatalogError("generic-cost evidence contains a value outside the card's hypotheses")
+        try:
+            observed_cost = majority_generic_cost_value(frame_values)
+        except GenericCostReferenceError as error:
+            raise ArenaCatalogError(str(error)) from error
         generic_ids = tuple(
             customization_id
             for customization_id in self.available_customization_ids(card_id)
@@ -2483,9 +2490,9 @@ class ArenaEntityCatalog:
                 f"card {card_id} generic-cost level is invalid: {selected_level}"
             )
         expected_value = hypotheses[selected_level]
-        if frame_values[0] != expected_value:
+        if observed_cost != expected_value:
             raise ArenaCatalogError(
-                f"card {card_id} card-face cost {frame_values[0]} disagrees with "
+                f"card {card_id} card-face cost {observed_cost} disagrees with "
                 f"resolved generic-cost level {selected_level} (expected {expected_value})"
             )
         return "card_face_generic_cost_unique"
@@ -2633,7 +2640,7 @@ class ArenaEntityCatalog:
         effect_roi_text: str | None,
         expected_count: int,
         resolved: Mapping[str, int],
-        generic_cost_frame_values: Sequence[int] | None = None,
+        generic_cost_frame_values: Sequence[int | None] | None = None,
         effect_roi_title_bound: bool = False,
         full_detail_title_proof: _DetailIdentityProof | None = None,
     ) -> str:
@@ -2979,15 +2986,7 @@ class ArenaEntityCatalog:
             base_values = _all_integer_increments(actions, field)
             if not base_values:
                 continue
-            selected_delta = 0
-            for customization_text, level in resolved.items():
-                delta = _growth_increment(
-                    self._customizations[int(customization_text)].get("effects"),
-                    field,
-                    int(level),
-                )
-                if delta is not None:
-                    selected_delta += delta
+            selected_delta = self._selected_direct_growth_increment(resolved, field)
             sections = _card_used_scalar_sections(actions, field)
             anchors.extend(
                 f"{prefix}{value + selected_delta}{suffix}"
@@ -3415,10 +3414,7 @@ class ArenaEntityCatalog:
             if not base_scores:
                 return False
             card_id = int(card["id"])
-            available = self.available_customization_ids(card_id)
-            maximum_total = sum(
-                int(self._customizations[item]["max"]) for item in available
-            )
+            maximum_total = self.maximum_customization_count(card_id)
             return any(
                 self._detail_counted_score_anchor_present(
                     card,
@@ -4083,10 +4079,7 @@ class ArenaEntityCatalog:
             if not base_scores:
                 return False
             card_id = int(card["id"])
-            available = self.available_customization_ids(card_id)
-            maximum_total = sum(
-                int(self._customizations[item]["max"]) for item in available
-            )
+            maximum_total = self.maximum_customization_count(card_id)
             visible_zero_scores: set[int] = set()
             for expected_count in range(maximum_total + 1):
                 for group in self.legal_customization_groups(
@@ -4263,6 +4256,8 @@ class ArenaEntityCatalog:
             if key in resolved:
                 raise ArenaCatalogError(f"customization {customization_id} appears more than once in clicked details")
             resolved[key] = observation.count
+        if sum(resolved.values()) > self.maximum_customization_count(card_id):
+            raise ArenaCatalogError(f"card {card_id} exceeds the total customization limit")
         return resolved
 
     def resolve_effective_customizations(
@@ -4271,7 +4266,6 @@ class ArenaEntityCatalog:
         detail_text: str,
         *,
         expected_count: int,
-        allow_positive_completion: bool = True,
     ) -> dict[str, int]:
         """Resolve a clicked contest card from its final, already-applied effect text.
 
@@ -4311,6 +4305,7 @@ class ArenaEntityCatalog:
             )
 
         compact = _normalise_effect_text(detail_text)
+        self._check_independent_optional_effects(card_id, matchers, compact)
         if expected_count == 0:
             if all(matchers[customization_id](compact, 0) for customization_id in available):
                 return {}
@@ -4334,44 +4329,11 @@ class ArenaEntityCatalog:
             )
         ]
 
-        # Badge completion may constrain unrendered or baseline-dependent
-        # carriers. An independently rendered addition absent from the detail
-        # cannot become positive merely to fill the badge count.
-        absent = self._independent_optional_absences(card_id, matchers, compact)
-        positive_levels: dict[int, frozenset[int]] = {}
-        for customization_id in available:
-            matcher = matchers[customization_id]
-            maximum = int(self._customizations[customization_id]["max"])
-            zero_matches = matcher(compact, 0)
-            positive_levels[customization_id] = frozenset(
-                level
-                for level in range(1, maximum + 1)
-                if not zero_matches and matcher(compact, level)
-            )
-        positive_evidence_count = sum(bool(levels) for levels in positive_levels.values())
-        positive_candidates = [
-            group
-            for group in legal_groups
-            if not absent.intersection(map(int, group)) and all(
-                not positive_levels[customization_id]
-                or group.get(str(customization_id), 0)
-                in positive_levels[customization_id]
-                for customization_id in available
-            )
-        ]
         if len(strict_candidates) == 1:
             return strict_candidates[0]
-        if (
-            allow_positive_completion
-            and positive_evidence_count
-            and len(positive_candidates) == 1
-        ):
-            return positive_candidates[0]
         raise ArenaCatalogError(
             f"final skill-card effects must resolve exactly once for card {card_id} "
-            f"and badge count {expected_count}; "
-            f"strict_candidates={strict_candidates!r}; "
-            f"positive_candidates={positive_candidates!r}"
+            f"and badge count {expected_count}; strict_candidates={strict_candidates!r}"
         )
 
     def merge_compatible_effect_detail_views(
@@ -4537,6 +4499,7 @@ class ArenaEntityCatalog:
         card = self._cards_by_id[card_id]
         compact = _normalise_effect_text(detail_text)
         levels = []
+        matchers = {}
         for customization_id in available:
             matcher = self._cached_effective_detail_matcher(card, customization_id)
             if matcher is None:
@@ -4550,9 +4513,12 @@ class ArenaEntityCatalog:
             if not matched:
                 raise ArenaCatalogError(f"card {card_id} has an unresolved visible effect")
             levels.append(matched)
+            matchers[customization_id] = matcher
+        self._check_independent_optional_effects(card_id, matchers, compact)
         resolved = None
+        maximum_total = self.maximum_customization_count(card_id)
         for counts in itertools.product(*levels):
-            if not any(counts):
+            if not 0 < sum(counts) <= maximum_total:
                 continue
             if resolved is not None:
                 raise ArenaCatalogError(f"card {card_id} has multiple strict positive detail groups")
@@ -4578,7 +4544,7 @@ class ArenaEntityCatalog:
             raise ArenaCatalogError(
                 f"card {card_id} cannot infer a positive customization count"
             )
-        maximum_total = sum(int(self._customizations[item]["max"]) for item in available)
+        maximum_total = self.maximum_customization_count(card_id)
         matches: list[dict[str, int]] = []
         for expected_count in range(1, maximum_total + 1):
             try:
@@ -4586,7 +4552,6 @@ class ArenaEntityCatalog:
                     card_id,
                     detail_text,
                     expected_count=expected_count,
-                    allow_positive_completion=False,
                 )
             except ArenaCatalogError:
                 continue
@@ -4604,13 +4569,13 @@ class ArenaEntityCatalog:
         card_id: int,
         detail_text: str,
         *,
-        generic_cost_frame_values: Sequence[int],
+        generic_cost_frame_values: Sequence[int | None],
     ) -> dict[str, int]:
         """Resolve one positive group from detail plus the same card's face cost.
 
         The face badge does not supply the count.  Generic-cost effects are
         rendered only on the source card face, so detail text alone can leave
-        two otherwise identical groups.  Three stable source-frame reads close
+        two otherwise identical groups.  A majority of the three stable source-frame reads closes
         that degree of freedom without adding another UI action.
         """
         self._validate_added_numeric_effects(card_id, detail_text)
@@ -4619,11 +4584,7 @@ class ArenaEntityCatalog:
             raise ArenaCatalogError(
                 f"card {card_id} has no generic-cost customization evidence"
             )
-        available = self.available_customization_ids(card_id)
-        maximum_total = sum(
-            int(self._customizations[item]["max"])
-            for item in available
-        )
+        maximum_total = self.maximum_customization_count(card_id)
         matches: list[dict[str, int]] = []
         for expected_count in range(1, maximum_total + 1):
             try:
@@ -4631,7 +4592,6 @@ class ArenaEntityCatalog:
                     card_id,
                     detail_text,
                     expected_count=expected_count,
-                    allow_positive_completion=False,
                 )
                 self.certify_card_face_generic_cost(
                     card_id,
@@ -4656,7 +4616,7 @@ class ArenaEntityCatalog:
         detail_text: str,
         *,
         observed_badge_count: int,
-        generic_cost_frame_values: Sequence[int] | None = None,
+        generic_cost_frame_values: Sequence[int | None] | None = None,
     ) -> EffectiveCustomizationResolution:
         """Resolve detail truth before using the fallible card-face digit.
 
@@ -4728,7 +4688,7 @@ class ArenaEntityCatalog:
         card_id: int,
         detail_text: str,
         *,
-        generic_cost_frame_values: Sequence[int] | None = None,
+        generic_cost_frame_values: Sequence[int | None] | None = None,
     ) -> tuple[int, ...]:
         """Return every positive badge count still compatible with detail truth.
 
@@ -4771,7 +4731,7 @@ class ArenaEntityCatalog:
         available = self.available_customization_ids(card_id)
         if not available:
             return {}
-        maximum_total = sum(int(self._customizations[item]["max"]) for item in available)
+        maximum_total = self.maximum_customization_count(card_id)
         matches: list[dict[str, int]] = []
         for expected_count in range(0, maximum_total + 1):
             try:
@@ -4779,7 +4739,6 @@ class ArenaEntityCatalog:
                     card_id,
                     detail_text,
                     expected_count=expected_count,
-                    allow_positive_completion=False,
                 )
             except ArenaCatalogError:
                 continue
@@ -4866,10 +4825,7 @@ class ArenaEntityCatalog:
                 f"card {card_id} has unsupported final-effect signatures for customizations {unsupported!r}"
             )
         compact = _normalise_effect_text(detail_text)
-        maximum_total = sum(
-            int(self._customizations[customization_id]["max"])
-            for customization_id in available
-        )
+        maximum_total = self.maximum_customization_count(card_id)
         candidates = tuple(
             group
             for expected_count in range(maximum_total + 1)
@@ -4928,7 +4884,7 @@ class ArenaEntityCatalog:
         # need a rendered baseline or their established scoped proof.
         representative = by_generic_level[0]
         observed = _normalise_effect_text(observation_text)
-        absent = self._independent_optional_absences(card_id, matchers, observed)
+        absent = self._check_independent_optional_effects(card_id, matchers, observed)
         uses_independent_optional_absence = False
         native_only = full_detail_text is None and effect_roi_text is None
         coverage_kwargs = {
@@ -5825,18 +5781,18 @@ class ArenaEntityCatalog:
             ] = ()
             if direct_score_times is not None:
                 card_id = int(card["id"])
-                available = self.available_customization_ids(card_id)
-                maximum_total = sum(
-                    int(self._customizations[item]["max"]) for item in available
-                )
+                maximum_total = self.maximum_customization_count(card_id)
                 signatures: list[tuple[Mapping[str, int], tuple[str, ...]]] = []
-                for expected_count in range(1, maximum_total + 1):
-                    for group in self.legal_customization_groups(
+                # Observe a repeated score even when adding that repetition
+                # would exceed the cap. Its presence must still rule out zero.
+                for expected_count in range(maximum_total + 1):
+                    for other_levels in self.legal_customization_groups(
                         card_id,
                         expected_count=expected_count,
                     ):
-                        if int(group.get(str(customization_id), 0)) < 1:
+                        if str(customization_id) in other_levels:
                             continue
+                        group = {**other_levels, str(customization_id): 1}
                         selected_score_delta = self._selected_direct_growth_increment(
                             group,
                             "score",
@@ -5914,6 +5870,27 @@ class ArenaEntityCatalog:
 
             return match_score_times
 
+        stance_growth = _stance_triggered_score_growth(definition)
+        if stance_growth is not None:
+            stance, values = stance_growth
+
+            def match_stance_triggered_growth(compact: str, count: int) -> bool:
+                sections = tuple(
+                    section for view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY)
+                    for section in view.split("成長")[1:]
+                )
+                if not sections:
+                    return count == 0 and "スコア値増加" not in compact
+                observed = {
+                    value
+                    for section in sections
+                    if stance in section.partition("スコア値増加")[0]
+                    for value in re.findall(r"スコア値増加([+−-]?[0-9]+(?:[.,][0-9]+)?)", section)
+                }
+                return 1 <= count <= len(values) and observed == {f"+{values[count - 1]}"}
+
+            return match_stance_triggered_growth
+
         scalar_labels = {
             "goodConditionTurns": ("好調", "ターン"),
             "goodImpressionTurns": ("好印象+", ""),
@@ -5928,7 +5905,7 @@ class ArenaEntityCatalog:
         for field, (prefix, suffix) in scalar_labels.items():
             maximum = int(definition["max"])
             deltas = {
-                level: _growth_increment(definition.get("effects"), field, level)
+                level: _direct_prestage_target_this_increment(definition.get("effects"), field, level)
                 for level in range(1, maximum + 1)
             }
             if not any(value is not None for value in deltas.values()):

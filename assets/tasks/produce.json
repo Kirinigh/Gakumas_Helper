@@ -36,10 +36,50 @@
       "description": "$HIF 主属性说明",
       "default_case": "preset",
       "cases": [
-        {"name": "preset", "label": "$HIF 预设优先级", "pipeline_override": {"ProduceHifMainAttributeSettings": {"attach": {"attribute": null}}}},
-        {"name": "Vo", "label": "Vo", "pipeline_override": {"ProduceHifMainAttributeSettings": {"attach": {"attribute": "Vo"}}}},
-        {"name": "Da", "label": "Da", "pipeline_override": {"ProduceHifMainAttributeSettings": {"attach": {"attribute": "Da"}}}},
-        {"name": "Vi", "label": "Vi", "pipeline_override": {"ProduceHifMainAttributeSettings": {"attach": {"attribute": "Vi"}}}}
+        {
+          "name": "preset",
+          "label": "$HIF 预设优先级",
+          "pipeline_override": {
+            "ProduceHifMainAttributeSettings": {
+              "attach": {
+                "attribute": null
+              }
+            }
+          }
+        },
+        {
+          "name": "Vo",
+          "label": "Vo",
+          "pipeline_override": {
+            "ProduceHifMainAttributeSettings": {
+              "attach": {
+                "attribute": "Vo"
+              }
+            }
+          }
+        },
+        {
+          "name": "Da",
+          "label": "Da",
+          "pipeline_override": {
+            "ProduceHifMainAttributeSettings": {
+              "attach": {
+                "attribute": "Da"
+              }
+            }
+          }
+        },
+        {
+          "name": "Vi",
+          "label": "Vi",
+          "pipeline_override": {
+            "ProduceHifMainAttributeSettings": {
+              "attach": {
+                "attribute": "Vi"
+              }
+            }
+          }
+        }
       ]
     },
     "HIF 选拔回忆": {
@@ -57,19 +97,38 @@
       ],
       "pipeline_override": {
         "ProduceHifQualifierMemorySettings": {
-          "attach": {"stats": "{hif_memory_stats}"}
+          "attach": {
+            "stats": "{hif_memory_stats}"
+          }
         }
       }
     },
     "HIF 候选牌优先级": {
       "type": "input",
       "inputs": [
-        {"name": "hif_preferred_cards", "label": "候选牌优先 ID（逗号分隔，留空沿用原策略）", "default": "", "pipeline_type": "string", "verify": "^(?:[1-9][0-9]*(?:,[1-9][0-9]*)*)?$"},
-        {"name": "hif_pool_order", "label": "免费候选池顺序", "default": "reroll,exclude", "pipeline_type": "string", "verify": "^(?:reroll,exclude|exclude,reroll)$"}
+        {
+          "name": "hif_preferred_cards",
+          "label": "候选牌优先 ID（逗号分隔，留空沿用原策略）",
+          "default": "",
+          "pipeline_type": "string",
+          "verify": "^(?:[1-9][0-9]*(?:,[1-9][0-9]*)*)?$"
+        },
+        {
+          "name": "hif_pool_order",
+          "label": "免费候选池顺序",
+          "default": "reroll,exclude",
+          "pipeline_type": "string",
+          "verify": "^(?:reroll,exclude|exclude,reroll)$"
+        }
       ],
-      "pipeline_override": {"ProduceHifCandidatePoolSettings": {"attach": {
-        "preferred": "{hif_preferred_cards}", "order": "{hif_pool_order}"
-      }}}
+      "pipeline_override": {
+        "ProduceHifCandidatePoolSettings": {
+          "attach": {
+            "preferred": "{hif_preferred_cards}",
+            "order": "{hif_pool_order}"
+          }
+        }
+      }
     },
     "HIF 推进模式": {
       "type": "select",
@@ -457,7 +516,8 @@
         {
           "name": "初",
           "option": [
-            "「初」难度"
+            "「初」难度",
+            "初／NIA 出牌策略"
           ]
         },
         {
@@ -465,7 +525,8 @@
           "option": [
             "「NIA」难度",
             "启用试镜难度降低",
-            "试镜手动接管"
+            "试镜手动接管",
+            "初／NIA 出牌策略"
           ]
         },
         {
@@ -519,6 +580,59 @@
               }
             }
           }
+        },
+        {
+          "name": "HIF 選抜試験",
+          "label": "HIF 選抜試験（编成准备）",
+          "option": [
+            "HIF 選抜試験编成"
+          ],
+          "pipeline_override": {
+            "Produce": {
+              "next": [
+                "ProduceHifQualifierPrepareEntry"
+              ]
+            }
+          }
+        },
+        {
+          "name": "HIF 選抜試験自动",
+          "label": "HIF 選抜試験（自动开局、考试并领回忆）",
+          "option": [
+            "HIF 選抜試験编成"
+          ],
+          "pipeline_override": {
+            "Produce": {
+              "next": [
+                "ProduceHifQualifierPrepareEntry"
+              ]
+            },
+            "ProduceHifQualifierPrepareEntry": {
+              "custom_action_param": {
+                "run_exams": true
+              }
+            }
+          }
+        },
+        {
+          "name": "HIF Hiro 全流程",
+          "label": "HIF Hiro 全流程（选拔＋本战）",
+          "option": [
+            "HIF 選抜試験编成",
+            "HIF Hiro 本战策略"
+          ],
+          "pipeline_override": {
+            "LocalDataConfigureProduce": {
+              "next": [
+                "ProduceHiroCampaignEntry"
+              ]
+            },
+            "ProduceHiroCampaignEntry": {
+              "custom_action_param": {
+                "hif": true
+              }
+            }
+          }
         }
       ],
       "label": "$培育难度"
@@ -530,6 +644,11 @@
         {
           "name": "REGULAR",
           "pipeline_override": {
+            "ProduceCultivationScenarioSettings": {
+              "attach": {
+                "produce": "produce-001"
+              }
+            },
             "ProduceChooseScenario": {
               "recognition": {
                 "param": {
@@ -550,6 +669,11 @@
         {
           "name": "PRO",
           "pipeline_override": {
+            "ProduceCultivationScenarioSettings": {
+              "attach": {
+                "produce": "produce-002"
+              }
+            },
             "ProduceChooseScenario": {
               "recognition": {
                 "param": {
@@ -570,6 +694,11 @@
         {
           "name": "MASTER",
           "pipeline_override": {
+            "ProduceCultivationScenarioSettings": {
+              "attach": {
+                "produce": "produce-003"
+              }
+            },
             "ProduceChooseScenario": {
               "recognition": {
                 "param": {
@@ -597,6 +726,11 @@
         {
           "name": "PRO",
           "pipeline_override": {
+            "ProduceCultivationScenarioSettings": {
+              "attach": {
+                "produce": "produce-004"
+              }
+            },
             "ProduceChooseScenario": {
               "recognition": {
                 "param": {
@@ -617,6 +751,11 @@
         {
           "name": "MASTER",
           "pipeline_override": {
+            "ProduceCultivationScenarioSettings": {
+              "attach": {
+                "produce": "produce-005"
+              }
+            },
             "ProduceChooseScenario": {
               "recognition": {
                 "param": {
@@ -5569,6 +5708,214 @@
           ]
         }
       ]
+    },
+    "HIF Hiro 本战策略": {
+      "type": "select",
+      "label": "HIF 本战出牌策略",
+      "default_case": "UINet 2.1",
+      "cases": [
+        {
+          "name": "UINet 2.1",
+          "pipeline_override": {
+            "ProduceHiroHifFinalsSettings": {
+              "attach": {
+                "battle_policy": "uinet-2.1"
+              }
+            }
+          }
+        },
+        {
+          "name": "快速",
+          "pipeline_override": {
+            "ProduceHiroHifFinalsSettings": {
+              "attach": {
+                "battle_policy": "fast"
+              }
+            }
+          }
+        },
+        {
+          "name": "高分参考",
+          "pipeline_override": {
+            "ProduceHiroHifFinalsSettings": {
+              "attach": {
+                "battle_policy": "strong-reference-trial"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "初／NIA 出牌策略": {
+      "type": "select",
+      "label": "初／NIA 出牌策略",
+      "default_case": "游戏推荐",
+      "cases": [
+        {
+          "name": "游戏推荐",
+          "pipeline_override": {}
+        },
+        {
+          "name": "UINet 1.1",
+          "option": [
+            "Hiro 从主页开始"
+          ],
+          "pipeline_override": {
+            "ProduceCultivationBattleSettings": {
+              "attach": {
+                "algorithm": "uinet-1.1"
+              }
+            },
+            "ProduceLauncher": {
+              "next": [
+                "ProduceHiroCultivationAfterStart"
+              ]
+            }
+          }
+        },
+        {
+          "name": "UINet 2.1",
+          "option": [
+            "Hiro 从主页开始"
+          ],
+          "pipeline_override": {
+            "ProduceCultivationBattleSettings": {
+              "attach": {
+                "algorithm": "uinet-2.1"
+              }
+            },
+            "ProduceLauncher": {
+              "next": [
+                "ProduceHiroCultivationAfterStart"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Hiro 从主页开始": {
+      "type": "select",
+      "label": "Hiro 从主页开始",
+      "default_case": "现有开局",
+      "cases": [
+        {
+          "name": "现有开局",
+          "pipeline_override": {}
+        },
+        {
+          "name": "Hiro 全流程",
+          "option": [
+            "Hiro 培育编成"
+          ],
+          "pipeline_override": {
+            "LocalDataConfigureProduce": {
+              "next": [
+                "ProduceHiroCampaignEntry"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Hiro 培育编成": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "hiro_support_set",
+          "label": "支援编成号",
+          "default": "1",
+          "pipeline_type": "string",
+          "verify": "^(?:[1-9]|1[0-9]|20)$"
+        },
+        {
+          "name": "hiro_memory_set",
+          "label": "回忆编成号",
+          "default": "1",
+          "pipeline_type": "string",
+          "verify": "^(?:[1-9]|1[0-9]|20)$"
+        },
+        {
+          "name": "hiro_main_attr",
+          "label": "主属性（Vo／Da／Vi）",
+          "default": "Da",
+          "pipeline_type": "string",
+          "verify": "^(?:Vo|Da|Vi)$"
+        }
+      ],
+      "pipeline_override": {
+        "ProduceHiroFormationSettings": {
+          "attach": {
+            "support_set": "{hiro_support_set}",
+            "memory_set": "{hiro_memory_set}",
+            "attribute": "{hiro_main_attr}"
+          }
+        }
+      }
+    },
+    "HIF 選抜試験编成": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "qualifier_support_set",
+          "label": "支援编成号",
+          "default": "1",
+          "pipeline_type": "string",
+          "verify": "^(?:[1-9]|1[0-9]|20)$"
+        },
+        {
+          "name": "qualifier_memory_set",
+          "label": "回忆编成号",
+          "default": "1",
+          "pipeline_type": "string",
+          "verify": "^(?:[1-9]|1[0-9]|20)$"
+        },
+        {
+          "name": "qualifier_rental_attr",
+          "label": "租借主属性（Vo／Da／Vi）",
+          "default": "Da",
+          "pipeline_type": "string",
+          "verify": "^(?:Vo|Da|Vi)$"
+        },
+        {
+          "name": "qualifier_memory_cards",
+          "label": "回忆卡 ID（按槽序，留空沿用套组）",
+          "default": "",
+          "pipeline_type": "string",
+          "verify": "^(?:[1-9][0-9]*(?:,[1-9][0-9]*){0,3})?$"
+        },
+        {
+          "name": "qualifier_support_cards",
+          "label": "支援卡 ID（最多五张，留空沿用套组）",
+          "default": "",
+          "pipeline_type": "string",
+          "verify": "^(?:s_card-[a-zA-Z0-9_-]+(?:,s_card-[a-zA-Z0-9_-]+){0,4})?$"
+        },
+        {
+          "name": "qualifier_support_gallery",
+          "label": "本机支援图目录（Hiro support 格式）",
+          "default": "",
+          "pipeline_type": "string"
+        },
+        {
+          "name": "qualifier_support_effects",
+          "label": "本机支援效果 JSON（留空按属性和等级选租借）",
+          "default": "",
+          "pipeline_type": "string"
+        }
+      ],
+      "pipeline_override": {
+        "ProduceHifQualifierPreparationSettings": {
+          "attach": {
+            "support_set": "{qualifier_support_set}",
+            "memory_set": "{qualifier_memory_set}",
+            "attribute": "{qualifier_rental_attr}",
+            "memory_cards": "{qualifier_memory_cards}",
+            "support_cards": "{qualifier_support_cards}",
+            "support_gallery": "{qualifier_support_gallery}",
+            "support_effects": "{qualifier_support_effects}"
+          }
+        }
+      }
     }
   }
 }

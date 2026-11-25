@@ -7,7 +7,6 @@ projection may consume verified effects; this module never changes a model.
 import re
 import json
 import math
-import unicodedata
 from copy import deepcopy
 from types import SimpleNamespace
 from dataclasses import asdict
@@ -16,7 +15,7 @@ import cv2
 import numpy as np
 
 from .layout import calibrated_live_client_size
-from .upgrade import normalize_upgrade_title
+from .upgrade import compact_ocr_text, normalize_upgrade_title
 from .inventory import _inventory_ocr, inventory_white_text
 from .hif_visual import locate_hif_selected_detail_title
 from .high_score.contracts import _jsonable
@@ -111,7 +110,7 @@ _SUPPORTED = {
 
 
 def _text(value):
-    return re.sub(r'\s+', '', unicodedata.normalize('NFKC', value))
+    return compact_ocr_text(value)
 
 
 def _panel_bounds(image, title):

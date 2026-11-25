@@ -347,7 +347,7 @@
   },
   "ProduceRecognitionNoCards": {
     "recognition": {
-      "type": "OCR",
+      "type": "Custom",
       "param": {
         "roi": [
           159,
@@ -355,7 +355,10 @@
           393,
           97
         ],
-        "expected": "手札のスキルカードが0枚です"
+        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition_param": {
+          "expected": "手札のスキルカードが0枚です"
+        }
       }
     },
     "action": {
@@ -440,7 +443,8 @@
           "produce/skip_round.png",
           "produce/skip_round_1.png",
           "produce/skip_round_2.png",
-          "produce/skip_round_plain.png"
+          "produce/skip_round_plain.png",
+          "produce/skip_round_3.png"
         ]
       }
     },

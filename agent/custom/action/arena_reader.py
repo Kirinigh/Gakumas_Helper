@@ -1674,13 +1674,13 @@ class MaaArenaReaderBackend:
             target, stage_number, member_slot, group_index, card_slot
         )
 
-    def _measure_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int, int, int] | None:
+    def _measure_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int | None, ...] | None:
         return self._component_card_customizations_reader()._measure_card_face_generic_cost(key, card_id)
 
-    def _measure_optional_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int, int, int] | None:
+    def _measure_optional_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int | None, ...] | None:
         return self._component_card_customizations_reader()._measure_optional_card_face_generic_cost(key, card_id)
 
-    def _certify_card_face_generic_cost(self, key: tuple[int, int], card_id: int, customizations: Any) -> tuple[int, int, int] | None:
+    def _certify_card_face_generic_cost(self, key: tuple[int, int], card_id: int, customizations: Any) -> tuple[int | None, ...] | None:
         return self._component_card_customizations_reader()._certify_card_face_generic_cost(key, card_id, customizations)
 
     def _detail_identity_observation(

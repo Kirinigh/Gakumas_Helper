@@ -9,6 +9,8 @@ from maa.context import Context
 from maa.custom_action import CustomAction
 from maa.agent.agent_server import AgentServer
 
+from agent.live_decision.ocr_nodes import read_ocr_node
+
 
 @AgentServer.custom_action("SupportCardsAuto")
 class SupportCardsAuto(CustomAction):
@@ -167,7 +169,7 @@ class SupportCardsAuto(CustomAction):
                     context.tasker.controller.post_click(card_x, card_y).wait()
                     time.sleep(self.ACTION_DELAY)
 
-                card_name = self._recognize_card_name(context)
+                card_name = self._recognize_card_name(context, card_data)
                 star_count = self._recognize_star_count(context)
 
                 if card_name:
@@ -193,14 +195,12 @@ class SupportCardsAuto(CustomAction):
         return page_cards, should_stop
 
     @staticmethod
-    def _recognize_card_name(context: Context) -> str:
+    def _recognize_card_name(context: Context, card_data: dict) -> str:
         """识别卡牌右上角的文字"""
         image = context.tasker.controller.post_screencap().wait().get()
-        reco_detail = context.run_recognition("SupportCardsOCR", image)
-        if reco_detail and reco_detail.hit:
-            text = "".join(item.text for item in reco_detail.filtered_results)
-            return text.strip()
-        return ""
+        result = read_ocr_node(context, image, "SupportCardsOCR",
+                              accept=lambda rows: "".join(row.text for row in rows).strip() in card_data)
+        return "".join(row.text for row in result.rows).strip()
 
     @staticmethod
     def _recognize_star_count(context: Context) -> int:

@@ -9,6 +9,65 @@ from maa.context import Context
 from maa.custom_action import CustomAction
 from maa.agent.agent_server import AgentServer
 
+from agent.live_decision.ocr_nodes import read_ocr_node
+
+_cultivation_entries = {}
+
+
+def _cultivation_option(context, argv):
+    task = getattr(argv, 'task_detail', None)
+    if getattr(task, 'entry', None) != 'Produce':
+        return None, {}
+    node = context.get_node_data('ProduceCultivationBattleSettings') or {}
+    scenario = context.get_node_data('ProduceCultivationScenarioSettings') or {}
+    return task.task_id, {**(node.get('attach') or {}), **(scenario.get('attach') or {})}
+
+
+@AgentServer.custom_action("ProduceBindCultivationExam")
+class ProduceBindCultivationExam(CustomAction):
+    def run(self, context, argv):
+        task, settings = _cultivation_option(context, argv)
+        algorithm = settings.get('algorithm')
+        if task is not None and algorithm in ('uinet-1.1', 'uinet-2.1'):
+            from live_decision.inventory import _inventory_ocr
+
+            from agent.live_decision.cultivation_maa_exam import (
+                _stamina,
+                _parameters,
+                cultivation_master,
+                read_cultivation_entry,
+                read_cultivation_briefing,
+            )
+
+            try:
+                image = context.tasker.controller.post_screencap().wait().get()
+                rows = tuple(_inventory_ocr(context, image, 'ProduceRecognitionScore'))
+                if argv.node_name == 'ProduceLauncher':
+                    _cultivation_entries.pop(task, None)
+                    _cultivation_entries[task] = read_cultivation_entry(rows, settings['produce'], cultivation_master())
+                elif (entry := _cultivation_entries.get(task)) is not None:
+                    phase, number = read_cultivation_briefing(rows)
+                    if phase:
+                        if entry.round_key != phase:
+                            entry.audition_number = None
+                        entry.round_key = phase
+                        entry.audition_number = number if number is not None else entry.audition_number
+                        entry.parameters = _parameters(rows) or entry.parameters
+                        entry.max_stamina = _stamina(rows) or entry.max_stamina
+            except (KeyError, TypeError, ValueError, RuntimeError, OSError, ImportError) as error:
+                logger.error(f'培育考试开局资料读取停止 {error}')
+                return False
+        click_params = {'target_offset': [0, 0, 0, -10]} if argv.node_name in (
+            'ProduceButton', 'ProduceNIAButton') else {}
+        original = {'action': {'type': 'Click', 'param': click_params}}
+        action = context.run_action(argv.node_name, box=argv.box, pipeline_override={argv.node_name: original})
+        return bool(action and action.success)
+
+
+def _ocr_score_pair(context, image, roi):
+    return read_ocr_node(context, image, "ProduceRecognitionScore", override={"roi": roi},
+                         accept=lambda rows: len(rows) == 2).rows
+
 
 class ProduceChooseEventBase(CustomAction):
     """
@@ -61,7 +120,8 @@ class ProduceChooseEventBase(CustomAction):
         if context.get_node_data("ProduceSuggestion").get("enabled", True):
             suggestion = self._get_suggestion(context, image)
 
-        health_data = self._get_health(context, image) or {"current": 34, "max": 34, "ratio": 1.0}
+        observed_health = self._get_health(context, image)
+        health_data = observed_health or {"current": 34, "max": 34, "ratio": 1.0}
         points = self._get_current_points(context, image) or 0
         score = self._get_current_score(context, image) or {"Vo": 0, "Da": 0, "Vi": 0, "max": 1}
         events = self._get_available_events(context, image)
@@ -85,6 +145,17 @@ class ProduceChooseEventBase(CustomAction):
             best_event["name"] = name + "_SP"
         box = best_event["box"]
         logger.info(f"选择事件: {best_event['name']}, 坐标: ({box[0] + box[2] // 2}, {box[1] + box[3] // 2})")
+
+        task, _ = _cultivation_option(context, argv)
+        if (entry := _cultivation_entries.get(task)) is not None:
+            values = tuple(score[key] for key in ('Vo', 'Da', 'Vi'))
+            if all(value > 0 for value in values):
+                entry.parameters = values
+            if observed_health is not None and observed_health['max'] > 0:
+                entry.max_stamina = observed_health['max']
+            label = best_event['name']
+            entry.lesson_kind = ('sp' if label.endswith('_SP') else 'normal'
+                                 if label in ('Vo', 'Da', 'Vi') else None)
 
         return self._execute_event(context, best_event)
 
@@ -308,12 +379,12 @@ class ProduceChooseEventBase(CustomAction):
     @staticmethod
     def _get_health(context: Context, image) -> Optional[dict]:
         """获取体力比例"""
-        reco_detail = context.run_recognition("ProduceRecognitionHealth", image)
-        if not (reco_detail and reco_detail.hit):
+        found = read_ocr_node(context, image, "ProduceRecognitionHealth").best
+        if not found:
             return None
 
         try:
-            health_parts = reco_detail.best_result.text.split("/")
+            health_parts = found.text.split("/")
             current_health = int("".join(filter(str.isdigit, health_parts[0])))
             max_health = int("".join(filter(str.isdigit, health_parts[1])))
             ratio = current_health / max_health
@@ -326,15 +397,12 @@ class ProduceChooseEventBase(CustomAction):
     @staticmethod
     def _get_current_points(context: Context, image) -> Optional[int]:
         """获取当前积分"""
-        reco_detail = context.run_recognition(
-            "ProduceRecognitionPoint",
-            image,
-            pipeline_override={"ProduceRecognitionPoint": {"roi": [320, 90, 130, 54]}},
-        )
-        if not (reco_detail and reco_detail.hit):
+        found = read_ocr_node(context, image, "ProduceRecognitionPoint",
+                              override={"roi": [320, 90, 130, 54]}).best
+        if not found:
             return None
         try:
-            points = int(reco_detail.best_result.text.replace(",", ""))
+            points = int(found.text.replace(",", ""))
             logger.info(f"积分: {points}")
             return points
         except ValueError:
@@ -351,14 +419,10 @@ class ProduceChooseEventBase(CustomAction):
             "max": 0,
         }
         for i in range(3):
-            reco_detail = context.run_recognition(
-                "ProduceRecognitionScore",
-                image,
-                pipeline_override={"ProduceRecognitionScore": {"roi": [150 + i * 150, 668, 136, 80]}},
-            )
-            if reco_detail and reco_detail.hit and len(reco_detail.filtered_results) == 2:
-                current_score = int("".join(filter(lambda c: c.isdigit(), reco_detail.filtered_results[0].text)))
-                max_score = int("".join(filter(lambda c: c.isdigit(), reco_detail.filtered_results[1].text.replace("/", ""))))
+            rows = _ocr_score_pair(context, image, [150 + i * 150, 668, 136, 80])
+            if len(rows) == 2:
+                current_score = int("".join(filter(str.isdigit, rows[0].text)))
+                max_score = int("".join(filter(str.isdigit, rows[1].text)))
                 logger.debug(f"第{i + 1}列得分: {current_score} / {max_score}")
                 score[["Vo", "Da", "Vi"][i]] = current_score
                 score["max"] = max_score if score["max"] < max_score < 9999 else score["max"]
@@ -576,6 +640,8 @@ class ProduceCardsAuto(CustomAction):
             live_params = json.loads(argv.custom_action_param or "{}")
         except (json.JSONDecodeError, TypeError):
             live_params = {}
+        if live_params is None:
+            live_params = {}
         live_mode = live_params.get("live_decision_mode")
         if live_mode == "observe":
             from .live_decision import ProduceLiveDecisionObserve
@@ -597,32 +663,14 @@ class ProduceCardsAuto(CustomAction):
             if not self._wait_until_playable(context):
                 logger.success("事件: 自定义决策等待期间已退出出牌")
                 return True
-        else:
-            # 使用饮料
-            self._wait_until_playable(context)
-            image = context.tasker.controller.post_screencap().wait().get()
-            reco_detail = context.run_recognition("ProduceCheckDrinkButton", image)
-            hit_count = len(reco_detail.filtered_results)  # 获取饮料数
-            logger.info(f"识别到{hit_count}瓶饮料")
-            for _ in range(hit_count):
-                context.run_task("ProduceUseDrink")
-                self._wait_until_playable(context, 2)
-
-        # 开始出牌
-        self.start_time = time.time()
-        while True:
-            # 处理手动终止任务
-            if context.tasker.stopping:
-                logger.info("任务中断")
-                return True
-
-            if live_mode == "debug_execute":
+            self.start_time = time.time()
+            while not context.tasker.stopping:
                 from .live_decision import ProduceLiveDecisionObserve
 
                 image = context.tasker.controller.post_screencap().wait().get()
                 if not self._is_playing_card(context, image):
                     logger.success("事件: 自定义决策完成出牌")
-                    break
+                    return True
                 executed = ProduceLiveDecisionObserve().run(context, argv)
                 if not executed:
                     logger.error(
@@ -642,72 +690,227 @@ class ProduceCardsAuto(CustomAction):
                 time.sleep(1)
                 self._wait_until_playable(context)
                 self.start_time = time.time()
-                continue
-
-            # 截图
+            return True
+        else:
+            task, settings = _cultivation_option(context, argv)
+            algorithm = settings.get('algorithm')
+            if algorithm in ('uinet-1.1', 'uinet-2.1'):
+                return self._run_cultivation_policy(context, task, algorithm)
+            # 使用饮料
+            self._wait_until_playable(context)
             image = context.tasker.controller.post_screencap().wait().get()
+            reco_detail = context.run_recognition("ProduceCheckDrinkButton", image)
+            hit_count = len(reco_detail.filtered_results)  # 获取饮料数
+            logger.info(f"识别到{hit_count}瓶饮料")
+            for _ in range(hit_count):
+                context.run_task("ProduceUseDrink")
+                self._wait_until_playable(context, 2)
 
-            # 通过检测体力槽判断是否处于出牌场景
-            if not self._is_playing_card(context, image):
-                # 动画可能暂时遮住体力标志，复用等待逻辑复核，恢复后重新截图。
-                if self._wait_until_playable(context):
-                    continue
-                if context.tasker.stopping:
-                    return True
-                logger.info("未检测到体力")
+        return self._run_recommended_exam(context)
+
+    def _run_cultivation_policy(self, context, task, algorithm):
+        from agent.live_decision.cultivation_maa_exam import CultivationMaaExam
+
+        from .live_decision import _ocr_live_score, _locate_live_self_rank
+
+        def report(row):
+            logger.info(json.dumps(row, ensure_ascii=False))
+
+        def read_score(ctx, image):
+            result = _ocr_live_score(ctx, image, _locate_live_self_rank(ctx, image))
+            return result.get('value') if result.get('accepted') else None
+
+        try:
+            entry = _cultivation_entries.get(task)
+            if entry is None:
+                raise ValueError('cultivation_exam_launch_not_observed')
+
+            def factory(ctx, verify, *, log, client_size):
+                return CultivationMaaExam(ctx, verify, log=log, entry=entry, algorithm=algorithm,
+                                         client_size=client_size, score_reader=read_score)
+
+            battle, _ = _open_idol_road_maa(context, report, factory=factory)
+            result = battle.run_cultivation()
+            if result is None:
+                return False
+            report(dict(event='cultivation_exam_result', produce=entry.produce, idol=entry.idol,
+                        rank=result.rank, score=result.score, algorithm=algorithm))
+            return True
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+            logger.error(f'培育考试停止 {error}')
+            return False
+
+    def _run_recommended_exam(self, context, *, result_reader=None, authorize=None):
+        from live_decision.exam_hud import read_lesson_goal, read_exam_ranking
+        from live_decision.exam_loop import (
+            LESSON_END_DELAY,
+            EXAM_STALL_TIMEOUT,
+            EXAM_CHANGE_TIMEOUT,
+            ExamCycle,
+            ExamOutcome,
+            ExamRecovery,
+            run_exam_session,
+        )
+        from live_decision.inventory import _inventory_ocr
+        from live_decision.hif_card_retry import same_retry_scene, read_exam_select_markers
+        from live_decision.hif_entry_round import read_entry_turn
+
+        self.start_time = time.time()
+        recovery = ExamRecovery()
+        opening = lesson = latest = None
+        pending = None
+        force_skip = False
+        last_progress = time.monotonic()
+        exit_seen = None
+
+        def ocr(image, **kwargs):
+            return _inventory_ocr(context, image, 'ProduceRecognitionScore', **kwargs)
+
+        def hit(node, image):
+            return getattr(context.run_recognition(node, image), 'hit', False)
+
+        def click_stage(point):
+            if authorize is not None:
+                authorize()
+            context.tasker.controller.post_click(*point).wait()
+
+        def snapshot(image, hand, current_lesson):
+            if getattr(image, 'shape', ()) != (1280, 720, 3):
+                return None
+            turn = read_entry_turn(context, image)
+            if turn is None:
+                return None
+            marks = tuple(sorted((row.box[0] // 10, row.box[1] // 10, row.label)
+                                 for row in (hand.all_results if hand and hand.hit else ())
+                                 if self.CARD_Y_MIN <= row.box[1] <= self.CARD_Y_MAX))
+            return dict(turns_remaining=turn, marks=marks, stamina=None, shield=None, lesson=current_lesson)
+
+        def execute(_index):
+            nonlocal opening, lesson, latest, pending, force_skip, last_progress, exit_seen
+            if context.tasker.stopping:
+                logger.info("任务中断")
+                return "finished"
+            image = context.tasker.controller.post_screencap().wait().get()
+            playing = self._is_playing_card(context, image)
+            stalled = time.monotonic() - last_progress >= EXAM_STALL_TIMEOUT
+            if not playing:
+                result = result_reader(image) if result_reader is not None else read_exam_ranking(image, ocr)
+                if result is not None:
+                    logger.info(json.dumps(dict(event='produce_exam_result', opening=opening,
+                        last_live=latest, **result), ensure_ascii=False))
+                    return 'result', result
+                if result_reader is not None:
+                    if stalled:
+                        return "stalled"
+                    recovery.advance_animation(context, image,
+                        is_animating=lambda: hit('ProduceRecognitionHealthFlag', image), click=click_stage)
+                    return None
+                if opening is not None:
+                    # Like Hiro's lesson detector, a disappearing HUD can be
+                    # a transition. Leave the result page for the outer task.
+                    exit_seen = time.monotonic() if exit_seen is None else exit_seen
+                    if time.monotonic() - exit_seen < (LESSON_END_DELAY if lesson is not None else EXAM_CHANGE_TIMEOUT):
+                        return None
+                if lesson is not None:
+                    self.exam_result = dict(opening=opening, last_live=latest, lesson=lesson)
+                    logger.info(json.dumps(dict(event='produce_lesson_hud', opening=opening,
+                        last_live=latest, **lesson), ensure_ascii=False))
                 logger.success("事件: 退出出牌")
-                break
+                return "finished"
 
-            # 识别手牌
-            reco_detail = context.run_recognition("ProduceRecognitionCards", image)
-            if reco_detail and reco_detail.hit:
-                # 目前模型识别的准确度不够高，暂时使用all_results
-                results = reco_detail.all_results
+            exit_seen = None
+            current_lesson = read_lesson_goal(image, ocr)
+            if current_lesson is not None:
+                lesson = current_lesson
+            hand = context.run_recognition("ProduceRecognitionCards", image)
+            current = snapshot(image, hand, current_lesson)
+            if current is not None:
+                opening = opening or current
+                if latest != current:
+                    last_progress = time.monotonic()
+                latest = current
+            if time.monotonic() - last_progress >= EXAM_STALL_TIMEOUT:
+                logger.warning("出牌循环未观察到进展")
+                return "stalled"
 
-                # 获取卡牌信息
-                suggestions, useless, cards, suggestions_box, best_box = self._get_card_info(results)
-                # print(f"卡片数量:{suggestions}/{cards}/{useless}")
+            if getattr(image, 'shape', ()) == (1280, 720, 3):
+                skip_ready = hit('ProduceRecognitionSkipRound', image)
+                if not skip_ready:
+                    if self._handle_move_cards(context, image):
+                        return None
+                    if hit('ProduceButton', image):
+                        if authorize is not None:
+                            authorize()
+                        context.run_task('ProduceButton')
+                        return None
+                    recovery.advance_animation(context, image,
+                        is_animating=lambda: hit('ProduceRecognitionHealthFlag', image), click=click_stage)
+                    return None
+                if pending is not None:
+                    before, until = pending
+                    if current is None or read_exam_select_markers(context, image)[1]:
+                        return None
+                    unchanged = same_retry_scene(before, current) and before['lesson'] == current['lesson']
+                    if unchanged and time.monotonic() < until:
+                        return None
+                    force_skip = recovery.record(no_effect=unchanged)
+                    pending = None
 
-                # 有推荐牌时，打出推荐牌
-                if suggestions > 0:
-                    if suggestions_box[1] < self.CARD_Y_MIN or suggestions_box[1] > self.CARD_Y_MAX:
-                        time.sleep(self.CLICK_DELAY)
-                        continue
-                    self._play_a_card(context, suggestions_box)
-                # 只有一张可用牌时，直接打出该牌
-                elif cards == 1:
-                    if best_box[1] < self.CARD_Y_MIN or best_box[1] > self.CARD_Y_MAX:
-                        time.sleep(self.CLICK_DELAY)
-                        continue
-                    time.sleep(1)  # 防止点击过早导致只命中一次
-                    self._play_a_card(context, best_box)
-                # 没有可用牌时，先判断是否处于出牌场景，确认处于出牌场景后，再跳过回合
-                elif useless > 0 and suggestions == 0 and cards == 0:
-                    logger.warning("!!!!!!!!无可用牌!!!!!!!!!!!")
-                    context.run_task("ProduceRecognitionSkipRound")
-                    self._wait_until_playable(context)
-                    self.start_time = time.time()
-
-                end_time = time.time()
-                if end_time - self.start_time > self.TIME_OUT:
-                    if best_box[1] < self.CARD_Y_MIN or best_box[1] > self.CARD_Y_MAX:
-                        time.sleep(self.CLICK_DELAY)
-                        continue
-
-                    logger.warning("检测超时")
-                    self._play_a_card(context, best_box)
-
+            if hand and hand.hit:
+                suggested, unusable, playable, suggestion, best = self._get_card_info(hand.all_results)
+                skip = unusable > 0 and not (suggested or playable)
+                box = suggestion if suggested else best if (
+                    playable == 1 or time.time() - self.start_time > self.TIME_OUT) else None
             else:
-                reco_detail = context.run_recognition("ProduceRecognitionNoCards", image)
-                if reco_detail and reco_detail.hit:
-                    logger.info("无手牌")
-                    context.run_task("ProduceRecognitionSkipRound")
-                    self._wait_until_playable(context)
-                    self.start_time = time.time()
+                no_cards = context.run_recognition("ProduceRecognitionNoCards", image)
+                skip, box = bool(no_cards and no_cards.hit), None
 
+            if skip or force_skip:
+                skip_button = context.run_recognition("ProduceRecognitionSkipRound", image)
+                if skip_button and skip_button.hit:
+                    if authorize is not None:
+                        authorize()
+                    if getattr(context.run_task("ProduceRecognitionSkipRound"), 'succeeded', True) is not False:
+                        if force_skip:
+                            logger.info("连续三次动作无效，跳过当前回合")
+                        force_skip = False
+                        pending = (current, time.monotonic() + EXAM_CHANGE_TIMEOUT) if current is not None else None
+                        return "skip"
+            elif box is not None and self.CARD_Y_MIN <= box[1] <= self.CARD_Y_MAX:
+                self._recommended_selection_attempted = False
+                if authorize is not None:
+                    authorize()
+                confirmed = (self._play_a_card(context, box, authorize=authorize) if authorize is not None
+                             else self._play_a_card(context, box))
+                if current is not None and (confirmed or self._recommended_selection_attempted):
+                    pending = (current, time.monotonic() + EXAM_CHANGE_TIMEOUT)
+                if confirmed:
+                    return "play"
+            return None
+
+        def observe(action):
+            if action in ("finished", "stalled") or isinstance(action, tuple):
+                return ExamCycle(ExamOutcome.RESULT, action)
+            if action == "skip":
+                self.start_time = time.time()
+            return ExamCycle(ExamOutcome.PROGRESS if action else ExamOutcome.REOBSERVE, action)
+
+        def recover(_):
             time.sleep(self.CLICK_DELAY)
+            return True
 
-        return True
+        def commit(action):
+            if action == "stalled":
+                return False
+            if action == "finished":
+                return result_reader is None
+            if isinstance(action, tuple):
+                self.exam_result = dict(opening=opening, last_live=latest, display=action[1])
+                return action[1] if result_reader is not None else True
+            time.sleep(self.CLICK_DELAY)
+            return None
+
+        return run_exam_session(execute=execute, observe=observe, commit=commit, recover=recover)
 
     @classmethod
     def _get_card_info(cls, results: list):
@@ -748,30 +951,81 @@ class ProduceCardsAuto(CustomAction):
         cards = label_counts["cards"]
         return suggestions, useless, cards, suggestions_box, best_box
 
-    def _play_a_card(self, context: Context, box: list) -> bool:
-        """
-        出牌并处理移动卡牌界面
+    def _play_a_card(self, context: Context, box: list, *, authorize=None) -> bool:
+        """Play the current recommendation using the shared SELECT sequence."""
+        from live_decision.exam_loop import ExamNoProgress, select_exam_card
+        from live_decision.hif_card_retry import same_retry_scene, read_exam_select_markers
+        from live_decision.hif_entry_round import read_entry_turn
+        from live_decision.upstream_hif_card_ui import BattleRecognitionMixin
 
-        Args:
-            context: maa的Context类
-            box: 点击范围，格式为[x, y, w, h]（x、y为点击范围左上角的坐标）
+        controller = context.tasker.controller
+        detector = BattleRecognitionMixin()
 
-        Returns:
-            bool: 如果执行没有问题，返回True；否则返回False。
-        """
+        def stopped():
+            return context.tasker.stopping
 
-        # 出牌
-        # context.tasker.controller.post_click(box[0] + 100, box[1] + 140).wait()
-        context.tasker.controller.post_click(box[0] + box[2] // 2, box[1] + box[3] // 2).wait()
-        time.sleep(self.CLICK_DELAY)
-        context.tasker.controller.post_click(box[0] + box[2] // 2, box[1] + box[3] // 2).wait()
+        def capture():
+            return controller.post_screencap().wait().get()
+
+        def hand(image):
+            result = context.run_recognition("ProduceRecognitionCards", image)
+            return detector._hif_card_boxes(result.all_results if result else ())
+
+        def target(rows):
+            matches = [card for card, _ in rows if detector._hif_duplicate_box(box, card)]
+            return matches[0] if len(matches) == 1 else None
+
+        def selected(image):
+            current = target(hand(image))
+            if current is not None and detector._hif_has_select(context, image, current):
+                return tuple(current), True
+            markers, present = read_exam_select_markers(context, image)
+            if current is not None:
+                center = current[0] + current[2] // 2
+                if any(abs(x + width // 2 - center) <= 70 for x, _, width, _ in markers):
+                    return tuple(current), True
+            return None, present
+
+        def signature(image, rows):
+            turns = read_entry_turn(context, image)
+            return dict(turns_remaining=turns, marks=detector._hif_geometry(rows), stamina=None, shield=None) if turns else None
+
+        image = capture()
+        rows = hand(image)
+        current = target(rows)
+        if current is None or stopped():
+            return False
+
+        def retry_target(retry):
+            later = hand(retry)
+            candidate = target(later)
+            if (candidate is not None and not any(detector._hif_has_select(context, retry, card) for card, _ in later)
+                    and same_retry_scene(signature(image, rows), signature(retry, later))):
+                return tuple(candidate)
+            return None
+
+        confirmed = False
+
+        def tap(card, *, purpose):
+            nonlocal confirmed
+            x, y, width, height = card
+            if authorize is not None:
+                authorize()
+            if stopped() or not controller.post_click(x + width // 2, y + height // 2).wait().succeeded:
+                raise ExamNoProgress(purpose)
+            self._recommended_selection_attempted = True
+            confirmed = purpose == 'confirm-card'
+
+        initial = tuple(current) if detector._hif_has_select(context, image, current) else None
+        try:
+            select_exam_card(tuple(current), tap=tap, capture=capture, stopping=stopped, read_select=selected,
+                             retry_target=retry_target, reconcile=lambda: None, initial_selection=initial)
+        except ExamNoProgress:
+            return False
+        if not confirmed:
+            return False
         logger.info("出牌 耗时:{:.2f}秒".format(time.time() - self.start_time))
-
-        # 等待回到可出牌状态后，重置计时
-        time.sleep(1)
-        self._wait_until_playable(context)
         self.start_time = time.time()
-
         return True
 
     @staticmethod
@@ -892,6 +1146,169 @@ class ProduceCardsAuto(CustomAction):
             time.sleep(1)
 
 
+def _open_idol_road_maa(context, log, *, factory=None):
+    from route.bootstrap import _endpoint, _product_paths
+
+    from agent.live_decision.idol_road_maa import IdolRoadMaaBattle
+
+    maa = _product_paths()[2]
+    controller = context.tasker.controller
+    endpoint = _endpoint(context, expected_maa=maa, controller_info=controller.info)
+    if controller.set_screenshot_target_long_side(1280) is not True:
+        raise ValueError('idol_road_maa_screenshot_profile_unavailable')
+
+    def verify_input(bound_controller):
+        # Maa's RemoteTasker replaces its controller handle on each lookup.
+        return _endpoint(context, expected_maa=maa, controller_info=bound_controller.info) == endpoint
+
+    if factory is not None:
+        return factory(context, verify_input, log=log,
+                       client_size=tuple(endpoint['game']['observed_client_size'])), endpoint
+    return IdolRoadMaaBattle(context, verify_input, log=log), endpoint
+
+
+@AgentServer.custom_action("IdolRoadChooseFloor")
+class IdolRoadChooseFloor(CustomAction):
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        try:
+            navigation, _ = _open_idol_road_maa(context, lambda row: logger.info(json.dumps(row, ensure_ascii=False)))
+            params = getattr(argv, 'custom_action_param', None)
+            params = json.loads(params) if isinstance(params, str) else params
+            if params and params.get('hiro'):
+                from agent.live_decision.hiro_runtime import hiro_module
+
+                run = hiro_module('runtime.tower').TowerRun(tower_id='idol-road')
+                run.gave_up_three.extend(params.get('advanced_floors', ()))
+                navigation.enter_challengeable_floor(run)
+            else:
+                navigation.enter_challengeable_floor()
+            return True
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+            logger.error(f'偶像之路 选层停止 {error}')
+            return False
+
+
+@AgentServer.custom_action("IdolRoadNavigate")
+class IdolRoadNavigate(CustomAction):
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        try:
+            params = argv.custom_action_param
+            params = json.loads(params) if isinstance(params, str) else params
+            idol = (params or {}).get('idol', '').strip()
+            if not idol:
+                return False
+            navigation, _ = _open_idol_road_maa(context, lambda row: logger.info(json.dumps(row, ensure_ascii=False)))
+            navigation.enter_idol_road(idol)
+            return True
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+            logger.error(f'偶像之路 入场停止 {error}')
+            return False
+
+
+@AgentServer.custom_action("IdolRoadPolicyBattle")
+class IdolRoadPolicyBattle(CustomAction):
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        def report(row):
+            logger.info(json.dumps(row, ensure_ascii=False))
+
+        try:
+            params = argv.custom_action_param
+            params = json.loads(params) if isinstance(params, str) else params
+            algorithm = params['algorithm']
+            is_retry = params.get('retry') is True
+            battle, endpoint = _open_idol_road_maa(context, report)
+            from route.bootstrap import _process_instance
+            from utils.local_data import DEFAULT_RUNTIME_ROOT
+
+            from agent.live_decision.idol_road_navigation import TowerAttempts, TowerLoadoutCache
+
+            directory = DEFAULT_RUNTIME_ROOT / 'idol-road'
+            cache = TowerLoadoutCache(directory, _process_instance(endpoint['game']['pid'])['created_at_100ns'])
+            client_size = tuple(endpoint['game']['observed_client_size'])
+            if params.get('hiro'):
+                from agent.live_decision.hiro_runtime import hiro_module
+
+                hiro_module('exec.exam')  # Resolve the pinned executor before challenging the floor.
+                tower_runtime = hiro_module('runtime.tower')
+                battle.hiro_policy_route = True
+                attempts = TowerAttempts(directory, tower_runtime.MAX_TRIES)
+                while True:
+                    result = battle.run(algorithm, client_size=client_size, attempts=attempts, saved=(cache, is_retry))
+                    verdict = battle.settle_hiro_tower(result, attempts)
+                    if verdict == 'stop':
+                        return False
+                    if verdict == 'next':
+                        start = context.get_node_data('IdolRoadFloorOverview') or {}
+                        prior = start.get('custom_action_param') or {}
+                        prior = json.loads(prior) if isinstance(prior, str) else prior
+                        advanced = sorted({*prior.get('advanced_floors', ()), battle.loadout.overview.layer})
+                        return context.override_pipeline({'IdolRoadFloorOverview': {'custom_action_param': {
+                            'hiro': True, 'advanced_floors': advanced}}})
+                    is_retry = True
+            attempts = None
+            get_node = getattr(context, 'get_node_data', None)
+            if get_node is not None:
+                retry_limit = (get_node('IdolRoadRetryConfirm') or {}).get('max_hit')
+                if type(retry_limit) is int and retry_limit >= 0:
+                    attempts = TowerAttempts(directory, retry_limit + 1)
+            result = battle.run(algorithm, client_size=client_size, attempts=attempts, saved=(cache, is_retry))
+            report(dict(event='idol_road_battle_finished', algorithm=battle.algorithm, rank=result.rank, score=result.score))
+            return True
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+            logger.error(f'偶像之路 战斗停止 {error}')
+            return False
+
+
+@AgentServer.custom_action("IdolRoadContinueRetry")
+class IdolRoadContinueRetry(CustomAction):
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        try:
+            battle, _ = _open_idol_road_maa(context, lambda row: logger.info(json.dumps(row, ensure_ascii=False)))
+            battle.enter_same_formation_retry()
+            return True
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+            logger.error(f'偶像之路再挑战停止 {error}')
+            return False
+
+
+@AgentServer.custom_action("IdolRoadResultContinue")
+class IdolRoadResultContinue(CustomAction):
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        from live_decision.inventory import _inventory_ocr
+        from live_decision.idol_road_battle import read_idol_road_result_frame
+
+        target = None
+        if argv.node_name == 'IdolRoadRetry':
+            x, y, w, h = argv.box
+            target = [x + w // 2, y + h // 2, 1, 1]
+        try:
+            frame = context.tasker.controller.post_screencap().wait().get()
+            if argv.node_name == 'IdolRoadResumeClearRetry':
+                from live_decision.idol_road_navigation import read_tower_clear_stars
+
+                stars = read_tower_clear_stars(frame)
+                if stars is None or stars == 3:
+                    return False
+
+            def ocr(image, **kwargs):
+                return _inventory_ocr(context, image, 'IdolRoadResultOCR', **kwargs)
+
+            if target is not None and frame is not None:
+                # Match Hiro's retry button text inside the recognized button.
+                for row in ocr(frame, roi=(x, y, w, h)):
+                    if '再挑戦' in ''.join(row.text.split()):
+                        left, top, width, height = row.box
+                        target = [left + width // 2, top + height // 2, 1, 1]
+                        break
+            result = read_idol_road_result_frame(ocr, frame) if frame is not None else None
+            logger.info(json.dumps(dict(event='idol_road_result_seen', result=result), ensure_ascii=False))
+        except (ValueError, RuntimeError, TypeError) as error:
+            logger.warning(f'偶像之路结算画面未读到有效分数 {error}')
+        original = {'action': {'type': 'Click', 'param': {'target': target} if target else {}}}
+        action = context.run_action(argv.node_name, box=argv.box, pipeline_override={argv.node_name: original})
+        return bool(action and action.success)
+
+
 @AgentServer.custom_action("ProduceChooseWorkAuto")
 class ProduceChooseWorkAuto(CustomAction):
     """
@@ -939,12 +1356,12 @@ class ProduceChooseWorkAuto(CustomAction):
     @staticmethod
     def _get_health(context: Context, image) -> Optional[dict]:
         """获取当前体力数值"""
-        reco_detail = context.run_recognition("ProduceRecognitionHealth", image)
-        if not (reco_detail and reco_detail.hit):
+        found = read_ocr_node(context, image, "ProduceRecognitionHealth").best
+        if not found:
             return None
 
         try:
-            health_parts = reco_detail.best_result.text.split("/")
+            health_parts = found.text.split("/")
             current_health = int("".join(filter(str.isdigit, health_parts[0])))
             max_health = int("".join(filter(str.isdigit, health_parts[1])))
             ratio = current_health / max_health
@@ -1101,22 +1518,14 @@ class ProduceChooseOptionsAuto(CustomAction):
         }
         roi0_list = [[70 + i * 230, 430, 136, 80] for i in range(3)]
         roi1_list = [[150 + i * 150, 325, 136, 80] for i in range(3)]
-        first_reco = context.run_recognition(
-            "ProduceRecognitionScore",
-            image,
-            pipeline_override={"ProduceRecognitionScore": {"roi": roi0_list[0]}},
-        )
-        use_roi_list = roi1_list if not (first_reco and first_reco.hit) else roi0_list
+        first_rows = _ocr_score_pair(context, image, roi0_list[0])
+        use_roi_list = roi0_list if first_rows else roi1_list
 
         for i in range(3):
-            reco_detail = context.run_recognition(
-                "ProduceRecognitionScore",
-                image,
-                pipeline_override={"ProduceRecognitionScore": {"roi": use_roi_list[i]}},
-            )
-            if reco_detail and reco_detail.hit and len(reco_detail.filtered_results) == 2:
-                current_score = int("".join(filter(lambda c: c.isdigit(), reco_detail.filtered_results[0].text)))
-                max_score = int("".join(filter(lambda c: c.isdigit(), reco_detail.filtered_results[1].text.replace("/", ""))))
+            rows = first_rows if i == 0 and first_rows else _ocr_score_pair(context, image, use_roi_list[i])
+            if len(rows) == 2:
+                current_score = int("".join(filter(str.isdigit, rows[0].text)))
+                max_score = int("".join(filter(str.isdigit, rows[1].text)))
                 logger.debug(f"第{i + 1}列得分: {current_score} / {max_score}")
                 score[["Vo", "Da", "Vi"][i]] = current_score
                 score["max"] = max_score if score["max"] < max_score < 9999 else score["max"]
@@ -1205,9 +1614,17 @@ class ProduceChooseMirrorAuto(CustomAction):
 
         # 在点击前判断当前是第几镜，若启用 focus 则点击后进入手动接管
         mirror_idx = self._get_focus_mirror_index(context, image)
+        task, _ = _cultivation_option(context, argv)
+        entry = _cultivation_entries.get(task)
+        stage = None
+        if entry is not None:
+            stage = mirror_idx or self._read_mirror_index(context, image)
 
         logger.info(f"当前投票: {vote:,}, 目标分数: {target_threshold:,}, 点击坐标: ({x}, {y - 20})")
         self._double_click(context, x, y - 20)
+        if stage and target_threshold in thresholds:
+            entry.round_key = {1: 'mid1', 2: 'mid2', 3: 'final'}[stage]
+            entry.audition_number = sorted(thresholds).index(target_threshold) + 1
 
         if not mirror_idx:
             return True
@@ -1242,7 +1659,11 @@ class ProduceChooseMirrorAuto(CustomAction):
         has_focus = any(attach.get(f"focus_{i}", False) for i in range(1, 4))
         if not has_focus:
             return 0
+        index = ProduceChooseMirrorAuto._read_mirror_index(context, image)
+        return index if attach.get(f"focus_{index}", False) else 0
 
+    @staticmethod
+    def _read_mirror_index(context: Context, image) -> int:
         for i in range(1, 4):
             reco_detail = context.run_recognition(
                 f"ProduceMirrorFlag_{i}",
@@ -1257,7 +1678,7 @@ class ProduceChooseMirrorAuto(CustomAction):
                 },
             )
             if reco_detail and reco_detail.hit:
-                return i if attach.get(f"focus_{i}", False) else 0
+                return i
         return 0
 
     @staticmethod
@@ -1298,12 +1719,10 @@ class ProduceChooseMirrorAuto(CustomAction):
     def _get_current_mirror(context: Context, image):
         """获取当前试镜"""
         mirror = {"0": [360, 1050, 1, 1]}
-        reco_detail = context.run_recognition("ProduceRecognitionMirror", image)
-        if reco_detail and reco_detail.hit:
-            for result in reco_detail.filtered_results:
-                box = result.box
-                text = "".join(filter(lambda c: c.isdigit(), result.text.replace(",", "")))
-                mirror[text] = [box[0], box[1], box[2], box[3]]
+        for result in read_ocr_node(context, image, "ProduceRecognitionMirror").rows:
+            box = result.box
+            text = "".join(filter(str.isdigit, result.text))
+            mirror[text] = [box[0], box[1], box[2], box[3]]
         mirror = dict(sorted(mirror.items(), key=lambda x: int(x[0])))
         logger.info(f"当前试镜门槛分数: {list(mirror.keys())}")
         return mirror
@@ -1311,10 +1730,11 @@ class ProduceChooseMirrorAuto(CustomAction):
     @staticmethod
     def _get_current_vote(context: Context, image) -> Optional[int]:
         """获取当前投票"""
-        reco_detail = context.run_recognition("ProduceRecognitionVote", image)
-        if reco_detail and reco_detail.hit:
+        found = read_ocr_node(context, image, "ProduceRecognitionVote",
+                              accept=lambda rows: rows[0].text.replace(",", "").isdecimal()).best
+        if found:
             try:
-                vote = int(reco_detail.best_result.text.replace(",", ""))
+                vote = int(found.text.replace(",", ""))
                 return vote
             except ValueError:
                 logger.warning("投票数据解析失败")

@@ -28,15 +28,20 @@ class BattleProgress:
     """miyu's battle._check_battle_progress clock, shared by normal UI polls."""
 
     def __init__(self):
+        from .exam_loop import ExamRecovery
+
+        self.exam = ExamRecovery()
         self.last_progress = time.monotonic()
         self.recovery_deadline = None
         self.remaining = None
+        self.communication = None
 
     def confirmed(self, remaining=None, *, played_or_used=False):
         changed = remaining is not None and remaining != self.remaining
         if remaining is not None:
             self.remaining = remaining
         if changed or played_or_used:
+            self.exam.record(no_effect=False)
             self.last_progress = time.monotonic()
             self.recovery_deadline = None
 
@@ -52,28 +57,30 @@ class BattleProgress:
             raise ValueError('HIF battle recovery ended without confirmed progress')
 
     def retry_network(self, context, image, *, click):
-        """fb8 common._hif_retry_network discards this image after the retry."""
+        """Use the shared Hiro retry while HIF retains its audited input path."""
+        from .inventory import _inventory_ocr
+        from .hiro_maa_exam import ExamCommunication
         from .hif_capture_adapter import captured_at
 
-        if len(getattr(image, 'shape', ())) != 3 or image.shape[2] < 3:
+        if getattr(context.tasker, 'stopping', False):
             return False
-        band = image[945:1000, 40:660]
-        if not band.size:
-            return False
-        orange = (band[:, :, 2] > 200) & (band[:, :, 1] > 100) & (band[:, :, 0] < 180)
-        if orange.mean() <= .6:
-            return False
-        captured = captured_at(context.tasker.controller, image)
-        node = 'Task275HifBattleNetworkRetry'
-        detail = context.run_recognition(node, image, pipeline_override={node: dict(
-            recognition='And', all_of=[
-                dict(recognition='OCR', roi=[40,940,620,165], expected=['通信エラー','通信中にエラー','网络错误','通信错误']),
-                dict(recognition='OCR', roi=[370,1115,265,90], expected=['リトライ','重试','重試'])], box_index=1)})
-        if not (detail and detail.hit) or getattr(context.tasker, 'stopping', False):
-            return False
+        if self.communication is None:
+            controller = context.tasker.controller
+            latest = None
+
+            def capture():
+                nonlocal latest
+                latest = controller.post_screencap().wait().get()
+                return latest
+
+            def tap(x, y):
+                click((x, y, 1, 1), captured_at(controller, latest), 'network_retry')
+
+            self.communication = ExamCommunication(capture=capture, tap=tap, retry_only=True,
+                ocr=lambda frame, **kwargs: _inventory_ocr(context, frame, 'Task275HifBattleNetworkRetry', **kwargs))
         start = time.monotonic()
-        click(detail.box, captured, 'network_retry')
-        time.sleep(3)
+        if self.communication.recover(image) is None:
+            return False
         paused = time.monotonic() - start
         self.last_progress += paused
         if self.recovery_deadline is not None:

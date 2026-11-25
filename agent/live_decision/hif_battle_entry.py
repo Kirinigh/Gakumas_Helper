@@ -121,7 +121,7 @@ class CurrentPageBattleRequest(HifBattleRequest):
 
 
 def run_current_page_battle(context, *, path, runtime, run_id, game_pid, client_size,
-        policy_profile, authorise_task):
+        policy_profile, authorise_task, expected_round=None):
     """Use the visible opening or this battle's original reports on recovery."""
     from .hif_entry_round import current_opening_round
     from .hif_capture_adapter import adapt_hif_context
@@ -138,6 +138,8 @@ def run_current_page_battle(context, *, path, runtime, run_id, game_pid, client_
         number = current_opening_round(view, controller.cached_image)
         if number is None:
             raise ValueError('current page is not a playable HIF opening')
+    if expected_round is not None and number != expected_round:
+        raise ValueError('current HIF battle does not match the cultivation round')
 
     # The supported HIF preset's plan remains fixed. All cards and bottles come
     # from the existing live opening observer, including after manual cultivation.

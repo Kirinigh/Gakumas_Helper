@@ -2,6 +2,7 @@
 from collections import Counter
 from dataclasses import replace, dataclass
 
+from .high_score.kernel import RuleEvent
 from .high_score.planner import PlannerConfig, RobustHighScorePlanner
 from .high_score.contracts import (
     CardRef,
@@ -9,10 +10,12 @@ from .high_score.contracts import (
     DeckBelief,
     GameAction,
     DecisionKind,
+    DeckKnowledge,
     StrategyState,
     DecisionRequest,
     CapabilityReport,
 )
+from .idol_road_card_rules import TowerCardState, TowerCardKernel
 from .high_score.hif_environment import HifStep
 
 ATTRIBUTES = ('vocal', 'dance', 'visual')
@@ -32,6 +35,13 @@ class TowerFrame:
     playable: tuple[int, ...]
     available_drinks: tuple[int, ...] | None = None
     end_available: bool = True
+    skip_recovery: int | None = None
+    statuses: tuple[tuple[str, int], ...] = ()
+
+
+def _observed_fields(frame):
+    return {field: value for field, value in frame.statuses
+            if field in ('good_impression_turns', 'motivation', 'concentration', 'good_condition_turns')}
 
 
 class TowerChoicePolicy:
@@ -70,10 +80,13 @@ def bind_tower_slots(cards, visible):
     return tuple(result)
 
 
-def tower_schedule(attribute, turns, multipliers):
+def tower_schedule(attribute, turns, multipliers, *, timeline=None, current_turn=1):
     """Supply a planning forecast while retaining the observed current attribute."""
     trend = sorted(ATTRIBUTES, key=lambda name: multipliers[ATTRIBUTES.index(name)], reverse=True)
     future = ([trend[0]] * max(0, turns - 3) + trend[::-1])[-turns:]
+    if timeline:
+        future = [timeline[turn].attribute if turn in timeline and timeline[turn].attribute else forecast
+                  for turn, forecast in enumerate(future, current_turn)]
     return (attribute, *future[1:])
 
 
@@ -82,7 +95,8 @@ def _turn_fields(attributes, multipliers):
     return dict(turn_attributes=attributes, score_multiplier=values[0], future_score_multipliers=values[1:])
 
 
-def tower_opening(kernel, loadout, frame, deck_ids, *, status=None, item_uses=None):
+def tower_opening(kernel, loadout, frame, deck_ids, *, status=None, item_uses=None, timeline=None, native=False,
+                  partial_deck=False):
     """Build the first request from the visible formation and opening HUD."""
     info = loadout.overview
     if (info.turns != frame.turns or info.max_stamina is None or info.multiplier_permils is None
@@ -93,13 +107,18 @@ def tower_opening(kernel, loadout, frame, deck_ids, *, status=None, item_uses=No
     slots = bind_tower_slots(refs, frame.hand)
     by_id = {card.instance_id: card for card in refs}
     hand = tuple(by_id[iid] for iid, _ in slots)
-    schedule = tower_schedule(frame.attribute, frame.turns, info.multiplier_permils)
+    schedule = tower_schedule(frame.attribute, frame.turns, info.multiplier_permils, timeline=timeline)
     item_uses = item_uses or {}
-    state = StrategyState(turn=1, turns_remaining=frame.turns, score=frame.score, stamina=frame.stamina,
+    state_type = TowerCardState if isinstance(kernel, TowerCardKernel) else StrategyState
+    state = state_type(turn=1, turns_remaining=frame.turns, score=frame.score, stamina=frame.stamina,
         max_stamina=info.max_stamina, genki=frame.genki, actions_remaining=1, hand_limit=5,
-        deck=DeckBelief(refs, hand, tuple(card for card in refs if card not in hand)),
+        deck=DeckBelief(refs, hand, tuple(card for card in refs if card not in hand),
+                        knowledge=DeckKnowledge.UNKNOWN if partial_deck else DeckKnowledge.KNOWN_COMPOSITION),
         drinks=tuple(identifier for _, identifier in frame.drinks), items=tuple(item_uses),
-        **_turn_fields(schedule, info.multiplier_permils), **(status or {}))
+        **_turn_fields(schedule, info.multiplier_permils), **{**(status or {}), **_observed_fields(frame)})
+    if native:
+        return DecisionRequest(frame.frame_id, loadout.idol.plan, DecisionKind.LIVE, state,
+            _READY, ruleset_id=kernel.ruleset_id, card_slots=slots, drink_slots=frame.drinks)
     state = kernel.initialize_stage_entry(state, plan_type=loadout.idol.plan)
     if item_uses:
         scheduled = []
@@ -134,15 +153,24 @@ def tower_legal(kernel, request, frame):
     return tuple(result)
 
 
-def tower_branches(kernel, before, action, multipliers, *, observed=None):
+def tower_branches(kernel, before, action, multipliers, *, observed=None, skip_recovery=0, timeline=None):
     """Project rule consequences, including the game's automatic end of turn."""
     def with_next_attribute(state):
-        if observed is None or observed.turns >= before.state.turns_remaining or state.turns_remaining < 2:
+        if state.turns_remaining < 2:
             return state
-        updated = tower_schedule(observed.attribute, state.turns_remaining - 1, multipliers)
+        turn = state.turn + 1
+        if observed is not None and observed.turns <= state.turns_remaining:
+            attribute = observed.attribute
+        elif timeline and turn in timeline and timeline[turn].attribute:
+            attribute = timeline[turn].attribute
+        else:
+            return state
+        updated = tower_schedule(attribute, state.turns_remaining - 1, multipliers, timeline=timeline, current_turn=turn)
         return replace(state, **_turn_fields((state.turn_attributes[0], *updated), multipliers))
 
     initial = with_next_attribute(before.state) if action.kind is ActionKind.END_TURN else before.state
+    if action.kind is ActionKind.END_TURN and skip_recovery:
+        initial = replace(initial, stamina=min(initial.max_stamina, initial.stamina + skip_recovery))
     result = []
     for branch in kernel.transition(initial, action, plan_type=before.plan_type):
         state = branch.state
@@ -169,11 +197,72 @@ def tower_live_step(before, branches, frame):
                 or Counter(state.drinks) != Counter(cid for _, cid in frame.drinks)):
             continue
         slots = bind_tower_slots(state.deck.hand, frame.hand)
-        state = replace(state, score=frame.score)
+        observed = _observed_fields(frame)
+        corrections = tuple(RuleEvent('TOWER_OBSERVED_VALUE', 'hud', value - getattr(state, field), field)
+                            for field, value in observed.items() if value != getattr(state, field))
+        if isinstance(state, TowerCardState) and observed.get('good_impression_turns') == 0:
+            observed['review_fresh'] = False
+        if observed.get('good_condition_turns') == 0:
+            observed['good_condition_fresh'] = False
+        state = replace(state, score=frame.score, **observed)
         after = replace(before, snapshot_id=frame.frame_id, state=state, decision_kind=DecisionKind.LIVE,
             card_slots=slots, drink_slots=frame.drinks)
-        matches[(after, branch.events)] = HifStep(after, frame.score - before.state.score, False, branch.events)
-    return next(iter(matches.values())) if len(matches) == 1 else None
+        events = branch.events + corrections
+        matches[(after, branch.events)] = HifStep(after, frame.score - before.state.score, False, events)
+    return _merge_hidden_draw_positions(tuple(matches.values()))
+
+
+def _merge_hidden_draw_positions(steps):
+    if len(steps) <= 1:
+        return steps[0] if steps else None
+    decks = tuple(step.request.state.deck for step in steps)
+    if any(deck.knowledge is not DeckKnowledge.KNOWN_COMPOSITION for deck in decks):
+        return None
+    first = decks[0]
+    prefix = []
+    for index in range(min(deck.known_top_count for deck in decks)):
+        card = first.draw_pile[index]
+        if any(deck.draw_pile[index] != card for deck in decks[1:]):
+            break
+        prefix.append(card)
+
+    def normalize_event(event):
+        if event.event_type == 'ADD_CARD_TO_DECK' and event.detail:
+            return replace(event, detail=event.detail.split(':position:', 1)[0])
+        return event
+
+    normalized = []
+    for step, deck in zip(steps, decks, strict=True):
+        unknown = tuple(sorted(deck.draw_pile[len(prefix):], key=lambda card: card.instance_id))
+        shared = replace(deck, draw_pile=(*prefix, *unknown), known_top_count=len(prefix))
+        request = replace(step.request, state=replace(step.request.state, deck=shared))
+        normalized.append(replace(step, request=request, events=tuple(map(normalize_event, step.events))))
+    if any(candidate != normalized[0] for candidate in normalized[1:]):
+        return None
+    # Keep a known generated-card position only when every possible branch put it there.
+    events = []
+    for index, observed in enumerate(normalized[0].events):
+        first_event = steps[0].events[index]
+        if all(step.events[index] == first_event for step in steps[1:]):
+            observed = first_event
+        events.append(observed)
+    return replace(normalized[0], events=tuple(events))
+
+
+def tower_observed_extra_action(kernel, before, action, frame):
+    """The game may leave a playable hand after the forecast spent its final action."""
+    if (action.kind is not ActionKind.PLAY_CARD or before.state.turns_remaining != frame.turns
+            or not frame.playable):
+        return None
+    candidates = []
+    for branch in kernel.transition(before.state, action, plan_type=before.plan_type):
+        state = branch.state
+        if state.actions_remaining or state.pending_choice is not None or state.resolution_stack:
+            continue
+        observed = replace(state, actions_remaining=1)
+        event = RuleEvent('TOWER_OBSERVED_VALUE', 'hud', 1, 'actions_remaining')
+        candidates.append(replace(branch, state=observed, events=branch.events + (event,)))
+    return tower_live_step(before, candidates, frame)
 
 
 def tower_choice_step(before, branches, frame_id, cards, *, drink_slots):

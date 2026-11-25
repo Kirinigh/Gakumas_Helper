@@ -9,7 +9,9 @@ import math
 import time
 from dataclasses import asdict, replace
 
-from .contracts import ActionKind, DecisionKind
+from agent.live_decision.high_score.contracts import ActionKind, DecisionKind
+
+from .gkms_v2_effects import V2EffectState, CatalogV2EffectState, CatalogV2RuleSources
 from .gkms_shadow_adapter import TurnPlayHistory, build_shadow_observation
 
 VERSION = 'gkms-uinet-continuous-local-choice-v1'
@@ -67,6 +69,21 @@ class ObservedHandOrder:
         self.request(step.request)  # Fail on any missing or unexplained arrival.
 
 
+def strong_policy(kernel, *, planning_seed, deadline):
+    """Current explicit strong reference, never v22 or a restored old tree."""
+    from agent.live_decision.high_score.hif_mcts_candidate import HifMctsCandidatePolicy
+    from agent.live_decision.high_score.hif_strong_reference import configuration, load_baseline
+
+    from .hif_audited_policy import _AuditedMctsPolicy
+
+    settings = configuration()['policy_kwargs']
+    if (settings['simulations'], settings['min_root_samples'], settings['window_seconds']) != (256, 4, 300.):
+        raise ValueError('strong_reference_budget_changed')
+    baseline = load_baseline(kernel)
+    return _AuditedMctsPolicy(HifMctsCandidatePolicy(
+        kernel, baseline, planning_seed=planning_seed, deadline=deadline, **settings))
+
+
 def verify_model_output(output, observation):
     """Keep the original deterministic argmax; reject malformed model output."""
     if not isinstance(output, dict):
@@ -84,13 +101,33 @@ def verify_model_output(output, observation):
     return output['action']
 
 
+def _tower_legal_projection(projection, request, legal):
+    """Give the model the same physical options the live host can execute."""
+    positions = dict(request.card_slots)
+    valid = set(legal)
+    bindings = tuple(binding for binding in projection.bindings
+        if (replace(binding.action, source_slot=positions[binding.action.card_instance_id])
+            if binding.action.kind is ActionKind.PLAY_CARD else binding.action) in valid)
+    if not bindings:
+        raise ValueError('tower_no_model_action_matches_visible_legal_actions')
+    playable = {binding.token[1] for binding in bindings if binding.token[0] == 'play'}
+    observation = dict(projection.observation, legal=[list(binding.token) for binding in bindings],
+        hand=[dict(card, p=int(index in playable)) for index, card in enumerate(projection.observation['hand'])])
+    return replace(projection, bindings=bindings, observation=observation)
+
+
 class GkmsContinuousPolicy:
-    """One offline episode with caller-provided ordinary and secondary policies."""
+    """One episode; ordinary decisions never use the strong-reference chooser."""
 
     def __init__(self, kernel, model, context, initial, *, source, planning_seed,
-                 deadline, secondary_factory=None, opening_hand_order=None, observation_builder=None):
+                 deadline, secondary_factory=strong_policy, opening_hand_order=None,
+                 observation_builder=None, use_observed_hand_order=False, v2_sources=None):
         self.kernel, self.model, self.context = kernel, model, context
         self.observation_builder = observation_builder
+        self.use_observed_hand_order = use_observed_hand_order
+        self.v2_sources = v2_sources
+        effect_state = CatalogV2EffectState if isinstance(v2_sources, CatalogV2RuleSources) else V2EffectState
+        self.v2_effects = effect_state.initial(initial) if v2_sources is not None else None
         self.history = TurnPlayHistory(initial, (), source)
         self.hand_order = ObservedHandOrder(opening_hand_order if opening_hand_order is not None
                                            else (c.instance_id for c in initial.deck.hand))
@@ -118,9 +155,7 @@ class GkmsContinuousPolicy:
             if request.decision_kind is DecisionKind.SECONDARY:
                 if request.state.pending_choice is None:
                     raise ValueError('secondary_without_pending_choice')
-                if self.secondary_factory is None:
-                    raise ValueError('offline_secondary_policy_required')
-                entry['source'] = 'caller_supplied_secondary'
+                entry['source'] = 'local_strong_reference_secondary'
                 local_start = time.perf_counter()
                 self._secondary_calls += 1
                 # A declared new local-choice window, not recovery of a prior
@@ -145,10 +180,9 @@ class GkmsContinuousPolicy:
                 stage = time.perf_counter()
                 observed_request = self.hand_order.request(request)
                 entry['observed_card_slots'] = observed_request.card_slots
-                build_observation = (
-                    build_shadow_observation if self.observation_builder is None else self.observation_builder
-                )
-                projection = build_observation(observed_request, self.kernel, self.context, self.history)
+                build_observation = self.observation_builder or build_shadow_observation
+                options = {} if self.v2_effects is None else {'effects': self.v2_effects}
+                projection = build_observation(observed_request, self.kernel, self.context, self.history, **options)
                 elapsed = (time.perf_counter() - stage) * 1000
                 self.timing['mapping_ms'] += elapsed
                 entry.update(mapping_ms=elapsed, mapping_status=projection.status,
@@ -157,6 +191,8 @@ class GkmsContinuousPolicy:
                     compression_evidence=getattr(projection, 'compression_evidence', ()))
                 if projection.status != 'supported':
                     raise ValueError('ordinary_state_mapping_incomplete:' + '|'.join(projection.reason_codes))
+                if getattr(self.context, 'use_host_legality', False):
+                    projection = _tower_legal_projection(projection, request, legal)
                 entry['observation'] = projection.observation
                 stage = time.perf_counter()
                 output = self.model.decide(projection.observation)
@@ -191,14 +227,26 @@ class GkmsContinuousPolicy:
         if self._pending is None or self._pending[:2] != (before, action):
             raise ValueError('network_commit_does_not_match_selected_action')
         bridge = self._pending[2]
-        self.hand_order.advance(before, step)
-        card_upgrades = self.context.mappings.card_upgrades if self.context.mappings else None
-        if hasattr(self.history, 'advance_step'):
-            self.history = self.history.advance_step(action, step, card_upgrades=card_upgrades)
+        if self.use_observed_hand_order:
+            after = step.request
+            if after.decision_kind is DecisionKind.LIVE and not step.terminated:
+                self.hand_order.ids = tuple(iid for iid, _ in sorted(after.card_slots, key=lambda pair: pair[1]))
+            else:
+                self.hand_order.ids = tuple(card.instance_id for card in after.state.deck.hand)
         else:
-            self.history = self.history.advance(action, step.request.state, step.events, card_upgrades=card_upgrades)
+            self.hand_order.advance(before, step)
+        if hasattr(self.history, 'advance_step'):
+            self.history = self.history.advance_step(action, step)
+        else:
+            self.history = self.history.advance(action, step.request.state, step.events)
         if bridge is not None:
             bridge.committed(before, action, step.request.state)
+        self.v2_effects = self.effect_state_after(before, action, step.request.state, step.events)
         self._pending = None
         self.decisions[-1]['status'] = 'committed'
         self.timing['history_ms'] += (time.perf_counter() - started) * 1000
+
+    def effect_state_after(self, before, action, after, events):
+        if self.v2_effects is None:
+            return None
+        return self.v2_effects.advance(before, action, after, events, self.v2_sources)

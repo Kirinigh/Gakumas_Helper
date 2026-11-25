@@ -531,6 +531,7 @@ class CardDefinition:
     upgrade_card_id: str | None = None
     source_type: str | None = None
     canonical_card_id: str | None = None
+    effect_groups: tuple[str, ...] = ()
 
     def validate(self) -> None:
         if not self.card_id or not self.name:
@@ -701,6 +702,8 @@ def _is_counted_stance_change(old_stance: Stance, target: Stance) -> bool:
 
 
 def _definition_has_effect_tag(definition: CardDefinition, effect_tag: str) -> bool:
+    if effect_tag in definition.effect_groups:
+        return True
     if effect_tag == "strength":
         return any(
             effect.kind is EffectKind.STANCE
@@ -4023,6 +4026,7 @@ class PythonNiaProKernel:
         card_id: str,
         *,
         source_id: str,
+        on_top: bool = False,
     ) -> tuple[TransitionBranch, ...]:
         definition = self.cards.get(card_id)
         if definition is None:
@@ -4035,6 +4039,11 @@ class PythonNiaProKernel:
         card = CardRef(instance_id=instance_id, card_id=card_id)
         all_cards = state.deck.all_cards + (card,)
         next_count = state.created_card_count + 1
+        if on_top:
+            deck = state.deck.replace_zones(all_cards=all_cards,
+                draw_pile=(card, *state.deck.draw_pile), known_top_count=state.deck.known_top_count + 1)
+            return (TransitionBranch(1.0, replace(state, deck=deck, created_card_count=next_count),
+                (RuleEvent("ADD_CARD_TO_DECK", source_id, detail=f"{card_id}:{instance_id}:position:0"),)),)
         if state.deck.knowledge is DeckKnowledge.KNOWN_COMPOSITION and not state.deck.known_top_count:
             deck = state.deck.replace_zones(
                 all_cards=all_cards,
@@ -4175,7 +4184,8 @@ class PythonNiaProKernel:
                     removed = True
                     continue
                 next_draw.append(item)
-            next_deck = deck.replace_zones(hand=deck.hand + (card,), draw_pile=tuple(next_draw))
+            next_deck = deck.replace_zones(hand=deck.hand + (card,), draw_pile=tuple(next_draw),
+                                           known_top_count=max(0, deck.known_top_count - 1))
             moved_state = replace(state, deck=next_deck)
             branches.extend(
                 self._trigger_event_phase(
@@ -4282,6 +4292,10 @@ class PythonNiaProKernel:
         self._validate_probability_mass(merged)
         return merged
 
+    def _review_turn_end(self, state: StrategyState) -> tuple[int, int]:
+        return (math.floor(state.good_impression_turns * state.score_multiplier),
+                max(0, state.good_impression_turns - 1))
+
     def _complete_end_turn(
         self,
         state: StrategyState,
@@ -4290,8 +4304,8 @@ class PythonNiaProKernel:
     ) -> tuple[TransitionBranch, ...]:
         score = state.score
         events: tuple[RuleEvent, ...] = ()
+        gain, remaining_review = self._review_turn_end(state)
         if plan_type is PlanType.LOGIC and state.good_impression_turns > 0:
-            gain = math.floor(state.good_impression_turns * state.score_multiplier)
             score += gain
             events += (RuleEvent("GOOD_IMPRESSION_TICK", "system", gain),)
         statuses = tuple(
@@ -4321,7 +4335,7 @@ class PythonNiaProKernel:
             excellent_condition_turns=(state.excellent_condition_turns if state.excellent_condition_fresh
                                        else max(0, state.excellent_condition_turns - 1)),
             excellent_condition_fresh=False,
-            good_impression_turns=max(0, state.good_impression_turns - 1),
+            good_impression_turns=remaining_review,
             nullify_genki_turns=(state.nullify_genki_turns if state.nullify_genki_fresh
                                 else max(0, state.nullify_genki_turns - 1)),
             nullify_genki_fresh=False,
@@ -4754,7 +4768,9 @@ class PythonNiaProKernel:
                     tuple(
                         replace(scheduled, effect_counter=scheduled.effect_counter + 1)
                         if self._scheduled_effect_spec(scheduled).schedule_counter_condition is not None
-                        and _condition_matches(snapshot, self._scheduled_effect_spec(scheduled).schedule_counter_condition, self.cards, trigger_context)
+                        and _condition_matches(snapshot, self._scheduled_effect_spec(scheduled).schedule_counter_condition,
+                                               self.cards, replace(trigger_context or EffectTriggerContext(),
+                                                                   effect_counter=scheduled.effect_counter))
                         else scheduled
                         for scheduled in due
                     ),

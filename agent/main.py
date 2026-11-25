@@ -18,9 +18,11 @@ parent_dir = os.path.dirname(current_dir)
 os.chdir(parent_dir)
 # print(f"设置工作目录为: {parent_dir}")
 
-# 将当前目录添加到路径
+# Maa 直接执行 agent/main.py。兼容现有顶层导入和 agent.* 包导入。
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(sys.path.index(current_dir) + 1, parent_dir)
 
 from github_credentials import consume_launch_token
 

@@ -144,9 +144,9 @@ def configuration():
 def verified_model_path(model_path=None):
     """Check the frozen model without creating a policy or a search window."""
     if __package__.startswith('agent.'):
-        from agent.utils.runtime_paths import resolve_runtime_path
+        from agent.utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
     else:
-        from utils.runtime_paths import resolve_runtime_path
+        from utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
     path = (resolve_runtime_path(MODEL_RELATIVE_PATH, Path('data/hif_policy_candidates/ppo-27502-v1.json'))
             if model_path is None else Path(model_path))
     payload = json.loads(path.read_text(encoding='utf8'))

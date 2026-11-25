@@ -261,7 +261,7 @@ def _item_description_name_rows(text, box, header_height=90):
     title, countdown = sorted(names, key=lambda row: row.box[1])
     tx, ty, _, th = title.box
     cx, cy, _, _ = countdown.box
-    if (re.fullmatch(r'[1-9]\d*ターン', _normalize_status_text(countdown.text))
+    if (re.fullmatch(r'[1-9]\d*(?:ターン|回)', _normalize_status_text(countdown.text))
             and type(countdown.score) in (int, float)
             and math.isfinite(countdown.score) and .95 <= countdown.score <= 1
             and ty+th <= y+55 and cy >= max(ty+th, y+40)
@@ -270,8 +270,9 @@ def _item_description_name_rows(text, box, header_height=90):
     return names
 
 
-def read_item_description(context, image, *, text_rows=None):
-    boxes, thumb, top, bottom, partial = status_panel_geometry(image, row_white_min=250)
+def read_item_description(context, image, *, text_rows=None, allow_unscrolled=False):
+    boxes, thumb, top, bottom, partial = status_panel_geometry(image, row_white_min=250,
+                                                               allow_unscrolled=allow_unscrolled)
     text = _inventory_ocr(context, image, 'LiveStatusItemDescription') if text_rows is None else text_rows
     rows = []
     for box in boxes:

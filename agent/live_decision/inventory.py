@@ -1180,6 +1180,10 @@ def recognize_inventory_button(context, frame, client_size=(720, 1280)):
 
 
 def _inventory_ocr(context, image, node, **params):
+    from .simd_ocr import read_optional_simd_ocr
+
+    if rows := read_optional_simd_ocr(image, params):
+        return rows
     hit = context.run_recognition(node, image, pipeline_override={node: {
         "recognition": "OCR", "expected": ".+", **params,
     }})

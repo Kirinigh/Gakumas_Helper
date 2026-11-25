@@ -74,7 +74,7 @@ def _move_control(context, image):
 
 
 def scan_move_viewports(context, initial, count, *, capture, identify_frame, journal, previous=(),
-                        target_slot=None):
+                        target_slot=None, client_size=None):
     """Yield each newly visible slot. A resume continues from its recorded pixel offset."""
     history = list(previous)
     image = initial
@@ -92,7 +92,7 @@ def scan_move_viewports(context, initial, count, *, capture, identify_frame, jou
         from utils.maa_input import verify_maa_input_endpoints
 
         endpoints = verify_maa_input_endpoints(controller.info,
-            expected_client_size=getattr(context, 'gkh_hif_client_size', (720, 1280)))
+            expected_client_size=client_size or getattr(context, 'gkh_hif_client_size', (720, 1280)))
         receipt = dict(direction=direction, start=(360, start), end=(360, end), duration=1000,
             offset_before=offset, offset_after=None, before_frame=identify_frame(image, 0),
             endpoints=endpoints, state='dispatch_pending')

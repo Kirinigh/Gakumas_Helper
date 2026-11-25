@@ -1,7 +1,14 @@
-"""Offline UIObs projection for caller-supplied Sense states and mappings.
+"""Project the verified local battle state and physical actions to UIObs.
 
-Only an already bound request and verified, caller-supplied mappings can
-produce supported input. The caller retains ownership of its state and data.
+This module loads no model and performs no input, capture, download or rollout.
+It reuses the caller's production kernel for legality. Unsupported observations
+and secondary choices have no model input; they remain with local planning.
+
+Mappings were checked against GKMSUINet at UINET_REVISION below,
+gakumasu-diff 571dbb62601e,
+the observed 22/20-card inventories/customizations, and the pre-session criteria at
+91d847d08e1c. Full evidence is in research-deep-20261029/mapping. This is a
+bounded mapping of custom forms, with ordinary forms resolved in the model master.
 """
 from __future__ import annotations
 
@@ -10,8 +17,8 @@ from typing import Any, Sequence
 from collections import Counter
 from dataclasses import asdict, replace, dataclass
 
-from .kernel import RuleEvent, KernelError
-from .contracts import (
+from agent.live_decision.high_score.kernel import RuleEvent, KernelError
+from agent.live_decision.high_score.contracts import (
     Stance,
     CardRef,
     PlanType,
@@ -24,7 +31,20 @@ from .contracts import (
     ScheduledEffectRef,
     HighScoreContractError,
 )
-from .gkms_shadow_mappings import ShadowMappings
+
+from .gkms_master_forms import PLAN_CODES, drink_id, card_form
+from .gkms_shadow_mappings import (
+    DRINK_IDS,
+    SCHEDULES,
+    CARD_FORMS,
+    CUSTOM_FORMS,
+    GROW_EFFECTS,
+    CARD_UPGRADES,
+)
+
+UINET_REVISION = '1201b841828d9874b604f7d48f7b00ddf3b71d95'
+MASTER_REVISION = '571dbb62601e78998cddeacdbce3ea1bc672d7fc'
+CRITERIA_REVISION = '91d847d08e1c3afad32b37cffba110ca558dec75'
 
 
 class ShadowMappingError(ValueError):
@@ -41,23 +61,27 @@ class ExamContext:
     """Observed whole-round metadata; the state supplies current resources."""
 
     produce: str
-    step: str
+    step: str | None
     plan: int
     turn_types: tuple[int, ...]
     permil: tuple[int, int, int]
     criteria: tuple[int, int, int]
     idol: str
     source: str
-    mappings: ShadowMappings | None = None
 
-    def observation(self, state: StrategyState):
-        _require(self.produce in {'produce-007', 'produce-008'}
-                 and self.step in {'AUDITION_MID1', 'AUDITION_MID2', 'AUDITION_FINAL'}
-                 and self.plan == 2 and bool(self.source), 'exam_context_unverified')
+    def observation(self, state: StrategyState, plan_type: PlanType):
+        tower = self.produce == 'tower'
+        _require(bool(self.source and self.idol) and type(self.plan) is int
+                 and self.plan == PLAN_CODES[plan_type.value], 'exam_context_unverified')
+        _require((tower and self.step is None)
+                 or (self.produce in {'produce-007', 'produce-008'}
+                     and self.step in {'AUDITION_MID1', 'AUDITION_MID2', 'AUDITION_FINAL'}),
+                 'exam_context_unverified')
         _require(self.turn_types and all(type(x) is int and x in (1, 2, 3) for x in self.turn_types),
                  'exam_turn_types_invalid')
         _require(len(self.permil) == len(self.criteria) == 3
-                 and all(type(x) is int and x > 0 for x in self.permil + self.criteria),
+                 and all(type(x) is int and x > 0 for x in self.permil)
+                 and all(type(x) is int and (x == 0 if tower else x > 0) for x in self.criteria),
                  'exam_multipliers_or_criteria_invalid')
         _require(state.turn + state.turns_remaining - 1 == len(self.turn_types),
                  'exam_limit_or_extra_turn_unmapped')
@@ -70,9 +94,26 @@ class ExamContext:
         _require(len(actual) == len(multipliers)
                  and all(math.isclose(a, b, rel_tol=0, abs_tol=1e-9)
                          for a, b in zip(actual, multipliers)), 'exam_state_multipliers_mismatch')
-        return dict(produce=self.produce, step=self.step, plan=self.plan, idol=self.idol,
+        # Hiro's tower fields carry no audition phase, plan category or criteria.
+        # The actual plan above still determines the kernel's legal actions.
+        return dict(produce=self.produce, step=self.step, plan=0 if tower else self.plan, idol=self.idol,
                     turn=state.turn, limit=len(self.turn_types), types=list(self.turn_types),
                     permil=list(self.permil), crit=list(self.criteria))
+
+
+# Must be passed explicitly. It is not a default for arbitrary future rounds.
+SAVED_1752_1755_CONTEXT = ExamContext(
+    'produce-008', 'AUDITION_MID1', 2, (3, 2, 1, 1, 3, 3, 2, 1, 3),
+    (26200, 35380, 38150), (1392, 1088, 1871), 'i_card-jsna-3-020',
+    'accepted 1752/1755 turn panels; mapping/obs-1752-evidence.json; '
+    'ProduceStepAuditionDifficulty and ProduceExamBattleConfig@' + CRITERIA_REVISION,
+)
+SAVED_1116_CONTEXT = ExamContext(
+    'produce-008', 'AUDITION_MID1', 2, (1, 3, 2, 1, 1, 2, 3, 2, 1),
+    (38750, 30960, 25470), (1871, 1392, 1088), 'i_card-shro-3-018',
+    'accepted 1116 turn panel; idol origin of cards 816/818; '
+    'ProduceStepAuditionDifficulty and ProduceExamBattleConfig@' + CRITERIA_REVISION,
+)
 
 
 @dataclass(frozen=True)
@@ -89,6 +130,7 @@ complete accepted chain; actions_remaining is never used to infer plays.
     source: str
     played_support: tuple[int | None, ...] = ()
     expired_start_effects: tuple[ScheduledEffectRef, ...] = ()
+    upgrade_ids: dict[str, str] | None = None
 
     def validate(self, state):
         _require(bool(self.source), 'played_history_source_missing')
@@ -98,7 +140,7 @@ complete accepted chain; actions_remaining is never used to infer plays.
         _require(not self.played_support or len(self.played_support) == len(self.played),
                  'played_history_support_length_mismatch')
 
-    def advance(self, action: GameAction, after: StrategyState, events: Sequence[RuleEvent], *, card_upgrades=None):
+    def advance(self, action: GameAction, after: StrategyState, events: Sequence[RuleEvent]):
         """Consume complete HifStep events, including turn-start Encore replays.
 
         The local kernel emits phase-qualified TRIGGER_SCHEDULED before a replay;
@@ -111,7 +153,6 @@ complete accepted chain; actions_remaining is never used to infer plays.
         self.validate(self.state)
         action.validate()
         after.validate()
-        card_upgrades = card_upgrades if card_upgrades is not None else {}
         markers = {'CONSUME_ACTION', 'FREE_PLAY', 'PAID_PLAY', 'FREE_PLAY_RANDOM'}
         if action.kind is ActionKind.PLAY_CARD:
             _require(sum(event.event_type == 'CONSUME_ACTION'
@@ -125,6 +166,7 @@ complete accepted chain; actions_remaining is never used to infer plays.
                              for event in events) == 1, 'played_history_secondary_play_event_missing')
         ledger = {card.instance_id: card for card in self.state.deck.all_cards}
         after_cards = {card.instance_id: card for card in after.deck.all_cards}
+        upgrade_ids = CARD_UPGRADES if self.upgrade_ids is None else self.upgrade_ids
         played = list(self.played)
         support = list(self.played_support or (None,) * len(played))
         active_support = {fact.instance_id: fact for fact in self.state.hand_support if fact.turn == self.state.turn}
@@ -161,9 +203,9 @@ complete accepted chain; actions_remaining is never used to infer plays.
                 ledger[instance_id] = CardRef(instance_id, cid)
             elif event.event_type == 'UPGRADE_HAND':
                 for target in (event.detail or '').split('|'):
-                    _require(target in ledger and ledger[target].card_id in card_upgrades,
+                    _require(target in ledger and ledger[target].card_id in upgrade_ids,
                              'played_history_upgrade_unmapped')
-                    ledger[target] = replace(ledger[target], card_id=card_upgrades[ledger[target].card_id], upgraded=True)
+                    ledger[target] = replace(ledger[target], card_id=upgrade_ids[ledger[target].card_id], upgraded=True)
             elif event.event_type == 'CARD_MODIFICATION':
                 for target in (event.detail or '').split('|'):
                     _require(target in ledger and target in after_cards, 'played_history_growth_instance_missing')
@@ -202,11 +244,12 @@ complete accepted chain; actions_remaining is never used to infer plays.
                     and ref.remaining_uses == 1 and triggered[ref.source_id, detail] and not active[key]):
                 residues.append(replace(ref, remaining_uses=0, last_fired_turn=after.turn))
                 triggered[ref.source_id, detail] -= 1
-        return TurnPlayHistory(after, tuple(played), self.source, tuple(support), tuple(residues))
+        return replace(self, state=after, played=tuple(played), played_support=tuple(support),
+                       expired_start_effects=tuple(residues))
 
-    def advance_step(self, action: GameAction, step, *, card_upgrades=None):
+    def advance_step(self, action: GameAction, step):
         """Convenience consumer of the existing HifStep; it does not re-simulate."""
-        return self.advance(action, step.request.state, step.events, card_upgrades=card_upgrades)
+        return self.advance(action, step.request.state, step.events)
 
 
 _GROWTH_FIELDS = ('score_bonus', 'genki_bonus', 'stamina_cost_delta', 'typed_cost_delta', 'score_repeat_bonus')
@@ -217,35 +260,48 @@ def _compression(evidence, field, value, reason, source):
         evidence.append(dict(local_field=field, value=value, reason=reason, source=source))
 
 
-def _grow_ids(kind, amount, mappings):
+def _grow_ids(kind, amount):
     """Exact numerical decomposition into real fixed-master growth records."""
     _require(type(amount) is int and amount >= 0, f'card_growth_integer_required:{kind}')
-    _require(kind in mappings.grow_effects, f'card_growth_unmapped:{kind}')
     result = []
-    for value, identifier in reversed(mappings.grow_effects[kind]):
+    for value, identifier in reversed(GROW_EFFECTS[kind]):
         count, amount = divmod(amount, value)
         result.extend([identifier] * count)
     _require(amount == 0, f'card_growth_not_representable:{kind}:{amount}')
     return result
 
 
-def _card(card: CardRef, mappings, *, support_count=None, evidence=None):
-    _require(card.card_id in mappings.card_forms, f'card_form_unmapped:{card.card_id}')
-    identifier, upgrade, cost_kind = mappings.card_forms[card.card_id]
+_SUPPORT_DELTAS = {
+    '35': {'stamina_cost_delta': -1, 'score_bonus': 1},
+    '49': {'genki_bonus': 2},
+    '55': {'stamina_cost_delta': -1},
+    '87': {'score_bonus': 6},
+    '709': {'stamina_cost_delta': -1},
+    '818': {'typed_cost_delta': -1},
+    '295@3=1,52=1': {'ParameterBuffTurnAdd': 1},
+    '597@14=1,54=1': {'LessonBuffAdd': 2},
+    '762': {},
+}
+
+
+def _card(card: CardRef, *, kernel=None, support_count=None, evidence=None, native=False):
+    form = CARD_FORMS.get(card.card_id)
+    if form is None and kernel is not None:
+        form = card_form(kernel.cards.get(card.card_id), card.upgraded, native=native)
+    _require(form is not None, f'card_form_unmapped:{card.card_id}')
+    identifier, upgrade, cost_kind = form
     _require(type(card.upgraded) is bool and card.upgraded == bool(upgrade),
              f'card_upgrade_unverified:{card.card_id}')
     values = {name: getattr(card, name) for name in _GROWTH_FIELDS}
     extra = {}
     if support_count is not None:
-        if upgrade == 0 and support_count == 1 and card.card_id in mappings.card_upgrades:
-            upgraded_id = mappings.card_upgrades[card.card_id]
-            _require(upgraded_id in mappings.card_forms, f'card_form_unmapped:{upgraded_id}')
-            identifier, upgrade, cost_kind = mappings.card_forms[upgraded_id]
+        if upgrade == 0 and support_count == 1 and card.card_id in CARD_UPGRADES:
+            identifier, upgrade, cost_kind = CARD_FORMS[CARD_UPGRADES[card.card_id]]
         else:
-            _require(upgrade == 1 and support_count == 2 and card.card_id in mappings.support_deltas,
+            _require(upgrade == 1 and support_count == 2 and card.card_id in _SUPPORT_DELTAS,
                      f'hand_support_tier_unmapped:{card.card_id}:{support_count}')
             upgrade = support_count
-            for name, amount in mappings.support_deltas[card.card_id].items():
+            for name, amount in _SUPPORT_DELTAS[card.card_id].items():
                 if name in values:
                     values[name] += amount
                 else:
@@ -255,8 +311,8 @@ def _card(card: CardRef, mappings, *, support_count=None, evidence=None):
                      'the public featurizer falls back to the highest available master tier.',
                      'skill_support.supported_definition; GKMS feat.py:_resolved')
     result = {'id': identifier, 'u': upgrade}
-    if card.card_id in mappings.custom_forms:
-        result['c'] = [list(pair) for pair in mappings.custom_forms[card.card_id]]
+    if card.card_id in CUSTOM_FORMS:
+        result['c'] = [list(pair) for pair in CUSTOM_FORMS[card.card_id]]
     grows = []
     for field, positive, negative in (('score_bonus', 'LessonAdd', 'LessonReduce'),
                                     ('genki_bonus', 'BlockAdd', 'BlockReduce'),
@@ -265,7 +321,7 @@ def _card(card: CardRef, mappings, *, support_count=None, evidence=None):
         _require(type(amount) is int, f'card_growth_integer_required:{field}')
         if amount:
             _require(amount > 0 or negative is not None, f'card_growth_sign_invalid:{field}')
-            grows += _grow_ids(positive if amount > 0 else negative, abs(amount), mappings)
+            grows += _grow_ids(positive if amount > 0 else negative, abs(amount))
     generic = values['stamina_cost_delta']
     _require(type(generic) is int, 'card_growth_integer_required:stamina_cost_delta')
     if generic and cost_kind != 'NORMAL':
@@ -280,9 +336,9 @@ def _card(card: CardRef, mappings, *, support_count=None, evidence=None):
               'MOTIVATION': 'CostAggressive', 'FULL_POWER': 'CostFullPowerPoint'}[cost_kind]
     for name, amount in (('Cost', generic), (prefix, typed)):
         if amount:
-            grows += _grow_ids(name + ('Add' if amount > 0 else 'Reduce'), abs(amount), mappings)
+            grows += _grow_ids(name + ('Add' if amount > 0 else 'Reduce'), abs(amount))
     for kind, amount in extra.items():
-        grows += _grow_ids(kind, amount, mappings)
+        grows += _grow_ids(kind, amount)
     if grows:
         result['g'] = grows
         _compression(evidence, 'card.dynamic_growth', dict(instance_id=card.instance_id, deltas=values, grow_ids=grows),
@@ -293,10 +349,21 @@ def _card(card: CardRef, mappings, *, support_count=None, evidence=None):
     return result
 
 
-def _enchant(ref, state, evidence, mappings, *, kernel=None):
+def schedule_mapping(ref):
     key = ref.source_kind.value, ref.card_id, ref.definition_effect_index, ref.persistent
-    _require(key in mappings.schedules, f'enchant_definition_unmapped:{key}')
-    identifier, mode, phase, delay, uses, ttl, raw_turns, installer = mappings.schedules[key]
+    mapping = SCHEDULES.get(key)
+    if mapping is None:
+        from ..idol_road_card_rules import tower_enchant_mapping
+
+        mapping = tower_enchant_mapping(ref)
+    return mapping
+
+
+def _enchant(ref, state, evidence, *, kernel=None):
+    key = ref.source_kind.value, ref.card_id, ref.definition_effect_index, ref.persistent
+    mapping = schedule_mapping(ref)
+    _require(mapping is not None, f'enchant_definition_unmapped:{key}')
+    identifier, mode, phase, delay, uses, ttl, raw_turns, installer = mapping
     _require(ref.trigger_phase.value == phase and 0 <= ref.turns_until_fire <= delay
              and ref.direct_on_trigger == (phase == 'TURN' and uses == 1),
              f'enchant_trigger_unverified:{key}')
@@ -333,6 +400,9 @@ def _enchant(ref, state, evidence, mappings, *, kernel=None):
         return [identifier, -1 if ref.remaining_uses is None else ref.remaining_uses, -1]
     if mode == 'remaining_turns':
         return [identifier, -1, ref.remaining_turns]
+    if mode == 'tower_enchant':
+        turns = -1 if ref.remaining_turns is None else ref.remaining_turns + int(ref.duration_fresh)
+        return [identifier, -1, turns]
     if mode == 'end_uses_as_turns':
         # 363 installs five turns, while local rules retain the current end
         # plus five future ends. Initial grace is the sixth use, not a sixth UI turn.
@@ -347,31 +417,53 @@ def _enchant(ref, state, evidence, mappings, *, kernel=None):
 
 def _statuses(state):
     result = []
-    for status in state.statuses:
-        _require(status.status_id == 'anti_debuff' and type(status.stacks) is int
-                 and status.stacks > 0 and status.remaining_turns is None,
-                 f'state_semantic_mapping_unverified:statuses:{status.status_id}')
-        result.append(['anti_debuff', status.stacks, -1])
     for field, kind in (('concentration', 'lesson_buff'), ('good_impression_turns', 'review'),
                         ('motivation', 'aggressive'), ('cost_reduction', 'stamina_consumption_down_fix')):
         value = getattr(state, field)
         if value:
             result.append([kind, value, -1])
+    for field, kind, unit in (('full_power', 'full_power_point', 1), ('passion', 'enthusiastic', 1),
+                              ('passion_buff', 'enthusiastic_add', 1),
+                              ('passion_gain_bonus_pct', 'enthusiastic_gain_permil', 10)):
+        value = getattr(state, field)
+        _require(math.isfinite(value) and value >= 0, f'status_value_invalid:{field}')
+        if value:
+            result.append([kind, value * unit, -1])
     if state.good_condition_turns:
         result.append(['parameter_buff', state.good_condition_turns, state.good_condition_turns])
     for field, kind in (('excellent_condition_turns', 'parameter_buff_multiple'),
                         ('half_cost_turns', 'stamina_consumption_down'),
                         ('double_cost_turns', 'stamina_consumption_add'),
-                        ('nullify_genki_turns', 'block_restriction')):
+                        ('nullify_genki_turns', 'block_restriction'), ('stance_lock_turns', 'stance_lock')):
         if getattr(state, field):
             result.append([kind, 1, getattr(state, field)])
-    for field, kind in (('score_buffs', 'lesson_parameter_multiple'),
-                        ('concentration_effect_buffs', 'lesson_buff_multiple'),
-                        ('concentration_addition_buffs', 'lesson_buff_gain_fix')):
+    for field, kind, unit in (('score_buffs', 'lesson_parameter_multiple', 1),
+                              ('concentration_effect_buffs', 'lesson_buff_multiple', 1),
+                              ('concentration_addition_buffs', 'lesson_buff_gain_fix', 1),
+                              ('enthusiasm_bonus_buffs', 'enthusiastic_add', 1),
+                              ('enthusiasm_multiplier_buffs', 'enthusiastic_gain_permil', 1000)):
         for modifier in getattr(state, field):
             _require(math.isfinite(modifier.amount), f'status_value_invalid:{field}')
-            result.append([kind, modifier.amount, -1 if modifier.remaining_turns is None else modifier.remaining_turns])
+            result.append([kind, modifier.amount * unit,
+                           -1 if modifier.remaining_turns is None else modifier.remaining_turns])
+    from ..idol_road_card_rules import TowerCardState
+
+    if isinstance(state, TowerCardState):
+        result.extend(state.review_statuses())
     return result
+
+
+_STANCES = {
+    Stance.NEUTRAL: (None, 0),
+    Stance.CONSERVE_1: ('Preservation', 1),
+    Stance.CONSERVE_2: ('OverPreservation', 2),
+    Stance.AGGRESSIVE_1: ('Concentration', 1),
+    Stance.AGGRESSIVE_2: ('Concentration', 2),
+    Stance.LEISURE: ('Leisurely', 1),
+    Stance.FULL_POWER: ('FullPower', 1),
+}
+_ANOMALY_HISTORY = ('previous_stance', 'cumulative_full_power', 'strength_times', 'preservation_times',
+                    'full_power_times', 'leisure_times', 'stance_changed_by_direct_effect_times')
 
 
 _MODEL_COMPRESSION = (
@@ -396,7 +488,6 @@ class ShadowObservation:
     reason_codes: tuple[str, ...] = ()
     compression_notes: tuple[str, ...] = _MODEL_COMPRESSION
     compression_evidence: tuple[dict[str, Any], ...] = ()
-    mappings: ShadowMappings | None = None
 
     def bind_action(self, model_action: Sequence, *, request: DecisionRequest, kernel) -> GameAction:
         """Validate a model token against this exact root and recheck local legality."""
@@ -418,10 +509,10 @@ class ShadowObservation:
 
 
 def build_shadow_observation(request: DecisionRequest, kernel, context: ExamContext,
-                             history: TurnPlayHistory | None) -> ShadowObservation:
+                             history: TurnPlayHistory | None, *, include_enchants: bool = True) -> ShadowObservation:
     """Return supported UIObs, an explicit local-only phase, or a precise gap.
 
-    Use the rule engine's types consistently. No partially filled UIObs is
+    Use the agent.live_decision types consistently. No partially filled UIObs is
     exposed after an error, and no unknown action ever becomes ['end'].
     """
     try:
@@ -433,36 +524,39 @@ def build_shadow_observation(request: DecisionRequest, kernel, context: ExamCont
         if (request.decision_kind is DecisionKind.SECONDARY or state.pending_choice
                 or state.resolution_stack or state.pending_after_card_ids):
             return ShadowObservation('local_only', request, reason_codes=('secondary_or_unfinished_resolution',))
-        _require(request.plan_type is PlanType.SENSE and request.decision_kind is DecisionKind.LIVE,
-                 'ordinary_sense_live_required')
+        _require(request.decision_kind is DecisionKind.LIVE, 'ordinary_live_required')
         _require(state.deck.knowledge is DeckKnowledge.KNOWN_COMPOSITION, 'observed_composition_required')
         _require(state.persistent_effects_initialized, 'persistent_effect_lifecycle_missing')
         _require(history is not None, 'played_history_missing')
         history.validate(state)
-        _require(state.stance is Stance.NEUTRAL and state.previous_stance is Stance.NEUTRAL,
-                 'sense_stance_unmapped')
-        # These fields can require actual additional UIObs statuses/enchants.
-        # Their mappings have not been verified; do not relabel them as model loss.
-        for field in ('full_power', 'cumulative_full_power', 'passion', 'passion_buff',
-                      'passion_gain_bonus_pct', 'parameter_gain_bonus_pct', 'stance_lock_turns',
-                      'strength_times', 'preservation_times', 'full_power_times', 'leisure_times',
-                      'stance_changed_by_direct_effect_times', 'enthusiasm_bonus_buffs',
-                      'enthusiasm_multiplier_buffs', 'full_power_charge_buffs',
-                      'field_effects'):
+        if request.plan_type is not PlanType.ANOMALY:
+            _require(state.stance is Stance.NEUTRAL and state.previous_stance is Stance.NEUTRAL,
+                     'exam_stance_plan_mismatch')
+            for field in ('full_power', 'passion', 'passion_buff', 'passion_gain_bonus_pct', 'stance_lock_turns',
+                          'enthusiasm_bonus_buffs', 'enthusiasm_multiplier_buffs', *_ANOMALY_HISTORY[1:]):
+                _require(not getattr(state, field), f'state_semantic_mapping_unverified:{field}')
+        for field in ('parameter_gain_bonus_pct', 'full_power_charge_buffs', 'statuses', 'field_effects'):
             _require(not getattr(state, field), f'state_semantic_mapping_unverified:{field}')
-        mappings = context.mappings
-        _require(isinstance(mappings, ShadowMappings), 'verified_shadow_mappings_required')
-        _require(set(state.items) <= mappings.item_ids, 'item_inventory_unmapped')
-        for item_id in set(state.items) & mappings.observed_only_items.keys():
-            from .kernel import ItemDefinition
+        if '428' in state.items:
+            from agent.live_decision.high_score.kernel import ItemDefinition
+            from agent.live_decision.high_score.opening_items import STAGE_START_ITEM_NAME
 
-            _require(kernel.items.get(item_id) == ItemDefinition(
-                item_id, mappings.observed_only_items[item_id], (), PlanType.SENSE)
-                and not any(ref.source_id == f'item:{item_id}' for ref in state.scheduled_effects),
+            # This is the opening assembler's observed-only definition. Its
+            # generated cards are already in the complete deck; it has no
+            # remaining effect to encode or apply a second time.
+            _require(kernel.items.get('428') == ItemDefinition(
+                '428', STAGE_START_ITEM_NAME, (), PlanType.SENSE)
+                and not any(ref.source_id == 'item:428' for ref in state.scheduled_effects),
                 'stage_start_item_not_resolved')
-        known_memories = {key[1] for key in mappings.schedules if key[0] == 'MEMORY'}
-        _require(set(state.memory_abilities) <= known_memories, 'memory_inventory_unmapped')
+        # The kernel validates the registered inventory for this plan. UIObs
+        # represents the effects that are still active via statuses and enchants.
         evidence = []
+        for field in _ANOMALY_HISTORY:
+            value = getattr(state, field)
+            if value and value is not Stance.NEUTRAL:
+                _compression(evidence, field, value.value if isinstance(value, Stance) else value,
+                    'The host retains stance history and counters for legality and rule transitions. '
+                    'UIObs encodes only the current stance and its step.', 'GKMS obs.py; encode.py:global_num')
         for field, raw in (
                 ('nullify_cost_cards', 'ExamSearchPlayCardStaminaConsumptionChange'),
                 ('double_card_effects_remaining', 'ExamCardSearchEffectPlayCountBuff')):
@@ -470,19 +564,20 @@ def build_shadow_observation(request: DecisionRequest, kernel, context: ExamCont
                 _compression(evidence, field, getattr(state, field),
                     'The local count is known and determines legal costs/effect passes. The fixed '
                     'UIObs status vocabulary and enchant schema have no matching count input.',
-                    f"ProduceExamEffectType_{raw}; GKMS obs.py:STATUS_KINDS; encode.py")
+                    f'ProduceExamEffectType_{raw}@{MASTER_REVISION}; GKMS obs.py:STATUS_KINDS; encode.py')
         for field in ('good_condition_fresh', 'excellent_condition_fresh', 'half_cost_fresh',
-                      'double_cost_fresh', 'nullify_genki_fresh'):
+                      'double_cost_fresh', 'nullify_genki_fresh', 'stance_lock_fresh'):
             if getattr(state, field):
                 _compression(evidence, field, True, 'UIObs stores remaining turns without a fresh bit.', 'GKMS encode.py:st_num')
-        for field in ('score_buffs', 'concentration_effect_buffs', 'concentration_addition_buffs'):
+        for field in ('score_buffs', 'concentration_effect_buffs', 'concentration_addition_buffs',
+                      'enthusiasm_bonus_buffs', 'enthusiasm_multiplier_buffs'):
             fresh = [asdict(value) for value in getattr(state, field) if value.fresh]
             if fresh:
                 _compression(evidence, field + '.fresh', fresh,
                              'UIObs stores each known amount and lifetime without layer freshness.', 'GKMS encode.py:st_num')
         for card in state.deck.all_cards:
-            _card(card, mappings)
-        exam = context.observation(state)
+            _card(card, kernel=kernel)
+        exam = context.observation(state, request.plan_type)
         slots = dict(request.card_slots)
         _require(set(slots) == {card.instance_id for card in state.deck.hand}
                  and all(type(slot) is int and slot >= 0 for slot in slots.values()),
@@ -490,7 +585,8 @@ def build_shadow_observation(request: DecisionRequest, kernel, context: ExamCont
         hand = sorted(state.deck.hand, key=lambda card: slots[card.instance_id])
         hand_index = {card.instance_id: i for i, card in enumerate(hand)}
         drinks = sorted(request.drink_slots)
-        _require(all(drink in mappings.drink_ids for _, drink in drinks), 'drink_inventory_unmapped')
+        wire_drinks = [DRINK_IDS.get(drink) or drink_id(kernel.drinks.get(drink)) for _, drink in drinks]
+        _require(all(wire_drinks), 'drink_inventory_unmapped')
         legal = kernel.legal_actions(state, plan_type=request.plan_type, decision_kind=request.decision_kind)
         bindings = []
         for action in legal:
@@ -515,29 +611,32 @@ def build_shadow_observation(request: DecisionRequest, kernel, context: ExamCont
                        block=state.genki, playable=state.actions_remaining, plays=len(history.played))
         _require(all(type(value) is int and value >= 0 for value in numbers.values()), 'num_integer_required')
         en = []
-        refs = tuple(ref for ref in state.scheduled_effects if ref.remaining_uses != 0 and ref.remaining_turns != 0)
-        for ref in refs + history.expired_start_effects:
-            mapped = _enchant(ref, state, evidence, mappings, kernel=kernel)
-            if mapped is not None:
-                en.append(mapped)
+        if include_enchants:
+            refs = tuple(ref for ref in state.scheduled_effects if ref.remaining_uses != 0 and ref.remaining_turns != 0)
+            for ref in refs + history.expired_start_effects:
+                mapped = _enchant(ref, state, evidence, kernel=kernel)
+                if mapped is not None:
+                    en.append(mapped)
         support = {fact.instance_id: fact.enhancement_count for fact in state.hand_support if fact.turn == state.turn}
-        observation = dict(v='uiobs.v1', exam=exam, num=numbers, stance=[None, 0],
-            status=_statuses(state), ench=en,
-            hand=[dict(_card(card, mappings, support_count=support.get(card.instance_id), evidence=evidence),
+        observation = dict(v='uiobs.v1', exam=exam, num=numbers, stance=list(_STANCES[state.stance]),
+            status=_statuses(state),
+            hand=[dict(_card(card, kernel=kernel, support_count=support.get(card.instance_id), evidence=evidence),
                        p=int(card.instance_id in playable)) for card in hand],
-            deck=[_card(card, mappings, evidence=evidence) for card in state.deck.draw_pile],
-            grave=[_card(card, mappings, evidence=evidence) for card in state.deck.discard],
-            hold=[_card(card, mappings, evidence=evidence) for card in state.deck.held],
-            lost=[_card(card, mappings, evidence=evidence) for card in state.deck.removed],
-            played=[_card(card, mappings, support_count=tier, evidence=evidence) for card, tier in zip(
+            deck=[_card(card, kernel=kernel, evidence=evidence) for card in state.deck.draw_pile],
+            grave=[_card(card, kernel=kernel, evidence=evidence) for card in state.deck.discard],
+            hold=[_card(card, kernel=kernel, evidence=evidence) for card in state.deck.held],
+            lost=[_card(card, kernel=kernel, evidence=evidence) for card in state.deck.removed],
+            played=[_card(card, kernel=kernel, support_count=tier, evidence=evidence) for card, tier in zip(
                 history.played, history.played_support or (None,) * len(history.played), strict=True)],
-            drinks=[mappings.drink_ids[drink] for _, drink in drinks], legal=[list(binding.token) for binding in bindings])
+            drinks=wire_drinks, legal=[list(binding.token) for binding in bindings])
+        if include_enchants:
+            observation['ench'] = en
         notes = _MODEL_COMPRESSION
         if state.deck.known_top_count:
             notes += ('The explicitly known deck prefix is not representable by the external bag encoder.',)
             _compression(evidence, 'deck.known_top_count', state.deck.known_top_count,
                          'The encoder treats draw-zone input as a bag.', 'GKMS encode.py:ZONES')
         return ShadowObservation('supported', request, observation, tuple(bindings), compression_notes=notes,
-                                 compression_evidence=tuple(evidence), mappings=mappings)
+                                 compression_evidence=tuple(evidence))
     except (ShadowMappingError, HighScoreContractError, KernelError) as error:
         return ShadowObservation('unsupported', request, reason_codes=(str(error),))

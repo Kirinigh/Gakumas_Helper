@@ -1,10 +1,85 @@
 """Compare the visible hand markers and HUD after an unconfirmed selection tap."""
 import json
+import time
 from pathlib import Path
 from functools import lru_cache
 
 import cv2
 import numpy as np
+
+CARD_SELECT_TIMEOUT = 1.6
+CARD_SELECT_POLL_INTERVAL = .2
+_SELECT_MARKER = r'^\s*[Ss]\s*[Ee]\s*[Ll]\s*[Ee]\s*[Cc].{0,5}\s*$'
+_SELECT_SUFFIX = r'[Ss][Ee][Ll][Ee][Cc][Tt]$'
+
+
+def read_exam_select_markers(context, image):
+    """Hiro's tolerant SELECT strip read, with a crop retry for joined OCR rows."""
+    node = 'ProduceHIF__ProduceIdentitySelected'
+
+    def ocr(roi, expected, *, only_rec=False):
+        return context.run_recognition(node, image, pipeline_override={node: dict(
+            recognition='OCR', roi=list(roi), expected=expected, only_rec=only_rec)})
+
+    result = ocr((0, 1040, 720, 160), [_SELECT_MARKER, _SELECT_SUFFIX])
+    if not getattr(result, 'hit', False):
+        return (), False
+    rows = getattr(result, 'filtered_results', ()) or ()
+    markers = []
+    for row in rows:
+        label = ''.join((row.text or '').split()).upper()
+        if label.startswith('SELEC') and len(label) <= 10:
+            markers.append(tuple(row.box))
+            continue
+        if (not isinstance(image, np.ndarray) or not label.endswith('SELECT')
+                or row.box[2] < 105):
+            continue
+        x, top, width, height = map(int, row.box)
+        y = top + height // 2
+        if not 1080 < y < 1140:
+            continue
+        right = x + width
+        left, right = max(0, right - 94), min(image.shape[1], right + 5)
+        crop = image[y - 10:y + 25, left:right]
+        if not crop.size:
+            continue
+        orange = cv2.inRange(cv2.cvtColor(crop, cv2.COLOR_BGR2HSV), (14, 130, 178), (30, 255, 255))
+        if cv2.countNonZero(orange) > 200:
+            roi = (left, y - 10, right - left, 35)
+            confirmed = ocr(roi, [_SELECT_MARKER], only_rec=True)
+            if confirmed and confirmed.hit:
+                markers.append(roi)
+    return tuple(markers), bool(markers) or not rows
+
+
+def recheck_persistent_select(image, anchor, *, selected, capture, stopping):
+    """Ignore a stale SELECT during a card animation before tapping the same card."""
+    first = selected(image, anchor)
+    if first is None:
+        return None
+    time.sleep(.8)
+    return None if stopping() else selected(capture(), first)
+
+
+def wait_for_target_select(capture, probe, stopping):
+    """Read the target marker during the same Hiro selection wait in each host."""
+    deadline = time.monotonic() + CARD_SELECT_TIMEOUT
+    seen_marker = False
+    while not stopping() and time.monotonic() < deadline:
+        time.sleep(CARD_SELECT_POLL_INTERVAL)
+        if stopping():
+            break
+        box, any_marker = probe(capture())
+        if box is not None:
+            return box, True
+        seen_marker |= any_marker
+    return None, seen_marker
+
+
+def same_readable_resources(before, after):
+    """A missed HUD read alone does not show that the game progressed."""
+    return all(old is None or new is None or old == new
+               for old, new in zip(before, after, strict=True))
 
 
 @lru_cache
@@ -48,8 +123,8 @@ def same_retry_scene(before, after):
     if before is None or after is None:
         return False
     return (before['marks'] == after['marks'] and before['turns_remaining'] == after['turns_remaining']
-            and all(before[name] is None or after[name] is None or before[name] == after[name]
-                    for name in ('stamina', 'shield')))
+            and same_readable_resources((before['stamina'], before['shield']),
+                                        (after['stamina'], after['shield'])))
 
 
 def observe_after_unconfirmed(module, context, params, baseline, ui=None, *, image=None, selection_retry=None):

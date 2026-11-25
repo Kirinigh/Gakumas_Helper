@@ -267,6 +267,30 @@ class HifFastNativePolicy:
         self._box = box
         return action
 
+    def recover_end_turn(self, state):
+        """Bind Hiro's host-selected SKIP after verified non-consumption."""
+        from agent.live_decision.high_score.decision_box import DecisionBox
+
+        if (self._box is None or self._pending is None or self._invalid
+                or not self._same(self._pending[0], state)):
+            raise ValueError('fast_recovery_requires_original_pending_state')
+        request = self._box.request
+        legal = self._legal(business_copy(request, offline=False))
+        action = next((candidate for candidate in legal if candidate.kind is ActionKind.END_TURN), None)
+        if action is None:
+            raise ValueError('fast_recovery_skip_not_legal')
+        started = time.perf_counter()
+        offline = business_copy(action, offline=True)
+        self.policy.decisions[-1]['status'] = 'observed_no_effect'
+        entry = dict(index=len(self.policy.decisions), source='hiro_forced_skip',
+                     turn=state.turn, status='selected', action=asdict(offline))
+        self.policy.decisions.append(entry)
+        self.policy._pending = request.state, offline, None
+        self._box = DecisionBox(self.policy, request, pending_action=offline)
+        self._pending = state, action
+        self._pending_branches = ()
+        return self._response(action, 'hiro_forced_skip', started, entry)
+
     @staticmethod
     def _rebind(action, request, legal):
         if action.kind is ActionKind.PLAY_CARD:

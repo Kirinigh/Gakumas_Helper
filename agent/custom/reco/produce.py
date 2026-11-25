@@ -159,11 +159,11 @@ class ProduceCardsFlagAuto(CustomRecognition):
         context: Context,
         argv: CustomRecognition.AnalyzeArg,
     ) -> Union[CustomRecognition.AnalyzeResult, Optional[RectType]]:
-        context.run_action("Click_1")
-        cards_reco_detail = context.run_recognition("ProduceRecognitionCards", argv.image)
-        health_reco_detail = context.run_recognition("ProduceRecognitionHealthFlag", argv.image)
-        if cards_reco_detail and cards_reco_detail.hit and health_reco_detail and health_reco_detail.hit:
-            logger.success("事件: 出牌场景")
-            return CustomRecognition.AnalyzeResult(box=[0, 0, 1, 1], detail={"detail": "识别到出牌场景"})
-        else:
-            return CustomRecognition.AnalyzeResult(box=None, detail={"detail": "未识别到选择场景"})
+        health = context.run_recognition("ProduceRecognitionHealthFlag", argv.image)
+        if health and health.hit:
+            for node in ("ProduceRecognitionCards", "ProduceRecognitionNoCards"):
+                hand = context.run_recognition(node, argv.image)
+                if hand and hand.hit:
+                    logger.success("事件: 出牌场景")
+                    return CustomRecognition.AnalyzeResult(box=[0, 0, 1, 1], detail={"detail": "识别到出牌场景"})
+        return CustomRecognition.AnalyzeResult(box=None, detail={"detail": "未识别到选择场景"})

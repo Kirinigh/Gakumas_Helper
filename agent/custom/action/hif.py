@@ -74,3 +74,105 @@ class ProduceHifAdvance(CustomAction):
         # The bounded sequence ends at a boundary, failure or budget. It always
         # yields to StopTask rather than generic Produce fallbacks or retries.
         return False
+
+
+@AgentServer.custom_action("ProduceHifQualifierPrepare")
+class ProduceHifQualifierPrepare(CustomAction):
+    def run(self, context, argv):
+        from route.qualifier import run_native_qualifier
+
+        try:
+            options = context.get_node_data('ProduceHifQualifierPreparationSettings')['attach']
+            result = run_native_qualifier(context, argv, options)
+            if result['status'] == 'settled':
+                logger.info("選抜試験已完成结算。")
+            elif result['status'] == 'prepared':
+                count = len(result['memory_inventory']['entries'])
+                logger.info(f"選抜試験编成已准备，读取回忆 {count} 份。已到开始确认。")
+            else:
+                logger.warning(f"選抜試験停止，状态 {result['status']}，已登记 {len(result.get('exams', []))} 场。")
+        except (KeyError, TypeError, ValueError, RuntimeError, OSError) as error:
+            logger.error(f"選抜試験准备停止：{error}")
+        return False
+
+
+@AgentServer.custom_action("ProduceRunHiroCultivation")
+class ProduceRunHiroCultivation(CustomAction):
+    def run(self, context, argv):
+        from pathlib import Path
+
+        from route.bootstrap import _endpoint, _product_paths, _instance_endpoint
+
+        from agent.route.hiro_hif import _read_ocr
+        from agent.route.hiro_exam import play_cultivation_exam
+        from agent.route.hiro_cultivation import nia_fallback, _capture_sink, maa_next_nodes, run_hiro_cultivation
+        from agent.live_decision.hiro_runtime import hiro_module, hiro_route_file
+        from agent.live_decision.hiro_maa_device import HiroMaaDevice
+
+        from .produce import _cultivation_option, _cultivation_entries
+
+        def report(event):
+            logger.info(json.dumps(event, ensure_ascii=False))
+
+        try:
+            task, settings = _cultivation_option(context, argv)
+            try:
+                hiro_route_file(Path('assets/pack/ui/templates.json'))
+            except (FileNotFoundError, ImportError):
+                # Installed packages may carry only the pinned battle module.
+                # Keep their existing Maa route and opening receipt.
+                return True
+            entry = _cultivation_entries[task]
+            algorithm = settings['algorithm']
+            hajime = hiro_module('runtime.hajime').MODES
+            nia = hiro_module('runtime.nia_sample').MODES
+            mode, difficulty = next((mode, difficulty) for mode, choices in (('hajime', hajime), ('nia', nia))
+                for difficulty, produce in choices.items() if produce == entry.produce)
+            if mode == 'nia':
+                mirror = context.get_node_data('ProduceMirrorFlag') or {}
+                attach = mirror.get('attach') or {}
+                if any(attach.get(f'focus_{stage}') for stage in (1, 2, 3)):
+                    # Retain the player's explicit manual audition choice.
+                    return True
+            failure = 'ProduceNIAFailedFlag' if mode == 'nia' else 'ProduceFailedFlag'
+            retry = 'ProduceFailedStop' not in maa_next_nodes(context, failure)
+            _cultivation_entries.pop(task)
+            maa = _product_paths()[2]
+            endpoint = _instance_endpoint(_endpoint(context, expected_maa=maa))
+
+            def authorize():
+                current = context.get_task_job()
+                if current.job_id != task or not current.status.running or context.tasker.stopping:
+                    raise ValueError('current Maa Produce task is no longer running')
+                if _instance_endpoint(_endpoint(context, expected_maa=maa)) != endpoint:
+                    raise ValueError('current Maa Produce input endpoint changed')
+
+            device = HiroMaaDevice(context, authorize, log=report)
+            run_hiro_cultivation(device, lambda image: _read_ocr(context, image),
+                mode=mode, difficulty=difficulty, skin=entry.idol,
+                play_exam=play_cultivation_exam(context, entry, algorithm, log=report),
+                log=report, fallback=nia_fallback(context, authorize) if mode == 'nia' else None,
+                save_frame=_capture_sink(report), retry=retry)
+            report(dict(event='hiro_cultivation_settled', produce=entry.produce))
+            return False  # StopTask owns both settlement and interrupted routes.
+        except (ImportError, KeyError, OSError, RuntimeError, StopIteration, TypeError, ValueError) as error:
+            logger.error(f'Hiro 培育停止：{error}')
+            return False
+
+
+@AgentServer.custom_action("ProduceRunHiroCampaign")
+class ProduceRunHiroCampaign(CustomAction):
+    def run(self, context, argv):
+        def report(data):
+            logger.info(json.dumps(data, ensure_ascii=False))
+
+        try:
+            from agent.route.hiro_product import run_hiro_product
+
+            params = argv.custom_action_param
+            params = json.loads(params) if isinstance(params, str) else params
+            result = run_hiro_product(context, argv, campaign=bool((params or {}).get('hif')), log=report)
+            logger.info(f"Hiro 全程培育 {result['status']}，编号 {result['run_id']}")
+        except (ImportError, KeyError, OSError, RuntimeError, StopIteration, TypeError, ValueError) as error:
+            logger.error(f'Hiro 全程培育停止：{error}')
+        return False

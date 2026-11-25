@@ -90,8 +90,8 @@ class CardCustomizationsReaderPort(Protocol):
 
     _inferred_clicked_cards: Any
 
-    def _measure_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int, int, int] | None: ...
-    def _measure_optional_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int, int, int] | None: ...
+    def _measure_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int | None, ...] | None: ...
+    def _measure_optional_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int | None, ...] | None: ...
 
     _member_failure_frames: Any
 
@@ -534,7 +534,6 @@ class CardCustomizationsReader:
                     card_id,
                     text,
                     expected_count=0,
-                    allow_positive_completion=False,
                 )
                 if customizations:
                     raise ArenaCatalogError("a known-zero card resolved a positive customization state")
@@ -549,6 +548,13 @@ class CardCustomizationsReader:
                         "skill_card_cost_fallback_policy_invalid",
                         f"unsupported generic-cost fallback policy {generic_cost_fallback_policy!r}",
                     )
+                at_cap = self._resolve_generic_cost_at_customization_cap(
+                    card_id,
+                    text,
+                    expected_customization_count=expected_customization_count,
+                )
+                if at_cap is not None:
+                    return at_cap
                 if not allow_generic_cost_fallback:
                     self.port._increment("skill_card_cost_fallback_settle_waits")
                     raise ArenaReaderError(
@@ -663,7 +669,6 @@ class CardCustomizationsReader:
                                 card_id,
                                 text,
                                 expected_count=0,
-                                allow_positive_completion=False,
                             )
                             if customizations:
                                 raise ArenaCatalogError("stable non-badge card art did not resolve a zero state")
@@ -727,6 +732,38 @@ class CardCustomizationsReader:
             conservative_cost_assumption=conservative_cost_assumption,
         )
 
+    def _resolve_generic_cost_at_customization_cap(
+        self,
+        card_id: int,
+        detail_text: str,
+        *,
+        expected_customization_count: int | None,
+    ) -> ClickedSkillCard | None:
+        """An independently confirmed group at the cap cannot add the cost bit."""
+        catalog = self.port.catalog
+        try:
+            customizations = catalog._resolve_failed_detail_unique_customizations(
+                card_id, detail_text,
+            )
+        except ArenaCatalogError:
+            return None
+        count = sum(customizations.values())
+        if count != catalog.maximum_customization_count(card_id):
+            return None
+        evidence = catalog.effective_customization_evidence_mode(
+            card_id, detail_text, expected_count=count, resolved=customizations,
+        )
+        if evidence != "positive_unique":
+            return None
+        return ClickedSkillCard(
+            card_id,
+            customizations,
+            resolution_source=(
+                "detail_unconstrained" if expected_customization_count is None else "detail_unique"
+            ),
+            detail_evidence_mode=evidence,
+        )
+
     def read_clicked_skill_card_unconstrained(
         self,
         target: TeamTarget,
@@ -756,7 +793,7 @@ class CardCustomizationsReader:
         self,
         key: tuple[int, int],
         card_id: int,
-    ) -> tuple[int, int, int] | None:
+    ) -> tuple[int | None, ...] | None:
         diagnostics = getattr(self.port, "_card_face_cost_diagnostics", None)
         if diagnostics is None:
             diagnostics = {}
@@ -776,8 +813,10 @@ class CardCustomizationsReader:
             cache_matches = cached.get("card_id") == card_id and isinstance(cached_hypotheses, list) and tuple(cached_hypotheses) == hypotheses
             if cache_matches:
                 values = cached.get("frame_values")
-                if isinstance(values, list) and len(values) == 3 and all(type(value) is int for value in values):
-                    return int(values[0]), int(values[1]), int(values[2])
+                if isinstance(values, list) and len(values) == 3 and all(
+                    value is None or (type(value) is int and value in hypotheses) for value in values
+                ):
+                    return tuple(values)
                 raise ArenaReaderError(
                     "skill_card_cost_evidence_invalid",
                     f"cached card-face cost evidence is invalid for {key!r}",
@@ -822,8 +861,10 @@ class CardCustomizationsReader:
                 )
                 for frame, row in zip(frames, frame_rows, strict=True)
             )
-            value = stable_generic_cost_value(predictions)
-            values = (value, value, value)
+            stable_generic_cost_value(predictions)
+            values = tuple(
+                prediction.value if prediction.status == "MEASURED" else None for prediction in predictions
+            )
         except (GenericCostReferenceError,) as error:
             detail = f"group {group_index}/slot {card_slot}/card {card_id}: {error}"
             failed_sources[key] = {
@@ -892,7 +933,7 @@ class CardCustomizationsReader:
         self,
         key: tuple[int, int],
         card_id: int,
-    ) -> tuple[int, int, int] | None:
+    ) -> tuple[int | None, ...] | None:
         """Return optional cost evidence without blocking independent detail truth."""
 
         errors = getattr(self.port, "_card_face_cost_optional_errors", None)
@@ -915,7 +956,7 @@ class CardCustomizationsReader:
         key: tuple[int, int],
         card_id: int,
         customizations: Any,
-    ) -> tuple[int, int, int] | None:
+    ) -> tuple[int | None, ...] | None:
         values = self.port._measure_card_face_generic_cost(key, card_id)
         if values is None:
             return None

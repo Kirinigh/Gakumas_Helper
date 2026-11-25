@@ -313,8 +313,9 @@ class ScheduledEffectRef:
         if self.last_fired_turn is not None and (type(self.last_fired_turn) is not int or self.last_fired_turn < 1):
             raise HighScoreContractError("last schedule activation turn must be positive")
         if type(self.duration_fresh) is not bool or (self.duration_fresh and
-                (not self.remaining_turns or self.trigger_phase is not SchedulePhase.END_OF_TURN)):
-            raise HighScoreContractError("fresh schedule duration requires an active end-turn timer")
+                (not self.remaining_turns or self.trigger_phase not in (
+                    SchedulePhase.END_OF_TURN, SchedulePhase.START_OF_TURN, SchedulePhase.AFTER_START_OF_TURN))):
+            raise HighScoreContractError("fresh schedule duration requires an active turn timer")
         if type(self.effect_counter) is not int or self.effect_counter < 0:
             raise HighScoreContractError("effect counter cannot be negative")
         if not self.source_id or not self.card_id:

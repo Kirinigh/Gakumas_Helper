@@ -147,7 +147,7 @@ class StatusPanelPage:
         return tuple(row.content_key for row in self.rows), self.at_top, self.at_bottom
 
 
-def status_panel_geometry(image, *, require_complete_layout=True, row_white_min=250):
+def status_panel_geometry(image, *, require_complete_layout=True, row_white_min=250, allow_unscrolled=False):
     if getattr(image, 'shape', ()) != (1280, 720, 3):
         raise ValueError('status panel resolution is uncalibrated')
     strip = image[30:738, 695].astype(np.int16)
@@ -171,7 +171,7 @@ def status_panel_geometry(image, *, require_complete_layout=True, row_white_min=
             span = (int(a+30),int(b+30))
             if b-a >= 30 and not any(max(abs(x-y) for x,y in zip(span,old)) <= 3 for old in spans):
                 spans.append(span)
-    if len(spans) != 1:
+    if len(spans) != 1 and (spans or not allow_unscrolled):
         raise ValueError('status panel scrollbar is not unique')
     if row_white_min not in (235, 250):
         raise ValueError('panel white-row profile is uncalibrated')
@@ -221,13 +221,17 @@ def status_panel_geometry(image, *, require_complete_layout=True, row_white_min=
     complete = tuple(box for box in boxes if box[1] > 20 and box[1]+box[3] < 738)
     if not complete and (require_complete_layout or not boxes):
         raise ValueError('status panel has no complete readable rows')
-    top, bottom = spans[0]
     def spacing_valid(a,b):
         clipped_edge = a[1] == 20 or b[1]+b[3] == 738
         lower,upper = (0,24) if clipped_edge else (7,16)
         return lower <= b[1]-a[1]-a[3] <= upper
     if require_complete_layout and any(not spacing_valid(a,b) for a,b in zip(boxes,boxes[1:])):
         raise ValueError(f'status panel contains an unobserved row or inconsistent spacing: {boxes}')
+    if not spans:
+        if len(complete) != len(boxes) or not 40 <= boxes[0][1] <= 48 or boxes[-1][1] + boxes[-1][3] > 708:
+            raise ValueError('unscrolled status panel rows are incomplete')
+        return complete, (0, 0), True, True, 0
+    top, bottom = spans[0]
     if require_complete_layout and ((30 <= top <= 36 and not 40 <= boxes[0][1] <= 48)
             or (731 <= bottom <= 736 and not 718 <= boxes[-1][1]+boxes[-1][3] <= 728)):
         raise ValueError('status panel endpoint rows are missing')

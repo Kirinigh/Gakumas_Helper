@@ -482,7 +482,7 @@ class UpstreamHifCardUI(BattleRecognitionMixin):
 
     def _first_target_select(self, index):
         """Use hiro's target marker and one same-scene retry on the bound miyu slot."""
-        from .hif_card_retry import same_retry_scene
+        from .hif_card_retry import same_retry_scene, wait_for_target_select, read_exam_select_markers
 
         context = self.context
         resumed = getattr(self.base, 'gkh_hif_reobserved_selected_target', None)
@@ -498,16 +498,12 @@ class UpstreamHifCardUI(BattleRecognitionMixin):
             box = current if current is not None else self._hif_hand_boxes[index]
             if BattleRecognitionMixin._hif_has_select(context, image, box):
                 return box, True
-            node = 'ProduceHIF__ProduceIdentitySelected'
-            result = context.run_recognition(node, image, pipeline_override={node: dict(
-                recognition='OCR', expected=[r'^[Ss][Ee][Ll][Ee][Cc].{0,5}$'], roi=[0, 1040, 720, 160])})
-            if not (result and result.hit):
-                return None, False
+            markers, present = read_exam_select_markers(context, image)
             target_x = box[0] + box[2] / 2
-            for row in getattr(result, 'filtered_results', ()):
-                if abs(row.box[0] + row.box[2] / 2 - target_x) <= 70:
+            for left, _, width, _ in markers:
+                if abs(left + width / 2 - target_x) <= 70:
                     return box, True
-            return None, True
+            return None, present
 
         image = context.tasker.controller.post_screencap().wait().get()
         boxes = self._hif_frame_boxes(context, image)
@@ -534,17 +530,15 @@ class UpstreamHifCardUI(BattleRecognitionMixin):
         first_click = self.receipt['inputs'][-1]
         self._hif_selection_index = index
         self._hif_unselected_count = 0
+        def capture():
+            return context.tasker.controller.post_screencap().wait().get()
+
         for attempt in range(2):
-            deadline = time.monotonic() + 1.6
-            saw_other_marker = False
-            while not context.tasker.stopping and time.monotonic() < deadline:
-                time.sleep(.2)
-                image = context.tasker.controller.post_screencap().wait().get()
-                boxes = self._hif_frame_boxes(context, image)
-                marker_box, any_marker = target_marker(image, boxes)
-                if marker_box is not None:
-                    return marker_box
-                saw_other_marker |= any_marker
+            marker_box, saw_other_marker = wait_for_target_select(capture,
+                lambda image: target_marker(image, self._hif_frame_boxes(context, image)),
+                lambda: context.tasker.stopping)
+            if marker_box is not None:
+                return marker_box
             retry = self.receipt.setdefault('selection_retry', dict(first_frame_id=first_click['frame_id'],
                 x=first_click['x'], y=first_click['y'], retries=0))
             if context.tasker.stopping or saw_other_marker or attempt:
@@ -597,6 +591,47 @@ class UpstreamHifCardUI(BattleRecognitionMixin):
         finally:
             self._first_click = self._click_frame = None
             self.publish()
+
+    def retry_persistent_confirmation(self, index):
+        """Recheck the target marker after an unresolved submission of this action."""
+        from .exam_hud import battle_dialog_header
+        from .hif_card_retry import same_retry_scene, read_exam_select_markers, recheck_persistent_select
+
+        context = self.context
+        if context.tasker.stopping or not self.selected_frames:
+            return False
+        original = self.selected_frames[0][1]
+        scene = self.read_retry_scene(original)
+        if scene is None:
+            return False
+
+        def capture():
+            return context.tasker.controller.post_screencap().wait().get()
+
+        def selected(image, box):
+            if battle_dialog_header(image) is not None:
+                return None
+            current = self._hif_preview_box(self._hif_frame_boxes(context, image), index)
+            if current is None:
+                return None
+            x, y, w, h = current
+            left, top, width, height = box
+            if abs(x + w / 2 - left - width / 2) > 30 or abs(y + h - top - height) > 30:
+                return None
+            markers, _ = read_exam_select_markers(context, image)
+            if (any(abs(mx + mw / 2 - x - w / 2) <= 70 for mx, _, mw, _ in markers)
+                    and same_retry_scene(scene, self.read_retry_scene(image))):
+                return current
+            return None
+
+        box = self._hif_preview_box(self._hif_frame_boxes(context, original), index)
+        if box is None:
+            return False
+        checked = recheck_persistent_select(capture(), box, selected=selected, capture=capture,
+                                            stopping=lambda: context.tasker.stopping)
+        if checked is None:
+            return False
+        return self._hif_click_card(context, checked, index, '确认出牌', 0)
 
     def end_turn(self, *, action):
         """The SKIP recognition/Click used by pinned fb8 _skip_round.

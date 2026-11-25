@@ -47,80 +47,153 @@
     "next": []
   },
   "ProduceHifDayText": {
-    "recognition": "OCR",
+    "recognition": "Custom",
     "roi": [
       72,
       80,
       120,
       50
     ],
-    "expected": "[0-6]日",
+    "custom_recognition": "LiveSimdOCR",
+    "custom_recognition_param": {
+      "expected": "[0-6]日"
+    },
     "action": "DoNothing"
   },
   "ProduceHifBattleText": {
-    "recognition": "OCR",
+    "recognition": "Custom",
     "roi": [
       0,
       0,
       720,
       300
     ],
-    "expected": "H[.．]?I[.．]?F[.．]?本戦(?:ラウンド|$)",
+    "custom_recognition": "LiveSimdOCR",
+    "custom_recognition_param": {
+      "expected": "H[.．]?I[.．]?F[.．]?本戦(?:ラウンド|$)"
+    },
     "action": "DoNothing"
   },
   "ProduceHifTitleText": {
-    "recognition": "OCR",
+    "recognition": "Custom",
     "roi": [
       0,
       0,
       720,
       200
     ],
-    "expected": "H[.．]?I[.．]?F[.．]?本戦まで",
+    "custom_recognition": "LiveSimdOCR",
+    "custom_recognition_param": {
+      "expected": "H[.．]?I[.．]?F[.．]?本戦まで"
+    },
     "action": "DoNothing"
   },
   "ProduceHifLessonText": {
-    "recognition": "OCR",
+    "recognition": "Custom",
     "roi": [
       0,
       1000,
       720,
       150
     ],
-    "expected": "授業",
+    "custom_recognition": "LiveSimdOCR",
+    "custom_recognition_param": {
+      "expected": "授業"
+    },
     "action": "DoNothing"
   },
   "ProduceHifTrainingText": {
-    "recognition": "OCR",
+    "recognition": "Custom",
     "roi": [
       0,
       1000,
       720,
       150
     ],
-    "expected": "公開",
+    "custom_recognition": "LiveSimdOCR",
+    "custom_recognition_param": {
+      "expected": "公開"
+    },
     "action": "DoNothing"
   },
   "ProduceHifOutingText": {
-    "recognition": "OCR",
+    "recognition": "Custom",
     "roi": [
       0,
       1000,
       720,
       150
     ],
-    "expected": "お[出で]かけ",
+    "custom_recognition": "LiveSimdOCR",
+    "custom_recognition_param": {
+      "expected": "お[出で]かけ"
+    },
     "action": "DoNothing"
   },
   "ProduceHifConsultText": {
-    "recognition": "OCR",
+    "recognition": "Custom",
     "roi": [
       0,
       1000,
       720,
       150
     ],
-    "expected": "相談",
+    "custom_recognition": "LiveSimdOCR",
+    "custom_recognition_param": {
+      "expected": "相談"
+    },
     "action": "DoNothing"
+  },
+  "ProduceHiroCultivationAfterStart": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "ProduceRunHiroCultivation",
+    "on_error": [
+      "ProduceHifAdvanceStop"
+    ],
+    "next": [
+      "ProduceEntryFlag",
+      "[JumpBack]ProduceNext"
+    ]
+  },
+  "ProduceHiroCampaignEntry": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "ProduceRunHiroCampaign",
+    "on_error": [
+      "ProduceHifAdvanceStop"
+    ],
+    "next": [
+      "ProduceHifAdvanceStop"
+    ]
+  },
+  "ProduceHiroFormationSettings": {
+    "action": "DoNothing"
+  },
+  "ProduceHiroHifFinalsSettings": {
+    "action": "DoNothing",
+    "attach": {
+      "battle_policy": "uinet-2.1"
+    }
+  },
+  "ProduceHifQualifierPrepareEntry": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "ProduceHifQualifierPrepare",
+    "on_error": [
+      "ProduceHifAdvanceStop"
+    ],
+    "next": [
+      "ProduceHifAdvanceStop"
+    ]
+  },
+  "ProduceHifQualifierPreparationSettings": {
+    "action": "DoNothing",
+    "attach": {
+      "support_set": "1",
+      "memory_set": "1",
+      "attribute": "Da",
+      "memory_cards": ""
+    }
   }
 }

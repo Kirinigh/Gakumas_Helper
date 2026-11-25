@@ -43,6 +43,7 @@ from maa.custom_action import CustomAction
 from route.battle_policy import FORMAL_PROFILES
 from card_selection.model import frame_identifier, isolate_card_candidates
 from live_decision.layout import calibrated_live_client_size
+from live_decision.exam_hud import EXAM_GENKI_ROI, EXAM_STAMINA_ROI, valid_stamina, outlined_number_roi
 from maa.agent.agent_server import AgentServer
 from live_decision.selection import (
     same_live_candidate_geometry as _same_live_candidate_geometry,
@@ -850,9 +851,7 @@ def _live_field_roi(context, name: str, roi: list[int], image=None) -> list[int]
             # can become an extra leading digit. Keep the percentage only.
             return [110, 82, 115, 37]
         if name == "stamina":
-            # Share the complete numeric crop validated by HIF recovery;
-            # stage lights outside it can be mistaken for punctuation.
-            return [573, 212, 49, 32]
+            return list(EXAM_STAMINA_ROI)
         if name == "shield":
             if (tuple(getattr(context, 'gkh_hif_client_size', ())) in
                     {(540, 960), (541, 961), (541, 962), (542, 962)}
@@ -877,7 +876,7 @@ def _live_field_roi(context, name: str, roi: list[int], image=None) -> list[int]
                 return [660, 177, 55, 31]
             # The old NIA crop ends at y=200, inside HIF's digit. Exclude
             # the stamina bar and outer badge edge, preserving its face.
-            return [660, 175, 55, 34]
+            return list(EXAM_GENKI_ROI)
     return list(roi)
 
 
@@ -988,8 +987,28 @@ def _ocr_field(
             and tuple(getattr(context, 'gkh_hif_client_size', ())) == (480, 853)
             and roi == [660, 177, 55, 31] and observed.get('accepted') is True
             and 0 <= observed['confidence'] < .95 and re.fullmatch(r'[0-9]', observed['text']) is not None)
-        if not (split_contrast_shield or weak_compact_shield_digit):
+        if shield_contrast_detection and not (split_contrast_shield or weak_compact_shield_digit):
             return observed
+    if name == "stamina" and isinstance(hif_run, HifLiveRunContext):
+        maximum = hif_run.max_stamina
+        observed = _hif_stamina_in_range(observed, maximum)
+        if observed.get("reason") not in {"live_field_ocr_missing", "hif_stamina_detection_unresolved",
+                                         "hif_run_stamina_contradiction"}:
+            return observed
+        tight = outlined_number_roi(image, tuple(roi))
+        if tight is None:
+            return observed
+        node = 'Task200VisualstaminaOutlined'
+        detail = context.run_recognition(node, image, pipeline_override={node: {
+            'recognition': 'OCR', 'roi': list(tight), 'expected': expected, 'only_rec': True,
+        }})
+        rows = list(detail.filtered_results or ()) if detail and detail.hit else []
+        fallback = _hif_stamina_in_range(_parse_live_field_ocr_results(rows, name=name, expected=expected), maximum)
+        if (fallback["accepted"]
+                and fallback["confidence"] >= LIVE_AUTHORITATIVE_OCR_MOSAIC_ABSOLUTE_MIN_CONFIDENCE):
+            return dict(fallback, acquisition_mode='hif_stamina_outlined_reread',
+                        roi=list(tight), original_observation=observed)
+        return observed
     if (name == 'shield' and isinstance(hif_run, HifLiveRunContext)
             and tuple(getattr(context, 'gkh_hif_client_size', ())) in
                 {(540, 960), (541, 961), (541, 962), (542, 962)}
@@ -1504,6 +1523,14 @@ def _hif_shield_text_fragments(rows, roi):
         and max(box[1] for box in boxes) < min(box[1]+box[3] for box in boxes)
         and all(left[0] < right[0] and left[0]+left[2] < right[0]+right[2]
                 for left, right in zip(boxes, boxes[1:])))
+
+
+def _hif_stamina_in_range(observed: dict[str, Any], maximum: int) -> dict[str, Any]:
+    if observed.get("accepted") and not valid_stamina(observed.get("value"), maximum):
+        return dict(observed, accepted=False, value=None, confidence=0.0,
+                    reason="hif_run_stamina_contradiction", observed_value=observed.get("value"),
+                    run_max_stamina=maximum)
+    return observed
 
 
 def _parse_live_field_ocr_results(
@@ -3364,6 +3391,8 @@ def _observe_authoritative_live_ocr_bundle(
             name=name,
             expected=expected,
         )
+        if name == "stamina" and hif_label_reader:
+            mosaic_field = _hif_stamina_in_range(mosaic_field, context.gkh_hif_live_context.max_stamina)
         if (
             mosaic_field.get("reason") == "live_field_ocr_ambiguous"
             or len(grouped.get(name, [])) > 1
@@ -3728,18 +3757,12 @@ def _observe_live_fields(
         "reason": "max_stamina_bar_overlay_uncalibrated",
     }
     if isinstance(hif_run, HifLiveRunContext):
-        stamina = fields["stamina"].get("value")
-        if fields["stamina"].get("accepted") and type(stamina) is int and stamina <= hif_run.max_stamina:
+        fields["stamina"] = _hif_stamina_in_range(fields["stamina"], hif_run.max_stamina)
+        if fields["stamina"].get("accepted"):
             fields["max_stamina"] = {
                 "accepted": True, "value": hif_run.max_stamina, "confidence": 1.0,
                 "reason": "verified_hif_route_context", "run_id": hif_run.run_id,
                 "revision": hif_run.revision,
-            }
-        elif fields["stamina"].get("accepted") and type(stamina) is int:
-            fields["stamina"] = {
-                "accepted": False, "value": None, "confidence": 0.0,
-                "reason": "hif_run_stamina_contradiction",
-                "observed_value": stamina, "run_max_stamina": hif_run.max_stamina,
             }
     fields["action_order"] = (
         dict(authoritative_evidence.get("action_order", {}))

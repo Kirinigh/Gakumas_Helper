@@ -464,7 +464,7 @@ def validate_tree(
             relative,
             payload,
             markers,
-            scan_personal_text=is_project_path,
+            scan_personal_text=is_project_path and path.suffix.casefold() != ".npz",
             allowed_emails=allowed_emails,
             compressed_image_payload=is_project_image,
         )

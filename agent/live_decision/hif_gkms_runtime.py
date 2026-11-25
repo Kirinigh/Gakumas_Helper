@@ -14,7 +14,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 MODEL_SHA256 = 'a8addb1a221100dd251b7846cc3ba3898ec3698c9d3b9b35768d5965472ebd5a'
 UINET21_REV = '1fc50378753bd35fb239bebb77cb315c019915ff'
 UINET21_SHA256 = '5895807a112ca6eec82bbe2dd252a27b140add528e1f33db841eef7c92057824'
-UINET21_ROOT = Path(__file__).resolve().parents[2] / '.local/task280-uinet21' / UINET21_REV
+UINET21_ROOT = Path('.local/task280-uinet21') / UINET21_REV
 MASTER_SHA256 = {
     'ProduceCard': 'fd16544ed56224a3d60c498f3530216d7772d3bcb1d9493daafdfe9d8c7c75b9',
     'ProduceCardCustomize': '90bffffca0030377dadd200cf202d7a7a82c3f3b1cf0aee5d6817fbce410242b',
@@ -30,16 +30,20 @@ MASTER_SHA256 = {
 
 def _master_path():
     if __package__.startswith('agent.'):
-        from agent.utils.runtime_paths import resolve_runtime_path
+        from agent.utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
     else:
-        from utils.runtime_paths import resolve_runtime_path
+        from utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
 
     return resolve_runtime_path(Path('assets/data/hif_fast/master'), Path('data/hif_fast/master'))
 
 
 def _uinet21_root():
-    packaged = _master_path().parent / 'uinet21' / UINET21_REV
-    return packaged if packaged.is_dir() else UINET21_ROOT
+    if __package__.startswith('agent.'):
+        from agent.utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
+    else:
+        from utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
+
+    return resolve_runtime_path(UINET21_ROOT, Path('data/hif_fast/uinet21') / UINET21_REV)
 
 
 def _verify_resources(expected_files):
@@ -54,9 +58,9 @@ def _verify_resources(expected_files):
 
 def require_resources():
     if __package__.startswith('agent.'):
-        from agent.utils.runtime_paths import resolve_runtime_path
+        from agent.utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
     else:
-        from utils.runtime_paths import resolve_runtime_path
+        from utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
 
     model = resolve_runtime_path(Path('assets/resource/base/model/hif_fast/gkms_uinet.onnx'),
         Path('resource/base/model/hif_fast/gkms_uinet.onnx'))
@@ -72,10 +76,20 @@ def require_resources():
     return model, master
 
 
-def load_model():
+def _with_native_master(master_type, directory, native_rules):
+    if not native_rules:
+        return directory
+    from .idol_road_card_rules import extend_uinet_master
+
+    return extend_uinet_master(master_type(directory))
+
+
+def load_model(*, native_rules=False):
     model, master = require_resources()
     from ._vendor.gkms_uinet import Policy
-    policy = Policy(model, master, threads=4)
+    from ._vendor.gkms_uinet.master import Master
+
+    policy = Policy(model, _with_native_master(Master, master, native_rules), threads=4)
     policy.sess.disable_fallback()
     if policy.sess.get_providers() != ['CPUExecutionProvider']:
         raise ValueError('fast_runtime_requires_cpu_only')
@@ -117,14 +131,15 @@ def _uinet21_package():
     return module
 
 
-def load_uinet21(model_path=None, *, model_sha256=UINET21_SHA256):
-    model, master = require_uinet21_resources(model_path, model_sha256=model_sha256)
-    package = _uinet21_package()
-    policy = package.Policy(model, master, threads=4)
-    if policy.version != 2:
-        raise ValueError('uinet21_uiobs_v2_required')
+def load_uinet21(model_path=None, *, model_sha256=UINET21_SHA256, native_rules=False, tower_cards=False):
     from importlib import import_module
 
+    model, master = require_uinet21_resources(model_path, model_sha256=model_sha256)
+    package = _uinet21_package()
+    master_type = import_module(package.__name__ + '.master').Master
+    policy = package.Policy(model, _with_native_master(master_type, master, native_rules or tower_cards), threads=4)
+    if policy.version != 2:
+        raise ValueError('uinet21_uiobs_v2_required')
     inputs = import_module(package.__name__ + '.encode2').INPUTS
     if set(policy.inputs) != set(inputs) or not {'logit', 'adv', 'value'} <= {
         output.name for output in policy.sess.get_outputs()
@@ -140,10 +155,19 @@ def load_uinet21(model_path=None, *, model_sha256=UINET21_SHA256):
 def uinet21_master():
     import json
 
+    if __package__.startswith('agent.'):
+        from agent.master_data import shared_master_rows
+    else:
+        from master_data import shared_master_rows
+
+    names = ('ProduceExamEffect', 'ProduceDrink', 'ProduceDrinkEffect', 'ProduceCard', 'ProduceCardSearch',
+             'ProduceExamStatusEnchant', 'ProduceExamTrigger')
+    shared = shared_master_rows('gkh-model', names, digests=MASTER_SHA256)
+    if shared is not None:
+        return shared
     master = _master_path()
     return {name: json.loads((master / (name + '.json')).read_text(encoding='utf-8'))
-            for name in ('ProduceExamEffect', 'ProduceDrink', 'ProduceDrinkEffect',
-                         'ProduceCard', 'ProduceCardSearch', 'ProduceExamStatusEnchant', 'ProduceExamTrigger')}
+            for name in names}
 
 
 def battle_identity_master():
@@ -161,3 +185,13 @@ def battle_identity_master():
         if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) or not row.get('id') for row in rows):
             raise ValueError(f'battle_identity_master_invalid:{name}')
     return tables
+
+
+def uinet21_observation_builder():
+    """Prepare the model-side projection with the same frozen exam-effect table."""
+    from functools import partial
+
+    from .high_score.gkms_v2_observation import build_v2_observation
+
+    table = uinet21_master()['ProduceExamEffect']
+    return partial(build_v2_observation, exam_effects={row['id']: row for row in table})

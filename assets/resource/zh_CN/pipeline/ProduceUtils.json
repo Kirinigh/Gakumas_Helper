@@ -2,7 +2,9 @@
   "ProduceRecognitionNoCards": {
     "recognition": {
       "param": {
-        "expected": "手牌中的技能卡为0张"
+        "custom_recognition_param": {
+          "expected": "手牌中的技能卡为0张"
+        }
       }
     }
   },

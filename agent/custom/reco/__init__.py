@@ -4,6 +4,7 @@ from .utils import *
 from .produce import *
 from .society import *
 from .challenge import *
+from .simd_ocr import LiveSimdOCR
 
 __all__ = [
     "ProduceHifSceneObserve",
@@ -17,4 +18,5 @@ __all__ = [
     "ProduceCardsFlagAuto",
     "ScreenRotateCheck",
     "ArenaChallengeOutcomePage",
+    "LiveSimdOCR",
 ]

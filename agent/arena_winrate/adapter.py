@@ -9,9 +9,11 @@ import time
 import subprocess
 from typing import Any, Mapping, Sequence
 from pathlib import Path
+from functools import cached_property
 from dataclasses import field, dataclass
 from collections.abc import Callable
 
+from .catalog import ArenaCatalogError, ArenaEntityCatalog
 from .decision import StageEstimate, OpponentEstimate
 
 PROTOCOL_VERSION = "2.0"
@@ -59,6 +61,7 @@ class SubprocessArenaAdapter:
         timeout_seconds: float,
         expected_upstream_commit: str = UPSTREAM_COMMIT,
         cancel_check: Callable[[], None] | None = None,
+        load_catalog: Callable[[], ArenaEntityCatalog] | None = None,
     ) -> None:
         if not command:
             raise ValueError("command must not be empty")
@@ -70,11 +73,13 @@ class SubprocessArenaAdapter:
         self.timeout_seconds = timeout_seconds
         self.expected_upstream_commit = expected_upstream_commit
         self.cancel_check = cancel_check
+        self._load_catalog = load_catalog
 
     @classmethod
     def from_bundle(
         cls, bundle_dir: Path, *, timeout_seconds: float,
         cancel_check: Callable[[], None] | None = None,
+        load_catalog: Callable[[], ArenaEntityCatalog] | None = None,
     ) -> "SubprocessArenaAdapter":
         manifest_path = bundle_dir / "manifest.json"
         try:
@@ -95,7 +100,34 @@ class SubprocessArenaAdapter:
             timeout_seconds=timeout_seconds,
             expected_upstream_commit=commit,
             cancel_check=cancel_check,
+            load_catalog=load_catalog if load_catalog is not None else lambda: ArenaEntityCatalog.from_bundle(bundle_dir),
         )
+
+    @cached_property
+    def _catalog(self) -> ArenaEntityCatalog | None:
+        return self._load_catalog() if self._load_catalog is not None else None
+
+    def validate_loadout_customizations(self, loadout: Mapping[str, Any]) -> None:
+        """Validate each selected customization group against the bundle catalog."""
+        catalog = self._catalog
+        if catalog is None:
+            return
+        for group_index, (cards, groups) in enumerate(
+            zip(loadout["skillCardIdGroups"], loadout["customizationGroups"], strict=True), start=1,
+        ):
+            for slot, (card_id, group) in enumerate(zip(cards, groups, strict=True), start=1):
+                if group == {}:
+                    continue
+                if type(card_id) is int and card_id > 0 and isinstance(group, Mapping) and all(
+                    type(level) is int and level > 0 for level in group.values()
+                ):
+                    legal_groups = catalog.legal_customization_groups(card_id, expected_count=sum(group.values()))
+                    if {str(key): level for key, level in group.items()} in legal_groups:
+                        continue
+                raise ArenaCatalogError(
+                    f"skill-card group {group_index} slot {slot} ID {card_id!r} "
+                    f"has an illegal customization group {group!r}"
+                )
 
     def simulate(self, request: Mapping[str, Any]) -> SimulationBatch:
         return self._parse_response(
@@ -117,6 +149,15 @@ class SubprocessArenaAdapter:
         executable = Path(self.command[0])
         if not executable.is_file():
             raise AdapterError(f"adapter executable is unavailable: {executable}")
+
+        if self._load_catalog is not None:
+            try:
+                for team in (request["own_team"], *request.get("opponents", ())):
+                    for stage in team["stages"]:
+                        for member in stage["members"]:
+                            self.validate_loadout_customizations(member["loadout"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise AdapterError(f"invalid skill-card customizations in simulation input: {error}") from error
 
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:

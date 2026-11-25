@@ -12,11 +12,11 @@ import time
 from copy import deepcopy
 from types import SimpleNamespace
 from pathlib import Path
-from itertools import count
 from dataclasses import asdict
 
 from route.battle_policy import FORMAL_PROFILES, UINET21_PROFILE, NETWORK_PROFILES
 
+from .exam_loop import ExamCycle, ExamOutcome, run_exam_session
 from .hif_handoff import require_hif_handoff, bind_hif_battle_handoff, return_hif_battle_handoff
 from .hif_entry_round import UNREAD_INVENTORY_SOURCES
 from .hif_upstream_ui import HIF_SKIP_RECOGNITION
@@ -525,6 +525,25 @@ class HifLiveHost:
         if entering_recovery and progress.recovery_deadline is not None:
             self.result['battle_progress_recovery'] = '120s_without_confirmed_progress'
             self._persist()
+        if image is not None:
+            from .hif_upstream_ui import HIF_SKIP_RECOGNITION
+            from .hif_capture_adapter import captured_at
+
+            context = self.context
+            skip = 'ProduceRecognitionSkipRound'
+
+            def animating():
+                return (getattr(context.run_recognition('ProduceRecognitionHealthFlag', image), 'hit', False)
+                    and not getattr(context.run_recognition(skip, image, pipeline_override={skip: HIF_SKIP_RECOGNITION}),
+                        'hit', False)
+                    and not getattr(context.run_recognition('ProduceRecognitionChooseMoveCards', image), 'hit', False))
+
+            def advance(point):
+                self._battle_navigation_click((*point, 1, 1),
+                    captured_at(context.tasker.controller, image), 'exam_animation')
+
+            if progress.exam.advance_animation(context, image, is_animating=animating, click=advance):
+                return True
         return False
 
     def _watch_unconfirmed_selection(self, first):
@@ -1151,7 +1170,8 @@ class HifLiveHost:
             opening_retry = None
             checkpoint_retry = None
             saved_opening_retried = False
-            for index in (count(1) if automatic_recovery else range(1, maximum_actions + 1)):
+            def execute_step(index):
+                nonlocal checkpoint, checkpoint_retry, opening_retry, recovery, observe_submission_once
                 require_hif_handoff(self.context, self.params)
                 if automatic_recovery and getattr(self.context.tasker, 'stopping', False):
                     raise ValueError('HIF battle task stopped')
@@ -1181,7 +1201,20 @@ class HifLiveHost:
                         key: value for key, value in checkpoint['live'].items() if key != 'round_number'}
                 self._persist()
                 previous = getattr(self.context, 'gkh_hif_committed_event', None)
-                if checkpoint is not None and checkpoint.get('retrieval') is not None:
+                if checkpoint is not None and checkpoint.get('forced_skip'):
+                    from .hif_upstream_policy import run_strong_end_turn
+                    from .high_score.live_policy import BoundHifOpeningPolicy
+
+                    candidate = self.context.gkh_hif_mcts_policy
+                    bundle, baseline = checkpoint['bundle'], checkpoint['event']
+                    policy = BoundHifOpeningPolicy(bundle, action_order=baseline['core']['fields'][5],
+                                                  decision_policy=candidate)
+                    policy.response = candidate.recover_end_turn(bundle.state)
+                    self.result['hiro_forced_skip'] = dict(reason='three_no_effect_dispatches')
+                    self._cache(candidate)
+                    event = run_strong_end_turn(self.module, self.context, self.params, policy, baseline)
+                    returned = event['accepted'] is True
+                elif checkpoint is not None and checkpoint.get('retrieval') is not None:
                     projected = checkpoint['retrieval']
                     confirmed = checkpoint.get('expected') is not None
                     if confirmed:
@@ -1226,6 +1259,10 @@ class HifLiveHost:
                         self._persist()
                     returned = self.module.ProduceLiveDecisionObserve().run(self.context,
                         SimpleNamespace(custom_action_param=json.dumps(self.params)))
+                return index, previous, returned
+
+            def observe_step(attempt):
+                index, previous, returned = attempt
                 reobserved = getattr(self.context, 'gkh_hif_reobserved_battle', None)
                 if reobserved is not None and self._battle_progress is not None:
                     if reobserved['classification'] == 'terminal':
@@ -1250,100 +1287,119 @@ class HifLiveHost:
                     self.result['observer_returned'] = dict(record=self.result['id'],
                         sequence=self.automatic_control['sequence'])
                 if returned is not True:
-                    if self._battle_progress is not None and terminal is None:
-                        self._poll_battle_progress()
-                    self.result['status'] = 'STOP'
+                    outcome = ExamOutcome.REOBSERVE
+                elif terminal is not None:
+                    outcome = ExamOutcome.RESULT
+                else:
+                    outcome = ExamOutcome.PROGRESS
+                return ExamCycle(outcome, (index, previous, returned, terminal))
+
+            def recover_step(evidence):
+                nonlocal checkpoint, checkpoint_retry, opening_retry, observe_submission_once
+                nonlocal automatic_failure, saved_opening_retried
+                index, _, _, terminal = evidence
+                if self._battle_progress is not None and terminal is None:
+                    self._poll_battle_progress()
+                self.result['status'] = 'STOP'
+                self._persist()
+                if self.result.get('hold_journal'):
+                    self.result['automatic_recovery_stop'] = 'hold_requires_observed_resolution_no_replay'
                     self._persist()
-                    if observe_submission_once:
-                        break
-                    if self.result.get('hold_journal'):
-                        self.result['automatic_recovery_stop'] = 'hold_requires_observed_resolution_no_replay'
-                        self._persist()
-                        break
-                    if self.result.get('pending_dispatch_outcome') == 'not_consumed':
-                        from .hif_native.native_pending_outcome import prepare_unconsumed_retry
+                    return False
+                if self.result.get('pending_dispatch_outcome') == 'not_consumed':
+                    from .hif_native.native_pending_outcome import prepare_unconsumed_retry, is_unconsumed_observation
 
-                        checkpoint = prepare_unconsumed_retry(checkpoint, self.result, self.runtime)
-                        if checkpoint is None:
-                            self.result['automatic_recovery_stop'] = 'verified_unconsumed_retry_limit'
-                            self._persist()
-                            break
-                        self.result['automatic_recovery'] = dict(source=self.result['id'],
-                            reason='dispatch_proven_not_consumed', retry_limit=1,
-                            business_history_advanced=False)
-                        self.context.gkh_hif_mcts_policy = checkpoint['policy']
-                        self._cache(checkpoint['policy'])
+                    if not is_unconsumed_observation(self.result):
+                        return False
+                    checkpoint = prepare_unconsumed_retry(checkpoint, self.result, self.runtime,
+                        recovery=self._battle_progress.exam if self._battle_progress is not None else None)
+                    if checkpoint is None:
+                        self.result['automatic_recovery_stop'] = 'verified_unconsumed_retry_limit'
                         self._persist()
-                        continue
-                    if self.automatic_control is not None:
-                        from .hif_live_recovery import (
-                            find_resume,
-                            reserve_retry,
-                            recovery_candidate,
-                            reported_pending_stop,
-                            verify_recovery_checkpoint,
-                        )
-                        from .hif_native.native_choice_resume import is_confirmed_retrieval_stop
-                        from .hif_native.native_observed_identity_resume import unsubmitted_drink_inspection
+                        return False
+                    observe_submission_once = False
+                    self.result['automatic_recovery'] = dict(source=self.result['id'],
+                        reason='dispatch_proven_not_consumed', retry_limit=3 if self._battle_progress else 1,
+                        business_history_advanced=False)
+                    self.context.gkh_hif_mcts_policy = checkpoint['policy']
+                    self._cache(checkpoint['policy'])
+                    self._persist()
+                    return True
+                if observe_submission_once:
+                    return False
+                if self.automatic_control is not None:
+                    from .hif_live_recovery import (
+                        find_resume,
+                        reserve_retry,
+                        recovery_candidate,
+                        reported_pending_stop,
+                        verify_recovery_checkpoint,
+                    )
+                    from .hif_native.native_choice_resume import is_confirmed_retrieval_stop
+                    from .hif_native.native_observed_identity_resume import unsubmitted_drink_inspection
 
-                        candidate = recovery_candidate(self.result)
-                        drink_inspection = unsubmitted_drink_inspection(self.result) is not None
-                        if candidate is not None or drink_inspection or reported_pending_stop(self.result) or is_confirmed_retrieval_stop(self.result):
+                    candidate = recovery_candidate(self.result)
+                    drink_inspection = unsubmitted_drink_inspection(self.result) is not None
+                    if candidate is not None or drink_inspection or reported_pending_stop(self.result) or is_confirmed_retrieval_stop(self.result):
+                        try:
+                            if candidate is not None:
+                                source = reserve_retry(self.automatic_control, self.result, previous=automatic_failure)
+                                automatic_failure = self.result
+                                self.result['automatic_recovery'] = dict(source=source,
+                                    reason=candidate['kind'], business_input_replayed=False)
+                                self._persist()
+                            else:
+                                control, latest, source = find_resume(self.runtime,
+                                    self.context.gkh_hif_input_session, maximum_actions=maximum_actions,
+                                    timeout_seconds=timeout_seconds, parent_deadline=parent_deadline)
+                                if latest['id'] != self.result['id'] or source != latest['id']:
+                                    raise ValueError('HIF settlement retry differs from the reported submission')
+                            from .hif_native.native_handoff_resume import load_handoff_checkpoint
+
+                            restored = load_handoff_checkpoint(self.runtime, source,
+                                self.context.gkh_hif_input_session, self.module)
+                            if candidate is None and restored.get('receipt', {}).get('boundary_kind') == 'confirmed_retrieval':
+                                observe_submission_once = True
+                                checkpoint_retry = control, latest, restored
+                            elif candidate is None and drink_inspection:
+                                verify_recovery_checkpoint(latest, restored)
+                                checkpoint_retry = control, latest, restored
+                            elif candidate is not None:
+                                verify_recovery_checkpoint(self.result, restored)
+                                checkpoint = restored
+                            else:
+                                verified = verify_recovery_checkpoint(latest, restored)
+                                if restored.get('pending') is not True:
+                                    raise ValueError('HIF settlement retry lacks a submitted action')
+                                observe_submission_once = verified == 'submitted_pending'
+                                checkpoint_retry = control, latest, restored
+                        except Exception as error:
+                            self.result['automatic_recovery_stop'] = str(error)
+                            return False
+                        return True
+                    if not saved_opening_retried:
+                        from .hif_native.native_opening_intent_resume import prepare_saved_opening, is_original_saved_opening_intent
+
+                        if is_original_saved_opening_intent(self.result):
                             try:
-                                if candidate is not None:
-                                    source = reserve_retry(self.automatic_control, self.result, previous=automatic_failure)
-                                    automatic_failure = self.result
-                                    self.result['automatic_recovery'] = dict(source=source,
-                                        reason=candidate['kind'], business_input_replayed=False)
-                                    self._persist()
-                                else:
-                                    control, latest, source = find_resume(self.runtime,
-                                        self.context.gkh_hif_input_session, maximum_actions=maximum_actions,
-                                        timeout_seconds=timeout_seconds, parent_deadline=parent_deadline)
-                                    if latest['id'] != self.result['id'] or source != latest['id']:
-                                        raise ValueError('HIF settlement retry differs from the reported submission')
-                                from .hif_native.native_handoff_resume import load_handoff_checkpoint
+                                checkpoint_retry = prepare_saved_opening(self.runtime,
+                                    self.context.gkh_hif_input_session, self.module, self.result,
+                                    attempt=f'{self.attempt_id}-step-{index+1}', maximum_actions=maximum_actions,
+                                    timeout_seconds=timeout_seconds, parent_deadline=parent_deadline,
+                                    authorise=None)
+                            except (KeyError, ValueError):
+                                return False
+                            saved_opening_retried = True
+                            return True
+                    opening_retry = self._unbound_opening_retry(maximum_actions=maximum_actions,
+                        timeout_seconds=timeout_seconds, parent_deadline=parent_deadline)
+                    if opening_retry is not None:
+                        return True
+                return False
 
-                                restored = load_handoff_checkpoint(self.runtime, source,
-                                    self.context.gkh_hif_input_session, self.module)
-                                if candidate is None and restored.get('receipt', {}).get('boundary_kind') == 'confirmed_retrieval':
-                                    observe_submission_once = True
-                                    checkpoint_retry = control, latest, restored
-                                elif candidate is None and drink_inspection:
-                                    verify_recovery_checkpoint(latest, restored)
-                                    checkpoint_retry = control, latest, restored
-                                elif candidate is not None:
-                                    verify_recovery_checkpoint(self.result, restored)
-                                    checkpoint = restored
-                                else:
-                                    verified = verify_recovery_checkpoint(latest, restored)
-                                    if restored.get('pending') is not True:
-                                        raise ValueError('HIF settlement retry lacks a submitted action')
-                                    observe_submission_once = verified == 'submitted_pending'
-                                    checkpoint_retry = control, latest, restored
-                            except Exception as error:
-                                self.result['automatic_recovery_stop'] = str(error)
-                                break
-                            continue
-                        if not saved_opening_retried:
-                            from .hif_native.native_opening_intent_resume import prepare_saved_opening, is_original_saved_opening_intent
-
-                            if is_original_saved_opening_intent(self.result):
-                                try:
-                                    checkpoint_retry = prepare_saved_opening(self.runtime,
-                                        self.context.gkh_hif_input_session, self.module, self.result,
-                                        attempt=f'{self.attempt_id}-step-{index+1}', maximum_actions=maximum_actions,
-                                        timeout_seconds=timeout_seconds, parent_deadline=parent_deadline,
-                                        authorise=None)
-                                except (KeyError, ValueError):
-                                    break
-                                saved_opening_retried = True
-                                continue
-                        opening_retry = self._unbound_opening_retry(maximum_actions=maximum_actions,
-                            timeout_seconds=timeout_seconds, parent_deadline=parent_deadline)
-                        if opening_retry is not None:
-                            continue
-                    break
+            def commit_step(evidence):
+                nonlocal observe_submission_once, automatic_failure, checkpoint
+                _, previous, returned, terminal = evidence
                 observe_submission_once = False
                 if terminal is not None:
                     session = self.context.gkh_hif_input_session
@@ -1361,7 +1417,7 @@ class HifLiveHost:
                         terminal_source=self.result['id'], terminal_runtime=self.runtime)
                     if not current_screen:
                         self.result['returned_to_nonbattle'] = True
-                    break
+                    return self.result
                 settlement = getattr(self.context, 'gkh_hif_committed_event', None)
                 policy = getattr(self.context, 'gkh_hif_mcts_policy', None)
                 from .hif_native.native_handoff_policy import phase
@@ -1386,11 +1442,18 @@ class HifLiveHost:
                 self.context.gkh_hif_gray_selected_source = None
                 checkpoint = None
                 self._persist()
-                if not automatic_recovery and time.perf_counter() - started >= timeout_seconds:
+                return None
+
+            def invocation_expired():
+                if time.perf_counter() - started >= timeout_seconds:
                     self.result['continuation_stop'] = 'invocation_timeout'
-                    break
-            else:
-                self.result['continuation_stop'] = 'invocation_action_limit'
+                    return True
+                return False
+
+            run_exam_session(execute=execute_step, observe=observe_step, commit=commit_step, recover=recover_step,
+                limit=None if automatic_recovery else maximum_actions,
+                expired=None if automatic_recovery else invocation_expired,
+                on_limit=lambda: self.result.update(continuation_stop='invocation_action_limit'))
         except Exception as error:
             if self.result is None:
                 raise

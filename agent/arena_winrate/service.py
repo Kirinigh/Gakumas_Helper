@@ -272,6 +272,7 @@ def prepare_own_score_cache(
                 "竞技场日期在自动准备己方缓存后跨过了每日 04:00 刷新边界；请重新运行任务"
             )
     evaluation: ArenaOwnScoreEvaluation | None = None
+    validate_customizations = getattr(adapter, "validate_loadout_customizations", None)
 
     def validate_snapshot_for_cache(snapshot: Mapping[str, Any]) -> None:
         if snapshot["season"] != season or tuple(snapshot["stageIds"]) != stage_ids:
@@ -280,10 +281,21 @@ def prepare_own_score_cache(
             raise OwnScoreCacheError(
                 "本次任务准备的己方缓存已被其他内容替换；请重新运行任务"
             )
-        if validate_loadout is None:
+        if validate_loadout is None and validate_customizations is None:
             return
         for stage in snapshot["own_team"]["stages"]:
             for member in stage["members"]:
+                if validate_customizations is not None:
+                    try:
+                        validate_customizations(member["loadout"])
+                    except ArenaCatalogError as error:
+                        raise OwnScoreCacheError(
+                            f"己方阵容舞台{stage['stage_number']}/成员{member['slot']}的"
+                            "技能卡强化组合无法通过目录校验，请重算竞技场己方总分",
+                            technical_detail=str(error),
+                        ) from error
+                if validate_loadout is None:
+                    continue
                 try:
                     validate_loadout(member["loadout"])
                 except ArenaCatalogError as error:

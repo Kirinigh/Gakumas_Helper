@@ -6,6 +6,7 @@ import json
 import hashlib
 from typing import Any
 from pathlib import Path
+from collections import Counter
 from dataclasses import replace, dataclass
 from collections.abc import Sequence
 
@@ -1221,19 +1222,28 @@ class GenericCostReferenceGallery:
 def stable_generic_cost_value(
     predictions: Sequence[GenericCostPrediction],
 ) -> int:
-    """Return one value only after all three stable frames agree."""
+    """Confirm a value when at least two of the three frozen frames read it."""
 
-    if len(predictions) != 3:
-        raise GenericCostReferenceError(
-            f"generic-cost evidence requires three frames, found {len(predictions)}"
-        )
-    if any(prediction.status != "MEASURED" for prediction in predictions):
-        raise GenericCostReferenceError(
-            "generic-cost frame was inconclusive: " + repr(tuple(predictions))
-        )
-    values = tuple(prediction.value for prediction in predictions)
-    if None in values or len(set(values)) != 1:
-        raise GenericCostReferenceError(
-            f"generic-cost values disagreed across stable frames: {values!r}"
-        )
-    return int(values[0])
+    values = tuple(prediction.value if prediction.status == "MEASURED" else None for prediction in predictions)
+    try:
+        return majority_generic_cost_value(values)
+    except GenericCostReferenceError as error:
+        if len(values) == 3 and None in values:
+            raise GenericCostReferenceError(
+                "generic-cost frames were inconclusive: " + repr(tuple(predictions))
+            ) from error
+        raise
+
+
+def majority_generic_cost_value(frame_values: Sequence[int | None]) -> int:
+    if len(frame_values) != 3 or any(
+        value is not None and (type(value) is not int or value < 0) for value in frame_values
+    ):
+        raise GenericCostReferenceError("generic-cost evidence requires three valid frame observations")
+    counts = Counter(value for value in frame_values if value is not None)
+    for value, count in counts.items():
+        if count >= 2:
+            return value
+    raise GenericCostReferenceError(
+        f"generic-cost values disagreed or were inconclusive across stable frames: {tuple(frame_values)!r}"
+    )

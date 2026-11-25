@@ -27,7 +27,6 @@ from ._reader_errors import ArenaReaderError
 from ._reader_visual import _box, _text
 from ._reader_evidence import _EffectRoiSourceBinding, _TitleBoundEffectRoiText, _SourceBackgroundOcrBudget
 from .recognition_probe import RecognitionProbe
-from ._detail_inline_icon import has_repeated_inline_icon_atom
 from ._detail_text_layout import NUMERIC_TOKEN_BOUNDARY, ErrorNumericLayoutRecovery, ErrorWrappedSignedRecovery, _inside_roi
 from ._skill_detail_domain import SkillDetailDomain, project_domain_items, attribute_skill_detail
 from ._detail_capture_evidence import _EvidenceClock, _FullFrameOcrEvidence
@@ -96,7 +95,7 @@ class DetailEffectOcrPort(Protocol):
 
     def _isolated_skill_card_title_atoms(self, image: Any, title_pattern: str) -> Any: ...
 
-    def _measure_optional_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int, int, int] | None: ...
+    def _measure_optional_card_face_generic_cost(self, key: tuple[int, int], card_id: int) -> tuple[int | None, ...] | None: ...
 
     def _merge_skill_card_effect_detail_views(self, card_id: int, detail_texts: Sequence[str]) -> str: ...
 
@@ -740,20 +739,27 @@ class DetailEffectOcr:
                 derived_titles = tuple(item for item in projected if re.fullmatch(title_pattern, _text(item).strip()))
                 if len(derived_titles) != 1 or not self._overlaps_operand(_box(derived_titles[0]), title_box):
                     raise self._native_operand_effect_view_conflict()
-                excluded = self._confirmed_native_icon_atoms(image, native_items, body_items, disputed, projected)
-                icon_ids = {id(item) for item in excluded}
-                disputed = tuple((field, fragment) for field, fragment in disputed if id(fragment) not in icon_ids)
-                if not all(self._derived_separates_native_fragment(field, fragment, projected)
-                           for field, fragment in disputed):
-                    raise self._native_operand_effect_view_conflict()
-                # Keep every disputed numeric token in the reconstructed text,
-                # except independently proven visual icons.
-                fragment_keys = {(_text(fragment), _box(fragment)) for _, fragment in disputed}
-                deferred = tuple(item for item in native_items if (_text(item), _box(item)) in fragment_keys)
-                native_roi_items = [item for item in native_roi_items
-                                    if id(item) not in icon_ids and (_text(item), _box(item)) not in fragment_keys]
+                signatures = Counter((_text(item), _box(item)) for item in native_items)
+                omitted_keys, separated_keys = set(), set()
+                for field, fragment in disputed:
+                    fragment_key = (_text(fragment), _box(fragment))
+                    decision = self._compare_derived_numeric_fragment(field, fragment, projected)
+                    if decision == "separate":
+                        separated_keys.add(fragment_key)
+                    elif (
+                        decision == "absent"
+                        and signatures[fragment_key] == 1
+                        and self._inside_detail_body(_box(fragment), title_box, roi)
+                    ):
+                        omitted_keys.add(fragment_key)
+                    else:
+                        raise self._native_operand_effect_view_conflict()
+                excluded = tuple(item for item in native_items if (_text(item), _box(item)) in omitted_keys)
+                deferred = tuple(item for item in native_items if (_text(item), _box(item)) in separated_keys)
+                affected = omitted_keys | separated_keys
+                native_roi_items = [item for item in native_roi_items if (_text(item), _box(item)) not in affected]
                 if excluded:
-                    self.port._increment("skill_card_detail_inline_icon_repairs")
+                    self.port._increment("skill_card_detail_enlarged_fragment_omissions")
             original_items = native_items
             native_body = tuple(item for item in native_roi_items if self._inside_detail_body(_box(item), title_box, roi))
             native_items = self._coalesce_omission_field_atoms(native_items, native_body, card_id)
@@ -1188,14 +1194,12 @@ class DetailEffectOcr:
         return (min(ax + aw, bx + bw) - max(ax, bx) >= .5 * max(aw, bw)
                 and min(ay + ah, by + bh) - max(ay, by) >= .5 * max(ah, bh))
 
-    def _derived_separates_native_fragment(self, field, fragment, projected):
-        # A second reading of only the effect value is insufficient. Both raw
-        # boxes must be reproduced in the title-bound crop, with no intervening
-        # modifier of the effect. A detached integer must repeat its exact sign.
+    def _compare_derived_numeric_fragment(self, field, fragment, projected):
+        """Keep a repeated numeric fragment, or omit it when the enlarged view is clear."""
         text, fragment_text = (_normalise_operand_atom(_text(item)) for item in (field, fragment))
         match = _LABELED_EFFECT_OPERAND.search(text)
         if match is None or not _DETACHED_EFFECT_OPERAND.fullmatch(fragment_text):
-            return False
+            return None
         atoms = tuple((_normalise_operand_atom(_text(item)), _box(item)) for item in projected)
         overlapping_fields = tuple(
             index for index, (value, box) in enumerate(atoms)
@@ -1208,53 +1212,24 @@ class DetailEffectOcr:
             value for value, box in atoms
             if value == fragment_text and self._overlaps_operand(box, _box(fragment))
         )
-        if len(fields) != 1 or len(fragments) != 1:
-            return False
-        return (
-            len(overlapping_fields) == 1
-            and not any(index == fields[0] for index, _ in self._native_omission_operand_conflicts(atoms))
-        )
-
-    def _confirmed_native_icon_atoms(self, image, native_items, body_items, disputed, projected):
-        """Exclude a numeric-looking atom only when the pixels identify its icon."""
-        signatures = Counter((_text(item), _box(item)) for item in native_items)
-        derived_atoms = tuple((_text(item), _box(item)) for item in projected)
-        derived_conflicted_rows = {field for field, _ in self._native_omission_operand_conflicts(derived_atoms)}
-        confirmed = []
-        for field, fragment in disputed:
-            text = _normalise_operand_atom(_text(field))
-            match = _LABELED_EFFECT_OPERAND.fullmatch(text)
-            fragment_box = _box(fragment)
-            if (match is None or match["label"] not in _VALUE_LABELS
-                    or not text.startswith(match["label"] + "+")
-                    or not re.fullmatch(r"[0-9]", _normalise_operand_atom(_text(fragment)))
-                    or signatures[(_text(fragment), fragment_box)] != 1
-                    or sum(candidate is fragment for _, candidate in disputed) != 1
-                    or any(owner is fragment for owner, _ in disputed)):
-                continue
-            same_field = tuple(
-                (index, value) for index, (observed, box) in enumerate(derived_atoms)
-                if self._overlaps_operand(box, _box(field))
-                and (value := _normalise_operand_atom(observed)).startswith(match["label"])
-            )
-            if (len(same_field) != 1 or same_field[0][1] != text or same_field[0][0] in derived_conflicted_rows
-                    or any(_EFFECT_OPERAND_FRAGMENT.fullmatch(_normalise_operand_atom(observed))
-                           and self._overlaps_icon_region(box, fragment_box) for observed, box in derived_atoms)):
-                continue
-            if any(
-                item is not field
-                and (other := _LABELED_EFFECT_OPERAND.fullmatch(_normalise_operand_atom(_text(item)))) is not None
-                and other["label"] == match["label"]
-                and has_repeated_inline_icon_atom(image, fragment_box, _box(field), _box(item))
-                for item in body_items
-            ):
-                confirmed.append(fragment)
-        return tuple(confirmed)
+        if len(fields) != 1 or len(overlapping_fields) != 1 or any(
+            index == fields[0] for index, _ in self._native_omission_operand_conflicts(atoms)
+        ):
+            return None
+        if len(fragments) == 1:
+            return "separate"
+        if not any(
+            (_EFFECT_OPERAND_FRAGMENT.fullmatch(value) or re.search(r"[0-9]", value))
+            and self._overlaps_fragment_area(box, _box(fragment))
+            for value, box in atoms
+        ):
+            return "absent"
+        return None
 
     @staticmethod
-    def _overlaps_icon_region(box, icon):
+    def _overlaps_fragment_area(box, fragment):
         x, y, w, h = box
-        a, b, iw, ih = icon
+        a, b, iw, ih = fragment
         overlap_x = max(0, min(x + w, a + iw) - max(x, a))
         overlap_y = max(0, min(y + h, b + ih) - max(y, b))
         # A sharper crop can box a real character much more tightly.

@@ -1,7 +1,7 @@
 {
   "interface_version": 2,
   "name": "MaaGakumasu",
-  "version": "v0.8.2",
+  "version": "v0.9.0",
   "github": "https://github.com/Kirinigh/Gakumas_Helper",
   "contact": "QQ群: 799823681",
   "icon": "./logo.ico",
@@ -83,10 +83,10 @@
     }
   ],
   "agent": {
-    "child_exec": "python",
+    "child_exec": "./python/python.exe",
     "child_args": [
       "-u",
-      "./../agent/main.py"
+      "./agent/main.py"
     ]
   },
   "import": [
@@ -207,7 +207,9 @@
       "name": "偶像之路",
       "entry": "IdolRoad",
       "option": [
+        "偶像之路目标偶像",
         "偶像之路自动回忆",
+        "偶像之路出牌策略",
         "偶像之路失败重试次数"
       ],
       "default_check": true,
@@ -225,14 +227,13 @@
       "dynamic_cases": true,
       "label": "$竞技场赛季",
       "description": "$竞技场期数选择说明",
-      "default_case": "season-51",
+      "default_case": "season-56",
       "cases": [
         {
           "name": "latest",
-          "replacement_case": "season-51",
-          "label": "$竞技场最新预览期格式",
+          "label": "$竞技场最新期格式",
           "label_args": {
-            "season": "51"
+            "season": "56"
           },
           "pipeline_override": {
             "ChallengeSeasonConfig": {
@@ -241,11 +242,11 @@
               }
             }
           },
-          "description": "$竞技场预览期说明"
+          "replacement_case": "season-56"
         },
         {
           "name": "season-50",
-          "label": "$竞技场最近正式期格式",
+          "label": "$竞技场固定期格式",
           "label_args": {
             "season": "50"
           },
@@ -945,7 +946,7 @@
         },
         {
           "name": "season-51",
-          "label": "$竞技场固定预览期格式",
+          "label": "$竞技场固定期格式",
           "label_args": {
             "season": "51"
           },
@@ -955,8 +956,77 @@
                 "season": 51
               }
             }
+          }
+        },
+        {
+          "name": "season-52",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "52"
           },
-          "description": "$竞技场预览期说明"
+          "pipeline_override": {
+            "ChallengeSeasonConfig": {
+              "attach": {
+                "season": 52
+              }
+            }
+          }
+        },
+        {
+          "name": "season-53",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "53"
+          },
+          "pipeline_override": {
+            "ChallengeSeasonConfig": {
+              "attach": {
+                "season": 53
+              }
+            }
+          }
+        },
+        {
+          "name": "season-54",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "54"
+          },
+          "pipeline_override": {
+            "ChallengeSeasonConfig": {
+              "attach": {
+                "season": 54
+              }
+            }
+          }
+        },
+        {
+          "name": "season-55",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "55"
+          },
+          "pipeline_override": {
+            "ChallengeSeasonConfig": {
+              "attach": {
+                "season": 55
+              }
+            }
+          }
+        },
+        {
+          "name": "season-56",
+          "label": "$竞技场固定期格式",
+          "label_args": {
+            "season": "56"
+          },
+          "pipeline_override": {
+            "ChallengeSeasonConfig": {
+              "attach": {
+                "season": 56
+              }
+            }
+          }
         }
       ]
     },
@@ -2020,8 +2090,36 @@
       ],
       "label": "$启用领取任务"
     },
+    "偶像之路目标偶像": {
+      "type": "input",
+      "label": "$偶像之路目标偶像",
+      "description": "$偶像之路目标偶像说明",
+      "inputs": [
+        {
+          "name": "idol_road_idol",
+          "label": "$偶像之路目标偶像",
+          "default": "",
+          "pipeline_type": "string"
+        }
+      ],
+      "pipeline_override": {
+        "IdolRoadNavigate": {
+          "enabled": true,
+          "action": {
+            "type": "Custom",
+            "param": {
+              "custom_action": "IdolRoadNavigate",
+              "custom_action_param": {
+                "idol": "{idol_road_idol}"
+              }
+            }
+          }
+        }
+      }
+    },
     "偶像之路自动回忆": {
       "type": "switch",
+      "description": "$偶像之路自动回忆说明",
       "default_case": "Yes",
       "cases": [
         {
@@ -2043,13 +2141,163 @@
       ],
       "label": "$偶像之路自动回忆"
     },
+    "偶像之路出牌策略": {
+      "type": "select",
+      "label": "$偶像之路出牌策略",
+      "description": "$偶像之路策略说明",
+      "default_case": "推荐出牌",
+      "cases": [
+        {
+          "name": "推荐出牌",
+          "label": "$偶像之路推荐出牌",
+          "pipeline_override": {}
+        },
+        {
+          "name": "UINet 1.1",
+          "pipeline_override": {
+            "IdolRoadFloorOverview": {
+              "custom_action_param": {
+                "hiro": true
+              }
+            },
+            "IdolRoadStart": {
+              "action": {
+                "type": "Custom",
+                "param": {
+                  "custom_action": "IdolRoadPolicyBattle",
+                  "custom_action_param": {
+                    "algorithm": "uinet-1.1",
+                    "hiro": true
+                  }
+                }
+              },
+              "next": [
+                "IdolRoadFloorOverview",
+                "IdolRoadFormationPage",
+                "IdolRoadStartNextFlag"
+              ]
+            },
+            "IdolRoadRetryConfirm": {
+              "action": {
+                "type": "Custom",
+                "param": {
+                  "custom_action": "IdolRoadPolicyBattle",
+                  "custom_action_param": {
+                    "algorithm": "uinet-1.1",
+                    "hiro": true,
+                    "retry": true
+                  }
+                }
+              },
+              "next": [
+                "IdolRoadFloorOverview",
+                "IdolRoadFormationPage",
+                "IdolRoadStartNextFlag"
+              ]
+            }
+          }
+        },
+        {
+          "name": "UINet 2.1",
+          "pipeline_override": {
+            "IdolRoadFloorOverview": {
+              "custom_action_param": {
+                "hiro": true
+              }
+            },
+            "IdolRoadStart": {
+              "action": {
+                "type": "Custom",
+                "param": {
+                  "custom_action": "IdolRoadPolicyBattle",
+                  "custom_action_param": {
+                    "algorithm": "uinet-2.1",
+                    "hiro": true
+                  }
+                }
+              },
+              "next": [
+                "IdolRoadFloorOverview",
+                "IdolRoadFormationPage",
+                "IdolRoadStartNextFlag"
+              ]
+            },
+            "IdolRoadRetryConfirm": {
+              "action": {
+                "type": "Custom",
+                "param": {
+                  "custom_action": "IdolRoadPolicyBattle",
+                  "custom_action_param": {
+                    "algorithm": "uinet-2.1",
+                    "hiro": true,
+                    "retry": true
+                  }
+                }
+              },
+              "next": [
+                "IdolRoadFloorOverview",
+                "IdolRoadFormationPage",
+                "IdolRoadStartNextFlag"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Rust GNRPA",
+          "label": "$偶像之路RustGNRPA",
+          "pipeline_override": {
+            "IdolRoadFloorOverview": {
+              "custom_action_param": {
+                "hiro": true
+              }
+            },
+            "IdolRoadStart": {
+              "action": {
+                "type": "Custom",
+                "param": {
+                  "custom_action": "IdolRoadPolicyBattle",
+                  "custom_action_param": {
+                    "algorithm": "rust-gnrpa",
+                    "hiro": true
+                  }
+                }
+              },
+              "next": [
+                "IdolRoadFloorOverview",
+                "IdolRoadFormationPage",
+                "IdolRoadStartNextFlag"
+              ]
+            },
+            "IdolRoadRetryConfirm": {
+              "action": {
+                "type": "Custom",
+                "param": {
+                  "custom_action": "IdolRoadPolicyBattle",
+                  "custom_action_param": {
+                    "algorithm": "rust-gnrpa",
+                    "hiro": true,
+                    "retry": true
+                  }
+                }
+              },
+              "next": [
+                "IdolRoadFloorOverview",
+                "IdolRoadFormationPage",
+                "IdolRoadStartNextFlag"
+              ]
+            }
+          }
+        }
+      ]
+    },
     "偶像之路失败重试次数": {
       "type": "input",
+      "description": "$偶像之路失败重试次数说明",
       "inputs": [
         {
           "name": "idol_road_retry_times",
           "label": "$偶像之路失败重试次数",
-          "default": "999",
+          "default": "2",
           "pipeline_type": "int",
           "verify": "^[1-9]\\d*$",
           "pattern_msg": "$偶像之路失败重试次数输入框说明"

@@ -1,0 +1,8 @@
+[
+  {"id": "initial_deck-aggressive", "produceCardIds": ["p_card-02-men-0_012", "p_card-02-act-0_037"], "produceCardUpgradeCounts": []},
+  {"id": "initial_deck-concentration", "produceCardIds": ["p_card-03-men-0_015", "p_card-03-act-0_042"], "produceCardUpgradeCounts": []},
+  {"id": "initial_deck-full_power", "produceCardIds": ["p_card-03-men-0_015", "p_card-03-act-0_047"], "produceCardUpgradeCounts": []},
+  {"id": "initial_deck-lesson_buff", "produceCardIds": ["p_card-01-men-0_008", "p_card-01-act-0_028"], "produceCardUpgradeCounts": []},
+  {"id": "initial_deck-parameter_buff", "produceCardIds": ["p_card-01-men-0_007", "p_card-01-act-0_022"], "produceCardUpgradeCounts": []},
+  {"id": "initial_deck-review", "produceCardIds": ["p_card-02-men-0_011", "p_card-02-men-0_035"], "produceCardUpgradeCounts": []}
+]

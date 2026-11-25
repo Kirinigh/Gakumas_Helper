@@ -1,0 +1,18 @@
+[
+  {"id": "p_exam_battle_config-davi-01-produce_008-01", "turn": 9, "vocal": 1089, "dance": 1960, "visual": 1307},
+  {"id": "p_exam_battle_config-davi-01-produce_008-02", "turn": 12, "vocal": 1089, "dance": 1960, "visual": 1307},
+  {"id": "p_exam_battle_config-davo-01-produce_008-01", "turn": 9, "vocal": 1307, "dance": 1960, "visual": 1089},
+  {"id": "p_exam_battle_config-davo-01-produce_008-02", "turn": 12, "vocal": 1307, "dance": 1960, "visual": 1089},
+  {"id": "p_exam_battle_config-davo-03-produce_008-01", "turn": 9, "vocal": 1392, "dance": 1871, "visual": 1088},
+  {"id": "p_exam_battle_config-davo-03-produce_008-02", "turn": 12, "vocal": 1392, "dance": 1871, "visual": 1088},
+  {"id": "p_exam_battle_config-vida-03-produce_008-01", "turn": 9, "vocal": 1088, "dance": 1392, "visual": 1871},
+  {"id": "p_exam_battle_config-vida-03-produce_008-02", "turn": 12, "vocal": 1088, "dance": 1392, "visual": 1871},
+  {"id": "p_exam_battle_config-vivo-03-produce_008-01", "turn": 9, "vocal": 1392, "dance": 1088, "visual": 1871},
+  {"id": "p_exam_battle_config-vivo-03-produce_008-02", "turn": 12, "vocal": 1392, "dance": 1088, "visual": 1871},
+  {"id": "p_exam_battle_config-voda-01-produce_008-01", "turn": 9, "vocal": 1960, "dance": 1307, "visual": 1089},
+  {"id": "p_exam_battle_config-voda-01-produce_008-02", "turn": 12, "vocal": 1960, "dance": 1307, "visual": 1089},
+  {"id": "p_exam_battle_config-voda-03-produce_008-01", "turn": 9, "vocal": 1871, "dance": 1392, "visual": 1088},
+  {"id": "p_exam_battle_config-voda-03-produce_008-02", "turn": 12, "vocal": 1871, "dance": 1392, "visual": 1088},
+  {"id": "p_exam_battle_config-vovi-01-produce_008-01", "turn": 9, "vocal": 1960, "dance": 1089, "visual": 1307},
+  {"id": "p_exam_battle_config-vovi-01-produce_008-02", "turn": 12, "vocal": 1960, "dance": 1089, "visual": 1307}
+]

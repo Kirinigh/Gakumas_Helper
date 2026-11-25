@@ -1499,7 +1499,7 @@ def _detect_host_revision() -> str:
         build = None
     if isinstance(build, Mapping):
         source = build.get("source")
-        revision = source.get("revision") if isinstance(source, Mapping) else None
+        revision = (source.get("arena_revision") or source.get("revision")) if isinstance(source, Mapping) else None
         if isinstance(revision, str) and revision.strip():
             return f"source:{revision.strip()}"
         version = build.get("derived_version")

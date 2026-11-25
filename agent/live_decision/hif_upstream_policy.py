@@ -203,6 +203,10 @@ def _stable_hand_geometry(module, ui, state=None, *, target_slot=None, hand_size
         boxes = ui._hif_card_boxes(results)
         slots = _playable_slots(module, ui, image, results, boxes, hand_size)
         if slots is not None:
+            if state is not None and (target_slot is None or target_slot in slots):
+                # The SELECT path takes its own current frame before input.
+                # The whole hand need not repeat on a fixed number of frames.
+                return image, boxes, slots
             # Opening inspection has only physical slots before inventory.
             identified = [dict(key=state.deck.hand[slot].instance_id if state is not None else None,
                                box=list(box), upgraded=None)
@@ -353,6 +357,11 @@ def run_strong_card_step(module, context, params, policy, baseline):
         expected = complete_hif_hold(context, policy, expected)
         settlement = module._observe_hif_opening_state(context, params,
             committed_expected=expected, baseline_event=baseline, committed_action=action)
+        for _ in range(2):
+            if settlement.get('accepted') is True or not ui.retry_persistent_confirmation(index):
+                break
+            settlement = module._observe_hif_opening_state(context, params,
+                committed_expected=expected, baseline_event=baseline, committed_action=action)
         accepted = settlement.get('accepted') is True
         event.update(settlement=settlement, accepted=accepted, executed=accepted)
         module._confirm_hif_mcts_observed_commit(context, policy, event, submitted=dispatched)

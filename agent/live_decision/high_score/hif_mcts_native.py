@@ -1048,6 +1048,22 @@ class HifMctsNativePolicy:
         except (ValueError, RuntimeError, TimeoutError) as error:
             return self._response(None, str(error), started, plan, tree_context)
 
+    def recover_end_turn(self, state):
+        """Keep the prior decision as evidence and bind the host's legal SKIP."""
+        pending = self._pending
+        request = self._cache_request
+        if (pending is None or request is None or self._window_incomplete
+                or self.kernel._canonical_probability_state(state) != pending['before']):
+            raise ValueError('native_mcts_recovery_requires_original_pending_state')
+        action = next((candidate for candidate in self._legal(request) if candidate.kind is ActionKind.END_TURN), None)
+        if action is None:
+            raise ValueError('native_mcts_recovery_skip_not_legal')
+        plan = dict(accepted=True, action=asdict(action), source='hiro_forced_skip',
+                    value_scope='UNSCORED_HOST_RECOVERY', replaced_action=asdict(pending['action']))
+        self._pending = dict(pending, action=action, plan=plan)
+        self._exact_segment = []
+        return self._response(action, 'hiro_forced_skip', time.perf_counter(), plan, 'observed_no_effect')
+
     def _rebind_observed_drink_slots(self, state, source_slots, observed_slots):
         from .hif_mcts_cache import rebind_retained_drink_slots
 

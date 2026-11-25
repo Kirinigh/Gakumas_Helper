@@ -29,6 +29,10 @@ REGULAR = ArchivedLayout(4, 634, 66, 69.33)
 COMPACT = ArchivedLayout(5, 647, 52, 55.8)
 
 
+class ItemHudCatalogCoverageError(ValueError):
+    """The icon index does not cover the requested item catalog."""
+
+
 def highpass(pixels):
     image = pixels.astype(np.float32)
     return image - cv2.GaussianBlur(image, (0, 0), 3)
@@ -104,8 +108,33 @@ def observe_frame(context, frame, layout, references, crosswalk):
     return rows
 
 
+def read_bound_item_uses(context, frame, directory, limited):
+    """Read numeric badges only on artwork already bound to the loadout."""
+    if not limited or getattr(frame, 'shape', ()) != (1280, 720, 3):
+        return {}
+    references, crosswalk = load_hud_references(directory, frozenset())
+    assets = {asset: keys for asset, ids in crosswalk.items() if len(keys := limited.intersection(ids)) == 1}
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    counts = {}
+    for layout in (REGULAR, COMPACT):
+        templates = [row for row in references[layout.icon_size] if row[0] in assets]
+        if not templates:
+            continue
+        for ordinal in range(layout.slots):
+            shift = round(layout.pitch * ordinal)
+            ranked = rank_icons(frame, templates, layout.left, 244 + shift, layout.icon_size)
+            score, asset, _ = ranked[0]
+            if score < .50 or (len(ranked) > 1 and score - ranked[1][0] < .15):
+                continue
+            value = read_badge(context, frame, gray, 246 + shift)['value']
+            if value is not None:
+                item, = assets[asset]
+                counts.setdefault(item, set()).add(value)
+    return {item: values.pop() for item, values in counts.items() if len(values) == 1}
+
+
 @lru_cache(maxsize=2)
-def load_hud_references(directory, required_ids):
+def load_hud_references(directory, required_ids, sizes=(REGULAR.icon_size, COMPACT.icon_size)):
     """Read the Live icon source, including produce items and shared art."""
     crosswalk = {}
     mapped_ids = set()
@@ -116,15 +145,16 @@ def load_hud_references(directory, required_ids):
         if not isinstance(entry, dict):
             raise ValueError("invalid Live item crosswalk entry")
         item_id, asset = str(entry.get("business_id")), entry.get("asset_name")
-        if (not item_id.isascii() or not item_id.isdecimal() or item_id in mapped_ids
+        if (not re.fullmatch(r"(?:[0-9]+|pitem_[0-9]{2}-[0-3]-[0-9]{3}-[0-9](?:-[0-9]{3})?)", item_id)
+                or item_id in mapped_ids
                 or not isinstance(asset, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", asset)):
             raise ValueError("ambiguous Live item crosswalk entry")
         mapped_ids.add(item_id)
         crosswalk.setdefault(asset, []).append(item_id)
     if not required_ids <= mapped_ids:
-        raise ValueError("Live item crosswalk does not cover the current stage catalog")
+        raise ItemHudCatalogCoverageError("Live item crosswalk does not cover the current stage catalog")
 
-    references = {layout.icon_size: [] for layout in (REGULAR, COMPACT)}
+    references = {size: [] for size in sizes}
     for path in sorted((directory / "official-art").glob("*.webp")):
         pixels = cv2.imdecode(np.frombuffer(path.read_bytes(), dtype=np.uint8), cv2.IMREAD_UNCHANGED)
         if pixels is None or pixels.ndim != 3 or pixels.shape[2] != 4:

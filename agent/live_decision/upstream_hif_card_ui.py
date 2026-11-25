@@ -143,6 +143,12 @@ class BattleRecognitionMixin:
 
 
     @staticmethod
+    def _hif_card_is_raised(box) -> bool:
+        # A raised card ends above the regular hand row. The recommended
+        # card halo may start high but still extends below the ordinary row.
+        return box[1] <= 875 and box[1] + box[3] <= 1130
+
+    @staticmethod
     def _hif_panel_top(image) -> Optional[int]:
         """详情框向上扩展；以浅色面板定位顶部，避开效果正文。"""
         if cv2 is None or image is None or image.shape[:2] != (1280, 720):
@@ -185,7 +191,7 @@ class BattleRecognitionMixin:
             self._hif_selection_index = selected[0]
             return selected[0]
         panel = self._hif_panel_top(image)
-        raised = any(box[1] <= 875 and box[1] + box[3] <= 1130 for box, _ in boxes)
+        raised = any(self._hif_card_is_raised(box) for box, _ in boxes)
         if selected or panel is not None or raised:
             self._hif_unselected_count = 0
             return -2

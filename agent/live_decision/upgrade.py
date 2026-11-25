@@ -2,8 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 from dataclasses import asdict, dataclass
+from unicodedata import normalize
 
 BASE_FRAME_SIZE = (720, 1280)
+_CARD_OCR_GLYPHS = str.maketrans(dict(zip(
+    'ァィゥェォャュョッヮぁぃぅぇぉゃゅょっゎへべぺ一-−',
+    'アイウエオヤユヨツワあいうえおやゆよつわヘベペーーー', strict=True)))
+
+
+def compact_ocr_text(text: str) -> str:
+    return ''.join(normalize('NFKC', text).split())
+
+
+def fold_card_ocr_title(title: str) -> str:
+    """Hiro's card-name glyph folding, used only for a comparison fallback."""
+    return title.translate(_CARD_OCR_GLYPHS)
 
 
 def normalize_upgrade_title(title: str) -> str:

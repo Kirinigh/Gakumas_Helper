@@ -103,14 +103,9 @@
     },
     "pre_delay": 0,
     "action": {
-      "type": "Click",
+      "type": "Custom",
       "param": {
-        "target_offset": [
-          0,
-          0,
-          0,
-          -10
-        ]
+        "custom_action": "ProduceBindCultivationExam"
       }
     },
     "post_delay": 0

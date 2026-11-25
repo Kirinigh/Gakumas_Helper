@@ -368,12 +368,18 @@ def observe_drink_slot_occupancy(context, *, capture_frames, checkpoint, templat
         raise StatusInspectionError(str(error),[event]) from error
 
 
-def _wait_drink_panel(context, fresh, *, opened, timeout):
+def _wait_drink_panel(context, fresh, *, opened, timeout, open_probe=None):
     from .hif_upstream_ui import HIF_SKIP_RECOGNITION, upstream_drink_actions
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline and getattr(context.tasker, 'stopping', False) is not True:
-        image, _ = fresh()
+        frame = fresh()
+        image, _ = frame
+        if open_probe is not None:
+            if open_probe(frame):
+                return True
+            time.sleep(.2)
+            continue
         actions = upstream_drink_actions(context, image)
         matches = opened and len(actions) == 2
         if not opened and not actions:
@@ -693,7 +699,31 @@ def observe_drink_detail_transaction(context, *, capture_frames, checkpoint,
         failure = None
         try:
             if upstream:
-                if not _wait_drink_panel(context, fresh, opened=True, timeout=4):
+                if current_use:
+                    from .exam_hud import battle_dialog_header
+                    from .exam_loop import exam_drink_open_probe
+                    from .hif_upstream_ui import upstream_drink_actions
+
+                    def retry_open(frame):
+                        image, captured_at = frame
+                        try:
+                            current = checkpoint((image,), single_frame=True)
+                            same_scene = (_expected_core_validator(current) if _expected_core_validator is not None else
+                                all(json.dumps(current[k]) == json.dumps(_expected_core[k])
+                                    for k in ('families', 'fields')))
+                        except ValueError:
+                            return
+                        if same_scene is True:
+                            box = drink_slot_targets(context, image)[event['slot']]
+                            if box is not None:
+                                click(box, captured_at, 'open_retry')
+
+                    probe = exam_drink_open_probe(lambda frame: upstream_drink_actions(context, frame[0]),
+                        lambda actions: set(actions) == {'use', 'cancel'}, retry_open,
+                        dialog_visible=lambda frame: battle_dialog_header(frame[0]) is not None)
+                    if not _wait_drink_panel(context, fresh, opened=True, timeout=8, open_probe=probe):
+                        raise ValueError('drink detail did not open')
+                elif not _wait_drink_panel(context, fresh, opened=True, timeout=4):
                     if _inspection_click is not None:
                         raise ValueError('scoped drink inspection did not confirm the detail opened')
                     if getattr(context.tasker, 'stopping', False) is True:

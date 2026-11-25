@@ -977,7 +977,7 @@ def compile_skill_card_catalog(
     for row in rows:
         if row.get("plan") not in {plan_type.value.lower(), "free"}:
             continue
-        source_variants.setdefault(str(row["name"]).removesuffix("+"), {})[
+        source_variants.setdefault(str(row["name"]).removesuffix("+").removesuffix("＋"), {})[
             str(row.get("upgraded", "")).upper() == "TRUE"
         ] = str(row["id"])
     base_card_ids = {
@@ -996,6 +996,8 @@ def compile_skill_card_catalog(
     for row in selected:
         card_id = str(row["id"])
         name = str(row["name"])
+        if str(row.get("upgraded", "")).upper() == "TRUE":
+            name = name.removesuffix("+").removesuffix("＋") + "+"
         reasons: list[str] = []
         raw_condition = row.get("conditions", "").strip()
         condition = _compile_condition(raw_condition) if raw_condition else None
@@ -1004,7 +1006,8 @@ def compile_skill_card_catalog(
         cost = _compile_cost(row.get("cost", "").strip())
         if cost is None:
             reasons.append("cost_not_compiled")
-        raw_actions = row.get("actions", "")
+        # Named customization anchors label existing actions in the arena data.
+        raw_actions = re.sub(r"(^|;)\s*@[A-Za-z][A-Za-z0-9_]*\s+", r"\1 ", row.get("actions", ""))
         compiled_actions = _compile_action_sequence(raw_actions)
         actions = list(compiled_actions or ())
         if compiled_actions is None:
