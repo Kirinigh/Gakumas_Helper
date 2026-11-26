@@ -2972,11 +2972,13 @@ def _component_inventory(candidate: Path) -> tuple[dict[str, Any], dict[str, dic
 
 
 def _write_deterministic_zip(candidate: Path, destination: Path) -> None:
-    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as archive:
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, allowZip64=True) as archive:
         for source in sorted((path for path in candidate.rglob("*") if path.is_file()), key=lambda path: path.relative_to(candidate).as_posix()):
             relative = source.relative_to(candidate).as_posix()
             info = zipfile.ZipInfo(relative, ZIP_TIMESTAMP)
             info.compress_type = zipfile.ZIP_DEFLATED
+            # ZipFile.open() uses the level on an explicitly constructed entry.
+            info._compresslevel = archive.compresslevel
             info.create_system = 3
             info.external_attr = (source.stat().st_mode & 0xFFFF) << 16
             with source.open("rb") as input_stream, archive.open(info, "w", force_zip64=True) as output_stream:

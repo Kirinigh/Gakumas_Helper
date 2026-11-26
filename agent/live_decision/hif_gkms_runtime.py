@@ -131,13 +131,13 @@ def _uinet21_package():
     return module
 
 
-def load_uinet21(model_path=None, *, model_sha256=UINET21_SHA256, native_rules=False, tower_cards=False):
+def load_uinet21(model_path=None, *, model_sha256=UINET21_SHA256, native_rules=False):
     from importlib import import_module
 
     model, master = require_uinet21_resources(model_path, model_sha256=model_sha256)
     package = _uinet21_package()
     master_type = import_module(package.__name__ + '.master').Master
-    policy = package.Policy(model, _with_native_master(master_type, master, native_rules or tower_cards), threads=4)
+    policy = package.Policy(model, _with_native_master(master_type, master, native_rules), threads=4)
     if policy.version != 2:
         raise ValueError('uinet21_uiobs_v2_required')
     inputs = import_module(package.__name__ + '.encode2').INPUTS

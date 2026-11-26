@@ -88,7 +88,7 @@ def _master_exam_fields(run, round_number, base_turns, tables):
 
 def observed_exam_context(bundle, run, *, round_context=None):
     """Use observed turns and multipliers with the selected role's exam data."""
-    from agent.live_decision.high_score.gkms_native_shadow_adapter import ExamContext
+    from agent.live_decision.high_score.gkms_shadow_adapter import ExamContext
 
     from ..hif_session import resolve_hif_round_context
     from ..hif_gkms_runtime import battle_identity_master
@@ -190,8 +190,9 @@ class HifFastNativePolicy:
             source=source, planning_seed=planning_seed,
             deadline=deadline if deadline is not None else time.perf_counter() + 300.,
             opening_hand_order=bundle.hand_instance_ids, use_observed_hand_order=True)
-        if initial_history is not None:
-            self.policy.history = initial_history
+        upgrades = {key: card.upgrade_card_id for key, card in offline_kernel.cards.items()
+                    if card.upgrade_card_id in offline_kernel.cards}
+        self.policy.history = replace(initial_history or self.policy.history, upgrade_ids=upgrades)
         self._pending = None
         self._box = None
         self._retrieval = None
@@ -317,7 +318,7 @@ class HifFastNativePolicy:
             raise ValueError('fast_observed_commit_has_no_complete_rule_events')
         offline_after = business_copy(after, offline=True)
         histories = [self.policy.history.advance(business_copy(action, offline=True), offline_after,
-            business_copy(branch.events, offline=True), cards=self.policy.kernel.cards) for branch in matches]
+            business_copy(branch.events, offline=True)) for branch in matches]
         if any(history != histories[0] for history in histories[1:]):
             raise ValueError('fast_observed_play_history_ambiguous')
         from agent.live_decision.high_score.hif_environment import HifStep
@@ -479,7 +480,7 @@ class HifFastNativePolicy:
 
     @classmethod
     def from_cache(cls, payload, bundle, *, source_run_id, source_revision, accepted, model=None, profile=None):
-        from agent.live_decision.high_score.gkms_native_shadow_adapter import ExamContext, TurnPlayHistory
+        from agent.live_decision.high_score.gkms_shadow_adapter import ExamContext, TurnPlayHistory
 
         from .hif_strong_policy_cache import decode_value
 

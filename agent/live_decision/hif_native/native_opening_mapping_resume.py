@@ -327,7 +327,7 @@ def verify_opening_metadata_source(runtime, row):
 def require_repaired_mapping(checkpoint):
     """Confirm the actual full opening maps now, before any fresh UI operation."""
     from agent.live_decision.high_score.contracts import PlanType, DecisionKind, DecisionRequest, CapabilityReport
-    from agent.live_decision.high_score.gkms_native_shadow_adapter import build_shadow_observation
+    from agent.live_decision.high_score.gkms_shadow_adapter import build_shadow_observation
 
     policy = checkpoint['policy'].policy
     bundle = checkpoint['bundle']

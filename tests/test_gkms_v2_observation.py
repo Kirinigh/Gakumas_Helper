@@ -1,14 +1,18 @@
-"""UIObs v2 mock projection and binding on synthetic Sense fixtures."""
+"""UIObs v2 mock projection and binding on existing public Sense fixtures."""
 from copy import deepcopy
 from dataclasses import replace
 
 import pytest
-from test_task275_gkms_shadow_adapter import CONTEXT, kernel, initial, project, request, isolated  # noqa: F401
+from gkms_release_fixtures import CONTEXT, kernel, initial, project, request, isolated  # noqa: F401
 
-from tools.task275.gkms_v2_observation import project_v2, bind_mock_output, build_v2_observation
+from tools.task275.gkms_v2_observation import bind_mock_output
+from agent.live_decision.hif_gkms_runtime import uinet21_master
 from agent.live_decision.high_score.contracts import CardRef, ActionKind, SchedulePhase, ScheduledEffectRef, VerifiedHandSupport
+from agent.live_decision.high_score.gkms_v2_effects import COST_SEARCH, REPLAY_SEARCH, V2EffectState, effect_sources
 from agent.live_decision.high_score.hif_environment import HifEnvironment
 from agent.live_decision.high_score.gkms_shadow_adapter import TurnPlayHistory, ShadowMappingError, build_shadow_observation
+from agent.live_decision.high_score.gkms_v2_observation import project_v2, build_v2_observation
+from agent.live_decision.high_score.gkms_shadow_mappings import SCHEDULES, CARD_FORMS, _TIMER_FORMS
 
 
 def mock_pick(shadow, token):
@@ -77,26 +81,143 @@ def test_816_original_plus_drives_both_encoded_hand_and_legality(kernel, stamina
 
 
 def test_active_timer_uses_child_id_and_remaining_delay(kernel):  # noqa: F811
-    installer, child = 'fixture-install-timer', 'fixture-draw-effect'
-    master_effects = {
-        installer: dict(id=installer, effectType='ProduceExamEffectType_ExamEffectTimer',
-                        effectValue1=2, effectValue2=0, effectCount=1, chainProduceExamEffectId=child),
-        child: dict(id=child),
-    }
-    context = replace(CONTEXT, mappings=replace(CONTEXT.mappings, schedules={
-        ('CARD', 'card-0', 0, False): (None, 'timer_not_in_protocol', 'TURN', 2, 1, None, 2, installer),
-    }))
-    state = isolated('card-0')
-    timer = ScheduledEffectRef('isolated', 'card-0', 0, turns_until_fire=1,
+    rows = uinet21_master()['ProduceExamEffect']
+    master_effects = {row['id']: row for row in rows}
+    # This card's second delayed draw started two turns away and has one turn left.
+    timer = ScheduledEffectRef('source', '295', 3, turns_until_fire=1,
         trigger_phase=SchedulePhase.TURN, remaining_uses=1, direct_on_trigger=True)
-    source = project(kernel, replace(state, scheduled_effects=(timer,)), context=context)
+    source = project(kernel, isolated('295', removed=True, scheduled_effects=(timer,)))
     assert not project_v2(source).observation
     projection = project_v2(source, exam_effects=master_effects)
-    assert projection.observation['timers'] == [[1, child, 0]]
+    assert projection.observation['timers'] == [[1, 'e_effect-exam_card_draw-0001', 0]]
     assert not any(r['local_field'] == 'scheduled_effects.timer' for r in projection.compression_evidence)
     assert any(r['local_field'] == 'scheduled_effects.timer' for r in source.compression_evidence)
-    del master_effects[child]
+    del master_effects['e_effect-exam_card_draw-0001']
     assert project_v2(source, exam_effects=master_effects).reason_codes == ('v2_timer_requires_verified_installer_and_child',)
+
+
+def test_base_hif_memory_card_installs_both_enchants_after_play(kernel):  # noqa: F811
+    state = isolated('816')
+    card = replace(state.deck.hand[0], card_id='815', upgraded=False)
+    ref = ScheduledEffectRef(card.instance_id, card.card_id, 0,
+        trigger_phase=SchedulePhase.EVERY_TURN, remaining_uses=2, persistent=True)
+    state = replace(state, deck=replace(state.deck, hand=(card,), all_cards=(card, *state.deck.draw_pile)),
+                    scheduled_effects=(ref,))
+    shadow = project(kernel, state)
+    assert shadow.status == 'supported', shadow.reason_codes
+    assert shadow.observation['ench'] == []
+    projected = project_v2(shadow)
+    assert projected.status == 'supported', projected.reason_codes
+    assert projected.observation['ench'] == projected.observation['timers'] == []
+    assert kernel.cards['815'].persistent_effects == kernel.cards['816'].persistent_effects
+    tables = uinet21_master()
+    forms = {r['upgradeCount']: r['playEffects'] for r in tables['ProduceCard']
+             if r['id'] == 'p_card-01-ido-3_202'}
+    assert forms[0] == forms[1]
+    env = HifEnvironment(kernel)
+    before = env.reset(state, seed=17)
+    action = next(a for a in env.legal_actions() if a.kind is ActionKind.PLAY_CARD)
+    step = env.step(action)
+    history = TurnPlayHistory(before.state, (), 'base memory card transition').advance_step(action, step)
+    result = build_v2_observation(step.request, kernel, CONTEXT, history)
+    assert result.status == 'supported', result.reason_codes
+    assert result.observation['ench'] == [
+        ['enchant-p_card-01-ido-3_202-enc02', 2, -1],
+        ['enchant-p_card-01-ido-3_202-enc01', -1, 2],
+    ]
+
+
+def test_master_matched_hif_item_keeps_the_independent_card_timer(kernel, monkeypatch):  # noqa: F811
+    from agent.live_decision.high_score import gkms_shadow_adapter
+    from agent.live_decision.high_score.contracts import EffectSourceKind
+
+    mapping = ('ITEM', '442', 0, True)
+    monkeypatch.setattr(gkms_shadow_adapter, 'SCHEDULES',
+                        {key: value for key, value in SCHEDULES.items() if key != mapping})
+    item = ScheduledEffectRef('item:442', '442', 0, turns_until_fire=0, trigger_phase=SchedulePhase.AFTER_CARD_USED,
+        remaining_uses=3, persistent=True, source_kind=EffectSourceKind.ITEM)
+    timer = ScheduledEffectRef('source', '295', 3, turns_until_fire=1,
+        trigger_phase=SchedulePhase.TURN, remaining_uses=1, direct_on_trigger=True)
+    state = isolated('295', removed=True, items=('442',), scheduled_effects=(item, timer))
+    effects = {row['id']: row for row in uinet21_master()['ProduceExamEffect']}
+    shadow = project(kernel, state)
+    assert shadow.status == 'supported', shadow.reason_codes
+    result = project_v2(shadow, exam_effects=effects)
+    assert result.status == 'supported', result.reason_codes
+    assert result.observation['ench'] == [['enchant-p_item_effect_01-3-313-0-enc01', 3, -1]]
+    assert result.observation['timers'] == [[1, 'e_effect-exam_card_draw-0001', 0]]
+    unknown = replace(state, scheduled_effects=(replace(item, remaining_uses=4), timer))
+    assert project(kernel, unknown).status == 'unsupported'
+
+
+@pytest.mark.parametrize('card_id,_,upgrade,kind,timers', _TIMER_FORMS)
+def test_added_timers_match_master_and_actual_card_transition(kernel, card_id, _, upgrade, kind, timers):  # noqa: F811
+    tables = uinet21_master()
+    master_effects = {row['id']: row for row in tables['ProduceExamEffect']}
+    form = CARD_FORMS[card_id]
+    master_card, = [row for row in tables['ProduceCard']
+                    if (row['id'], row['upgradeCount']) == form[:2]]
+    installer_ids = {entry['produceExamEffectId'] for entry in master_card['playEffects']}
+    assert upgrade == form[1] and kind == kernel.cards[card_id].cost_kind.value
+    source = isolated(card_id)
+    env = HifEnvironment(kernel)
+    before = env.reset(source, seed=17)
+    action = next(a for a in env.legal_actions() if a.kind is ActionKind.PLAY_CARD)
+    step = env.step(action)
+    history = TurnPlayHistory(before.state, (), 'current timer fixture').advance_step(action, step)
+    projection = build_v2_observation(step.request, kernel, CONTEXT, history, exam_effects=master_effects)
+    assert projection.status == 'supported', projection.reason_codes
+    expected = []
+    for index, delay, child in timers:
+        assert SCHEDULES['CARD', card_id, index, False][-1] in installer_ids
+        expected.append([delay, 'e_effect-exam_' + child, 0])
+    assert projection.observation['timers'] == expected
+
+
+@pytest.mark.parametrize('card_id', ['162', '163'])
+def test_confirmed_replay_rule_uses_master_scope_and_clears_after_consumption(kernel, card_id):  # noqa: F811
+    env = HifEnvironment(kernel)
+    # A second eligible card remains in hand so the real rule consumes the layer.
+    source = isolated(card_id)
+    extra = CardRef('eligible', '23')
+    source = replace(source, deck=replace(source.deck, all_cards=(*source.deck.all_cards, extra),
+        hand=(*source.deck.hand, extra)))
+    before = env.reset(source, seed=17)
+    history = TurnPlayHistory(before.state, (), 'current replay fixture')
+    sources = effect_sources(uinet21_master())
+    book = V2EffectState.initial(before.state)
+    action = next(a for a in env.legal_actions() if a.card_instance_id == 'source')
+    step = env.step(action)
+    history = history.advance_step(action, step)
+    book = book.advance(before.state, action, step.request.state, step.events, sources)
+    observation = build_v2_observation(step.request, kernel, CONTEXT, history, effects=book).observation
+    assert observation['pcount'] == [[REPLAY_SEARCH, 1, 1, -1]]
+    after = step.request
+    consume = next(a for a in env.legal_actions() if a.card_instance_id == extra.instance_id)
+    step = env.step(consume)
+    new_book = book.advance(after.state, consume, step.request.state, step.events, sources)
+    assert new_book.replay == () and step.request.state.double_card_effects_remaining == 0
+
+
+def test_confirmed_vinegar_cost_lifetime_never_guesses_overlapping_layers(kernel):  # noqa: F811
+    from agent.live_decision.high_score.kernel import RuleEvent
+    from agent.live_decision.high_score.contracts import GameAction
+
+    sources = effect_sources(uinet21_master())
+    start = initial()
+    drink = GameAction(ActionKind.USE_DRINK, drink_id='22', source_slot=1)
+    events = (RuleEvent('CONSUME_DRINK', 'drink:22'), RuleEvent('NULLIFY_COST_CARDS', 'drink:22', 2))
+    doubled = replace(start, nullify_cost_cards=2)
+    book = V2EffectState.initial(start).advance(start, drink, doubled, events, sources)
+    assert book.cost == (COST_SEARCH, 0, 2)
+    overlapping = book.advance(doubled, drink, replace(doubled, nullify_cost_cards=4), events, sources)
+    assert overlapping.cost is None
+    play = GameAction(ActionKind.PLAY_CARD, card_instance_id=start.deck.hand[0].instance_id)
+    spend = (RuleEvent('NULLIFY_CARD_COST', play.card_instance_id, 1),)
+    once = replace(doubled, nullify_cost_cards=1)
+    book = book.advance(doubled, play, once, spend, sources)
+    assert book.cost == (COST_SEARCH, 0, 1)
+    assert book.advance(once, play, start, spend, sources).cost == ()
 
 
 @pytest.mark.parametrize(('field', 'reason'), [

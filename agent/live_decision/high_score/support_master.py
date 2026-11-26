@@ -14,6 +14,20 @@ from .gkms_master_forms import card_form
 
 SOURCE = 'gakumasu-diff@571dbb62601e78998cddeacdbce3ea1bc672d7fc'
 
+# ProduceCard.produceDescriptions for p_card-01-ido-3_202, tier 2, in Live.
+MEMORY_SUPPORT = dict(name='わたしだけの思い出', source_id='p_card-01-ido-3_202:2',
+    source=SOURCE, enhancement_count=2, cost=2, cost_kind='STAMINA', typed_cost=r'体力消費(\d{1,2})',
+    body=r'体力消費2試験・ステージ開始時手札に入るスキルカードを引く集中強化5%'
+         r'以降の2ターンの間、ターン終了時、集中\+2'
+         r'再演:2ターンごとに、体力が80%以上の場合、自身を再使用\(2回まで・ターン内1回まで\)'
+         r'試験・ステージ中1回',
+    effects=[dict(kind='DRAW', amount=1), dict(kind='CONCENTRATION_EFFECT_BUFF', amount=.05),
+        dict(kind='SCHEDULE', phase='END_OF_TURN', ttl=2, concentration=2),
+        dict(kind='SCHEDULE', phase='EVERY_TURN', persistent=True, uses=2, base_card_id='815',
+            removed_min=1, counter_modulus=2, counter_remainder=1, stamina_ratio_min=.8,
+            action='FREE_PLAY_RANDOM')], limited=True)
+
+
 @lru_cache(maxsize=1)
 def _master():
     from ..hif_gkms_runtime import _master_path
@@ -50,6 +64,11 @@ def _effect(entry, effects):
 
 def cost_only_support(ordinary, enhancement_count):
     """Return the effective definition and complete-body specification together."""
+    if ordinary.card_id == '816':
+        baseline, effective = _memory_cost_tier()
+        if type(enhancement_count) is not int or enhancement_count != 2 or ordinary != baseline:
+            raise ValueError('memory support requires the exact permanent 816+ and its double-plus tier')
+        return effective, MEMORY_SUPPORT
     form = card_form(ordinary, True)
     if (form is None or '@' in ordinary.card_id or form[1:] != (1, 'NORMAL')
             or type(enhancement_count) is not int or enhancement_count not in (2, 3)):
@@ -93,6 +112,34 @@ def cost_only_support(ordinary, enhancement_count):
         name=raw['name'].rstrip('+'), source_id=f'{form[0]}:{enhancement_count}', source=SOURCE,
         enhancement_count=enhancement_count, cost=effective['stamina'], cost_kind='NORMAL',
         body=re.escape(body), effects=[dict(kind=e.kind.value, amount=e.amount) for e, _ in compiled], limited=limited)
+
+
+@lru_cache(maxsize=1)
+def _memory_cost_tier():
+    """Check the complete frozen tier pair, including the unchanged persistent replay."""
+    from .kernel import CardCostKind
+    from .catalog_v2 import _compile_action_sequence
+    from .gkms_shadow_mappings import CARD_FORMS
+
+    master_id, grade, kind = CARD_FORMS['816']
+    cards, _ = _master()
+    before, after = cards[master_id, grade], cards[master_id, 2]
+    if ((master_id, grade, kind) != ('p_card-01-ido-3_202', 1, 'STAMINA')
+            or (before['name'], before['forceStamina']) != (MEMORY_SUPPORT['name'] + '+', 3)
+            or (after['name'], after['forceStamina']) != (MEMORY_SUPPORT['name'] + '++', MEMORY_SUPPORT['cost'])
+            or dict(before, **{key: after[key] for key in ('upgradeCount', 'name', 'forceStamina', 'evaluation')}) != after):
+        raise ValueError('816 master support changes more than its forced stamina cost')
+    effects = _compile_action_sequence('drawCard; setConcentrationEffectBuff(0.05); '
+        'at:endOfTurn { concentration+=2; ttl:2 }')
+    replay = _compile_action_sequence('at:everyTurn { if:countCards[baseId(815) & removed] > 0 { '
+        'effectCounter+=1; if:effectCounter%2==1 & stamina>=maxStamina*0.8 { '
+        'useRandomCardFree[baseId(815)]; limit:2 } } }')
+    if effects is None or replay is None:
+        raise ValueError('816 permanent effects are not compiled')
+    baseline = CardDefinition('816', before['name'], PlanType.SENSE, stamina_cost=before['forceStamina'],
+        cost_kind=CardCostKind.STAMINA, effects=effects, persistent_effects=replay, limited=True,
+        base_card_id='815', card_type='mental', rarity='SSR', source_type='pIdol')
+    return baseline, replace(baseline, stamina_cost=after['forceStamina'])
 
 
 def genki_only_support(ordinary, enhancement_count):

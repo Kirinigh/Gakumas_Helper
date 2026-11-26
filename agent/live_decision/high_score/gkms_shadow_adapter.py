@@ -33,6 +33,7 @@ from agent.live_decision.high_score.contracts import (
 )
 
 from .gkms_master_forms import PLAN_CODES, drink_id, card_form
+from .gkms_master_enchants import project_enchant
 from .gkms_shadow_mappings import (
     DRINK_IDS,
     SCHEDULES,
@@ -359,9 +360,8 @@ def schedule_mapping(ref):
     return mapping
 
 
-def _enchant(ref, state, evidence, *, kernel=None):
+def _enchant(ref, mapping, state, evidence, *, kernel=None):
     key = ref.source_kind.value, ref.card_id, ref.definition_effect_index, ref.persistent
-    mapping = schedule_mapping(ref)
     _require(mapping is not None, f'enchant_definition_unmapped:{key}')
     identifier, mode, phase, delay, uses, ttl, raw_turns, installer = mapping
     _require(ref.trigger_phase.value == phase and 0 <= ref.turns_until_fire <= delay
@@ -373,7 +373,7 @@ def _enchant(ref, state, evidence, *, kernel=None):
     _require((ttl is None and ref.remaining_turns is None)
              or (ttl is not None and type(ref.remaining_turns) is int and 0 <= ref.remaining_turns <= ttl),
              f'enchant_turns_invalid:{key}')
-    if ref.persistent and ref.source_kind.value == 'CARD' and ref.card_id == '816':
+    if ref.persistent and ref.source_kind.value == 'CARD' and ref.card_id in {'815', '816'}:
         if not any(card.instance_id == ref.source_id for card in state.deck.removed):
             _compression(evidence, 'scheduled_effects.latent_encore', asdict(ref),
                          'Local initialization keeps the future Encore ledger before the card is played. '
@@ -493,6 +493,7 @@ class ShadowObservation:
     reason_codes: tuple[str, ...] = ()
     compression_notes: tuple[str, ...] = _MODEL_COMPRESSION
     compression_evidence: tuple[dict[str, Any], ...] = ()
+    master_schedules: frozenset[ScheduledEffectRef] = frozenset()
 
     def bind_action(self, model_action: Sequence, *, request: DecisionRequest, kernel) -> GameAction:
         """Validate a model token against this exact root and recheck local legality."""
@@ -615,11 +616,18 @@ def build_shadow_observation(request: DecisionRequest, kernel, context: ExamCont
         numbers = dict(score=state.score, stamina=state.stamina, max_stamina=state.max_stamina,
                        block=state.genki, playable=state.actions_remaining, plays=len(history.played))
         _require(all(type(value) is int and value >= 0 for value in numbers.values()), 'num_integer_required')
-        en = []
+        en, master_schedules = [], set()
         if include_enchants:
             refs = tuple(ref for ref in state.scheduled_effects if ref.remaining_uses != 0 and ref.remaining_turns != 0)
             for ref in refs + history.expired_start_effects:
-                mapped = _enchant(ref, state, evidence, kernel=kernel)
+                mapping = schedule_mapping(ref)
+                known, mapped = False, None
+                if mapping is None and context.produce in {'produce-007', 'produce-008'}:
+                    known, mapped = project_enchant(ref, state, history, kernel)
+                if known:
+                    master_schedules.add(ref)
+                else:
+                    mapped = _enchant(ref, mapping, state, evidence, kernel=kernel)
                 if mapped is not None:
                     en.append(mapped)
         support = {fact.instance_id: fact.enhancement_count for fact in state.hand_support if fact.turn == state.turn}
@@ -642,6 +650,6 @@ def build_shadow_observation(request: DecisionRequest, kernel, context: ExamCont
             _compression(evidence, 'deck.known_top_count', state.deck.known_top_count,
                          'The encoder treats draw-zone input as a bag.', 'GKMS encode.py:ZONES')
         return ShadowObservation('supported', request, observation, tuple(bindings), compression_notes=notes,
-                                 compression_evidence=tuple(evidence))
+                                 compression_evidence=tuple(evidence), master_schedules=frozenset(master_schedules))
     except (ShadowMappingError, HighScoreContractError, KernelError) as error:
         return ShadowObservation('unsupported', request, reason_codes=(str(error),))

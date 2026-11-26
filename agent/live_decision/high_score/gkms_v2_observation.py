@@ -7,12 +7,8 @@ from copy import deepcopy
 from dataclasses import replace
 
 from .gkms_v2_effects import V2EffectState
-from .gkms_shadow_adapter import ExamContext as LegacyExamContext
-from .gkms_shadow_adapter import build_shadow_observation as build_legacy_observation
-from .gkms_shadow_adapter import schedule_mapping
+from .gkms_shadow_adapter import ShadowMappingError, schedule_mapping, build_shadow_observation
 from .hif_support_planning import uses_hand_support_for_strategy
-from .gkms_native_shadow_adapter import ShadowMappingError, build_shadow_observation
-from .gkms_native_shadow_adapter import ShadowObservation as NativeShadowObservation
 
 _COMMON = ('exam', 'num', 'stance', 'status', 'ench', 'hand', 'deck', 'grave',
            'hold', 'lost', 'played', 'drinks', 'legal')
@@ -20,11 +16,11 @@ _EXAM = ('produce', 'step', 'plan', 'turn', 'limit', 'types', 'permil', 'crit', 
 _NUM = ('score', 'stamina', 'max_stamina', 'block', 'playable', 'plays')
 
 
-def _timers(state, exam_effects):
+def _timers(state, exam_effects, master_schedules):
     effects = {} if exam_effects is None else exam_effects
     rows = []
     for ref in state.scheduled_effects:
-        if ref.remaining_turns == 0 or ref.remaining_uses == 0:
+        if ref.remaining_turns == 0 or ref.remaining_uses == 0 or ref in master_schedules:
             continue
         mapping = schedule_mapping(ref)
         if mapping is None:
@@ -51,6 +47,7 @@ def _timers(state, exam_effects):
 def project_v2(shadow, *, exam_effects=None, effects=None):
     """Reuse the verified roots and physical bindings from build_shadow_observation.
 
+    The optional table is an already loaded, ID-indexed ProduceExamEffect table.
     Positive cost/play-count totals alone cannot identify the original target,
     layers or expiry. Such roots receive no mock model input.
     """
@@ -90,7 +87,7 @@ def project_v2(shadow, *, exam_effects=None, effects=None):
         ) if row is None)
         if reasons:
             return replace(shadow, status='unsupported', observation=None, bindings=(), reason_codes=reasons)
-        timers = [] if isinstance(shadow, NativeShadowObservation) else _timers(state, exam_effects)
+        timers = _timers(state, exam_effects, shadow.master_schedules)
     except ShadowMappingError as error:
         return replace(shadow, status='unsupported', observation=None, bindings=(), reason_codes=(str(error),))
     observation = {field: deepcopy(source[field]) for field in _COMMON}
@@ -105,13 +102,13 @@ def build_v2_observation(request, kernel, context, history, *, exam_effects=None
     """Rebuild from the ordinary 816+ when a historical input recorded live 816++."""
     state = request.state
     kept = tuple(fact for fact in state.hand_support if uses_hand_support_for_strategy(fact))
-    observe = build_legacy_observation if isinstance(context, LegacyExamContext) else build_shadow_observation
     if kept == state.hand_support or history is None or history.state != state:
-        source = observe(request, kernel, context, history)
+        source = build_shadow_observation(request, kernel, context, history)
     else:
         request.validate()
         ordinary = replace(state, hand_support=kept)
-        source = observe(replace(request, state=ordinary), kernel, context, replace(history, state=ordinary))
+        source = build_shadow_observation(replace(request, state=ordinary), kernel, context,
+                                          replace(history, state=ordinary))
     projected = project_v2(source, exam_effects=exam_effects, effects=effects)
     if projected.status == 'supported' and hasattr(state, 'projected_stage_enchants'):
         projected.observation['ench'].extend(state.projected_stage_enchants())

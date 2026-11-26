@@ -24,9 +24,9 @@ def network_policy(profile, kernel, context, initial, *, source, planning_seed, 
         from ..idol_road_card_rules import TowerCardKernel
 
         if model is None:
-            options_v2 = {'tower_cards': True} if isinstance(kernel, TowerCardKernel) else {}
             model = runtime.load_uinet21(model_path, model_sha256=(
-                runtime.UINET21_SHA256 if model_sha256 is None else model_sha256), **options_v2)
+                runtime.UINET21_SHA256 if model_sha256 is None else model_sha256),
+                native_rules=isinstance(kernel, TowerCardKernel))
         observation_builder = (runtime.uinet21_observation_builder() if exam_effects is None
             else partial(build_v2_observation, exam_effects=exam_effects))
         tables = runtime.uinet21_master()

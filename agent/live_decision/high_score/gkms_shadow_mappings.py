@@ -623,6 +623,9 @@ SCHEDULES.update({('CARD','599',3,False): (None,'timer_not_in_protocol','TURN',1
 # 1969 complete current ++ body keeps the raw four-turn enchant identity.
 # The +7 local payload is reported as UIObs representation loss by the adapter.
 SCHEDULES[('CARD', '597@54=1', 2, False)] = SCHEDULES[('CARD', '597@54=1', 1, False)]
+# The model master gives both forms the same once-play Encore and end-turn installer.
+SCHEDULES[('CARD', '815', 0, True)] = SCHEDULES[('CARD', '816', 0, True)]
+SCHEDULES[('CARD', '815', 2, False)] = SCHEDULES[('CARD', '816', 2, False)]
 
 # Base spotlight has the same two delayed draw installers as its + form.
 SCHEDULES.update({
