@@ -101,6 +101,28 @@ def mounted_asset_source():
             super().__init__()
             self._master_lock = RLock()
 
+        def card_art_dir(self):
+            if self.prebuilt_card_art_root() is not None:
+                return None
+            return super().card_art_dir()
+
+        def prebuilt_card_art_root(self):
+            runtime = hiro_runtime_root().resolve()
+            if self.bundled is None or self.bundled.resolve() != runtime / 'assets/pack':
+                return None
+            stock = self.bundled / 'cards'
+            if stock.is_dir() and any(stock.iterdir()):
+                return None
+            if not (self.bundled / 'card-index-v1/features.npz').is_file():
+                return None
+            # The compact bank replaces the 2,290 entries of the pinned stock
+            # directory for source selection. PublicAssetSource prefers user
+            # art on an equal count.
+            custom = self.user / 'cards'
+            if custom.is_dir() and sum(1 for _ in custom.iterdir()) >= 2290:
+                return None
+            return runtime
+
         def master_db(self):
             with self._master_lock:
                 if self._db is None:

@@ -3,13 +3,15 @@
 import json
 from dataclasses import replace
 
-from utils import logger
+from utils import logger, log_diagnostic, diagnostic_only
 from route.hif import HifConfig, training_main_attribute
 from route.host import HifRouteHost
 from route.maa_bridge import HifRuntimeHooks, run_hif_sequence
 from maa.custom_action import CustomAction
 from maa.agent.agent_server import AgentServer
 from live_decision.hif_recovery_reports import recovery_report_scope
+
+from .produce import _report_cultivation, _report_cultivation_stop
 
 STATUS_TEXT = {
     "HIF explicit battle policy differs from its retained cultivation": "HIF 已停止：当前培育已固定战斗策略，请选择继承存档或原策略；新策略从新的授权培育生效。",
@@ -52,22 +54,30 @@ class ProduceHifAdvance(CustomAction):
             if hooks is not None and not isinstance(hooks, HifRuntimeHooks):
                 raise ValueError("invalid runtime hook binding")
             cultivation = getattr(context, 'gkh_hif_cultivation_runtime', None)
-            if cultivation is not None:
-                from route.cultivation import HifCultivationRuntime
-                if not isinstance(cultivation, HifCultivationRuntime) or cultivation.bound is not context:
-                    raise ValueError('conflicting trusted HIF cultivation runtime')
-                decision = cultivation.run(config)
-                context.gkh_hif_cultivation_report = cultivation.report
-            else:
-                decision = host.run(context, config) if host is not None else run_hif_sequence(context, config, hooks)
+            with diagnostic_only():
+                if cultivation is not None:
+                    from route.cultivation import HifCultivationRuntime
+                    if not isinstance(cultivation, HifCultivationRuntime) or cultivation.bound is not context:
+                        raise ValueError('conflicting trusted HIF cultivation runtime')
+                    decision = cultivation.run(config)
+                    context.gkh_hif_cultivation_report = cultivation.report
+                else:
+                    decision = host.run(context, config) if host is not None else run_hif_sequence(context, config, hooks)
             context.gkh_hif_route_decision = decision
-            logger.info(STATUS_TEXT.get(decision.reason, "HIF 自动推进已停止，请核对当前画面和状态。"))
-            logger.info(f"HIF: {decision.outcome.value}: {decision.reason}")
+            log_diagnostic(f"HIF: {decision.outcome.value}: {decision.reason}")
+            if not getattr(getattr(context, 'tasker', None), 'stopping', False):
+                if cultivation is not None:
+                    for outcome in cultivation.report.get('battle_outcomes', ()):
+                        if outcome['status'] == 'TERMINAL_VERIFIED' and outcome['returned_to_nonbattle']:
+                            terminal = outcome['terminal_settlement']
+                            _report_cultivation(dict(event='hiro_formal_hif_result', status=outcome['status'],
+                                round_number=terminal['round_number'], score=terminal['score']))
+                logger.info(STATUS_TEXT.get(decision.reason, "HIF 自动推进已停止，请核对当前画面和状态。"))
         except Exception as error:
             producer = getattr(context, 'gkh_hif_route_producer', None)
             if producer is not None:
                 producer.events.append(dict(phase='route_failure', type=type(error).__name__, reason=str(error)))
-            logger.error(STATUS_TEXT.get(str(error), f"HIF stopped: {type(error).__name__}: {error}"))
+            _report_cultivation_stop(context, 'HIF 自动培育', error, message=STATUS_TEXT.get(str(error)))
         finally:
             if binding is not None:
                 binding.close()
@@ -83,18 +93,19 @@ class ProduceHifQualifierPrepare(CustomAction):
 
         try:
             options = context.get_node_data('ProduceHifQualifierPreparationSettings')['attach']
-            result = run_native_qualifier(context, argv, options)
+            logger.info('HIF 选拔编成开始。')
+            with diagnostic_only():
+                result = run_native_qualifier(context, argv, options)
+            for exam in result.get('exams', ()):
+                _report_cultivation(dict(exam, event='cultivation_exam_result', label=f'qualify-{exam["exam"]}'))
             if result['status'] == 'settled':
-                logger.info("選抜試験已完成结算。")
+                logger.info("HIF 选拔已完成。")
             elif result['status'] == 'prepared':
-                count = result.get('formation_inventory', {}).get('memories')
-                if count is None:
-                    count = len(result.get('memory_inventory', {}).get('entries', ()))
-                logger.info(f"選抜試験编成已准备，读取回忆 {count} 份。已到开始确认。")
+                logger.info("HIF 选拔编成已准备，请确认开始。")
             else:
-                logger.warning(f"選抜試験停止，状态 {result['status']}，已登记 {len(result.get('exams', []))} 场。")
+                _report_cultivation_stop(context, 'HIF 选拔', result['status'])
         except (KeyError, TypeError, ValueError, RuntimeError, OSError) as error:
-            logger.error(f"選抜試験准备停止：{error}")
+            _report_cultivation_stop(context, 'HIF 选拔准备', error)
         return False
 
 
@@ -118,9 +129,6 @@ class ProduceRunHiroCultivation(CustomAction):
         from agent.live_decision.hiro_maa_device import HiroMaaDevice
 
         from .produce import _cultivation_option, _cultivation_entries
-
-        def report(event):
-            logger.info(json.dumps(event, ensure_ascii=False))
 
         try:
             task, settings = _cultivation_option(context, argv)
@@ -155,24 +163,30 @@ class ProduceRunHiroCultivation(CustomAction):
                 if _instance_endpoint(_endpoint(context, expected_maa=maa)) != endpoint:
                     raise ValueError('current Maa Produce input endpoint changed')
 
-            device = HiroMaaDevice(context, authorize, log=report)
+            logger.info(f'{"初" if mode == "hajime" else "NIA"}自动培育开始。')
+            device = HiroMaaDevice(context, authorize, log=_report_cultivation)
             run_hiro_cultivation(device, lambda image: _read_ocr(context, image),
                 mode=mode, difficulty=difficulty, skin=entry.idol,
-                play_exam=play_cultivation_exam(context, entry, algorithm, log=report),
-                log=report, fallback=nia_fallback(context, authorize) if mode == 'nia' else None,
-                save_frame=_capture_sink(report), retry=retry, reward_policy=selected_reward_policy(context))
-            report(dict(event='hiro_cultivation_settled', produce=entry.produce))
+                play_exam=play_cultivation_exam(context, entry, algorithm, log=_report_cultivation),
+                log=_report_cultivation, fallback=nia_fallback(context, authorize) if mode == 'nia' else None,
+                save_frame=_capture_sink(_report_cultivation), retry=retry, reward_policy=selected_reward_policy(context))
+            _report_cultivation(dict(event='hiro_cultivation_settled', produce=entry.produce))
             return False  # StopTask owns both settlement and interrupted routes.
         except (ImportError, KeyError, OSError, RuntimeError, StopIteration, TypeError, ValueError) as error:
-            logger.error(f'Hiro 培育停止：{error}')
+            _report_cultivation_stop(context, '自动培育', error)
             return False
 
 
 @AgentServer.custom_action("ProduceRunHiroCampaign")
 class ProduceRunHiroCampaign(CustomAction):
     def run(self, context, argv):
+        stop_reason = None
+
         def report(data):
-            logger.info(json.dumps(data, ensure_ascii=False))
+            nonlocal stop_reason
+            if data['event'] == 'hiro_hif_segment_stopped':
+                stop_reason = data.get('reason')
+            _report_cultivation(data)
 
         try:
             from agent.route.hiro_product import run_hiro_product
@@ -180,9 +194,14 @@ class ProduceRunHiroCampaign(CustomAction):
             params = argv.custom_action_param
             params = json.loads(params) if isinstance(params, str) else params
             settings = params or {}
+            phase = 'HIF 自动培育' if settings.get('hif') else '自动培育'
+            logger.info(f'{phase}开始。')
             result = run_hiro_product(context, argv, campaign=bool(settings.get('hif')),
                                       hif_segment=settings.get('hif_segment'), log=report)
-            logger.info(f"Hiro 全程培育 {result['status']}，编号 {result['run_id']}")
+            if result['status'] == 'settled':
+                logger.info(f'{phase}已完成。')
+            else:
+                _report_cultivation_stop(context, phase, stop_reason or result.get('reason') or result['status'])
         except (ImportError, KeyError, OSError, RuntimeError, StopIteration, TypeError, ValueError) as error:
-            logger.error(f'Hiro 全程培育停止：{error}')
+            _report_cultivation_stop(context, '自动培育', error)
         return False

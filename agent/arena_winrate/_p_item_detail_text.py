@@ -1175,11 +1175,12 @@ class PItemDetailTextIndex:
             result.status == "unique" and not normalize(str(atom_rows[title_index]["text"])).endswith("+")
             and "reference_difference" in result.diagnostics.get("positive_support", {}).get(result.ids[0], ())
         )
-        if panel_box is not None and (result.status != "unique" or contextual_candidate):
+        if result.status != "unique" or contextual_candidate:
             # A short base-variant field can itself be an incomplete prefix of
             # the upgraded paragraph when a separate effect icon interrupts it.
             from ._p_item_detail_decorations import (
                 recover_decorated_body,
+                wrapped_effect_separator,
                 recover_owned_effect_icons,
                 recover_contextual_effect_icon,
             )
@@ -1187,6 +1188,38 @@ class PItemDetailTextIndex:
             scoped = self.family_ids_for_title(str(atom_rows[title_index]["text"]), plan=plan, eligible_ids=eligible_ids)
             if len(scoped) >= 2 and all(item_id in self._bodies for item_id in scoped):
                 paragraphs = {item_id: self._references[item_id]["paragraphs"] for item_id in scoped}
+                separator = wrapped_effect_separator(atom_rows, layout, paragraphs)
+                if separator is not None:
+                    if panel_box is None or any(
+                        entry["reason"] in ("after_body_geometric_gap", "outside_connected_body_column")
+                        for entry in layout.get("rejected", ())
+                    ):
+                        return PItemDetailTextResult(
+                            "unknown", reason="wrapped_effect_separator_panel_unproved", diagnostics=result.diagnostics,
+                        )
+                    item_id, index, paragraph = separator
+                    repaired = list(atom_rows)
+                    repaired[index] = {**atom_rows[index], "text": str(atom_rows[index]["text"]).rstrip() + "・"}
+                    text, spans = atom_text_view(repaired, layout)
+                    resolved = self._resolve(
+                        str(atom_rows[title_index]["text"]), text, spans, plan=plan, eligible_ids=eligible_ids,
+                        layout_diagnostics=result.diagnostics.get("layout"),
+                    )
+                    if (resolved.status == "unique" and resolved.ids == (item_id,)
+                            and "reference_difference" in resolved.diagnostics["positive_support"][item_id]):
+                        return PItemDetailTextResult("unique", resolved.ids, "wrapped_effect_separator_recovery", {
+                            **resolved.diagnostics,
+                            "decoration_recovery": {
+                                "edits": [{"atom_index": index, "kind": "wrapped_separator", "observed": ""}],
+                                "reference_paragraph": paragraph, "complete_reference_id": item_id,
+                                "numeric_value_edits": 0, "additional_ocr_calls": 0,
+                            },
+                        })
+                    return PItemDetailTextResult(
+                        "unknown", reason=resolved.reason, diagnostics=resolved.diagnostics,
+                    )
+                if panel_box is None:
+                    return result
                 if result.status != "unique":
                     proof = recover_decorated_body(
                         atom_rows, title_index, layout, paragraphs,

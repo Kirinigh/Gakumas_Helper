@@ -19,7 +19,7 @@ from arena_winrate import (
     stable_reference_business_candidates,
 )
 from card_selection import EmbeddingCardRecognizer
-from card_selection.model import frame_identifier, frame_identifiers
+from card_selection.model import ModelIntegrityError, frame_identifier, frame_identifiers
 from arena_winrate.task_log import arena_task_log
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded
 
@@ -209,7 +209,7 @@ class CardIdentityReader:
                     root,
                     load,
                 )
-            except (OSError, KeyError, TypeError, ValueError, ImportError) as error:
+            except (OSError, KeyError, TypeError, ValueError, ImportError, ModelIntegrityError) as error:
                 model_label = "arena custom-card" if customized else "base card"
                 raise ArenaReaderError(
                     "skill_card_runtime_not_approved",

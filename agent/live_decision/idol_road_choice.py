@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from .hif_choice_panel import CHOICE_BOXES, hif_choice_grid, _choice_selected_title_rows
+from .hif_choice_panel import CHOICE_BOXES, hif_choice_grid, _choice_selected_slot, _choice_selected_title_rows
 from .idol_road_native import ChoiceReceipt
 from .hif_choice_scroll import low_move_layout, scan_move_viewports
 from .high_score.contracts import ActionKind
@@ -68,13 +68,17 @@ def execute_native_choice(battle, image, menu, kind, *, confirm):
             raise ValueError('idol_road_native_choice_slot_changed')
         battle.click(_center(box), purpose='preview-move-choice' if menu.maximum > 1 else 'select-move-choice')
 
-        def title_matches(frame):
+        def selected(frame):
+            # A single visible selection bracket on the freshly bound slot
+            # proves the choice even when OCR adds a character to the title.
+            if menu.maximum == 1 and _choice_selected_slot(frame, (box,)) == 0:
+                return box
             rows = _choice_selected_title_rows(battle.context, frame)
             title = ''.join(''.join(row.text.split()) for row in rows).replace('顏', '顔')
             expected = ''.join(battle.kernel.cards[card_id].name.split()).replace('顏', '顔')
             return box if title == expected else None
 
-        target = battle.poll(title_matches, 'move-choice-title')
+        target = battle.poll(selected, 'move-choice-selected')
         if menu.maximum > 1:
             battle.click(_center(target), purpose='select-move-choice')
         picked.append((slot, guid))

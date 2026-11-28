@@ -10,6 +10,7 @@ from agent.live_decision.hiro_runtime import hiro_module, hiro_route_file
 from agent.live_decision.hiro_maa_device import HiroMaaDevice
 from agent.live_decision.cultivation_maa_exam import CultivationEntry, cultivation_idol
 from agent.live_decision.high_score.tower_gnrpa import load_native_tower
+from agent.live_decision.high_score.policy_factory import uses_hif_transaction, supports_native_policy
 
 from .hiro_hif import _read_ocr, run_hiro_hif_campaign
 from .hiro_exam import play_cultivation_exam
@@ -89,12 +90,19 @@ def product_formation(rt, segment, context, device, settings, report, *, skin=No
         if segment != 'main' and source('idol_cards') is None:
             scope.enter_context(_replace(opening, 'step1', maa_idol_selection))
         plan = None
-        if segment == 'qualify' and auto_formation_selected(context):
+        if segment != 'main' and auto_formation_selected(context):
             directory = scope.enter_context(formation_assets())
             if 'formation_changes' in report:
                 plan = report['formation_plan']
             else:
-                plan = build_qualifier_formation(rt, skin, formation, report, directory)
+                options = (context.get_node_data('ProduceHifAutoFormationSettings') or {}).get('attach') or {}
+                consent = {kind: int(options.get(f'overwrite_{kind}', 0)) for kind in ('support', 'memory')
+                           if options.get(f'overwrite_{kind}', '0') not in (0, '0')}
+                if any(not 1 <= number <= 20 for number in consent.values()):
+                    raise ValueError('允许覆盖的编成编号必须为 1–20。')
+                mode = 'hif' if segment == 'qualify' else segment
+                plan = build_qualifier_formation(rt, skin, formation, report, directory, consent=consent,
+                    mode=mode, produce=report.get('produce'), reuse_written=options.get('reuse_written') is True)
         elif segment == 'qualify':
             scope.enter_context(qualifier_formation(rt, settings, context, device, report))
         yield plan
@@ -153,13 +161,15 @@ def prepare_auto_qualifier(context, ui, options, report):
 def run_hiro_product(context, argv, *, campaign, log, hif_segment=None):
     from .bootstrap import _endpoint, _product_paths, _instance_endpoint
     from .ownership import write_hif_record, locked_hif_record
-    from .battle_policy import FAST_PROFILE, STRONG_PROFILE, UINET21_PROFILE, selected_profile, preflight_strong_provider
+    from .battle_policy import FAST_PROFILE, STRONG_PROFILE, selected_profile, preflight_strong_provider
 
     hiro_route_file(Path('assets/pack/ui/templates.json'))
     node = context.get_node_data('ProduceCultivationScenarioSettings') or {}
     produce = (node.get('attach') or {}).get('produce')
     settings = context.get_node_data('ProduceCultivationBattleSettings') or {}
     algorithm = (settings.get('attach') or {}).get('algorithm', 'uinet-2.1')
+    start = (context.get_node_data('ProduceHiroStartSettings') or {}).get('attach') or {}
+    resume = start.get('mode') == 'resume'
     if hif_segment not in (None, 'qualify', 'main') or hif_segment is not None and not campaign:
         raise ValueError('unknown standalone HIF segment')
     if campaign:
@@ -178,12 +188,12 @@ def run_hiro_product(context, argv, *, campaign, log, hif_segment=None):
     if campaign and hif_segment != 'main':
         choice = (context.get_node_data('ProduceHifQualifierBattleSettings') or {}).get('attach') or {}
         qualifier_policy = choice.get('algorithm') or ('recommended' if hif_segment == 'qualify' else 'uinet-2.1')
-        if qualifier_policy not in ('recommended', 'uinet-1.1', 'uinet-2.1'):
+        if qualifier_policy != 'recommended' and not supports_native_policy(qualifier_policy, cultivation=True):
             raise ValueError('unknown qualifier exam policy')
     if campaign and hif_segment != 'qualify':
         config = (context.get_node_data('ProduceHiroHifFinalsSettings') or {}).get('attach') or {}
         profile = selected_profile(config.get('battle_policy', 'uinet-2.1'))
-        if profile in (FAST_PROFILE, STRONG_PROFILE):
+        if uses_hif_transaction(profile):
             row, = (row for row in master.rows('IdolCard') if row['id'] == idol)
             if row['planType'] != 'ProducePlanType_Plan1':
                 raise ValueError('the existing HIF fast and strong finals profiles require a Sense idol')
@@ -222,6 +232,10 @@ def run_hiro_product(context, argv, *, campaign, log, hif_segment=None):
     run_id = f"hiro-{game['pid']}-{game['created_at_100ns']}-{task.task_id}"
     report = dict(run_id=run_id, task_id=task.task_id, produce=produce, idol=idol, status='running',
                   starts={}, exams=[], events=[], inputs=[], reward_policy=reward)
+    if campaign:
+        report['finals_policy_profile'] = profile
+    if resume:
+        report['start_mode'] = 'resume'
     record_file = runtime / f'result-{run_id}.json'
 
     def report_event(data):
@@ -282,36 +296,39 @@ def run_hiro_product(context, argv, *, campaign, log, hif_segment=None):
                 return _read_ocr(context, image)
 
             if campaign:
-                report['finals_policy_profile'] = profile
                 report['qualifier_policy'] = qualifier_policy if hif_segment != 'main' else None
                 finals = None
-                if profile is not None and profile != UINET21_PROFILE:
+                finals_policy = profile or 'uinet-2.1'
+                if uses_hif_transaction(profile):
                     # The parent holds the shared route lock. This scoped
                     # battle session retains its own receipts under this run
                     # instead of overwriting the legacy cultivation record.
                     finals = play_formal_hif_finals(context, path=record_file.with_suffix('.battle.json'),
-                        runtime=runtime, run_id=run_id, game=game, profile=profile,
+                        runtime=runtime, run_id=run_id, game=game, profile=profile, idol=idol,
                         authorize=authorize, log=report_event)
-                play = play_hif_exam(context, device, idol, log=report_event, play_finals=finals,
-                                     qualifier_policy=qualifier_policy)
+                    finals_policy = 'uinet-2.1'  # Existing screen resume when no HIF receipt can be attached.
+                play = play_hif_exam(context, idol, log=report_event, play_finals=finals,
+                                      qualifier_policy=qualifier_policy, finals_policy=finals_policy)
                 if hif_segment is None:
                     code = run_hiro_hif_campaign(device, ocr, skin=skin, enter=enter, play_exam=play, log=report_event,
                         main_attr=formation['main_attr'], save_frame=_capture_sink(report_event),
-                        opening_submitted=opening_submitted, reward_policy=reward)
+                        opening_submitted=opening_submitted, reward_policy=reward, resume_qualifier=resume)
                     report['status'] = 'settled' if code == 0 else 'stopped'
                 else:
                     run_hiro_cultivation(device, ocr, mode=mode, skin=skin, main_attr=formation['main_attr'],
-                        enter=enter, play_exam=play, log=report_event, save_frame=_capture_sink(report_event),
-                        opening_submitted=lambda: opening_submitted(mode), reward_policy=reward)
+                        enter=None if resume else enter, play_exam=play, log=report_event,
+                        save_frame=_capture_sink(report_event),
+                        opening_submitted=lambda: opening_submitted(mode), reward_policy=reward, resume_saved=resume)
                     report['status'] = 'settled'
             else:
                 battle = play_cultivation_exam(context, CultivationEntry(produce, idol, None), algorithm,
                                                log=report_event)
                 failure = 'ProduceNIAFailedFlag' if mode == 'nia' else 'ProduceFailedFlag'
                 retry = 'ProduceFailedStop' not in maa_next_nodes(context, failure)
-                run_hiro_cultivation(device, ocr, mode=mode, difficulty=difficulty, skin=skin, enter=enter,
+                run_hiro_cultivation(device, ocr, mode=mode, difficulty=difficulty, skin=skin,
+                    enter=None if resume else enter,
                     play_exam=battle, log=report_event, save_frame=_capture_sink(report_event), retry=retry,
-                    opening_submitted=lambda: opening_submitted(mode), reward_policy=reward,
+                    opening_submitted=lambda: opening_submitted(mode), reward_policy=reward, resume_saved=resume,
                     fallback=nia_fallback(context, authorize) if mode == 'nia' else None)
                 report['status'] = 'settled'
         except Exception as error:

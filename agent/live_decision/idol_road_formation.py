@@ -7,6 +7,7 @@ The caller supplies Maa OCR and the existing card-art recognizer.
 import re
 import csv
 import json
+from pathlib import Path
 from functools import lru_cache
 from collections import defaultdict
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from agent.card_selection.embedding import EmbeddingCardRecognizer
 from agent.arena_winrate.badge_reference import BadgeReferenceGallery
 
 from .item_hud import rank_icons, load_hud_references
+from .hiro_runtime import hiro_module, hiro_route_file
 from .high_score.contracts import PlanType
 
 _PLANS = {
@@ -83,10 +85,12 @@ def read_formation_overview(rows):
     boxes = tuple((row['text'].strip(), x + w // 2, y + h // 2)
                   for row in rows for x, y, w, h in (row['box'],))
     page = _only((int(text[0]), x, y) for text, x, y in boxes
-                 if re.fullmatch(r'[12]\s*/\s*2', text) and 600 <= y <= 720)
+                 if re.fullmatch(r'[12]\s*[/／]\s*2', text) and 280 <= x <= 440 and 600 <= y <= 720)
     labels = {text for text, _, y in boxes if y <= 350}
     # As in Hiro, the formation headers identify the page even if the button text is obscured.
-    formation_header = {'応援/トラブル', 'ターン'} <= labels and bool({'審査基準', '審查基準'} & labels)
+    support_label = any(re.fullmatch(r'応援\s*[/／]\s*トラ[ブプ]ル', text) and 0 <= y <= 60
+                        for text, _, y in boxes)
+    formation_header = support_label and 'ターン' in labels and bool({'審査基準', '審查基準'} & labels)
     if page is None or not (formation_header or any(text == '挑戦する' and y >= 1000 for text, _, y in boxes)):
         return None
     number, cx, cy = page
@@ -144,6 +148,16 @@ def formation_deck_at_edge(image, toward_bottom):
                  & (np.ptp(rail, axis=2) <= 18)).mean() >= .65)
 
 
+def _active_formation_cell(cell):
+    if cell[..., 2].mean() < 160:
+        return False  # Hiro's brightness test for dimmed duplicates and restrictions.
+    # Empty placeholders are light gray. Inspect the interior so that the
+    # rounded border and nearby cards do not count as card artwork.
+    interior = cell[9:-9, 9:-9]
+    low, high = np.percentile(interior[..., 2], (10, 90))
+    return high - low > 8 or (interior[..., 1] > 12).mean() >= .02
+
+
 def read_formation_deck(image, identify, *, with_fourth=False, after_scroll=False):
     """Read the active card cells on formation page 2 in formation order.
 
@@ -155,8 +169,11 @@ def read_formation_deck(image, identify, *, with_fourth=False, after_scroll=Fals
         raise ValueError('idol road formation image must be canonical Maa BGR')
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     if after_scroll:
-        fourth = _card_row_top(image, 556)
-        rows = ((2, 154, fourth - 96), (3, 154, fourth))
+        # The bottom row may only have one card. Align to the full row above
+        # it so its lower border cannot be mistaken for the bottom row's top.
+        # Search far enough below the nominal position to cover scroll offset.
+        third = _card_row_top(image, 460, through=28)
+        rows = ((2, 154, third), (3, 154, third + 96))
     elif with_fourth:
         # The scrollbar reaches the top while the list can still be
         # springing back. The full first two rows move together.
@@ -169,8 +186,7 @@ def read_formation_deck(image, identify, *, with_fourth=False, after_scroll=Fals
     for row, start, y in rows:
         for column in range(6):
             x = start + 91 * column
-            cell = hsv[y:y + 84, x:x + 82, 2]
-            if np.mean(cell) < 160:
+            if not _active_formation_cell(hsv[y:y + 84, x:x + 82]):
                 continue
             hue, saturation, value = hsv[y + 20:y + 44, x + 57:x + 82].transpose(2, 0, 1)
             red = ((hue <= 8) | (hue >= 172)) & (saturation >= 150) & (value >= 170)
@@ -178,6 +194,89 @@ def read_formation_deck(image, identify, *, with_fourth=False, after_scroll=Fals
             card_id = identify(image, (x, y, 82, 84), upgraded, column)
             cards.append(FormationCard(row, column, card_id, upgraded))
     return tuple(cards)
+
+
+@lru_cache(maxsize=1)
+def _formation_memory_icon_library(directory, size):
+    items = hiro_module('vision.items')
+    folder = hiro_route_file(Path('assets/pack/icons/pitem/index.json')).parent
+    library = items.IconLibrary.load(folder, size)
+    if not library.keys:
+        return library, items.MIN_SCORE, items.MIN_MARGIN
+    existing = set(library.keys)
+    supplements = []
+    for path in sorted((directory / 'official-art').glob('*.webp')):
+        if path.stem in existing:
+            continue
+        pixels = cv2.imdecode(np.frombuffer(path.read_bytes(), dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        if pixels is None or pixels.ndim != 3 or pixels.shape[2] != 4:
+            raise ValueError('idol_road_formation_item_reference_invalid:' + path.stem)
+        icon = cv2.resize(pixels, (size, size), interpolation=cv2.INTER_AREA)
+        # Match extra local artwork on the same scale and mask as Hiro's PNGs.
+        mask = np.repeat(icon[:, :, 3] > 128, 3).astype(np.float32)
+        count = mask.sum()
+        if not count:
+            raise ValueError('idol_road_formation_item_reference_invalid:' + path.stem)
+        # Formation tiles are bright. Render the local RGBA art on a light
+        # background so transparent WebP border pixels do not dominate its edges.
+        alpha = icon[:, :, 3:4].astype(np.float32) / 255
+        foreground = icon[:, :, :3] * alpha + 255 * (1 - alpha)
+        template = items._highpass(foreground).ravel()
+        template = (template - (template * mask).sum() / count) * mask
+        supplements.append((path.stem, template / (np.linalg.norm(template) + 1e-6), mask, count))
+    if supplements:
+        keys, templates, masks, counts = zip(*supplements, strict=True)
+        library = items.IconLibrary(keys=[*library.keys, *keys],
+                                    templates=np.vstack((library.templates, *templates)),
+                                    masks=np.vstack((library.masks, *masks)),
+                                    counts=np.concatenate((library.counts, counts)),
+                                    size=size, names=library.names)
+    return library, items.MIN_SCORE, items.MIN_MARGIN
+
+
+def _formation_memory_item_asset(image, directory, left, top, size):
+    """Run Hiro's masked icon match at the formation tile size and position."""
+    try:
+        library, min_score, min_margin = _formation_memory_icon_library(directory, size)
+    except (ImportError, FileNotFoundError):
+        return None
+    crops = [image[y:y + size, x:x + size] for y in range(top - 4, top + 5, 2)
+             for x in range(left - 4, left + 5, 2)]
+    (score, asset), (other, _) = max(library.match_many(crops), key=lambda ranked: ranked[0][0])
+    return asset if score >= min_score and score - other >= min_margin else None
+
+
+def read_formation_fixed_item_assets(image, directory):
+    """Identify the fixed items displayed twice on formation page one."""
+    if image.shape != (1280, 720, 3):
+        raise ValueError('idol_road_formation_image_not_canonical')
+    size = 44
+    references, _ = load_hud_references(directory, frozenset(), (size,))
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    assets = []
+    for slot in range(4):
+        top, fixed = (283 + slot * 75, 172), (116 + slot * 70, 522)
+        tx, ty = top
+        fx, fy = fixed
+        ribbon_sat, ribbon_value = hsv[ty:ty + size, tx:tx + size, 1:].transpose(2, 0, 1)
+        tile_sat, tile_value = hsv[fy:fy + size, fx:fx + size, 1:].transpose(2, 0, 1)
+        ribbon_empty = (12 <= ribbon_sat.min() <= ribbon_sat.max() <= 25
+                        and 215 <= ribbon_value.min() <= ribbon_value.max() <= 232
+                        and np.ptp(ribbon_sat) <= 5 and np.ptp(ribbon_value) <= 5)
+        tile_empty = (tile_sat.max() <= 10 and 210 <= tile_value.min() <= tile_value.max() <= 235
+                      and np.ptp(tile_value) <= 10)
+        if ribbon_empty and tile_empty:
+            continue
+        if ribbon_empty or tile_empty:
+            raise ValueError('idol_road_formation_fixed_items_unread')
+        (score, asset, _), (other, _, _) = rank_icons(image, references[size], *top, size)
+        (fixed_score, fixed_asset, _), (fixed_other, _, _) = rank_icons(image, references[size], *fixed, size)
+        # Both renders must support the same icon. The separation from their
+        # respective runner-ups is combined across the two tiles.
+        if asset != fixed_asset or min(score, fixed_score) < .50 or score + fixed_score - other - fixed_other < .15:
+            raise ValueError('idol_road_formation_fixed_items_unread')
+        assets.append(asset)
+    return tuple(assets)
 
 
 def read_formation_items(image, directory, metadata, plan, *, fixed_items=None):
@@ -194,15 +293,24 @@ def read_formation_items(image, directory, metadata, plan, *, fixed_items=None):
     fixed_ids = frozenset(result)
     references, crosswalk = load_hud_references(directory, frozenset(metadata_by_id.keys() - fixed_ids), (size,))
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    # A bound tower variant determines its fixed items in Hiro's master.
-    # Icon matching is for memory items or an unbound fixed row.
+    # The caller supplies the fixed rows after matching the formation icons.
+    # Generic icon-to-item lookup is for memory items or the older local path.
     for y in (513, 591) if fixed_items is None else (591,):
         for x in (107, 177, 247, 317):
-            cell = hsv[y + 6:y + 57, x + 6:x + 57]
-            if not np.any(cell[:, :, 1] >= 100):
-                continue
-            (score, asset, _), (other, _, _) = rank_icons(image, references[size], x + 9, y + 9, size)
-            if score < .50 or score - other < .15:
+            if y == 591:
+                # An empty memory slot has a flat gray interior. Low saturation
+                # alone does not prove that a faint or covered item is absent.
+                saturation, value = hsv[y + 9:y + 53, x + 9:x + 53, 1:].transpose(2, 0, 1)
+                if saturation.max() <= 10 and 210 <= value.min() <= value.max() <= 235 and np.ptp(value) <= 4:
+                    continue
+                asset = _formation_memory_item_asset(image, directory, x + 9, y + 9, size)
+            else:
+                cell = hsv[y + 6:y + 57, x + 6:x + 57]
+                if not np.any(cell[:, :, 1] >= 100):
+                    continue
+                (score, best, _), (other, _, _) = rank_icons(image, references[size], x + 9, y + 9, size)
+                asset = best if score >= .50 and score - other >= .15 else None
+            if asset is None:
                 raise ValueError(f'idol_road_formation_item_icon_unread:{x},{y}')
             hue, saturation, value = hsv[y + 3:y + 23, x + 40:x + 58].transpose(2, 0, 1)
             red = ((hue <= 8) | (hue >= 172)) & (saturation >= 150) & (value >= 170)
@@ -240,6 +348,24 @@ class FormationThumbnailMatcher:
 
     def identify_target(self, image, box, plan, possible):
         return self._identify(image, box, self.plan_scopes[plan] | possible, possible=possible)
+
+    def native_card_aliases(self, missing, cards, plan, master):
+        """Join gallery forms to the official IDs used by Hiro's battle catalog."""
+        families = {row['internal_id'] for cid in missing if cid.isdecimal()
+                    and (row := self.cards.get(int(cid))) and row.get('internal_id')}
+        official = defaultdict(set)
+        for row in master:
+            if row['id'] in families:
+                official[row['id'], row['upgradeCount']].add(row['assetId'])
+        aliases = defaultdict(set)
+        for cid, row in self.cards.items():
+            wire, asset = row.get('internal_id'), row.get('asset_id')
+            grade = int(row['upgraded'])
+            key = f'{wire}+' if grade else wire
+            if (wire in families and asset and official[wire, grade] == {asset}
+                    and row['plan'] in (plan.value.lower(), 'free') and key in cards and str(cid) not in cards):
+                aliases[key].add(str(cid))
+        return {key: cid for key, ids in aliases.items() if (cid := _only(ids)) is not None}
 
     def _identify(self, image, box, scope, *, upgraded=None, possible=None):
         if not scope:
@@ -284,7 +410,7 @@ def load_formation_thumbnail_matcher():
     return FormationThumbnailMatcher(reference, embedding, cards)
 
 
-def find_idol_card(idol_name, card_title, *, characters, idol_cards):
+def find_idol_card(idol_name, card_title, *, characters, idol_cards, allow_truncated_title=False):
     """Join the displayed character and card title to one master row."""
     if not idol_name or not card_title:
         return None
@@ -293,14 +419,22 @@ def find_idol_card(idol_name, card_title, *, characters, idol_cards):
                          if ''.join((row['lastName'] + row['firstName']).split()) == name)
     if character_id is None:
         return None
-    matches = [row for row in idol_cards
-               if row['characterId'] == character_id and row['name'] == card_title]
-    return matches[0] if len(matches) == 1 else None
+    cards = [row for row in idol_cards if row['characterId'] == character_id]
+    exact = [row for row in cards if row['name'] == card_title]
+    if exact or not allow_truncated_title:
+        return exact[0] if len(exact) == 1 else None
+    ellipsis = re.search(r'(?:…+|[.．]{3,})$', card_title)
+    prefix = card_title[:ellipsis.start()].rstrip() if ellipsis else ''
+    if not prefix:
+        return None
+    matches = [row for row in cards if row['name'].startswith(prefix)]
+    return matches[0] if len(matches) == 1 and matches[0]['name'] != prefix else None
 
 
 def resolve_formation_idol(overview, *, characters, idol_cards, initial_decks):
     """Join displayed name and title to the master, including off-page basic cards."""
-    card = find_idol_card(overview.idol_name, overview.card_title, characters=characters, idol_cards=idol_cards)
+    card = find_idol_card(overview.idol_name, overview.card_title, characters=characters, idol_cards=idol_cards,
+                          allow_truncated_title=True)
     if card is None:
         return None
     plan = _PLANS.get(card['planType'])

@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from agent.utils.runtime_paths import resolve_runtime_path
+from agent.card_selection.model import ModelIntegrityError
 from agent.card_selection.types import CandidateBox
 from agent.card_selection.embedding import EmbeddingCardRecognizer, resolve_card_identity
 
@@ -21,6 +22,7 @@ from .upgrade import compact_ocr_text, fold_card_ocr_title, normalize_upgrade_ti
 from .exam_hud import EXAM_STAMINA_ROI, valid_stamina, outlined_number_roi, battle_choice_buttons
 from .exam_hud import battle_dialog_header as _battle_dialog_header
 from .item_hud import read_bound_item_uses
+from .exam_hand import hand_row_ready, anchor_exam_hand, read_hiro_hand_slot, read_hiro_upgrade_suffix
 from .exam_loop import (
     EXAM_STALL_TIMEOUT,
     ExamResult,
@@ -35,7 +37,8 @@ from .exam_loop import (
 )
 from .inventory import _inventory_ocr
 from .drink_icons import EVENT_GREEN_JUICE_ID, load_default_drink_icons
-from .hif_card_retry import same_readable_resources, read_exam_select_markers, recheck_persistent_select
+from .hiro_runtime import hiro_module, hiro_ui_templates
+from .hif_card_retry import read_exam_hand_strip, same_readable_resources, read_exam_select_markers, recheck_persistent_select
 from .hif_entry_round import read_entry_turn
 from .hif_upstream_ui import HIF_SKIP_RECOGNITION, upstream_drink_actions
 from .hif_choice_panel import hif_choice_grid, _choice_selected_slot
@@ -48,7 +51,7 @@ from .idol_road_battle import (
     read_idol_road_result_frame,
 )
 from .idol_road_digits import read_ranking_digits
-from .idol_road_status import read_tower_status_values
+from .idol_road_status import read_hiro_statuses, hiro_primary_statuses, read_tower_status_values
 from .high_score.kernel import KernelError, PythonNiaProKernel
 from .idol_road_runtime import (
     ATTRIBUTES,
@@ -67,9 +70,11 @@ from .idol_road_formation import (
     read_formation_items,
     formation_deck_at_edge,
     read_formation_overview,
+    has_fourth_formation_memory,
     load_formation_thumbnail_matcher,
+    read_formation_fixed_item_assets,
 )
-from .high_score.contracts import ActionKind, DecisionKind, HighScoreContractError
+from .high_score.contracts import PlanType, ActionKind, DecisionKind, HighScoreContractError
 from .idol_road_card_rules import (
     TowerCardKernel,
     bind_tower_stage,
@@ -78,14 +83,22 @@ from .idol_road_card_rules import (
     tower_skip_recovery,
     has_tower_card_rules,
     stage_rule_supported,
-    tower_stage_timeline,
     tower_card_definitions,
     tower_stage_descriptions,
 )
-from .idol_road_navigation import next_unseen_floor, read_floor_overview, read_tower_navigation
+from .idol_road_navigation import (
+    next_unseen_floor,
+    tower_date_button,
+    read_floor_overview,
+    read_tower_navigation,
+    tower_retry_dialog_roi,
+    read_tower_clear_result,
+)
 from .upstream_hif_card_ui import BattleRecognitionMixin
 from .high_score.catalog_v2 import compile_item_catalog, compile_drink_catalog, compile_skill_card_catalog
 from .high_score.decision_box import open_native_decision_box
+from .high_score.policy_factory import supports_native_policy
+from .high_score.gkms_master_forms import PLAN_CODES
 
 
 def _data(name):
@@ -125,15 +138,13 @@ def _center(box):
     return x + width // 2, y + height // 2
 
 
-def _tower_hand_ready(boxes):
-    # Overlapped boxes can be clipped at the next card's left edge. Use the
-    # full width still visible on the rightmost card to locate the row center.
-    if not boxes:
-        return True
-    # Hiro distinguishes a floating card from a completed hand. A centered
-    # row can still contain a raised card while the next hand is being dealt.
-    return (abs(boxes[0][0] + boxes[-1][0] + max(box[2] for box in boxes) - 720) <= 24
-            and not any(BattleRecognitionMixin._hif_card_is_raised(box) for box in boxes))
+_RANKING_UPDATE_STABLE_S = .6
+_RANKING_UPDATE_RETRY_S = 1.5
+
+
+def _same_ranking_points(first, second):
+    # Match the large total in the popup, allowing minor background animation.
+    return cv2.absdiff(first, second).mean() <= 6
 
 
 @dataclass(frozen=True)
@@ -188,6 +199,10 @@ _BATTLE_CONFIRMATIONS = {
 }
 
 
+class TowerDateChanged(RuntimeError):
+    """The game interrupted an active Tower run with a return to title."""
+
+
 class IdolRoadMaaBattle(BattleRecognitionMixin):
     """One native Maa task owns both the formation input and the battle."""
 
@@ -227,6 +242,7 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         self.sequence += 1
         self.image = image
         self._live_reads.clear()
+        self.check_tower_date(image)
         return image
 
     @property
@@ -234,6 +250,14 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         return f'tower-frame-{self.sequence}'
 
     def click(self, point, *, purpose):
+        opening_cache = getattr(self, '_tower_opening_cache', None)
+        if opening_cache is not None:
+            opening_cache.update_opening(None)
+            self._tower_opening_cache = None
+        cache = getattr(self, '_tower_result_cache', None)
+        if cache is not None and getattr(self, '_saved_exam_frame', None) is not None:
+            cache.record_position(None)
+            self._saved_exam_frame = None
         job = self.context.tasker.controller.post_click(*point).wait()
         self.log(dict(event='idol_road_maa_input', purpose=purpose, frame_id=self.frame_id,
                       job_id=job.job_id, succeeded=job.succeeded))
@@ -299,8 +323,6 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
 
     def ranking_number(self, image, roi):
         if roi[2] > 100 and getattr(self, 'hiro_policy_route', False):
-            from .hiro_runtime import hiro_module
-
             x, y, width, height = roi
             try:
                 result, _ = hiro_module('vision.digits').read_score(image, (x, y, x + width, y + height))
@@ -354,21 +376,76 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
     def formation_ocr(self, image):
         return tuple(dict(text=row.text, box=tuple(row.box)) for row in self.ocr(image))
 
+    def check_tower_date(self, image):
+        if getattr(self, 'tower_date_watch', False) and tower_date_button(
+                image, self.ocr, header=_battle_dialog_header) is not None:
+            raise TowerDateChanged('idol_road_date_changed')
+
+    def resume_tower_after_date(self, idol):
+        from .hiro_maa_device import HiroMaaDevice, hiro_maa_route
+
+        def authorize():
+            if not self._authorized():
+                raise ValueError('the active Maa input endpoint changed')
+
+        self.tower_date_watch = False
+        date = hiro_module('loop.date_change')
+        session = SimpleNamespace(recover=lambda event, detail: self.log(dict(event='hiro_tower_' + event,
+                                                                              detail=detail)))
+        device = HiroMaaDevice(self.context, authorize, log=self.log)
+        with hiro_maa_route(device, self.ocr, session=session) as runtime:
+            try:
+                hiro_module('runtime.play').recover_date_change(runtime, session)
+            except date.DataLinkBlocked as error:
+                raise ValueError('idol_road_data_link_required') from error
+        self.enter_idol_road(idol)
+
     def enter_idol_road(self, idol):
+        settle = hiro_module('runtime.tower_play').ACT_WAIT_S
+
         def read(image):
-            return read_tower_navigation(self.ocr(image), idol)
+            if _battle_dialog_header(image) is not None:
+                # Maa owns the resume click. Other dialogs can cover live navigation buttons.
+                return ('resume', None) if self.recognition('IdolRoadResumeSaved', image) else None
+            rows = self.ocr(image)
+            if read_floor_overview(image, rows, None, idol=idol) is not None:
+                return 'arrived', None
 
-        page, point = self.poll(read, 'tower-entry')
-        for expected in ('home', 'contest'):
-            if page != expected:
-                continue
-            self.click(point, purpose='tower-entry-' + page)
-            def next_page(image):
+            def home_visible():
+                with hiro_ui_templates():
+                    return hiro_module('vision.classify').at_home(image)
+
+            return read_tower_navigation(rows, idol, home_visible=home_visible)
+
+        def advance(page, point, destinations):
+            purpose = 'tower-entry-' + page
+            after = 'tower-entry-after-' + page
+
+            def destination(image):
                 branch = read(image)
-                return branch if branch is not None and branch[0] != expected else None
+                return branch if branch is not None and branch[0] in destinations else None
 
-            page, point = self.poll(next_page, 'tower-entry-after-' + expected)
-        if page == 'idol-list':
+            self.click(point, purpose=purpose)
+            try:
+                return self.poll(destination, after, duration=settle)
+            except ExamNoProgress:
+                if self.context.tasker.stopping:
+                    raise
+                fresh = read(self.capture())
+                if fresh is not None:
+                    if fresh[0] in destinations:
+                        return fresh
+                    if fresh[0] == page and all(abs(a - b) <= 24 for a, b in zip(point, fresh[1], strict=True)):
+                        self.click(fresh[1], purpose=purpose + '-retry')
+                return self.poll(destination, after)
+
+        terminal = ('arrived', 'resume')
+        page, point = self.poll(read, 'tower-entry')
+        if page == 'home':
+            page, point = advance(page, point, ('contest', 'idols', 'idol-list', *terminal))
+        if page == 'contest':
+            page, point = advance(page, point, ('idols', 'idol-list', *terminal))
+        if page == 'idol-list' and idol:
             # The DMM list shows fewer rows than Hiro's capture. Scroll this
             # list and use the same name-and-progress match in each viewport.
             for start, end in ((1110, 475), (475, 1110)):
@@ -384,13 +461,27 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
                 if page != 'idol-list':
                     break
         if page == 'idols':
-            self.click(point, purpose='tower-entry-idols')
+            page, point = advance(page, point, terminal)
+        if page in terminal:
             return
         raise ValueError('idol_road_entry_did_not_reach_target')
 
-    def enter_challengeable_floor(self, tower_run=None):
+    def enter_challengeable_floor(self, tower_run=None, *, attempts=None, target_stars=3):
+        tower = hiro_module('runtime.tower_play') if attempts is not None else None
+        layers = hiro_module('vision.tower') if tower is not None else None
+        if attempts is not None:
+            target_stars = attempts.target_stars
+        idol_code = None
+
         def read(image):
-            return read_floor_overview(image, self.ocr(image), self.target('IdolRoadStartFlag', image))
+            nonlocal idol_code
+            rows = self.ocr(image)
+            floor = read_floor_overview(image, rows, self.target('IdolRoadStartFlag', image))
+            if floor is not None and tower is not None and idol_code is None:
+                boxes = [(''.join(row.text.split()), (x, y, x + w, y + h))
+                         for row in rows for x, y, w, h in (row.box,)]
+                idol_code = tower.idol_code(layers._layers_fields(image, boxes).get('idol'))
+            return floor
 
         floor = self.poll(read, 'floor-overview')
         origin = floor.number
@@ -405,12 +496,10 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
                 floor = next_view
                 if same_floor:
                     break
-            if tower_run is None:
-                eligible = floor.challenge and floor.stars < 3
-            else:
-                eligible = tower_run.pick_layer([dict(layer=floor.number, stars=floor.stars,
-                                                       unlocked=floor.challenge is not None)]) is not None
-            if eligible:
+            eligible = floor.challenge is not None and floor.stars < target_stars
+            if eligible and tower_run is not None:
+                eligible = tower_run.pick_layer([dict(layer=floor.number, stars=floor.stars, unlocked=True)]) is not None
+            if eligible and (idol_code is None or attempts.floor_allowed(idol_code, floor.number)):
                 self.click(floor.challenge, purpose=f'floor-challenge-{floor.number}')
                 return
             inspected[floor.number] = floor
@@ -433,7 +522,8 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             measured = (step_distance + distance / moved) / 2 if moved else step_distance * 1.6
             step_distance = min(420, max(80, measured))
             floor = after
-        raise ValueError('偶像之路总览未找到可挑战的未满三星楼层')
+        goal = '未满三星' if target_stars == 3 else '未通关'
+        raise ValueError(f'偶像之路总览未找到可挑战的{goal}楼层')
 
     def show_page(self, point, page):
         self.click(point, purpose=f'formation-page-{page}')
@@ -454,47 +544,71 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             raise ValueError('idol_road_formation_deck_scroll_failed')
         return self.poll(lambda frame: frame if formation_deck_at_edge(frame, toward_bottom) else None, purpose)
 
+    def restore_formation_error_view(self, overview, *, row=None):
+        """Leave the relevant slots visible for Maa's existing failure screenshot."""
+        page = 1 if row is None else 2
+
+        def same_floor(image):
+            found = read_formation_overview(self.formation_ocr(image))
+            if found is None or overview.layer is None or found.layer != overview.layer:
+                raise ValueError('idol_road_formation_error_view_unverified')
+            return found
+
+        try:
+            image = self.capture()
+            current = same_floor(image)
+            if page == 1 and current.page == 2 and current.previous_page is not None:
+                image = self.show_page(current.previous_page, 1)
+                current = same_floor(image)
+            if current.page != page:
+                raise ValueError('idol_road_formation_error_view_unverified')
+            if row is not None and has_fourth_formation_memory(image):
+                toward_bottom = row >= 2
+                if not formation_deck_at_edge(image, toward_bottom):
+                    image = self.scroll_formation_deck(toward_bottom)
+                    if same_floor(image).page != page:
+                        raise ValueError('idol_road_formation_error_view_unverified')
+        except (OSError, RuntimeError, ValueError, cv2.error) as error:
+            self.log(dict(event='idol_road_formation_error_view_unavailable', page=page, row=row, reason=str(error)))
+        else:
+            self.log(dict(event='idol_road_formation_error_view_restored', page=page, row=row))
+
     @staticmethod
     def _art():
         model = Path('resource/base/model/classify/card_embedding')
         return EmbeddingCardRecognizer.load(resolve_runtime_path(Path('assets') / model, model))
 
     def prepare(self, algorithm, *, cached=None, remember=None):
-        rust_tables = None
+        self.algorithm = algorithm
+        self.rust_stage = None
         hiro_tables = None
-        if algorithm in ('uinet-1.1', 'uinet-2.1'):
+        if algorithm == 'rust-gnrpa':
+            from .high_score.tower_gnrpa import load_rust_tower
+
+            _, hiro_tables = load_rust_tower()
+        elif supports_native_policy(algorithm):
             from .high_score.tower_gnrpa import load_native_tower
 
             if algorithm == 'uinet-1.1':
                 require_resources()
-            else:
+            elif algorithm == 'uinet-2.1':
                 require_uinet21_resources()
             _, hiro_tables = load_native_tower()
-        elif algorithm == 'rust-gnrpa':
-            from .high_score.tower_gnrpa import load_rust_tower
-
-            _, rust_tables = load_rust_tower()
-            hiro_tables = rust_tables
         elif algorithm != 'strong':
             raise ValueError('idol_road_unsupported_policy')
         self.art = self._art()
+        native = hiro_tables is not None
+        icons = _data('hif_item_icons')
+        items_path = _data('p_items.csv')
+        with items_path.open(encoding='utf-8-sig', newline='') as stream:
+            self.item_metadata = tuple(row for row in csv.DictReader(stream) if row['mode'] == 'stage')
+        stage = None
+        item_ids = ()
         formation = None
-        bound_stage = None
 
-        def on_overview(first_page, overview, idol):
-            nonlocal formation, bound_stage
+        def on_overview(first_page, overview, _idol):
+            nonlocal formation
             formation = first_page
-            if hiro_tables is not None and overview.layer is not None:
-                from .high_score.tower_gnrpa import lookup_hiro_floor
-
-                _, binding = lookup_hiro_floor(hiro_tables, idol.idol_card_id, overview.layer)
-                if binding and binding['turns'] in (None, overview.turns):
-                    identity = binding['exam'].get('produce_exam_gimmick_effect_group_id')
-                    self.timeline = tower_stage_timeline(overview.layer, identity)
-                    if self.timeline:
-                        bound_stage = tower_stage_rules(overview.layer, identity)
-                        self.log(dict(event='idol_road_formation_effects_binding', layer=overview.layer, id=identity))
-                        return
             self.timeline = self.inspect_formation_effects(first_page, overview.layer)
 
         if cached is None:
@@ -503,26 +617,42 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             self.loadout = read_idol_road_loadout(self.capture(), ocr=self.formation_ocr, show_page=self.show_page,
                 identify=self.formation_card, characters=tables['Character'], idol_cards=tables['IdolCard'],
                 initial_decks=initial, on_overview=on_overview, scroll_deck=self.scroll_formation_deck)
+            overview = self.loadout.overview
+            layer = overview.layer
+            stage = bind_tower_stage(layer, self.timeline) if (native or layer >= 15) and self.timeline else None
+            try:
+                if native or stage is not None:
+                    assets = read_formation_fixed_item_assets(formation, icons)
+                    if stage is None and (self.timeline or assets):
+                        raise ValueError('idol_road_native_gimmick_variant_unread')
+                    if stage is not None and Counter(assets) != Counter(item['assetId'] for item in stage.fixed_items):
+                        raise ValueError('idol_road_formation_fixed_items_mismatch')
+                fixed_items = stage.fixed_items if stage is not None else () if native else None
+                item_ids = read_formation_items(formation, icons, self.item_metadata, self.loadout.idol.plan,
+                                                fixed_items=fixed_items)
+            except (OSError, ValueError, cv2.error):
+                self.restore_formation_error_view(overview)
+                raise
         else:
             self.loadout, self.timeline, item_ids, stage_id = cached
-            if stage_id is not None:
-                bound_stage = tower_stage_rules(self.loadout.overview.layer, stage_id)
-        if rust_tables is not None:
+            stage = tower_stage_rules(self.loadout.overview.layer, stage_id) if stage_id is not None else None
+            if native and stage is None and self.timeline:
+                raise ValueError('idol_road_native_gimmick_variant_unread')
+        if native:
             from .high_score.tower_gnrpa import RustTowerStageBindingMissing, resolve_rust_tower_stage
 
             try:
-                self.rust_stage = resolve_rust_tower_stage(rust_tables, self.loadout)
+                binding = resolve_rust_tower_stage(hiro_tables, self.loadout, observed_stage=stage)
             except RustTowerStageBindingMissing as error:
-                require_uinet21_resources()
-                self.algorithm = 'uinet-2.1'
-                self.log(dict(event='idol_road_policy_fallback', requested_algorithm=algorithm,
-                              algorithm=self.algorithm, reason=str(error)))
+                if algorithm == 'rust-gnrpa':
+                    require_uinet21_resources()
+                    self.algorithm = 'uinet-2.1'
+                    self.log(dict(event='idol_road_policy_fallback', requested_algorithm=algorithm,
+                                  algorithm=self.algorithm, reason=str(error)))
+            else:
+                if algorithm == 'rust-gnrpa':
+                    self.rust_stage = binding
         plan = self.loadout.idol.plan
-        native = self.algorithm in ('uinet-1.1', 'uinet-2.1', 'rust-gnrpa')
-        stage = (bound_stage or bind_tower_stage(self.loadout.overview.layer, self.timeline)
-                 if (native or self.loadout.overview.layer >= 15) and self.timeline else None)
-        if native and stage is None and self.timeline:
-            raise ValueError('idol_road_native_gimmick_variant_unread')
         if stage is not None:
             stage_event = dict(event='idol_road_native_stage', id=stage.identity,
                                fixed_items=[item['id'] for item in stage.fixed_items],
@@ -534,11 +664,15 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         cards = read_exam_card_catalog(plan, native=native)
         unread = [card for card in self.loadout.cards if card.card_id is None]
         if unread and not native:
+            if cached is None:
+                self.restore_formation_error_view(self.loadout.overview, row=unread[0].row)
             raise ValueError('idol_road_formation_has_unread_or_unsupported_card')
         self.unread_formation_cards = len(unread)
         if unread:
             self.log(dict(event='idol_road_formation_unread_cards', slots=[(card.row, card.column) for card in unread]))
         formation_ids = tuple(card.card_id for card in self.loadout.cards if card.card_id is not None)
+        if native and (missing := set(formation_ids) - cards.keys()):
+            cards = self.bind_native_formation_catalog(cards, missing, plan)
         kernel_type = PythonNiaProKernel
         if stage is not None or has_tower_card_rules(formation_ids):
             if not native:
@@ -546,19 +680,13 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             kernel_type = TowerCardKernel
         drinks_path = _data('p_drinks.csv')
         drinks = compile_drink_catalog(drinks_path, plan_type=plan).drinks
-        items_path = _data('p_items.csv')
         self.item_catalog = compile_item_catalog(items_path, plan_type=plan)
-        with items_path.open(encoding='utf-8-sig', newline='') as stream:
-            self.item_metadata = tuple(row for row in csv.DictReader(stream) if row['mode'] == 'stage')
         if kernel_type is TowerCardKernel:
             self.item_catalog, self.item_metadata = tower_item_catalog(
                 self.item_catalog, self.item_metadata, stage=None if native else stage, plan=plan)
         self.kernel = kernel_type(cards, drinks, self.item_catalog.items)
         if stage is not None and not native:
             self.kernel.use_native_stage(stage)
-        if cached is None:
-            item_ids = read_formation_items(formation, _data('hif_item_icons'), self.item_metadata, plan,
-                                            fixed_items=stage.fixed_items if stage is not None else None)
         native_items = {}
         item_names = {row['id']: row['name'] for row in self.item_metadata}
         if stage:
@@ -594,6 +722,11 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             raise ValueError('idol_road_basic_deck_identity_unmapped')
         self.deck_ids = formation_ids + tuple(inverse_forms[key][0] for key in basic)
         if any(cid not in cards for cid in self.deck_ids):
+            failing = [card for card in self.loadout.cards if card.card_id is not None and card.card_id not in cards]
+            self.log(dict(event='idol_road_formation_unsupported_cards',
+                          slots=[(card.row, card.column, card.card_id) for card in failing]))
+            if cached is None:
+                self.restore_formation_error_view(self.loadout.overview, row=failing[0].row if failing else None)
             raise ValueError('idol_road_formation_has_unread_or_unsupported_card')
         with drinks_path.open(encoding='utf-8-sig', newline='') as stream:
             drink_ids = tuple(row['id'] for row in csv.DictReader(stream))
@@ -604,6 +737,31 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         if cached is None and remember is not None:
             remember.save(self.loadout, self.timeline, item_ids, stage)
 
+    def bind_native_formation_catalog(self, cards, missing, plan):
+        # Keep the numeric IDs used by the artwork readers, with exactly one
+        # local definition per official form for Hiro's reverse lookup.
+        master = hiro_module('bench_bridge.tower').master().rows('ProduceCard')
+        aliases = load_formation_thumbnail_matcher().native_card_aliases(missing, cards, plan, master)
+        verified = {}
+        for official, numeric in aliases.items():
+            upgraded = official.endswith('+')
+            definition = replace(cards[official], card_id=numeric)
+            try:
+                form = _wire_card(SimpleNamespace(cards={numeric: definition}), numeric, upgraded, native=True)
+            except ValueError:
+                continue
+            if form == (official.removesuffix('+'), int(upgraded)):
+                verified[official] = numeric
+        result = cards.copy()
+        for cid, card in cards.items():
+            if cid in verified or card.base_card_id in verified or card.upgrade_card_id in verified:
+                key = verified.get(cid, cid)
+                result.pop(cid)
+                result[key] = replace(card, card_id=key,
+                    base_card_id=verified.get(card.base_card_id, card.base_card_id),
+                    upgrade_card_id=verified.get(card.upgrade_card_id, card.upgrade_card_id))
+        return result
+
     def preparation(self):
         return TowerPreparation(self.loadout, self.kernel, self.deck_ids, self.multipliers, self.art,
             self.drink_reader, self.item_catalog, self.item_metadata, self.rust_stage, self.algorithm,
@@ -611,24 +769,94 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
 
     def enter_same_formation_retry(self):
         def dialog(image):
-            rows = tuple(self.ocr(image))
-            text = ''.join((row.text or '').replace(' ', '') for row in rows)
-            if 'ステージを再挑戦' not in text and '再挑戦確認' not in text:
+            roi = tower_retry_dialog_roi(image)
+            if roi is None:
+                return None
+            x, y, w, h = roi
+            rows = [(re.sub(r'\s+', '', row.text or ''), row.box) for row in self.ocr(image, roi=roi)
+                    if x <= row.box[0] and row.box[0] + row.box[2] <= x + w
+                    and y <= row.box[1] and row.box[1] + row.box[3] <= y + h]
+            text = ''.join(value for value, _ in rows)
+            if '再挑戦確認' not in text or 'ステージを再挑戦' not in text:
                 return None
             if re.search(r'ジュエル|アイテム|チケット|回数', text):
                 raise ValueError('idol_road_retry_dialog_shows_cost')
-            same = [row for row in rows if re.sub(r'\s+', '', row.text or '') == '同じ編成で再挑戦']
+            same = [box for value, box in rows if '同じ編成で再挑戦' in value]
             ok = self.target('IdolRoadRetryConfirm', image)
-            return (tuple(same[0].box), ok) if len(same) == 1 and ok is not None else None
+            if len(same) != 1 or ok is None:
+                return None
+            ox, oy = _center(ok)
+            # Hiro locates the footer independently of the dialog text.
+            # Rounded corners can end the white text region above the OK center.
+            return (tuple(same[0]), ok) if x <= ox < x + w and 900 <= oy <= 1260 else None
 
-        label, _ = self.poll(dialog, 'same-formation-retry-dialog')
+        def retry_page(image):
+            found = dialog(image)
+            receipt = getattr(self, '_tower_retry_result', None)
+            if found is not None or receipt is None or tower_retry_dialog_roi(image) is not None:
+                return found
+            sent, layer, failed, stars, result = receipt
+            if time.monotonic() - sent < hiro_module('runtime.tower_play').RESULT_REDO_S:
+                return None
+            target = self.target('IdolRoadRetry', image)
+            if target is None:
+                return None
+            if failed:
+                current = self.read_result_page(image) or self.read_unscored_failure(image)
+                same = current is not None and (current['rank'], current['score']) == (result.rank, result.score)
+            else:
+                same = read_tower_clear_result(image, self.ocr(image), ocr=self.ocr, layer=layer) == (layer, stars)
+            if same:
+                self.click(_center(target), purpose='tower-result-retry-repeat')
+                self._tower_retry_result = None
+            return None
+
+        label, _ = self.poll(retry_page, 'same-formation-retry-dialog')
+        self._tower_retry_result = None
         self.click(_center(label), purpose='retry-same-formation')
         _, ok = self.poll(dialog, 'same-formation-retry-confirm')
         self.click(_center(ok), purpose='retry-confirm')
 
-    def after_retry(self, image):
+    def read_tower_opening(self, image):
         opening = self.observe_live(image)
-        if opening is not None and opening.observation.turns == self.loadout.overview.turns:
+        if opening is None or opening.observation.turns != self.loadout.overview.turns:
+            return None
+        hand = opening.observation.hand
+        if hand:
+            # Hiro's hand signature is absent before the A/M/T badges are visible.
+            with hiro_ui_templates():
+                if not hiro_module('vision.hand_slots').card_letters(image):
+                    return None
+        unread = self.unread_formation_cards
+        if unread is not None and sum((Counter(hand) - Counter(self.deck_ids)).values()) > unread:
+            return None
+        return opening
+
+    def stable_tower_opening(self):
+        gap = hiro_module('exec.exam').STABLE_GAP
+        previous = None
+
+        def read(image):
+            nonlocal previous
+            now = time.monotonic()
+            opening = self.read_tower_opening(image)
+            if opening is None:
+                previous = None
+                return None
+            frame = opening.observation
+            signature = (self.read_progress_signature(image, screen=opening), frame.attribute, frame.score,
+                         frame.hand, frame.playable, frame.drinks, frame.available_drinks)
+            if previous is None or previous[0] != signature:
+                previous = signature, now
+            elif now - previous[1] >= gap:
+                return opening
+            return None
+
+        return read
+
+    def after_retry(self, image, read_opening):
+        opening = read_opening(image)
+        if opening is not None:
             return 'live', opening
         if self.target('IdolRoadStart', image) and read_formation_overview(self.formation_ocr(image)) is not None:
             return 'formation', None
@@ -675,33 +903,201 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             return None
 
     def card_id(self, image, box, slot, *, visible_right=None, possible_forms=None, dimmed=False):
-        plan = self.loadout.idol.plan.value.lower()
+        primary = self._gkh_card_id(image, box, slot, visible_right=visible_right,
+                                    possible_forms=possible_forms, dimmed=dimmed)
+        if primary is not None and (possible_forms is None or primary in possible_forms):
+            return primary
+        return self.hiro_card_id(image, box, slot, possible_forms=possible_forms)
+
+    def read_hand_strip(self, image):
+        cached = getattr(self, '_hand_strip', None)
+        if cached is None or cached[0] is not image:
+            cached = self._hand_strip = image, read_exam_hand_strip(self.context, image)
+        return cached[1]
+
+    def live_hand_titles(self, image, boxes):
+        if not boxes or not getattr(self, 'hiro_policy_route', False):
+            return {}
+        result = self.read_hand_strip(image)
+        rows = getattr(result, 'all_results', ()) or ()  # Includes titles when the SELECT filter has no hit.
+        if not rows:
+            return {}
+        cards = self.kernel.cards
+        cached = getattr(self, '_hand_title_catalog', None)
+        if cached is None or cached[0] is not cards:
+            titles = {}
+            for cid, card in cards.items():
+                key = normalize_upgrade_title(compact_ocr_text(card.name))
+                titles.setdefault(key, set()).add(cid)
+            cached = self._hand_title_catalog = cards, titles
+        titles = cached[1]
+        identified = {}
+        tracked = None
+        for slot, (left, top, width, height) in enumerate(boxes):
+            right = min(left + width, boxes[slot + 1][0]) if slot + 1 < len(boxes) else left + width
+            clipped = right < left + width - 4
+            matches = set()
+            for row in rows:
+                x, y, w, h = row.box
+                if row.score >= .90 and left <= x < x + w <= right and top + height - 40 <= y + h / 2 <= top + height:
+                    key = normalize_upgrade_title(compact_ocr_text(row.text or ''))
+                    exact = titles.get(key)
+                    if exact:
+                        matches.update(exact)
+                    elif clipped and row.score >= .95 and right - (x + w) <= 8 and len(key) >= 4:
+                        # Hiro uses a prefix when the following card covers the end of the title.
+                        forms = {cid for title, cids in titles.items() if title.startswith(key) for cid in cids}
+                        if len({cards[cid].base_card_id or cid for cid in forms}) == 1:
+                            if tracked is None:
+                                session = getattr(self, 'native_session', None)
+                                tracked = set(self.deck_ids)
+                                if session is not None:
+                                    tracked.update(session.drawable_card_forms())
+                            known = forms & tracked
+                            if len(known) == 1:
+                                matches.update(known)
+            if len(matches) == 1:
+                identified[slot], = matches
+        return identified
+
+    def prefer_live_hand_title(self, artwork, title):
+        if title is None or artwork is None or title == artwork:
+            return title or artwork
+        a, b = self.kernel.cards[artwork], self.kernel.cards[title]
+        # A clipped suffix cannot downgrade a form independently supported by the artwork reader.
+        if (a.base_card_id or artwork) == (b.base_card_id or title) and a.name.count('+') > b.name.count('+'):
+            return artwork
+        return title
+
+    def hiro_card_id(self, image, box, slot, *, possible_forms=None):
+        row = read_hiro_hand_slot(image, box, slot, self.ocr)
+        if not row or not row.get('card_id'):
+            return None
+        identifier, grade = row['card_id'], row['upgrade']
+        if row.get('plus') != grade:
+            return None
+        forms = getattr(getattr(self, 'native_rules', None), 'cards', None)
+        if forms is None:
+            # The Python policy uses the same master IDs but has no native inverse index.
+            forms = {}
+            for cid, card in self.kernel.cards.items():
+                if card.name.rstrip('+') != row['name'].rstrip('+'):
+                    continue
+                try:
+                    form = _wire_card(self.kernel, cid, card.name.endswith('+'), native=True)
+                except ValueError:
+                    continue
+                forms.setdefault(form, []).append(cid)
+        if grade is None and possible_forms is None:
+            return None
+        candidates = {cid for (wire, count), local in forms.items() if wire == identifier
+                      and (grade is None or grade == count) for cid in local}
+        if possible_forms is not None:
+            candidates.intersection_update(possible_forms)
+        elif len(candidates) > 1:
+            session = self.native_session
+            known = session.drawable_card_forms() if session is not None else self.deck_ids
+            candidates.intersection_update(known)
+        return next(iter(candidates)) if len(candidates) == 1 else None
+
+    def fill_hiro_hand_slots(self, image, raw, controls):
+        """Supply GKH artwork evidence for unread slots in Hiro's screen-only route."""
+        hand = raw.get('hand') or ()
+        if (raw.get('hand_layout') != 'ok' or len(hand) != len(controls)
+                or not any(not row.get('card_id') for row in hand)):
+            return raw
+        if any(row.get('slot') != slot or control is None or (row.get('box') and (
+            abs(control.rect.x1 - row['box'][0]) > 26 or abs(control.rect.y1 - row['box'][1]) > 24))
+            for slot, (row, control) in enumerate(zip(hand, controls, strict=True))):
+            return raw
+        plan_types = {f'ProducePlanType_Plan{code - 1}': PlanType(name) for name, code in PLAN_CODES.items()}
+        visible = {plan_types[row['plan']] for row in hand if row.get('plan') in plan_types}
+        if self.loadout is not None:
+            visible.add(self.loadout.idol.plan)
+        if len(visible) > 1:
+            return raw
+        art = getattr(self, 'art', None) or getattr(self, '_screen_hand_art', None)
+        if art is None:
+            try:
+                art = self._screen_hand_art = self._art()
+            except (ImportError, OSError, ModelIntegrityError):
+                return raw
+        catalogs = getattr(self, '_screen_hand_catalogs', None)
+        if catalogs is None:
+            catalogs = self._screen_hand_catalogs = {}
+        cards = hiro_module('vision.cards')
+        result = list(hand)
+        for slot, (row, control) in enumerate(zip(hand, controls, strict=True)):
+            if row.get('card_id'):
+                continue
+            letter = control.letter
+            left, top = letter.center.x - 96, letter.y1 - 200
+            next_left = controls[slot + 1].letter.center.x - 96 if slot + 1 < len(controls) else image.shape[1]
+            width = min(192, image.shape[1] - left)
+            if left < 0 or top < 0 or width < 1:
+                continue
+            forms = set()
+            for plan in visible or PlanType:
+                if plan not in catalogs:
+                    try:
+                        catalogs[plan] = SimpleNamespace(cards=read_exam_card_catalog(plan, native=True))
+                    except (ImportError, OSError, ValueError):
+                        return raw
+                kernel = catalogs[plan]
+                cid = self._gkh_card_id(image, (left, top, width, 248), slot,
+                    visible_right=next_left if next_left < left + width - 4 else None,
+                    dimmed=not row.get('available'), screen_catalog=(plan, kernel.cards, art))
+                definition = kernel.cards.get(cid)
+                if definition is not None:
+                    try:
+                        forms.add(_wire_card(kernel, definition.card_id, definition.name.endswith('+'), native=True))
+                    except ValueError:
+                        continue
+            if len(forms) == 1:
+                version = cards.card_version(*next(iter(forms)))
+                if version is not None:
+                    result[slot] = {**row, **cards.card_summary(version), 'source': 'gkh-hand'}
+        if all(new is old for new, old in zip(result, hand, strict=True)):
+            return raw
+        return {**raw, 'hand': result, 'unrecognized_cards': sum(not row.get('card_id') for row in result)}
+
+    def _gkh_card_id(self, image, box, slot, *, visible_right=None, possible_forms=None, dimmed=False,
+                     screen_catalog=None):
+        if screen_catalog is None:
+            plan, cards, art = self.loadout.idol.plan, self.kernel.cards, self.art
+            deck_ids, session = self.deck_ids, getattr(self, 'native_session', None)
+        else:
+            plan, cards, art = screen_catalog
+            deck_ids, session = (), None
+        plan = plan.value.lower()
         x, y, width, height = box
         right = min(visible_right, x + width - 4) if visible_right is not None else x + width - 4
         title_roi = (x + 4, y + height - 36, right - x - 4, 36)
+        covered_center = width // 2 - 4 if visible_right is not None and visible_right < x + width - 4 else None
 
         def read_form(card_id):
             # Hiro reads the visible title suffix separately from the artwork.
-            definition = self.kernel.cards.get(card_id)
+            definition = cards.get(card_id)
             upgrade = getattr(definition, 'upgrade_card_id', None)
-            if (upgrade in self.kernel.cards and isinstance(image, np.ndarray)
+            if (upgrade in cards and isinstance(image, np.ndarray)
                     and title_roi[2] > 0 and (possible_forms is None or upgrade in possible_forms)
-                    and detect_live_upgrade_marker(image, slot, box=title_roi).upgraded):
+                    and (detect_live_upgrade_marker(image, slot, box=title_roi).upgraded
+                         or read_hiro_upgrade_suffix(image, title_roi, center_x=covered_center))):
                 return upgrade
             return card_id
 
-        prediction = self.art.classify(image, CandidateBox(slot, tuple(box)), frame_id=self.frame_id,
+        prediction = art.classify(image, CandidateBox(slot, tuple(box)), frame_id=self.frame_id,
             plan=plan, acceptance_threshold=.70, min_margin=.05)
         if prediction.accepted:
             card_id = read_form(prediction.card_id)
-            if (not self.deck_ids and card_id in self.kernel.cards
-                    or prediction.card_id in self.deck_ids or card_id in self.deck_ids
+            if (not deck_ids and card_id in cards
+                    or prediction.card_id in deck_ids or card_id in deck_ids
                     or (possible_forms is not None and card_id in possible_forms)) and (
                     possible_forms is None or card_id in possible_forms):
                 return card_id
         matched = None
         if isinstance(image, np.ndarray):
-            known = possible_forms if possible_forms is not None else self.deck_ids
+            known = possible_forms if possible_forms is not None else deck_ids
             matched = self.scoped_card_id(image, box, known, plan, dimmed=dimmed)
             # A close global art tie still needs Hiro's title cross-check,
             # even when the smaller deck slice returns a single hit.
@@ -719,7 +1115,7 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             titles.add(normalized(''.join(row.text for row in sorted(rows, key=lambda row: row.box[0]))))
         if visible_right is not None:
             def clipped_matches(known):
-                names = {cid: normalized(self.kernel.cards[cid].name) for cid in known}
+                names = {cid: normalized(cards[cid].name) for cid in known}
                 marked = {cid for cid, name in names.items() if name.endswith('+') and name in titles}
                 if marked:
                     return marked
@@ -738,23 +1134,23 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
                 return found_cards
 
             candidates = set()
-            if titles and possible_forms is None and self.native_session is not None:
+            if titles and possible_forms is None and session is not None:
                 # The live zones can include a form learned or changed since formation.
-                candidates = clipped_matches(self.native_session.drawable_card_forms())
+                candidates = clipped_matches(session.drawable_card_forms())
             if not candidates:
-                known = possible_forms if possible_forms is not None else self.deck_ids
+                known = possible_forms if possible_forms is not None else deck_ids
                 candidates = clipped_matches(known)
             if len(candidates) == 1:
                 return next(iter(candidates))
             if candidates or possible_forms is not None:
                 return None
-        candidates = [card_id for card_id, definition in self.kernel.cards.items() if normalized(definition.name) in titles
+        candidates = [card_id for card_id, definition in cards.items() if normalized(definition.name) in titles
                       and (possible_forms is None or card_id in possible_forms)]
         if len(candidates) == 1:
             return candidates[0]
         if not candidates and titles:
             folded = {fold_card_ocr_title(title) for title in titles}
-            candidates = [cid for cid, card in self.kernel.cards.items()
+            candidates = [cid for cid, card in cards.items()
                           if fold_card_ocr_title(normalized(card.name)) in folded
                           and (possible_forms is None or cid in possible_forms)]
             if len(candidates) == 1:
@@ -762,16 +1158,18 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         if matched:
             return read_form(matched)
         return (read_form(prediction.card_id) if possible_forms is None and prediction.accepted
-                and prediction.card_id in self.kernel.cards else None)
+                 and prediction.card_id in cards else None)
 
     def read_overlapping_hand(self, image, fresh, branches):
         """Resolve a clipped title from the forms that can be present after the action."""
         frame = fresh.observation
-        forms = {card.card_id for branch in branches for state in (branch.state,)
-                 if not state.terminal and state.pending_choice is None
-                 and (state.turns_remaining, state.stamina, state.genki) == (frame.turns, frame.stamina, frame.genki)
-                 and len(state.deck.hand) == len(frame.hand)
-                 for card in state.deck.hand}
+        forms = Counter()
+        for branch in branches:
+            state = branch.state
+            if (not state.terminal and state.pending_choice is None
+                    and (state.turns_remaining, state.stamina, state.genki) == (frame.turns, frame.stamina, frame.genki)
+                    and len(state.deck.hand) == len(frame.hand)):
+                forms |= Counter(card.card_id for card in state.deck.hand)
         return self.read_overlapping_forms(image, fresh, forms)
 
     def read_overlapping_forms(self, image, fresh, forms):
@@ -779,14 +1177,40 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             return fresh
         frame = fresh.observation
         hand = list(frame.hand)
+        known = set(forms)
+        titles = self.live_hand_titles(image, fresh.boxes)
+        if isinstance(forms, Counter) and (excess := Counter(hand) - forms):
+            unused = forms - Counter(hand)
+            repairs = {}
+            for slot, card in enumerate(hand):
+                if card not in excess or card not in known:
+                    continue
+                replacement = self.hiro_card_id(image, fresh.boxes[slot], slot, possible_forms=unused)
+                if replacement is not None and self.prefer_live_hand_title(replacement, titles.get(slot)) == replacement:
+                    repairs[slot] = replacement
+            # Each repaired occurrence needs its own visual evidence and space in the observed zones.
+            if Counter(hand[slot] for slot in repairs) <= excess and Counter(repairs.values()) <= unused:
+                for slot, card in repairs.items():
+                    hand[slot] = card
         for slot, box in enumerate(fresh.boxes):
             right = fresh.boxes[slot + 1][0] if slot + 1 < len(fresh.boxes) else None
             clipped = right is not None and right < box[0] + box[2] - 4
-            if clipped or hand[slot] not in forms:
-                card = self.card_id(image, box, slot, visible_right=right if clipped else None,
-                                    possible_forms=forms)
-                if card is not None:
-                    hand[slot] = card
+            if isinstance(forms, Counter):
+                other = Counter(hand)
+                other[hand[slot]] -= 1
+                admissible = set(forms - other)
+            else:
+                admissible = known
+            if hand[slot] not in known:
+                read = self.card_id
+            elif clipped and hand[slot] in admissible:
+                read = self._gkh_card_id
+            else:
+                continue
+            card = read(image, box, slot, visible_right=right if clipped else None,
+                        possible_forms=admissible, dimmed=slot not in frame.playable)
+            if card is not None:
+                hand[slot] = self.prefer_live_hand_title(card, titles.get(slot))
         return replace(fresh, observation=replace(frame, hand=tuple(hand)))
 
     def hand_boxes(self, image):
@@ -797,6 +1221,10 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         boxes = tuple(tuple(box) for box, _ in self._hif_card_boxes(expanded))
         playable = tuple(i for i, box in enumerate(boxes) if any(
             row.label in ('cards', 'suggestions') and self._hif_duplicate_box(box, row.box) for row in rows))
+        anchored = anchor_exam_hand(image, rows, self)
+        if anchored is not None:
+            return tuple(row.box for row in anchored), tuple(i for i, row in enumerate(anchored)
+                                                             if row.label != 'useless')
         return boxes, playable
 
     def read_progress_signature(self, image, *, screen=None):
@@ -836,14 +1264,25 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         return turns
 
     def read_status_value(self, image, roi, *, percent, turns=False):
-        suffix = '%' if percent else r'(?:ターン)?' if turns else ''
-        expected = fr'^(\d{{1,3}}){suffix}$'
-        values = {int(match[1]) for row in self.ocr(image, roi=roi, expected=expected)
-                  if row.score >= .95 and (match := re.fullmatch(expected, row.text))}
+        expected = r'^\s*\d{1,3}\s*[%％]\s*$' if percent else r'^\s*\d{1,3}\s*$'
+        status = hiro_module('vision.status') if turns else None
+        if status is not None:
+            expected = [expected, r'^\s*[0-9０-９ろOolI|S]{1,2}\s*ターン\s*$']
+        values = set()
+        for row in self.ocr(image, roi=roi, expected=expected):
+            if row.score < .95:
+                continue
+            text = compact_ocr_text(row.text)
+            if status is not None and (duration := status._turns_from_text(text)) is not None:
+                values.add(duration)
+            else:
+                match = re.fullmatch(r'(\d{1,3})%' if percent else r'(\d{1,3})', text)
+                if match is not None:
+                    values.add(int(match[1]))
         return next(iter(values)) if len(values) == 1 else None
 
     def read_live_drinks(self, image, blocked_slot=None):
-        observed = self.drink_reader.read_slots(image, client_size=self.client_size)
+        observed = self.drink_reader.read_slots(image)
         occupied = {}
         for slot, row in enumerate(observed):
             if row['state'] == 'OCCUPIED':
@@ -885,7 +1324,7 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         if skip is None or not self.recognition('ProduceRecognitionHealthFlag', image):
             return None
         boxes, playable = self.hand_boxes(image)
-        if not _tower_hand_ready(boxes):
+        if not hand_row_ready(boxes):
             return None
         if not boxes and not self.recognition('ProduceRecognitionNoCards', image):
             return None
@@ -898,6 +1337,8 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         hand = tuple(self.card_id(image, box, i, dimmed=i not in playable, visible_right=boxes[i + 1][0]
                      if i + 1 < len(boxes) and boxes[i + 1][0] < box[0] + box[2] - 4 else None)
                      for i, box in enumerate(boxes))
+        titles = self.live_hand_titles(image, boxes)
+        hand = tuple(self.prefer_live_hand_title(cid, titles.get(i)) for i, cid in enumerate(hand))
         if any(cid is None for cid in hand):
             return None
         # Hiro treats Trouble cards as playable despite their naturally gray art.
@@ -912,8 +1353,16 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         if recovery is None and isinstance(self.kernel, TowerCardKernel):
             recovery = tower_skip_recovery()
         statuses = read_tower_status_values(image, self.read_status_value)
+        status_slots = ()
+        if getattr(self, 'hiro_policy_route', False):
+            cache = getattr(self, '_hiro_status_cache', None)
+            if cache is None:
+                cache = self._hiro_status_cache = hiro_module('vision.region_cache').RegionCache()
+            status_slots = read_hiro_statuses(image, self.ocr, cache=cache)
+            statuses.update(hiro_primary_statuses(status_slots))
         observation = TowerFrame(self.frame_id, turns, attribute, score, stamina, genki,
-            hand, drinks, playable, available, skip_recovery=recovery, statuses=tuple(statuses.items()))
+            hand, drinks, playable, available, skip_recovery=recovery, statuses=tuple(statuses.items()),
+            status_slots=status_slots)
         return TowerScreen(observation, boxes, skip, visible_bottles)
 
     def play_card(self, slot, *, before=None, action=None):
@@ -1036,7 +1485,9 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
                 self.native_session.candidate = candidate
                 self.native_session.observed_delta = played_delta
         else:
-            request = self.native_session.observed_position(before, frame)
+            observed = self.reobserve_visible(image, before, fresh)
+            request, fresh = observed if observed is not None else (None, fresh)
+            frame = fresh.observation
         if request is None and step is None:
             return None
         next_request = request if request is not None else step.request
@@ -1052,19 +1503,38 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             self.observed_types.append(ATTRIBUTES.index(fresh.observation.attribute) + 1)
         self.live_screen = fresh
 
-    def reobserve_visible(self, request, fresh):
+    def reobserve_visible(self, image, request, fresh):
         if self.native_session is None:
             return None
-        return self.native_session.observed_position(request, fresh.observation)
+        frame = fresh.observation
+        observed = self.native_session.observed_position(request, frame)
+        if observed is None:
+            forms = self.native_session.idle_hand_forms(request, frame)
+            corrected = self.read_overlapping_forms(image, fresh, forms)
+            if corrected != fresh:
+                fresh = corrected
+                observed = self.native_session.observed_position(request, fresh.observation)
+        return (observed, fresh) if observed is not None else None
 
-    def reobserve_no_effect(self, before, action, fresh):
-        if fresh is None:
+    def reobserve_no_effect(self, before, action, fresh, *, unconfirmed_image=None):
+        if fresh is None or self.native_session is None:
             return None
         frame, prior = fresh.observation, self.live_screen.observation
-        # Optional status reads may change while the hand and HUD establish
-        # that the dispatch did not consume the card or advance the turn.
-        if (frame.turns, frame.attribute, frame.score, frame.hand, frame.drinks, frame.stamina, frame.genki) != (
-                prior.turns, prior.attribute, prior.score, prior.hand, prior.drinks, prior.stamina, prior.genki):
+        if (frame.attribute, frame.drinks) != (prior.attribute, prior.drinks):
+            return None
+        if unconfirmed_image is not None:
+            # Use the ordered slots and the card identities Maa binds to them
+            # as the hand signature in Hiro's missed-selection comparison.
+            if frame.hand != prior.hand and len(frame.hand) == len(prior.hand):
+                fresh = self.read_overlapping_forms(unconfirmed_image, fresh, Counter(prior.hand))
+                frame = fresh.observation
+            old = (prior.turns, prior.stamina, prior.genki), prior.hand
+            new = (frame.turns, frame.stamina, frame.genki), frame.hand
+            same = hiro_module('exec.exam')._lite_same(old, new)
+        else:
+            same = (frame.turns, frame.stamina, frame.genki, frame.hand, frame.score) == (
+                prior.turns, prior.stamina, prior.genki, prior.hand, prior.score)
+        if not same:
             return None
         request = self.native_session.observed_position(before, frame)
         if request is None:
@@ -1081,21 +1551,23 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         if self.current_skip(image, before.turns) is None:
             return None
         boxes, playable = self.hand_boxes(image)
-        if len(boxes) != len(first.boxes) or not _tower_hand_ready(boxes):
+        if len(boxes) != len(first.boxes) or not hand_row_ready(boxes):
             return None
 
         target_id = before.hand[slot]
+        titles = self.live_hand_titles(image, boxes)
         # Try the expected physical slot first. Identity comparison catches a
         # same-width reorder, which geometry alone cannot see.
         def read_id(index):
             box = boxes[index]
             right = boxes[index + 1][0] if index + 1 < len(boxes) else None
             if right is not None and right < box[0] + box[2] - 4:
-                return self.card_id(image, box, index, visible_right=right, possible_forms=set(before.hand))
-            card_id = self.card_id(image, box, index)
-            if card_id not in before.hand:
-                return self.card_id(image, box, index, possible_forms=set(before.hand))
-            return card_id
+                card_id = self.card_id(image, box, index, visible_right=right, possible_forms=set(before.hand))
+            else:
+                card_id = self.card_id(image, box, index)
+                if card_id not in before.hand:
+                    card_id = self.card_id(image, box, index, possible_forms=set(before.hand))
+            return self.prefer_live_hand_title(card_id, titles.get(index))
 
         at_slot = read_id(slot)
         if at_slot == target_id and (slot in playable or self.is_trouble_card(target_id)):
@@ -1103,8 +1575,12 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         if before.hand.count(target_id) != 1:
             return None
         observed = tuple(at_slot if index == slot else read_id(index) for index in range(len(boxes)))
-        if Counter(observed) != Counter(before.hand):
-            return None
+        expected = Counter(before.hand)
+        if Counter(observed) != expected:
+            current = TowerScreen(replace(before, hand=observed, playable=playable), boxes, first.skip, first.drinks)
+            observed = self.read_overlapping_forms(image, current, expected).observation.hand
+            if Counter(observed) != expected:
+                return None
         actual = observed.index(target_id)
         if actual not in playable and not self.is_trouble_card(target_id):
             return None
@@ -1126,7 +1602,7 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
     def current_drink_target(self, image, action, turns):
         if self.current_skip(image, turns) is None:
             return None
-        drink = self.drink_reader.read_slots(image, client_size=self.client_size)[action.source_slot]
+        drink = self.drink_reader.read_slots(image)[action.source_slot]
         if drink['state'] == 'OCCUPIED' and drink['available'] is True and drink['drink_id'] == action.drink_id:
             return drink['center']
         return None
@@ -1135,7 +1611,7 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         boxes = self.retry_selection_boxes(image, first)
         if self.native_session and (fresh := self.observe_live(image)) is not None:
             before = first.observation
-            fresh = self.read_overlapping_forms(image, fresh, set(before.hand))
+            fresh = self.read_overlapping_forms(image, fresh, Counter(before.hand))
             after = fresh.observation
             if (not same_readable_resources((before.stamina, before.genki), (after.stamina, after.genki))
                     or (before.turns, before.attribute, before.drinks, Counter(before.hand)) != (
@@ -1200,6 +1676,8 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             self.click(page.close, purpose='close-formation-effects')
         self.poll(lambda frame: frame if (overview := read_formation_overview(self.formation_ocr(frame)))
                   and overview.page == 1 and overview.layer == layer else None, 'formation-after-effects')
+        if not completed:
+            raise ValueError('idol_road_native_gimmick_variant_unread')
         self.log(dict(event='idol_road_formation_effects', layer=layer, rows=[vars(row) for row in completed.values()],
                       master_completed=[turn for turn, row in completed.items() if rows.get(turn) != row],
                       unmapped=[row.turn for row in completed.values() if not tower_field_rule(row.description)]))
@@ -1208,8 +1686,8 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
     @staticmethod
     def same_live(left, right):
         a, b = left.observation, right.observation
-        return (a.turns, a.attribute, a.hand, a.drinks, a.score, a.stamina, a.genki, a.statuses) == (
-                b.turns, b.attribute, b.hand, b.drinks, b.score, b.stamina, b.genki, b.statuses)
+        return (a.turns, a.attribute, a.hand, a.drinks, a.score, a.stamina, a.genki, a.statuses, a.status_slots) == (
+                b.turns, b.attribute, b.hand, b.drinks, b.score, b.stamina, b.genki, b.statuses, b.status_slots)
 
     def observed_item_uses(self):
         limited = frozenset(item for item, limit in self.item_uses.items() if limit is not None)
@@ -1395,54 +1873,220 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         return read_idol_road_result_frame(self.ocr, image, idol_name=getattr(overview, 'idol_name', None),
                                            hiro=getattr(self, 'hiro_policy_route', False))
 
+    def read_unscored_failure(self, image):
+        from .exam_hud import exam_failed_header
+
+        if exam_failed_header(image, self.ocr):
+            return dict(rank=None, score=None, failed=True)
+        return None
+
     def result_page_ready(self, image):
         return bool(self.recognition('IdolRoadRetry', image) or self.recognition('IdolRoadAutoNext', image))
 
-    def settle_hiro_tower(self, result, attempts):
-        """Resolve the Maa page corresponding to Hiro's result verdict."""
-        from .idol_road_navigation import read_tower_clear_stars
+    def read_hiro_tower_settlement(self, image):
+        from .exam_hud import exam_failed_header
+        from .exam_loop import ExamSettlement
 
-        layer = self.loadout.overview.layer
+        if self.recognition('ProduceRecognitionHealthFlag', image):
+            return None
+        if self.result_page_ready(image):
+            result = self.read_result_page(image)
+            if result is not None:
+                return ExamSettlement(result['rank'], result['score'], None, failed=result['rank'] > 3)
+            if exam_failed_header(image, self.ocr):
+                return ExamSettlement(None, None, None, failed=True)
+            if self.target('IdolRoadAutoNext', image):
+                boxes = [(''.join(row.text.split()), (x, y, x + w, y + h))
+                         for row in self.ocr(image) for x, y, w, h in (row.box,)]
+                page = hiro_module('vision.tower').tower_page(image, boxes)
+                if page is not None and page[0] == 'TOWER_RANKING' and not page[1].get('failed'):
+                    return ExamSettlement(page[1].get('my_rank'), None, None)
+        if self.target('IdolRoadBackToList', image):
+            self.screen_clear = read_tower_clear_result(
+                image, self.ocr(image), ocr=self.ocr, layer=getattr(self, 'last_settled_layer', None))
+            if self.screen_clear is not None:
+                return ExamSettlement(None, None, None)
+        return None
+
+    def run_hiro_screen_tower(self, *, retry):
+        """Resume the visible exam with Hiro when no usable model start exists."""
+        from .hiro_maa_exam import run_maa_screen_exam
+
+        self.screen_clear = None
+        return run_maa_screen_exam(self, self.read_hiro_tower_settlement, label='tower-x', retry=retry, capture=self.capture)
+
+    def confirm_ranking_update(self, *, layer=None, first=None):
+        """Dismiss a stable ranking popup and read back the same settlement page."""
+        stable, sent_points, previous_result = None, None, None
+        sent_at, repeated = None, False
+
+        def observe_popup(image, box):
+            nonlocal stable, sent_points, sent_at, repeated
+            if image.shape != (1280, 720, 3):
+                stable = None
+                return
+            points = image[630:693, 235:485].copy()
+            now = time.monotonic()
+            if stable is None or box != stable[0] or not _same_ranking_points(points, stable[1]):
+                stable = box, points, now
+                return
+            if now - stable[2] < _RANKING_UPDATE_STABLE_S:
+                return
+            if sent_at is not None:
+                if repeated or now - sent_at < _RANKING_UPDATE_RETRY_S or not _same_ranking_points(points, sent_points):
+                    return
+                repeated = True
+            self.click(_center(box), purpose='tower-ranking-update-ok-repeat' if repeated else 'tower-ranking-update-ok')
+            sent_points, sent_at = points, time.monotonic()
+            stable = None
+
+        def read(image):
+            nonlocal stable, previous_result
+            update = self.recognition('IdolRoadRankingUpdate', image)
+            if update is not None:
+                previous_result = None
+                observe_popup(image, tuple(update.box))
+                return None
+            stable = None
+            result = None
+            if self.target('IdolRoadBackToList', image):
+                result = read_tower_clear_result(image, self.ocr(image), ocr=self.ocr, layer=layer)
+            if result is not None and result == previous_result:
+                self.log(dict(event='idol_road_ranking_update_confirmed', layer=result[0],
+                              clicks=2 if repeated else int(sent_at is not None)))
+                return result, image
+            previous_result = result
+            return None
+
+        if first is not None:
+            observe_popup(*first)
+        return self.poll(read, 'tower-ranking-update-confirm')
+
+    def settle_hiro_tower(self, result, attempts, *, screen_run=None):
+        """Resolve the Maa page corresponding to Hiro's result verdict."""
+        layer = self.loadout.overview.layer if screen_run is None else getattr(self, 'last_settled_layer', None)
+        failed = getattr(result, 'failed', False) or (result.rank is not None and result.rank > 3)
+        cleared = not failed and (result.rank is not None or screen_run is not None)
         stars, overview = 0, False
-        if result.rank <= 3:
+        update_confirmed = False
+
+        def ranking_update(image):
+            nonlocal update_confirmed
+            if not cleared:
+                return None
+            update = self.recognition('IdolRoadRankingUpdate', image)
+            if update is None:
+                return None
+            if update_confirmed:
+                raise ExamNoProgress('idol_road_no_progress:tower-ranking-update-confirm')
+            confirmed = self.confirm_ranking_update(layer=layer, first=(image, tuple(update.box)))
+            update_confirmed = True
+            return confirmed
+
+        def result_button(node, image):
+            confirmed = ranking_update(image)
+            return self.target(node, confirmed[1] if confirmed is not None else image)
+
+        ready = self.screen_clear if screen_run is not None else None
+        if cleared and ready is not None:
+            layer, stars = ready
+        elif cleared:
             target = self.poll(lambda image: self.target('IdolRoadAutoNext', image), 'tower-ranking-next')
             self.click(_center(target), purpose='tower-ranking-next')
 
-            update_sent = False
+            previous_clear = None
+            next_sent = time.monotonic()
+            next_repeated = False
 
             def clear_page(image):
-                nonlocal update_sent
-                update = self.recognition('IdolRoadRankingUpdate', image)
-                if update is not None:
-                    if not update_sent:
-                        self.click(_center(update.box), purpose='tower-ranking-update-ok')
-                        update_sent = True
-                    return None
+                nonlocal previous_clear, next_repeated
+                confirmed = ranking_update(image)
+                if confirmed is not None:
+                    return confirmed[0], False
                 rows = self.ocr(image)
+                settled = read_tower_clear_result(image, rows, ocr=self.ocr, layer=layer)
+                if settled is not None and settled[1] == 3:
+                    return settled, False
+                if settled is not None and settled == previous_clear:
+                    return settled, False
+                previous_clear = settled
+                if settled is not None:
+                    return None
                 floor = read_floor_overview(image, rows, self.target('IdolRoadStartFlag', image))
-                if floor is not None and floor.number == layer:
-                    return floor.stars, True
-                if any(row.text.strip().upper() in ('CLEAR', 'PERFECT') for row in rows):
-                    stars = read_tower_clear_stars(image)
-                    return (stars, False) if stars is not None else None
+                if floor is not None and floor.number == layer and floor.stars == 3:
+                    return (layer, 3), True
+                if not next_repeated and time.monotonic() - next_sent >= hiro_module('runtime.tower_play').RESULT_REDO_S:
+                    again = self.target('IdolRoadAutoNext', image)
+                    current = self.read_result_page(image) if again else None
+                    if current is not None and (current['rank'], current['score']) == (result.rank, result.score):
+                        self.click(_center(again), purpose='tower-ranking-next-repeat')
+                        next_repeated = True
                 return None
 
-            stars, overview = self.poll(clear_page, 'tower-clear-result')
-        verdict = attempts.hiro_result(self.loadout, result, stars=stars)
+            (layer, stars), overview = self.poll(clear_page, 'tower-clear-result')
+        self.last_settled_layer = layer
+        screen_idol = getattr(self, 'screen_tower_idol', None)
+        cache = getattr(self, '_tower_result_cache', None)
+        receipt = cache.active_id() if cache is not None else None
+        if screen_run is None:
+            verdict = attempts.hiro_result(self.loadout, result, stars=stars, receipt=receipt)
+        elif layer is not None and screen_idol is not None:
+            verdict = attempts.stage_result(attempts.stage_path(screen_idol, layer), layer, result,
+                                            stars=stars, receipt=receipt)
+        else:
+            if layer is not None and None in screen_run.tries:
+                screen_run.tries[layer] = screen_run.tries.pop(None)
+                screen_run.best[layer] = screen_run.best.pop(None)
+            verdict = attempts.verdict(screen_run, layer, cleared, stars) if attempts else screen_run.after_result(
+                layer, cleared=cleared, stars=stars)
         self.log(dict(event='hiro_tower_result', layer=layer, rank=result.rank, score=result.score,
-                      stars=stars, verdict=verdict))
+                      stars=stars, verdict=verdict, failed=failed))
         if verdict == 'retry':
-            target = self.poll(lambda image: self.target('IdolRoadRetry', image), 'tower-result-retry')
+            target = self.poll(lambda image: result_button('IdolRoadRetry', image), 'tower-result-retry')
             self.click(_center(target), purpose='tower-result-retry')
+            self._tower_retry_result = (time.monotonic(), layer, failed, stars, result)
         elif verdict == 'next' and not overview:
-            target = self.poll(lambda image: self.target('IdolRoadBackToList', image), 'tower-result-overview')
+            target = self.poll(lambda image: result_button('IdolRoadBackToList', image), 'tower-result-overview')
             self.click(_center(target), purpose='tower-result-overview')
+            start = time.monotonic()
+            repeated = False
+
+            def departure(image):
+                nonlocal repeated
+                if ranking_update(image) is not None:
+                    # Resume the return-to-list wait from the confirmed result.
+                    return False
+                if any(self.recognition(node, image) for node in (
+                        'IdolRoadFloorOverview', 'IdolRoadFormationPage', 'IdolRoadStartNextFlag')):
+                    return True
+                if repeated or time.monotonic() - start < hiro_module('runtime.tower_play').RESULT_REDO_S:
+                    return None
+                again = self.target('IdolRoadBackToList', image)
+                if again is None:
+                    return None
+                if failed:
+                    current = self.read_result_page(image) or self.read_unscored_failure(image)
+                    same = current is not None and (current['rank'], current['score']) == (result.rank, result.score)
+                else:
+                    same = read_tower_clear_result(image, self.ocr(image), ocr=self.ocr, layer=layer) == (layer, stars)
+                if same:
+                    self.click(_center(again), purpose='tower-result-overview-repeat')
+                    repeated = True
+                return None
+
+            if self.poll(departure, 'tower-next-page') is False:
+                self.poll(departure, 'tower-next-page')
+        if cache is not None and verdict == 'next':
+            cache.finish()
+            self._tower_result_cache = None
         return verdict
 
     def action_feedback(self, before, action, *, hiro_ui=False):
         drinks = tuple(pair for pair in before.drink_slots
                        if action.kind is not ActionKind.USE_DRINK or pair[0] != action.source_slot)
-        recovery = self.live_screen.observation.skip_recovery if action.kind is ActionKind.END_TURN else None
+        previous_frame = self.live_screen.observation
+        recovery = previous_frame.skip_recovery if action.kind is ActionKind.END_TURN else None
+        turn_receipt = {'previous_frame': previous_frame} if action.kind is ActionKind.END_TURN else {}
         branches = {}
         next_animation = 0.
         next_dialog_click = 0.
@@ -1506,6 +2150,10 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
             if retry or self.result_page_ready(image):
                 result = self.read_result_page(image)
                 if result:
+                    if result.get('score') is None:
+                        # The exam boundary handles explicit unscored failure.
+                        # A terminal screen alone cannot receipt a pending tap.
+                        return None
                     self.retry_available = retry
                     if self.native_session:
                         receipt, modeled = self.native_session.observe_result(before, action, result)
@@ -1603,15 +2251,16 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
                               score=frame.score, stamina=frame.stamina, genki=frame.genki))
                 first_visible_successor = False
             if self.native_session:
-                step = self.native_session.observe_frame(before, action, frame)
+                step = self.native_session.observe_frame(before, action, frame, **turn_receipt)
                 if step is None:
                     forms = self.native_session.overlapping_hand_forms(before, action, frame)
                     corrected = self.read_overlapping_forms(image, fresh, forms)
                     if corrected != fresh:
                         fresh, frame = corrected, corrected.observation
-                        step = self.native_session.observe_frame(before, action, frame)
+                        step = self.native_session.observe_frame(before, action, frame, **turn_receipt)
                     if step is None and confirmation is not None:
-                        step = self.native_session.observe_frame(before, action, frame, confirmed_card=True)
+                        step = self.native_session.observe_frame(before, action, frame, confirmed_card=True,
+                                                                 previous_frame=previous_frame)
                 if step:
                     if self.native_session.observed_delta:
                         self.log(dict(event='idol_road_maa_status_reconciled', frame_id=frame.frame_id,
@@ -1663,6 +2312,59 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         return any(row.text == '位' and row.score >= .95 for row in self.ocr(
             image, roi=(390, 906, 47, 57), expected='^位$', only_rec=True))
 
+    def restore_tower_opening(self, algorithm, client_size, cache):
+        """Rebind only a recorded opening that has no later Maa input."""
+        if not cache.has_opening() or not cache.has_verified_formation():
+            return False
+        self.client_size, self.algorithm = client_size, algorithm
+        self.prepare(algorithm, cached=cache.load(require_verified=True))
+        fresh = self.read_tower_opening(self.capture())
+        if fresh is None or not cache.opening_matches(fresh.observation):
+            self.loadout = None
+            return False
+        self.live_screen = fresh
+        self._tower_opening_cache = cache
+        return True
+
+    def save_committed_exam(self, request, frame):
+        cache = getattr(self, '_tower_result_cache', None)
+        if cache is None or self.native_session is None or getattr(self, '_saved_exam_frame', None) == frame.frame_id:
+            return
+        position = self.native_session.committed_position(request)
+        if position is not None:
+            try:
+                cache.record_position(dict(position, algorithm=self.algorithm, frame=cache._opening_key(frame)))
+            except OSError as error:
+                self.log(dict(event='idol_road_committed_position_not_saved', reason=str(error)))
+            else:
+                self._saved_exam_frame = frame.frame_id
+
+    def restore_tower_position(self, algorithm, client_size, cache):
+        """Bind an idle, previously committed position to a fresh Maa frame."""
+        if not cache.has_verified_formation() or (saved := cache.committed_position()) is None:
+            return False
+        try:
+            self.client_size, self.algorithm = client_size, algorithm
+            self.prepare(algorithm, cached=cache.load(require_verified=True))
+            fresh = self.observe_live(self.capture())
+            if (self.native_rules is not None and fresh is not None and saved['algorithm'] == self.algorithm
+                    and saved['frame'] == cache._opening_key(fresh.observation)):
+                frame = fresh.observation
+                self.observed_types.clear()
+                self._restored_exam_box, self.native_session = open_native_decision_box(
+                    self.algorithm, self.native_rules, None, self.loadout, self.observed_types, item_uses={},
+                    statuses=(), rust_stage=self.rust_stage, resumed=(saved, frame))
+                self.live_screen = fresh
+                self._tower_result_cache = cache
+                self._saved_exam_frame = frame.frame_id
+                return True
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+            if isinstance(error, TowerDateChanged):
+                raise
+            self.log(dict(event='idol_road_committed_position_unavailable', reason=str(error)))
+        cache.record_position(None)
+        return False
+
     def run(self, algorithm, *, client_size, retry=None, attempts=None, saved=None):
         self.unplayable_cards.clear()
         self.unplayable_drinks.clear()
@@ -1685,14 +2387,18 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
                 raise ValueError('idol_road_daily_attempts_exhausted')
 
         retrying = retry is not None or (saved is not None and saved[1])
+        read_opening = self.stable_tower_opening()
         if retrying:
             if retry is not None:
                 self.__dict__.update(vars(retry))
             else:
-                self.prepare(algorithm, cached=saved[0].load())
+                self.prepare(algorithm, cached=saved[0].load(require_verified=True))
             check_attempts()
+            if saved is not None:
+                saved[0].update_opening(None)
             self.enter_same_formation_retry()
-            _, self.live_screen = self.poll(self.after_retry, 'retry-opening-or-formation')
+            _, self.live_screen = self.poll(lambda image: self.after_retry(image, read_opening),
+                                            'retry-opening-or-formation')
         if self.live_screen is None:
             if not retrying:
                 if saved is None:
@@ -1702,11 +2408,22 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
                 check_attempts()
             target = self.poll(lambda image: self.target('IdolRoadStart', image), 'challenge')
             self.click(_center(target), purpose='challenge')
-            self.live_screen = self.poll(self.observe_live, 'opening-hud')
+            self.live_screen = self.poll(read_opening, 'opening-hud')
+        if saved is not None and getattr(self, '_tower_opening_cache', None) is None:
+            saved[0].update_opening(self.live_screen.observation)
+            self._tower_opening_cache = saved[0]
+        if saved is not None:
+            self._tower_result_cache = saved[0]
         return self.run_live_exam(attempts=attempts, hiro_label=f'tower-{self.loadout.overview.layer}'
                                   if getattr(self, 'hiro_policy_route', False) else None)
 
-    def run_live_exam(self, *, attempts=None, exam=None, hiro_label=None):
+    def run_live_exam(self, *, attempts=None, exam=None, hiro_label=None, hiro_session=None):
+        restored = getattr(self, '_restored_exam_box', None)
+        if restored is not None:
+            from .hiro_maa_exam import run_maa_exam
+
+            self._restored_exam_box = None
+            return run_maa_exam(self, restored, self.native_legal_reader(), label=hiro_label, session=hiro_session)
         items = self.opening_item_uses()
         if isinstance(self.kernel, TowerCardKernel):
             self.kernel.use_stage_timeline(self.timeline)
@@ -1727,22 +2444,9 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         if self.native_rules:
             box, self.native_session = open_native_decision_box(self.algorithm, self.native_rules,
                 opening, self.loadout, self.observed_types, item_uses=items, statuses=frame.statuses,
-                exam=exam, unknown_deck=unread, rust_stage=self.rust_stage)
+                status_slots=frame.status_slots, exam=exam, unknown_deck=unread, rust_stage=self.rust_stage)
 
-            last_item_observation = opening.snapshot_id
-
-            def legal(request):
-                nonlocal last_item_observation
-                if last_item_observation != request.snapshot_id:
-                    last_item_observation = request.snapshot_id
-                    changes = self.native_session.sync_item_uses(self.observed_item_uses())
-                    if changes:
-                        self.log(dict(event='exam_item_uses_reconciled', frame_id=request.snapshot_id,
-                                      observed_minus_model=changes))
-                return tuple(action for action in self.native_session.legal_actions(request, self.live_screen.observation)
-                             if (request.state.turn, action.card_instance_id) not in self.unplayable_cards
-                             and (action.kind is not ActionKind.USE_DRINK
-                                  or (request.state.turn, action.source_slot) not in self.unplayable_drinks))
+            legal = self.native_legal_reader()
         else:
             box = open_idol_road_battle(self.algorithm, loadout=self.loadout, kernel=self.kernel, opening=opening,
                 planning_seed=time.time_ns(), deadline=float('inf'), observed_types=self.observed_types,
@@ -1754,7 +2458,7 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
         if hiro_label is not None:
             from .hiro_maa_exam import run_maa_exam
 
-            result = run_maa_exam(self, box, legal, label=hiro_label)
+            result = run_maa_exam(self, box, legal, label=hiro_label, session=hiro_session)
         else:
             result = run_exam(box, legal_actions=legal, execute=self.submit, feedback=self.action_feedback, poll=self.poll,
                               force_skip=True, on_forced_skip=lambda: self.log(dict(
@@ -1770,3 +2474,22 @@ class IdolRoadMaaBattle(BattleRecognitionMixin):
                 self.log(dict(event='idol_road_daily_attempt', layer=self.loadout.overview.layer,
                               count=count, limit=attempts.limit))
         return result
+
+    def native_legal_reader(self):
+        last_item_observation = None
+
+        def legal(request):
+            nonlocal last_item_observation
+            observed = self.live_screen.observation
+            if last_item_observation != request.snapshot_id:
+                last_item_observation = request.snapshot_id
+                changes = self.native_session.sync_item_uses(self.observed_item_uses(), status_slots=observed.status_slots)
+                if changes:
+                    self.log(dict(event='exam_item_uses_reconciled', frame_id=request.snapshot_id,
+                                  observed_minus_model=changes))
+            return tuple(action for action in self.native_session.legal_actions(request, observed)
+                         if (request.state.turn, action.card_instance_id) not in self.unplayable_cards
+                         and (action.kind is not ActionKind.USE_DRINK
+                              or (request.state.turn, action.source_slot) not in self.unplayable_drinks))
+
+        return legal

@@ -6,6 +6,7 @@ import re
 import json
 import time
 import ctypes
+from types import SimpleNamespace
 from datetime import datetime, timezone
 
 from utils import logger as user_logger
@@ -13,7 +14,7 @@ from maa.context import Context
 from maa.custom_action import CustomAction
 
 from agent.live_decision.simd_ocr import without_vulkan_cold_wait
-from agent.live_decision.ocr_nodes import read_ocr_node
+from agent.live_decision.ocr_nodes import OcrRows, read_ocr_node
 
 from .reader import ArenaPageState, classify_arena_page
 from .recovery import error_retry_box
@@ -24,7 +25,6 @@ from .challenge_flow import (
     ArenaChallengeFlowError,
     ArenaChallengeRecordStore,
     contest_day_key,
-    _result_winner_rows,
     battle_outcome_tap_box,
     classify_post_challenge_page,
     result_observations_complete,
@@ -87,16 +87,12 @@ def _post_click(context, *args, **kwargs):
     return context.tasker.controller.post_click(*args, **kwargs)
 
 
-def _full_ocr(context: Context, image, *, accept, accept_fallback=None):
+def _full_ocr(context: Context, image, *, accept):
     cancellation_for(context).check()
-    rejected = []
 
     def accept_simd(rows):
         cancellation_for(context).check()
-        if not accept(rows):
-            rejected.append(rows)
-            return False
-        return accept_fallback is None or all(accept_fallback(previous, rows) for previous in rejected)
+        return accept(rows)
 
     observed = read_ocr_node(
         context, image, "ArenaReaderOCR",
@@ -112,23 +108,6 @@ def _result_rows_ready(rows):
         _connection_pending(rows)
         or _communication_retry_box(rows) is not None
         or result_observations_complete(serialise_result_observations(rows))
-    )
-
-
-def _result_ocr_fallback_agrees(previous_rows, fallback_rows):
-    fallback = serialise_result_observations(fallback_rows)
-    if not result_observations_complete(fallback):
-        return True
-    previous = serialise_result_observations(previous_rows)
-    outcome, _, banner = _result_winner_rows(previous["ocr_observations"])
-    if banner is None or outcome == fallback["outcome"]:
-        return True
-    x, y, width, height = banner["box"]
-    left, top, banner_width, banner_height = fallback["winner_evidence"]["overall"]["box"]
-    # An isolated side mark can be the first row in a partial read.
-    return not (
-        left <= x + width / 2 <= left + banner_width
-        and top <= y + height / 2 <= top + banner_height
     )
 
 
@@ -487,6 +466,9 @@ def _result_wait_communication_box(node):
     recognition = node.recognition
     if recognition is None or not recognition.hit:
         return None
+    if getattr(recognition, "algorithm", None) == "Custom":
+        box = tuple(recognition.box or ())
+        return box if len(box) == 4 and min(box[:2]) >= 0 and min(box[2:]) > 0 else None
     # The lightweight heading match and the dialog OCR share the native wait
     # frame. Use the latter's original boxes to require a unique control.
     sub_results = getattr(recognition.best_result, "sub_results", ())
@@ -495,6 +477,44 @@ def _result_wait_communication_box(node):
     if not recognition.hit or recognition.algorithm != "OCR":
         return None
     return _communication_retry_box(recognition.all_results or recognition.filtered_results or ())
+
+
+def recognize_result_communication(context, image):
+    native_box = None
+
+    def read_native():
+        nonlocal native_box
+        detail = context.run_recognition("ArenaChallengeResultCommunicationMaa", image)
+        native_box = _result_wait_communication_box(SimpleNamespace(recognition=detail))
+        return OcrRows(())
+
+    def retry_box(rows):
+        # The fallback verifies the original two native ROIs. SIMD must
+        # corroborate the dialog and its control in the same lower region.
+        height, width = image.shape[:2]
+        dialog = tuple(row for row in rows if row.score >= 0.3 and row.box[1] >= height * 680 / 1280)
+        headings = [
+            row for row in dialog
+            if re.fullmatch(r"(?:通信エラ[ー一]?|通信中にエラーが発生しました|アセット取得に失敗)", row.text.strip())
+            and width * 20 / 720 <= row.box[0] < width * 420 / 720
+            and height * 690 / 1280 <= row.box[1] < height * 1025 / 1280
+        ]
+        if not headings:
+            return None
+        box = _communication_retry_box(dialog)
+        if box is None:
+            return None
+        x, y, w, h = box
+        if not (0 <= x < x + w <= width
+                and max(row.box[1] + row.box[3] for row in headings) <= y < y + h <= height * 1253 / 1280):
+            return None
+        return box
+
+    observed = read_ocr_node(
+        context, image, "ArenaReaderOCR", all_results=True, accept=lambda rows: retry_box(rows) is not None,
+        prefer_gpu=True, native_read=read_native,
+    )
+    return retry_box(observed.rows) if observed.rows else native_box
 
 
 def _await_formal_result(context, store, capture_id: str, *, argv=None) -> bool:
@@ -635,10 +655,7 @@ class ArenaChallengeRecordResultAction(CustomAction):
                     break
                 try:
                     image = _capture(context)
-                    rows = _full_ocr(
-                        context, image, accept=_result_rows_ready,
-                        accept_fallback=_result_ocr_fallback_agrees,
-                    )
+                    rows = _full_ocr(context, image, accept=_result_rows_ready)
                     result = serialise_result_observations(rows)
                 except Exception as error:
                     image, rows = None, ()

@@ -14,6 +14,11 @@ from dataclasses import asdict
 import cv2
 import numpy as np
 
+if __package__.startswith('agent.'):
+    from agent.utils.effect_text import normalize_score_effect_text
+else:
+    from utils.effect_text import normalize_score_effect_text
+
 from .layout import calibrated_live_client_size
 from .upgrade import compact_ocr_text, normalize_upgrade_title
 from .inventory import _inventory_ocr, inventory_white_text
@@ -50,10 +55,10 @@ _SUPPORTED = {
             dict(kind='SCHEDULE', phase='START_OF_TURN', uses=4, score=7),
             dict(kind='GOOD_CONDITION', amount=2)], limited=True),
     '29': dict(name='準備運動', source_id='jumbiundo', cost=3,
-        body=r'(?:スコア|パラメータ)\+10集中\+3',
+        body=r'スコア\+10集中\+3',
         effects=[dict(kind='SCORE', amount=10), dict(kind='CONCENTRATION', amount=3)]),
     '35': dict(name='ハイタッチ', source_id='haitatchi', cost=3,
-        body=r'(?:スコア|パラメータ)\+24\(集中効果を2倍適用\)(?:レッスン中1回|試験・ステージ中1回)',
+        body=r'スコア\+24\(集中効果を2倍適用\)(?:レッスン中1回|試験・ステージ中1回)',
         effects=[dict(kind='SCORE', amount=24, score_concentration_multiplier=2)], limited=True),
     '49': dict(name='気合十分！', source_id='kiaijubun', cost=0,
         body=r'元気\+4消費体力減少(?:3ターン|\(3ターン\))',
@@ -265,9 +270,10 @@ def read_complete_zero_cost(context, image, roi):
 
 
 def _effect_body(rows, panel):
-    return ''.join(_text(row['text']) for row in rows
+    text = ''.join(_text(row['text']) for row in rows
         if not (_text(row['text']) in ('Mental','Active') and row['box'][1] < panel[1]+80)
         and _text(row['text']) != 'スキルカードサポート')
+    return normalize_score_effect_text(text)
 
 
 def _original_support_body_complete(title_rows, title_roi, body_rows, body_roi, panel):
@@ -862,7 +868,8 @@ def verify_selected_skill_support_observations(observations, *, bundle, selected
                 header = re.fullmatch(r'[-−]?(\d{1,2})',_text(row['printed_cost_rows'][0]['text']))
                 if header is not None and int(header[1]) != int(match[1]):
                     raise ValueError('selected support typed body cost contradicts the header')
-            signatures.append((tuple(_text(line['text']) for line in row['body_rows']),int(match[1])))
+            body_lines = tuple(normalize_score_effect_text(_text(line['text'])) for line in row['body_rows'])
+            signatures.append((body_lines, int(match[1])))
         if any(signature != signatures[0] for signature in signatures[1:]):
             raise ValueError('selected support complete body or printed cost changed')
         result.update(observation_accepted=True,body_lines=observed[0]['body_rows'])

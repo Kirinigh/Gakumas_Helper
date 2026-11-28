@@ -13,6 +13,7 @@ from collections import Counter
 from dataclasses import replace, dataclass
 
 from route.engine import has_single_frame_id
+from utils.effect_text import normalize_score_effect_text
 
 from .hif import HifSenseKernel, compile_observed_hif_memories
 from .kernel import EffectKind, EffectSpec, ConditionKind, DrinkDefinition, EffectCondition
@@ -566,7 +567,7 @@ def _observed_hif_single_plus_updates(bundle, components, action, receipt):
         row = matches[0]
         if (type(row.count) is not int or row.count <= 0 or row.unit != unit
                 or row.remaining_turns is not None or row.per_turn_limit is not None
-                or row.description != description.format(row.count)):
+                or normalize_score_effect_text(row.description) != description.format(row.count)):
             raise ValueError('HIF single-plus scalar body contradicts its count: ' + title)
         result[name] = row.count
     return result
@@ -595,7 +596,7 @@ def _observed_hif_duration_updates(bundle, components):
         if len(matches) == 1:
             row = matches[0]
             if (row.unit == 'ターン' and row.remaining_turns is None and row.per_turn_limit is None
-                    and row.description == description + str(row.count) + 'ターン'):
+                    and normalize_score_effect_text(row.description) == description + str(row.count) + 'ターン'):
                 result[name] = (row.count, kind)
     return result
 
@@ -672,7 +673,7 @@ def _counted_after_card_score_row(row):
             or row.remaining_turns is not None or row.per_turn_limit is not None):
         return None
     match = re.fullmatch(r'好調が(\d+)ターン以下の場合、スキルカード使用後(\d+)回ごとに、'
-        r'スコア\+(\d+)\(集中効果を(\d+)倍適用\)・好調減少(\d+)', row.description)
+        r'スコア\+(\d+)\(集中効果を(\d+)倍適用\)・好調減少(\d+)', normalize_score_effect_text(row.description))
     return (row.title, row.count, *map(int, match.groups())) if match else None
 
 
@@ -1167,7 +1168,8 @@ def verify_hif_committed_observation(bundle, expected, *, core, components, base
         elif row.title == '集中増加量追加':
             addition_rows.append((row.count, row.unit, row.remaining_turns))
         elif row.title == '集中強化':
-            match=re.fullmatch(r'集中によるスコア上昇量を(\d+)%増加(∞|\d+)ターン',row.description)
+            match=re.fullmatch(r'集中によるスコア上昇量を(\d+)%増加(∞|\d+)ターン',
+                normalize_score_effect_text(row.description))
             duration=None if match and match[2]=='∞' else int(match[2]) if match else None
             if match and row.unit=='%' and row.count==int(match[1]) and row.remaining_turns==duration:
                 percentage_rows.append((row.count,duration))
@@ -1177,7 +1179,8 @@ def verify_hif_committed_observation(bundle, expected, *, core, components, base
             # Native 1615 reads the entire clause, including 好印象. The
             # opening parenthesis beside its pictogram may be absent in OCR;
             # retain the actual text and compare every word and the amount.
-            match = re.fullmatch(r'スコア上昇量を(\d+)%増加\(?好印象による上昇も含む\)', row.description)
+            match = re.fullmatch(r'スコア上昇量を(\d+)%増加\(?好印象による上昇も含む\)',
+                normalize_score_effect_text(row.description))
             if (match and row.unit == '%' and row.count == int(match[1]) and row.count > 0
                     and type(row.remaining_turns) is int and row.remaining_turns > 0):
                 score_percentage_rows.append((row.count, row.remaining_turns))
@@ -1202,7 +1205,7 @@ def verify_hif_committed_observation(bundle, expected, *, core, components, base
             if match:
                 permanent_focus_rows.append((row.title, int(match[1]), int(match[2])))
             elif (row.title == '至高のエンタメ+'
-                    and row.description == 'アクティブスキルカード使用時、スコア+5'):
+                    and normalize_score_effect_text(row.description) == 'アクティブスキルカード使用時、スコア+5'):
                 active_score_rows.append((row.title, 5))
             elif (match := re.fullmatch(r'(アクティブ|メンタル)スキルカード使用時、集中\+([1-9]\d*)',
                     row.description)):
@@ -1213,7 +1216,8 @@ def verify_hif_committed_observation(bundle, expected, *, core, components, base
         elif row.title in card_names and row.unit=='ターン' and row.remaining_turns is None:
             suffix=str(row.count)+'ターン'
             match=re.fullmatch(r'ターン終了時、集中\+(\d+)',row.description.removesuffix(suffix))
-            start_score=re.fullmatch(r'ターン開始時、スコア\+(\d+)',row.description.removesuffix(suffix))
+            start_score=re.fullmatch(r'ターン開始時、スコア\+(\d+)',
+                normalize_score_effect_text(row.description.removesuffix(suffix)))
             if row.description.endswith(suffix) and match and row.per_turn_limit is None:
                 timer_rows.append((row.title,row.count,int(match[1])))
             elif (row.description.endswith(suffix) and start_score and row.per_turn_limit is None
@@ -1232,7 +1236,7 @@ def verify_hif_committed_observation(bundle, expected, *, core, components, base
         elif row.title == '発動予約':
             match=re.fullmatch(r'(\d+)ターン後、スキルカードを(?:(\d+)枚)?引く',row.description)
             score_match = re.fullmatch(r'([1-9]\d*)ターン後、スコア\+([1-9]\d*)'
-                r'(?:\(好調効果を([1-9]\d*)倍適用\))?', row.description)
+                r'(?:\(好調効果を([1-9]\d*)倍適用\))?', normalize_score_effect_text(row.description))
             if match and row.unit=='回' and row.remaining_turns==int(match[1]):
                 reservation_rows.append((int(match[1]),row.count,int(match[2]) if match[2] else 1))
             elif (score_match and row.unit == '回' and type(row.count) is int and row.count > 0

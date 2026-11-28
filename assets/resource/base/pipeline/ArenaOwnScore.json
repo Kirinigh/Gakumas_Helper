@@ -29,13 +29,20 @@
     "next": ["ArenaOwnScoreEnter"]
   },
   "ArenaOwnScoreEnter": {
-    "recognition": {"type": "OCR", "param": {"roi": [426, 809, 213, 157], "expected": ["コンテスト"], "replace": []}},
+    "recognition": {"type": "Custom", "param": {
+      "roi": [426, 809, 213, 157],
+      "custom_recognition": "ArenaPipelineText",
+      "custom_recognition_param": {"expected": ["コンテスト"]}
+    }},
     "action": {"type": "Click", "param": {}},
     "post_wait_freezes": 200,
     "next": ["ArenaOwnScoreReady", "[JumpBack]ClickCenter"]
   },
   "ArenaOwnScoreReady": {
-    "recognition": {"type": "OCR", "param": {"expected": ["リハーサル"]}},
+    "recognition": {"type": "Custom", "param": {
+      "custom_recognition": "ArenaPipelineText",
+      "custom_recognition_param": {"expected": ["リハーサル"]}
+    }},
     "action": {"type": "DoNothing", "param": {}},
     "next": ["ArenaOwnScoreRun"]
   },

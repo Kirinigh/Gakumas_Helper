@@ -11,7 +11,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 
 from agent.utils.runtime_paths import resolve_packaged_runtime_path as resolve_runtime_path
 
-HIRO_REVISION = 'a7df5a9be782765d3c6282566157fbd3f80b99ee'
+HIRO_REVISION = '6e7bbd59a7ca2a66c1f1615cb9bd8e2e3b3ede93'
 HIRO_MASTER_REVISION = 'edc305aac3ac0204806c96164ce36fb795ba81e1'
 _RUNTIME_OWNER = RLock()
 
@@ -65,6 +65,28 @@ def hiro_route_file(relative):
     if not reference.is_file():
         raise FileNotFoundError(f'Hiro {HIRO_REVISION} route file is unavailable: {relative}')
     return reference
+
+
+@contextmanager
+def hiro_ui_templates():
+    """Use the same pinned template pack in and outside a Hiro page runner."""
+    with _RUNTIME_OWNER:
+        ui = hiro_module('vision.ui_templates')
+        pack = hiro_route_file(Path('assets/pack/ui/templates.json')).parent
+        previous = ui.PACK
+        if pack == previous:
+            yield ui
+            return
+        caches = (ui._catalog, ui._pixels, ui.tpl)
+        ui.PACK = pack
+        try:
+            for reader in caches:
+                reader.cache_clear()
+            yield ui
+        finally:
+            ui.PACK = previous
+            for reader in caches:
+                reader.cache_clear()
 
 
 @cache

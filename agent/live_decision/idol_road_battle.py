@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from .exam_hud import read_exam_rank_label
 from .idol_road_formation import (
     FormationCard,
     FormationIdol,
@@ -80,11 +81,10 @@ def read_idol_road_result(rows, *, idol_name=None):
               and (match := re.fullmatch(r'([1-6])位?', text))}
     scores = sorted((y, int(match[1].replace(',', ''))) for text, _, y in tokens if 260 < y < 1080
                     and (match := re.fullmatch(r'(\d+|\d{1,3}(?:,\d{3})+)[Pp][tTlI1]?', text)))
-    if len(scores) < 3:
+    if not scores:
         return None
-    digits = str.maketrans('IlS', '115')
-    labels = [(y, int(text[0].translate(digits))) for text, x, y in tokens if x < 150 and 260 < y < 1080
-              and re.fullmatch(r'[1-6IlS](st|nd|rd|th)', text)]
+    labels = [(y, rank) for text, x, y in tokens if x < 150 and 260 < y < 1080
+              and (rank := read_exam_rank_label(text)) is not None]
     if not badges and idol_name and any('不合格' in text and x < 230 and 130 <= y <= 260
                                         for text, x, y in tokens):
         # Hiro reads the idol's own row on failure, where the top-left rank
@@ -119,7 +119,7 @@ def read_idol_road_result_frame(ocr, image, *, idol_name=None, hiro=False):
         from .hiro_runtime import hiro_module
 
         buttons = tuple(ocr(image, roi=(0, 1080, 720, 168)))
-        tokens = [(re.sub(r'\s+', '', row.text), (x, y, x + w, y + h))
+        tokens = [(''.join(row.text.split()), (x, y, x + w, y + h))
                   for row in labels + scores + buttons for x, y, w, h in (row.box,)]
         page = hiro_module('vision.tower').tower_page(image, tokens)
         if page and page[0] == 'TOWER_RANKING':

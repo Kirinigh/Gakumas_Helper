@@ -99,6 +99,10 @@ class HiroOpening:
                 plan = scope.enter_context(setup(rt))
                 if plan is not None:
                     prepare['plan'] = plan
+                    if mode != 'main':
+                        for kind in ('support', 'memory'):
+                            if (number := (plan.get(kind) or {}).get('set')) is not None:
+                                prepare[f'{kind}_set'] = number
             if mode == 'main':
                 opening.new_produce(rt, mode, expect_memory=memory, **prepare)
                 if verify_idol is not None and mode not in self.starts:

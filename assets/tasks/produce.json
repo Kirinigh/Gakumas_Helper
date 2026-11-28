@@ -154,6 +154,7 @@
           "label": "$HIF 高分继续",
           "description": "$HIF 高分说明",
           "option": [
+            "Hiro 开局方式",
             "Hiro 培育选卡",
             "使用体力药",
             "使用道具"
@@ -182,6 +183,7 @@
           "label": "$HIF 快速继续",
           "description": "$HIF 快速说明",
           "option": [
+            "Hiro 开局方式",
             "Hiro 培育选卡",
             "使用体力药",
             "使用道具"
@@ -210,6 +212,7 @@
           "label": "$HIF UINet 2.1",
           "description": "$HIF UINet 2.1 说明",
           "option": [
+            "Hiro 开局方式",
             "Hiro 培育选卡",
             "使用体力药",
             "使用道具"
@@ -623,6 +626,7 @@
           "name": "HIF 選抜試験自动",
           "label": "$HIF 仅选拔入口",
           "option": [
+            "Hiro 开局方式",
             "HIF 编成方式",
             "HIF 選抜試験编成",
             "Hiro 培育选卡",
@@ -649,6 +653,7 @@
           "name": "HIF Hiro 全流程",
           "label": "$HIF 完整培育入口",
           "option": [
+            "Hiro 开局方式",
             "HIF 编成方式",
             "HIF 選抜試験编成",
             "Hiro 培育选卡",
@@ -5796,9 +5801,16 @@
         {
           "name": "游戏推荐",
           "option": [
-            "卡片选择优先级"
+            "卡片选择优先级",
+            "Hiro 从主页开始"
           ],
-          "pipeline_override": {}
+          "pipeline_override": {
+            "ProduceCultivationBattleSettings": {
+              "attach": {
+                "algorithm": "recommended"
+              }
+            }
+          }
         },
         {
           "name": "UINet 1.1",
@@ -5853,7 +5865,9 @@
         {
           "name": "Hiro 全流程",
           "option": [
+            "Hiro 开局方式",
             "Hiro 培育编成",
+            "HIF 编成方式",
             "Hiro 培育选卡"
           ],
           "pipeline_override": {
@@ -6033,10 +6047,87 @@
           "name": "自动编成",
           "label": "$HIF 自动编成",
           "description": "$HIF 自动编成说明",
+          "option": [
+            "HIF 自动编成覆盖授权",
+            "Hiro 复用助手编成"
+          ],
           "pipeline_override": {
             "ProduceHifAutoFormationSettings": {
               "attach": {
                 "auto": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "HIF 自动编成覆盖授权": {
+      "type": "input",
+      "label": "$HIF 自动编成覆盖授权",
+      "inputs": [
+        {
+          "name": "hiro_overwrite_support",
+          "label": "$HIF 允许覆盖的支援编成号",
+          "default": "0",
+          "pipeline_type": "string",
+          "verify": "^(?:[0-9]|1[0-9]|20)$"
+        },
+        {
+          "name": "hiro_overwrite_memory",
+          "label": "$HIF 允许覆盖的回忆编成号",
+          "default": "0",
+          "pipeline_type": "string",
+          "verify": "^(?:[0-9]|1[0-9]|20)$"
+        }
+      ],
+      "pipeline_override": {
+        "ProduceHifAutoFormationSettings": {
+          "attach": {
+            "auto": true,
+            "overwrite_support": "{hiro_overwrite_support}",
+            "overwrite_memory": "{hiro_overwrite_memory}"
+          }
+        }
+      }
+    },
+    "Hiro 复用助手编成": {
+      "type": "switch",
+      "label": "$Hiro 复用助手编成",
+      "description": "$Hiro 复用助手编成说明",
+      "default_case": "No",
+      "cases": [
+        {
+          "name": "No"
+        },
+        {
+          "name": "Yes",
+          "pipeline_override": {
+            "ProduceHifAutoFormationSettings": {
+              "attach": {
+                "reuse_written": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Hiro 开局方式": {
+      "type": "select",
+      "label": "$Hiro 开局方式",
+      "description": "$Hiro 开局方式说明",
+      "default_case": "new",
+      "cases": [
+        {
+          "name": "new",
+          "label": "$Hiro 新开培育"
+        },
+        {
+          "name": "resume",
+          "label": "$Hiro 继续培育存档",
+          "pipeline_override": {
+            "ProduceHiroStartSettings": {
+              "attach": {
+                "mode": "resume"
               }
             }
           }

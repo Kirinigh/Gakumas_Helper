@@ -174,7 +174,7 @@ class HifFastNativePolicy:
     def __init__(self, bundle, *, exam_context, source, model=None, planning_seed=1731105100,
                  deadline=None, initial_history=None, profile=PROFILE):
         from agent.live_decision.high_score.hif import HifSenseKernel
-        from agent.live_decision.high_score.decision_box import build_battle_policy
+        from agent.live_decision.high_score.policy_factory import build_battle_policy
 
         if profile not in NETWORK_PROFILES:
             raise ValueError('fast_native_profile_not_supported')
@@ -185,8 +185,7 @@ class HifFastNativePolicy:
         offline_kernel = HifSenseKernel(plan_type=business_copy(bundle.kernel.plan_type, offline=True), **{name: business_copy(getattr(bundle.kernel, name), offline=True)
             for name in ('cards', 'drinks', 'items', 'memory_abilities')})
         state = business_copy(bundle.state, offline=True)
-        algorithm = 'uinet-2.1' if profile == UINET21_PROFILE else 'uinet-1.1'
-        self.policy = build_battle_policy(algorithm, kernel=offline_kernel, context=exam_context, state=state, model=model,
+        self.policy = build_battle_policy(profile, kernel=offline_kernel, context=exam_context, state=state, model=model,
             source=source, planning_seed=planning_seed,
             deadline=deadline if deadline is not None else time.perf_counter() + 300.,
             opening_hand_order=bundle.hand_instance_ids, use_observed_hand_order=True)
@@ -321,7 +320,7 @@ class HifFastNativePolicy:
             business_copy(branch.events, offline=True)) for branch in matches]
         if any(history != histories[0] for history in histories[1:]):
             raise ValueError('fast_observed_play_history_ambiguous')
-        from agent.live_decision.high_score.hif_environment import HifStep
+        from agent.live_decision.high_score.contracts import BattleStep
 
         previous = self._box.request
         branch_events = [business_copy(branch.events, offline=True) for branch in matches]
@@ -341,8 +340,8 @@ class HifFastNativePolicy:
         else:
             following = business_copy(next_request, offline=True)
         self._box.observe_transition(previous.state, self._box.pending_action,
-            HifStep(following, offline_after.score - before.score, offline_after.terminal,
-                    branch_events[0]))
+            BattleStep(following, offline_after.score - before.score, offline_after.terminal,
+                       branch_events[0]))
         self._box = None
         self._pending = None
         self._phase = 'observed_successor'

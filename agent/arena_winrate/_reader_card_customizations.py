@@ -647,6 +647,10 @@ class CardCustomizationsReader:
                                 text,
                                 generic_cost_frame_values=(generic_cost_frame_values),
                             )
+                            if not admissible_counts:
+                                # A glyph can choose between legal states. An
+                                # empty domain has to stay a body-read failure.
+                                raise
                             auxiliary_count = self.port._auxiliary_badge_glyph_count(
                                 key,
                                 maximum_count=(self.port.catalog.maximum_customization_count(card_id)),

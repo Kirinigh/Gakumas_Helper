@@ -79,9 +79,13 @@ class DrinkIconRecognizer:
             raise ValueError('drink icon crop is uncalibrated')
         return list(self._rank_crops([image])[0])
 
-    def read_slots(self, frame, *, client_size):
-        """Read the four HUD slots with hiro's two row layouts and score rules."""
-        if (calibrated_live_client_size(client_size) is None or not isinstance(frame, np.ndarray)
+    def read_slots(self, frame, *, client_size=None):
+        """Read Hiro's four HUD slots in a normalized frame.
+
+        Callers with a calibrated native profile may also supply the client size.
+        """
+        if ((client_size is not None and calibrated_live_client_size(client_size) is None)
+                or not isinstance(frame, np.ndarray)
                 or frame.shape != (1280, 720, 3) or frame.dtype != np.uint8):
             raise ValueError('drink icons require one normalized HUD frame')
         if not self._coverage_complete:

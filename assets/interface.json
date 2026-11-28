@@ -1,8 +1,7 @@
 {
   "interface_version": 2,
   "name": "MaaGakumasu",
-  "version": "v0.9.2",
-  "github": "https://github.com/Kirinigh/Gakumas_Helper",
+  "version": "v0.9.3",
   "contact": "QQ群: 799823681",
   "icon": "./logo.ico",
   "license": "./LICENSE",
@@ -210,6 +209,7 @@
         "偶像之路目标偶像",
         "偶像之路自动回忆",
         "偶像之路出牌策略",
+        "偶像之路必须三星",
         "偶像之路失败重试次数"
       ],
       "default_check": true,
@@ -2356,6 +2356,12 @@
         {
           "name": "UINet 1.1",
           "pipeline_override": {
+            "IdolRoadResumeBattle": {
+              "custom_action_param": {
+                "algorithm": "uinet-1.1",
+                "resume": true
+              }
+            },
             "IdolRoadFloorOverview": {
               "custom_action_param": {
                 "hiro": true
@@ -2373,6 +2379,7 @@
                 }
               },
               "next": [
+                "IdolRoadResumeDate",
                 "IdolRoadFloorOverview",
                 "IdolRoadFormationPage",
                 "IdolRoadStartNextFlag"
@@ -2391,6 +2398,7 @@
                 }
               },
               "next": [
+                "IdolRoadResumeDate",
                 "IdolRoadFloorOverview",
                 "IdolRoadFormationPage",
                 "IdolRoadStartNextFlag"
@@ -2401,6 +2409,12 @@
         {
           "name": "UINet 2.1",
           "pipeline_override": {
+            "IdolRoadResumeBattle": {
+              "custom_action_param": {
+                "algorithm": "uinet-2.1",
+                "resume": true
+              }
+            },
             "IdolRoadFloorOverview": {
               "custom_action_param": {
                 "hiro": true
@@ -2418,6 +2432,7 @@
                 }
               },
               "next": [
+                "IdolRoadResumeDate",
                 "IdolRoadFloorOverview",
                 "IdolRoadFormationPage",
                 "IdolRoadStartNextFlag"
@@ -2436,6 +2451,7 @@
                 }
               },
               "next": [
+                "IdolRoadResumeDate",
                 "IdolRoadFloorOverview",
                 "IdolRoadFormationPage",
                 "IdolRoadStartNextFlag"
@@ -2447,6 +2463,12 @@
           "name": "Rust GNRPA",
           "label": "$偶像之路RustGNRPA",
           "pipeline_override": {
+            "IdolRoadResumeBattle": {
+              "custom_action_param": {
+                "algorithm": "rust-gnrpa",
+                "resume": true
+              }
+            },
             "IdolRoadFloorOverview": {
               "custom_action_param": {
                 "hiro": true
@@ -2464,6 +2486,7 @@
                 }
               },
               "next": [
+                "IdolRoadResumeDate",
                 "IdolRoadFloorOverview",
                 "IdolRoadFormationPage",
                 "IdolRoadStartNextFlag"
@@ -2482,6 +2505,7 @@
                 }
               },
               "next": [
+                "IdolRoadResumeDate",
                 "IdolRoadFloorOverview",
                 "IdolRoadFormationPage",
                 "IdolRoadStartNextFlag"
@@ -2509,6 +2533,35 @@
           "max_hit": "{idol_road_retry_times}"
         }
       }
+    },
+    "偶像之路必须三星": {
+      "type": "switch",
+      "label": "$偶像之路必须三星",
+      "description": "$偶像之路必须三星说明",
+      "default_case": "Yes",
+      "cases": [
+        {
+          "name": "Yes",
+          "pipeline_override": {
+            "IdolRoad": {
+              "attach": {
+                "require_three_stars": true
+              }
+            }
+          }
+        },
+        {
+          "name": "No",
+          "pipeline_override": {
+            "IdolRoad": {
+              "attach": {
+                "require_three_stars": false
+              }
+            }
+          }
+        }
+      ]
     }
-  }
+  },
+  "github": "https://github.com/Kirinigh/Gakumas_Helper"
 }

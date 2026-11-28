@@ -1,4 +1,10 @@
 {
+  "ProduceHiroStartSettings": {
+    "enabled": false,
+    "attach": {
+      "mode": "new"
+    }
+  },
   "ProduceHifAdvanceEntry": {
     "recognition": "DirectHit",
     "action": "Custom",

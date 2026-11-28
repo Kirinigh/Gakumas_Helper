@@ -6,6 +6,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+if __package__.startswith('agent.'):
+    from agent.utils.effect_text import normalize_score_effect_text
+else:
+    from utils.effect_text import normalize_score_effect_text
+
 from .turn_panel import ATTRIBUTES
 
 
@@ -140,12 +145,40 @@ def read_tower_timeline_page(image, ocr_rows):
     return TowerTimelinePage(current, tuple(rows), thumbs[0] if thumbs else None)
 
 
+_EFFECT_ICON_READS = re.compile(
+    r'(?<![A-Za-z0-9])(?:'
+    r'\(?\s*A\s*\)?\s*(?=アクティブスキルカード)'
+    r'|\(?\s*M\s*\)?\s*(?=集中|メンタルスキルカード)'
+    r'|\(?\s*R\s*\)?\s*(?=スコア上昇)'
+    r')'
+    r'|(?<=[、,])回(?=スキルカード使用数追加\+\d+$)'
+)
+
+_EFFECT_FACTS = re.compile(
+    r'\d+|[+%−-]|以上|以下|未満|がない|がある|'
+    r'好印象|やる気|集中|好調|絶好調|全力|元気|体力|スコア|'
+    r'アクティブ|メンタル|SSR|SR|ターン開始|ターン終了|'
+    r'使用不可|使用可能|増加|減少|消費|回復'
+)
+
+
+def _normalize_effect(text, *, observed):
+    text = unicodedata.normalize('NFKC', text).translate(str.maketrans('增减态', '増減態'))
+    text = normalize_score_effect_text(text)
+    if not observed:
+        return text
+    text = text.replace('ァクティブスキルカード', 'アクティブスキルカード')
+    # These glyphs are OCR readings of icons next to the named effect. Keep
+    # the text of the effect itself and meaningful Latin labels such as SSR.
+    return _EFFECT_ICON_READS.sub('', text)
+
+
 def tower_field_rule(text):
     """Return only rules whose condition and amount both appear in the UI."""
-    text = unicodedata.normalize('NFKC', text).replace('增加', '増加')
-    if re.fullmatch(r'(?:直前に)?A?アクティブスキルカードを使用していた場合[、,]M?メンタルスキルカード使用不可\(1ターン\)', text):
+    text = _normalize_effect(text, observed=True)
+    if re.fullmatch(r'(?:直前に)?アクティブスキルカードを使用していた場合[、,]メンタルスキルカード使用不可\(1ターン\)', text):
         return 'block_mental', 1, 'active'
-    if re.fullmatch(r'(?:直前に)?M?メンタルスキルカードを使用していた場合[、,]A?アクティブスキルカード使用不可\(1ターン\)', text):
+    if re.fullmatch(r'(?:直前に)?メンタルスキルカードを使用していた場合[、,]アクティブスキルカード使用不可\(1ターン\)', text):
         return 'block_active', 1, 'mental'
     if match := re.fullmatch(r'やる気が(\d+)以上の場合[、,]以降[、,]ターン終了時[、,]好印象\+(\d+)', text):
         return 'review_at_end', int(match[2]), int(match[1])
@@ -161,24 +194,20 @@ def tower_field_rule(text):
         return 'slump', int(match[2]), int(match[1].replace(',', ''))
     if match := re.fullmatch(r'好印象が(\d+)以下の場合[、,](?:気まぐれ|スランプ)(\d+)ターン', text):
         return 'review_slump', int(match[2]), int(match[1])
-    if match := re.fullmatch(r'スコアが([\d,]+)以上の場合[、,](?:スコア|パラメータ)上昇量増加(\d+)%\((\d+)ターン\)', text):
+    if match := re.fullmatch(r'スコアが([\d,]+)以上の場合[、,]スコア上昇量増加(\d+)%\((\d+)ターン\)', text):
         return 'score_buff', int(match[2]), (int(match[1].replace(',', '')), int(match[3]))
-    if match := re.fullmatch(r'(?:好印象が(\d+)以上の場合[、,]?)?好印象の(\d+)%分(?:スコア|パラメータ)上昇', text):
+    if match := re.fullmatch(r'(?:好印象が(\d+)以上の場合[、,]?)?好印象の(\d+)%分スコア上昇', text):
         return 'review_score', int(match[2]), int(match[1]) if match[1] else None
     return None
 
 
 def match_formation_effects(rows, variants):
-    """Bind the visible rows to one specific schedule from the master."""
-    def normalize(text):
-        text = unicodedata.normalize('NFKC', text).translate(str.maketrans('增减', '増減'))
-        text = text.replace('パラメータ上昇', 'スコア上昇').replace('気まぐれ', 'スランプ')
+    """Bind the visible effects to one specific schedule from the master."""
+    def normalize(text, *, observed):
+        text = _normalize_effect(text, observed=observed).replace('気まぐれ', 'スランプ')
         # The master labels ExamStaminaReduceFix as 体力消費; the game adds 固定.
         text = text.replace('固定体力消費', '体力消費')
         text = re.sub(r'タ\s*[-‐‑‒–—―−一ー]\s*ン', 'ターン', text)
-        text = re.sub(r'(?<=[、,])R(?=スコア上昇)', '', text)
-        text = re.sub(r'(?<=[、,])回(?=スキルカード使用数追加\+\d+$)', '', text)
-        text = re.sub(r'\(?M\)?(?=メンタルスキルカード)|\(?A\)?(?=アクティブスキルカード)', '', text)
         text = re.sub(r'^\d(?=好印象\d+倍$)', '', text)
         # OCR can omit words. Keep numbers intact so 18 never matches 85 or 118.
         return re.findall(r'\d+|[^\d\s、,。]', text)
@@ -187,10 +216,10 @@ def match_formation_effects(rows, variants):
         remaining = iter(complete)
         return all(char in remaining for char in visible)
 
-    visible = {turn: tokens for turn, row in rows.items() if (tokens := normalize(row.description))}
+    visible = {turn: tokens for turn, row in rows.items() if (tokens := normalize(row.description, observed=True))}
     if not visible:
         return None
-    eligible = {key: {turn: normalize(variant[turn]) for turn in visible}
+    eligible = {key: {turn: normalize(variant[turn], observed=False) for turn in visible}
                 for key, variant in variants.items() if visible.keys() <= variant.keys()}
 
     def matching(fold):
@@ -199,11 +228,39 @@ def match_formation_effects(rows, variants):
                        for turn, tokens in visible.items())]
 
     matches = matching(lambda token: token)
-    if not matches:
-        # Like Hiro's OCR comparison, fold visually confusable characters at
-        # match time. In this fallback only the kana voicing marks differ.
-        matches = matching(lambda token: unicodedata.normalize('NFD', token).replace('\u309a', '\u3099'))
-    return matches[0] if len(matches) == 1 else None
+    if matches:
+        return matches[0] if len(matches) == 1 else None
+
+    def fold(token):
+        # Like Hiro's OCR comparison, fold visually confusable kana at match time.
+        return unicodedata.normalize('NFD', token).replace('\u309a', '\u3099')
+
+    matches = matching(fold)
+    if matches:
+        return matches[0] if len(matches) == 1 else None
+
+    supporting, unread, matched_text_rows = [], {}, 0
+    for turn, tokens in visible.items():
+        candidates = {key for key, variant in eligible.items()
+                      if is_subsequence(map(fold, tokens), map(fold, variant[turn]))}
+        if candidates:
+            supporting.append(candidates)
+            matched_text_rows += any(token.isalpha() for token in tokens)
+        else:
+            unread[turn] = tokens
+    if matched_text_rows < 2:
+        return None
+    common = set.intersection(*supporting)
+    if len(common) != 1:
+        return None
+    key, = common
+    for turn, tokens in unread.items():
+        # A broken OCR row can still contain a clearly read condition or amount.
+        observed_facts = _EFFECT_FACTS.findall(''.join(tokens))
+        master_facts = _EFFECT_FACTS.findall(''.join(eligible[key][turn]))
+        if not is_subsequence(observed_facts, master_facts):
+            return None
+    return key
 
 
 def complete_formation_effects(rows, variants):

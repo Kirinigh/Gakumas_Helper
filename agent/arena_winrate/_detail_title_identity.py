@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from collections.abc import Callable, Sequence
 
 from .catalog import ArenaCatalogError, ArenaEntityCatalog
+from ._reader_io import read_screen_ocr
 from ._reader_errors import ArenaReaderError
 from ._reader_visual import _box, _text
 from ._detail_title_region import isolated_title_region
@@ -205,7 +206,7 @@ class DetailTitleIdentity:
             cache.pop(next(iter(cache)))
         base_title = self.port.catalog.skill_card_title(base_id)
         normalize = self.port.catalog.normalize_skill_card_title_text
-        items = self.port._ocr(image, r".+")
+        items = self._read_title_frame(image, (base_id,))
         # Match the title resolver's cross-column splitting. A visual row can
         # also contain background stats (e.g. "08 100%") to the right of the
         # popup; merging that whole row prevents the failure-only crop running.
@@ -225,7 +226,16 @@ class DetailTitleIdentity:
             return None
         crop = cv2.resize(image[top:bottom, left:right], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
         self.port._increment("skill_card_upgrade_title_roi_reads")
-        items = self.port._with_full_frame_ocr_kind("derived_roi", self.port._ocr, crop, r".+")
+        def expected_upgrade(rows):
+            lines = self.port._spatial_ocr_rows(rows)
+            if len(lines) != 1:
+                return False
+            try:
+                return self.port.catalog.confirm_clicked_skill_card_by_exact_title(lines[0][0]) == expected_id
+            except ArenaCatalogError:
+                return False
+
+        items = self._read_derived_title(crop, expected_upgrade)
         crop_rows = self.port._spatial_ocr_rows(items)
         if len(crop_rows) != 1:
             return None
@@ -487,7 +497,7 @@ class DetailTitleIdentity:
         try:
             rows: list[tuple[int, int, str, tuple[int, int, int, int]]] = []
             unmatched_rows: list[tuple[str, tuple[int, int, int, int]]] = []
-            items = self.port._ocr(image, r".+")
+            items = self._read_title_frame(image, candidate_ids)
             original_candidates = tuple((_text(item).strip(), _box(item)) for item in items if _text(item).strip())
             candidates = original_candidates + self.port._skill_card_title_ocr_segments(items)
             original_candidate_keys = set(original_candidates)
@@ -695,6 +705,20 @@ class DetailTitleIdentity:
         )
         return entry if entry is not None and entry[0] is image else None
 
+    def _read_derived_title(self, crop, accept):
+        return self.port._with_full_frame_ocr_kind(
+            "derived_roi", read_screen_ocr, getattr(self.port, "context", None), self.port._ocr, crop, accept,
+        )
+
+    def _read_title_frame(self, image, candidate_ids):
+        if not candidate_ids:
+            # Source-frame observations disqualify persistent background text.
+            return self.port._ocr(image, r".+")
+        return read_screen_ocr(
+            getattr(self.port, "context", None), self.port._ocr, image,
+            lambda rows: self.port._skill_card_detail_view_complete(image, rows, candidate_ids),
+        )
+
     def _recover_isolated_skill_card_title(self, group: int, image: Any, box: Any) -> str | None:
         """One crop on a proven new panel; never repair a background substring."""
         rows = getattr(self.port, "_card_rows", {}).get(group, ())
@@ -714,7 +738,8 @@ class DetailTitleIdentity:
         cache[key] = (image, None, None, None, tuple(frames))
         while len(cache) > 16:
             cache.pop(next(iter(cache)))
-        items = self.port._ocr(image, r".+")
+        visual_ids = getattr(self.port, "_skill_detail_visual_ids", lambda _: ())
+        items = self._read_title_frame(image, visual_ids((group, slots[0])))
         region = isolated_title_region(image, frames, tuple(box), [(_text(v), _box(v)) for v in items])
         if region is None:
             return None
@@ -724,7 +749,17 @@ class DetailTitleIdentity:
         x, y, w, h = region
         crop = cv2.resize(image[y : y + h, x : x + w], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
         self.port._increment("skill_card_isolated_title_roi_reads")
-        cropped = self.port._with_full_frame_ocr_kind("derived_roi", self.port._ocr, crop, r".+")
+        def proven_title(rows):
+            candidates = self.port._spatial_ocr_rows(rows)
+            if len(candidates) != 1:
+                return False
+            try:
+                self.port.catalog.confirm_clicked_skill_card_by_exact_title(candidates[0][0])
+            except ArenaCatalogError:
+                return False
+            return True
+
+        cropped = self._read_derived_title(crop, proven_title)
         title_rows = self.port._spatial_ocr_rows(cropped)
         if len(title_rows) != 1:
             return None
@@ -748,7 +783,7 @@ class DetailTitleIdentity:
             self.port._increment("skill_card_isolated_title_context_reads")
             self.port._increment("skill_card_isolated_title_roi_reads")
             try:
-                context_items = self.port._with_full_frame_ocr_kind("derived_roi", self.port._ocr, context, r".+")
+                context_items = self._read_derived_title(context, proven_title)
                 context_rows = self.port._spatial_ocr_rows(context_items)
             except Exception:
                 return None

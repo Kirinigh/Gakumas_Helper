@@ -4,13 +4,14 @@ from __future__ import annotations
 import math
 import random
 from collections import Counter
-from dataclasses import replace, dataclass
+from dataclasses import replace
 
 from .hif import HifSenseKernel, is_hif_turn_boundary
 from .kernel import KernelError
 from .contracts import (
     PlanType,
     ActionKind,
+    BattleStep,
     GameAction,
     DecisionKind,
     DeckKnowledge,
@@ -88,13 +89,8 @@ class SampledHifKernel(HifSenseKernel):
         return result
 
 
-@dataclass(frozen=True)
-class HifStep:
-    request: DecisionRequest
-    reward: float
-    terminated: bool
-    events: tuple
-    boundary: StrategyState | None = None
+# Historical imports in the simulator still refer to this same step type.
+HifStep = BattleStep
 
 
 class HifEnvironment:

@@ -9,74 +9,120 @@
       "param": {}
     },
     "next": [
+      "IdolRoadResumeDate",
+      "IdolRoadResumeSaved",
       "IdolRoadFormationPage",
       "IdolRoadFloorOverview",
+      "IdolRoadResumeBattle",
+      "IdolRoadResumeRetryDialog",
       "IdolRoadResumeRanking",
       "IdolRoadRankingUpdate",
       "IdolRoadResumeClearRetry",
       "IdolRoadResumeClear",
       "IdolRoadResumeFailedRanking",
-      "IdolRoadResumeRetryDialog",
       "IdolRoadNavigate"
+    ]
+  },
+  "IdolRoadResumeDate": {
+    "recognition": "Custom",
+    "custom_recognition": "IdolRoadDateNotice",
+    "action": "Custom",
+    "custom_action": "IdolRoadResumeDate",
+    "next": [
+      "IdolRoadResumeSaved",
+      "IdolRoadResumeBattle",
+      "IdolRoadFloorOverview",
+      "IdolRoadFormationPage"
+    ]
+  },
+  "IdolRoadResumeSaved": {
+    "recognition": "Custom",
+    "custom_recognition": "IdolRoadSavedChallenge",
+    "action": "Click",
+    "next": [
+      "IdolRoadResumeDate",
+      "IdolRoadResumeBattle",
+      "IdolRoadResumeRanking",
+      "IdolRoadResumeFailedRanking"
+    ]
+  },
+  "IdolRoadResumeBattle": {
+    "recognition": "Custom",
+    "custom_recognition": "IdolRoadExamVisible",
+    "action": "Custom",
+    "custom_action": "IdolRoadPolicyBattle",
+    "custom_action_param": {
+      "resume": true
+    },
+    "next": [
+      "IdolRoadResumeDate",
+      "IdolRoadFloorOverview",
+      "IdolRoadFormationPage",
+      "IdolRoadStartNextFlag"
     ]
   },
   "IdolRoadResumeRanking": {
     "recognition": "And",
     "all_of": [
+      "IdolRoadAutoNext",
       {
-        "recognition": "Custom",
-        "roi": [
-          0,
-          125,
-          205,
-          145
-        ],
-        "custom_recognition": "LiveSimdOCR",
-        "custom_recognition_param": {
-          "expected": [
-            "[1-6]\\s*位",
-            "^位$"
-          ]
-        }
-      },
-      "IdolRoadAutoNext"
+        "recognition": "Or",
+        "any_of": [
+          {
+            "recognition": "Custom",
+            "roi": [
+              0,
+              125,
+              205,
+              145
+            ],
+            "custom_recognition": "LiveSimdOCR",
+            "custom_recognition_param": {
+              "expected": [
+                "[1-6]\\s*位",
+                "^位$"
+              ]
+            }
+          },
+          {
+            "recognition": "Custom",
+            "custom_recognition": "IdolRoadRankingVisible"
+          }
+        ]
+      }
     ],
-    "box_index": 1,
+    "box_index": 0,
     "action": "Custom",
     "custom_action": "IdolRoadResultContinue",
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadRankingUpdate",
       "IdolRoadResumeClearRetry",
-      "IdolRoadBackToList"
+      "IdolRoadResumeClear"
     ]
   },
   "IdolRoadResumeClearRetry": {
     "recognition": "And",
     "all_of": [
+      "IdolRoadRetry",
       {
         "recognition": "Custom",
-        "roi": [
-          0,
-          145,
-          720,
-          185
-        ],
-        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition": "IdolRoadClearVisible",
         "custom_recognition_param": {
-          "expected": [
-            "^CLEAR$"
+          "titles": [
+            "CLEAR"
           ]
         }
-      },
-      "IdolRoadRetry"
+      }
     ],
-    "box_index": 1,
+    "box_index": 0,
     "action": "Custom",
     "custom_action": "IdolRoadResultContinue",
     "custom_action_param": {
       "clear_retry": true
     },
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadRetryConfirm"
     ],
     "on_error": [
@@ -90,9 +136,9 @@
         "recognition": "Custom",
         "roi": [
           0,
-          340,
+          900,
           720,
-          640
+          360
         ],
         "custom_recognition": "LiveSimdOCR",
         "custom_recognition_param": {
@@ -106,32 +152,28 @@
     "box_index": 1,
     "action": "DoNothing",
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadRetryConfirm"
     ]
   },
   "IdolRoadResumeClear": {
     "recognition": "And",
     "all_of": [
+      "IdolRoadBackToList",
       {
         "recognition": "Custom",
-        "roi": [
-          0,
-          145,
-          720,
-          185
-        ],
-        "custom_recognition": "LiveSimdOCR",
+        "custom_recognition": "IdolRoadClearVisible",
         "custom_recognition_param": {
-          "expected": [
+          "titles": [
             "CLEAR",
             "PERFECT"
           ]
         }
-      },
-      "IdolRoadBackToList"
+      }
     ],
-    "box_index": 1,
-    "action": "Click",
+    "box_index": 0,
+    "action": "Custom",
+    "custom_action": "IdolRoadResultContinue",
     "next": [
       "IdolRoadFloorOverview",
       "IdolRoadFormationPage",
@@ -141,27 +183,40 @@
   "IdolRoadResumeFailedRanking": {
     "recognition": "And",
     "all_of": [
+      "IdolRoadRetry",
       {
-        "recognition": "Custom",
-        "roi": [
-          0,
-          100,
-          270,
-          160
-        ],
-        "custom_recognition": "LiveSimdOCR",
-        "custom_recognition_param": {
-          "expected": [
-            "不合格"
-          ]
-        }
-      },
-      "IdolRoadRetry"
+        "recognition": "Or",
+        "any_of": [
+          {
+            "recognition": "Custom",
+            "roi": [
+              0,
+              100,
+              270,
+              160
+            ],
+            "custom_recognition": "LiveSimdOCR",
+            "custom_recognition_param": {
+              "expected": [
+                "不合格"
+              ]
+            }
+          },
+          {
+            "recognition": "Custom",
+            "custom_recognition": "IdolRoadRankingVisible",
+            "custom_recognition_param": {
+              "failed": true
+            }
+          }
+        ]
+      }
     ],
-    "box_index": 1,
+    "box_index": 0,
     "action": "Custom",
     "custom_action": "IdolRoadResultContinue",
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadRetryConfirm"
     ]
   },
@@ -178,6 +233,9 @@
       }
     },
     "next": [
+      "IdolRoadResumeDate",
+      "IdolRoadResumeSaved",
+      "IdolRoadResumeBattle",
       "IdolRoadFloorOverview"
     ]
   },
@@ -185,12 +243,7 @@
     "recognition": {
       "type": "Custom",
       "param": {
-        "custom_recognition": "LiveSimdOCR",
-        "custom_recognition_param": {
-          "expected": [
-            "ステージ別ランキング"
-          ]
-        }
+        "custom_recognition": "IdolRoadFloorVisible"
       }
     },
     "action": {
@@ -200,45 +253,15 @@
       }
     },
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadFormationPage"
     ]
   },
   "IdolRoadFormationPage": {
     "recognition": {
-      "type": "And",
+      "type": "Custom",
       "param": {
-        "all_of": [
-          {
-            "recognition": "Custom",
-            "roi": [
-              360,
-              0,
-              185,
-              64
-            ],
-            "custom_recognition": "LiveSimdOCR",
-            "custom_recognition_param": {
-              "expected": [
-                "応援[/／]トラブル"
-              ]
-            }
-          },
-          {
-            "recognition": "Custom",
-            "roi": [
-              300,
-              640,
-              120,
-              72
-            ],
-            "custom_recognition": "LiveSimdOCR",
-            "custom_recognition_param": {
-              "expected": [
-                "^[12]\\s*/\\s*2$"
-              ]
-            }
-          }
-        ]
+        "custom_recognition": "IdolRoadFormationVisible"
       }
     },
     "action": {
@@ -246,6 +269,7 @@
       "param": {}
     },
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadFormationAuto",
       "IdolRoadStart"
     ]
@@ -330,6 +354,7 @@
       "param": {}
     },
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadStart",
       "IdolRoadAuto"
     ]
@@ -351,6 +376,7 @@
     },
     "post_delay": 100,
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadAutoNext",
       "IdolRoadRetry",
       "IdolRoadAuto",
@@ -371,6 +397,7 @@
       }
     },
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadRetryConfirm"
     ],
     "on_error": [
@@ -392,6 +419,7 @@
       }
     },
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadAuto",
       "IdolRoadStart"
     ],
@@ -438,9 +466,10 @@
       }
     },
     "next": [
+      "IdolRoadResumeDate",
       "IdolRoadRankingUpdate",
       "IdolRoadResumeClearRetry",
-      "IdolRoadBackToList"
+      "IdolRoadResumeClear"
     ],
     "focus": {
       "Node.Recognition.Succeeded": "[color:LimeGreen]挑战成功，继续前进[/color]"
@@ -481,10 +510,11 @@
       }
     ],
     "box_index": 1,
-    "action": "Click",
+    "action": "Custom",
+    "custom_action": "IdolRoadConfirmRankingUpdate",
     "next": [
       "IdolRoadResumeClearRetry",
-      "IdolRoadBackToList",
+      "IdolRoadResumeClear",
       "IdolRoadFloorOverview"
     ]
   },

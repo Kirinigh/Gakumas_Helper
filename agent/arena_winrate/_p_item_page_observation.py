@@ -13,9 +13,15 @@ from collections.abc import Sequence
 from p_item_recognition import PItemReferenceError
 from card_selection.model import frame_identifier
 
+from agent.live_decision.simd_ocr import without_vulkan_cold_wait
+from agent.live_decision.ocr_nodes import OcrRows, read_ocr_node
+
+from ._reader_io import read_screen_ocr
 from ._reader_errors import ArenaReaderError
-from ._reader_visual import _text
+from ._reader_visual import _text, p_item_detail_ocr_atoms
+from ._arena_page_flow import member_detail_ocr_visible
 from ._reader_evidence import _PItemPanelRow, _PItemOcrObservation
+from ._p_item_detail_evidence import resolve_p_item_ocr_body
 from ._p_item_source_evidence import p_item_source_frame_evidence, p_item_source_generation_evidence
 
 
@@ -141,26 +147,53 @@ class PItemPageObservation:
             f"last_errors={[round(value, 6) for value in last_errors]!r}",
         )
 
+    @without_vulkan_cold_wait()
     def ocr_observation(
-        self,
-        image: Any,
+        self, image: Any, *, source_images=(), source_frames=(), plan=None, slot_index=None,
     ) -> _PItemOcrObservation:
         """OCR one frame once and retain full text, title geometry and anchors."""
 
-        detail = self.port._run_recognition(
-            "ArenaReaderOCR",
-            image,
-            pipeline_override={
-                "ArenaReaderOCR": {
-                    "recognition": "OCR",
-                    "expected": r".+",
-                    "order_by": "Vertical",
-                }
-            },
-        )
-        if not detail or not detail.hit:
+        override = {"recognition": "OCR", "expected": r".+", "order_by": "Vertical"}
+        detail = None
+
+        def read_native():
+            nonlocal detail
+            detail = self.port._run_recognition(
+                "ArenaReaderOCR", image, pipeline_override={"ArenaReaderOCR": override},
+            )
+            return OcrRows(tuple(detail.all_results or detail.filtered_results or ()) if detail and detail.hit else ())
+
+        def panel_ready(rows):
+            catalog = self.port.catalog
+            panel = self.port._p_item_detail_panel_rows(image, rows)
+            titles = [row for row in panel if catalog.p_item_detail_title_family_ids(row[0])]
+            if len(panel) < 2 or len(titles) != 1:
+                return False
+            title, box, components = titles[0]
+            title_atoms = set(components)
+            atoms = [
+                atom for atom in p_item_detail_ocr_atoms(image, rows)
+                if (atom["text"].strip(), atom["box"]) not in title_atoms
+            ]
+            title_index = len(atoms)
+            atoms.append({"text": title, "box": box})
+            # Check body ownership against the already frozen source frames
+            # before treating an apparent short reference field as a conflict.
+            # The session still owns final title and transaction confirmation.
+            result, _ = resolve_p_item_ocr_body(
+                catalog.resolve_clicked_p_item_text, atoms,
+                image=image, source_images=source_images, title_index=title_index,
+                source_frames=source_frames, plan=plan, slot_index=slot_index,
+            )
+            return result.status == "unique" and len(result.ids) == 1
+
+        observed = read_ocr_node(
+            getattr(self.port, "context", None), image, "ArenaReaderOCR", override=override,
+            accept=panel_ready, all_results=True, prefer_gpu=True, native_read=read_native,
+        ).rows
+        if not observed and not (detail and detail.hit):
             raise ArenaReaderError("ocr_empty", "full-screen OCR returned no text")
-        items = list(detail.all_results or detail.filtered_results or [])
+        items = list(observed)
         self.port._observe_recognition_probe(image, items, reco_id=getattr(detail, "reco_id", None))
         full_text = "\n".join(_text(item) for item in items)
         panel_rows = self.port._p_item_detail_panel_rows(image, items)
@@ -283,7 +316,10 @@ class PItemPageObservation:
         if member_anchors_visible is None:
             # Both labels belong to this same frozen frame. Reuse its full
             # OCR result instead of recognizing the whole image twice.
-            exact_rows = {_text(item) for item in self.port._ocr(image, r".+")}
+            items = read_screen_ocr(
+                getattr(self.port, "context", None), self.port._ocr, image, member_detail_ocr_visible,
+            )
+            exact_rows = {_text(item) for item in items}
             anchors_visible = "体力" in exact_rows and "総合力" in exact_rows
             evidence = self.port._cached_full_frame_ocr_evidence(image)
             self.port._last_p_item_restore_anchors = {

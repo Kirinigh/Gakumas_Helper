@@ -1,13 +1,16 @@
 """Hiro's HIF exam labels and result pages over the existing Maa exam host."""
 
+import re
+import json
 import time
 from copy import deepcopy
 from dataclasses import replace
 
+from agent.live_decision.exam_loop import ExamSettlement
 from agent.live_decision.hiro_runtime import hiro_module
 from agent.live_decision.cultivation_maa_exam import CultivationEntry, CultivationMaaExam
 
-from .hiro_exam import _during_exam_capture, play_cultivation_exam, recover_exam_interrupt
+from .hiro_exam import play_cultivation_exam, recover_exam_interrupt
 from .qualifier import Screen
 from .qualifier_result import read_qualifier_result
 
@@ -94,57 +97,60 @@ class HifMaaExam(CultivationMaaExam):
         return self.label
 
 
-def play_hif_exam(context, device, idol, *, log, play_finals=None, qualifier_policy='uinet-2.1'):
+def play_hif_exam(context, idol, *, log, play_finals=None, qualifier_policy='uinet-2.1', finals_policy='uinet-2.1'):
     """Dispatch selection exams and the chosen finals policy."""
-    from custom.action.produce import ProduceCardsAuto
-
     entry = CultivationEntry('produce-007', idol, None)
-    qualifier = None if qualifier_policy == 'recommended' else play_cultivation_exam(
-        context, entry, qualifier_policy, log=log, battle_type=HifMaaExam)
-    finals = play_finals or play_cultivation_exam(context, entry, 'uinet-2.1', log=log, battle_type=HifMaaExam)
-
-    def recommended(rt, label, *, result_reader=None):
-        blocked = hiro_module('runtime.loop').ResumeBlocked
-        try:
-            result = ProduceCardsAuto()._run_recommended_exam(
-                context, result_reader=result_reader, authorize=device.authorise,
-                capture=_during_exam_capture(rt, device.screenshot))
-        except (OSError, RuntimeError, TypeError, ValueError, KeyError) as error:
-            raise blocked(str(error)) from error
-        if not result:
-            raise blocked(f'HIF {label} result was unreadable')
-        return result
+    qualifier = play_cultivation_exam(context, entry, qualifier_policy, log=log, battle_type=HifMaaExam)
+    finals = play_cultivation_exam(context, entry, finals_policy, log=log, battle_type=HifMaaExam)
+    lesson = play_cultivation_exam(context, entry, 'recommended', log=log)
 
     def play(rt, label, session, ended):
         produce = session.state.produce or {}
+        cards = None if 'produce.deck' in session.state.pending_review else deepcopy(produce.get('deck'))
         log(dict(event='hiro_exam_deck', label=label, segment=session.trace.mode,
-                 through_step=session.trace.seq, cards=deepcopy(produce.get('deck'))))
+                 through_step=session.trace.seq, cards=cards))
         if label.startswith('lesson-'):
-            # Public courses keep the in-game recommended policy independent of the exams.
-            recommended(rt, label)
-            return
+            return lesson(rt, label, session, ended)
         if play_finals is not None and label in ('r1', 'r2'):
-            return finals(rt, int(label[-1]))
-        if qualifier is None and label.startswith('qualify-'):
-            from .hiro_hif import _read_ocr
-
-            def result_reader(image):
-                rows = [dict(text=row.text, box=row.box, score=row.score) for row in _read_ocr(context, image)]
-                result = read_qualifier_result(Screen(image, rows, rt.clock()))
-                return result if result and result['exam'] == int(label[-1]) else None
-
-            result = recommended(rt, label, result_reader=result_reader)
-            log(dict(event='cultivation_exam_result', produce=entry.produce, idol=idol, label=label,
-                     score=result['score'], rank=None, algorithm='recommended'))
-            return
+            number = int(label[-1])
+            if not getattr(rt, 'gkh_resume_exam', False):
+                return play_finals(rt, number)
+            resume_finals = getattr(play_finals, 'resume', None)
+            if resume_finals is not None and (result := resume_finals(rt, number)) is not None:
+                rt.gkh_resume_exam = False
+                return result
         battle = finals if label in ('r1', 'r2') else qualifier
         return battle(rt, label, session, ended)
 
     return play
 
 
-def play_formal_hif_finals(context, *, path, runtime, run_id, game, profile, authorize, log):
+def previous_formal_hif_battle(runtime, *, run_id, game, idol, profile, number):
+    """Use exactly one unfinished native round of the selected profile in this game process."""
+    from live_decision.hif_current_battle_session import current_battle_round
+
+    prefix = f"hiro-{game['pid']}-{game['created_at_100ns']}-"
+    candidate = []
+    for path in runtime.glob(f'result-{prefix}*.json'):
+        if re.fullmatch(r'\d+', path.stem.removeprefix('result-' + prefix)) is None:
+            continue
+        report = json.loads(path.read_bytes())
+        prior = path.stem.removeprefix('result-')
+        if (report.get('run_id') != prior or prior == run_id or report.get('status') == 'settled'
+                or report.get('idol') != idol or report.get('finals_policy_profile') != profile):
+            continue
+        pattern = re.compile(rf'result-\d+-({re.escape(prior)}-r{number}-exam[1-9]\d*)-current-battle-live.*\.json')
+        attempts = {match[1] for item in runtime.glob(f'result-*-{prior}-r{number}-exam*-current-battle-live*.json')
+                    if (match := pattern.fullmatch(item.name))}
+        for identity in attempts:
+            if current_battle_round(runtime, identity, game['pid']) == number:
+                candidate.append((path.with_suffix('.battle.json'), identity))
+    return candidate[0] if len(candidate) == 1 else None
+
+
+def play_formal_hif_finals(context, *, path, runtime, run_id, game, profile, authorize, log, idol=None):
     """Reuse the HIF factory, observations, execution and durable action receipts."""
+    from utils import diagnostic_only
     from live_decision.hif_battle_entry import run_current_page_battle
 
     completed = {1: 0, 2: 0}
@@ -153,18 +159,17 @@ def play_formal_hif_finals(context, *, path, runtime, run_id, game, profile, aut
         authorize()
         return True
 
-    def play(rt, number):
+    def run(rt, number, battle_path, battle_run, attempt):
         # Hiro owns the in-game retry decision and reaches another opening
         # before calling back. Only that new exam gets a new receipt identity.
-        attempt = completed[number] + 1
-        battle_run = f'{run_id}-r{number}-exam{attempt}'
         recoveries = hiro_module('runtime.play').MAX_DATE_CHANGES
         blocked = hiro_module('runtime.loop').ResumeBlocked
         for recovery in range(recoveries + 1):
             try:
-                result = run_current_page_battle(context, path=path, runtime=runtime,
-                    run_id=battle_run, game_pid=game['pid'], client_size=tuple(game['observed_client_size']),
-                    policy_profile=profile, authorise_task=current_task, expected_round=number)
+                with diagnostic_only():
+                    result = run_current_page_battle(context, path=battle_path, runtime=runtime,
+                        run_id=battle_run, game_pid=game['pid'], client_size=tuple(game['observed_client_size']),
+                        policy_profile=profile, authorise_task=current_task, expected_round=number)
             except (OSError, RuntimeError, ValueError) as error:
                 result = dict(status='STOP', stop_reason=str(error))
             terminal = result.get('terminal_settlement') or {}
@@ -174,8 +179,21 @@ def play_formal_hif_finals(context, *, path, runtime, run_id, game, profile, aut
             if (result['status'] == 'TERMINAL_VERIFIED' and result.get('current_battle_finished') is True
                     and terminal.get('round_number') == number):
                 completed[number] = attempt
-                return
+                return ExamSettlement(None, terminal.get('score'), None)
             if recovery == recoveries or not recover_exam_interrupt(rt, rt.screen.shot()):
                 raise blocked(result.get('stop_reason') or 'HIF finals not settled')
 
+    def play(rt, number):
+        attempt = completed[number] + 1
+        return run(rt, number, path, f'{run_id}-r{number}-exam{attempt}', attempt)
+
+    def resume(rt, number):
+        source = previous_formal_hif_battle(runtime, run_id=run_id, game=game, idol=idol,
+                                           profile=profile, number=number)
+        if source is not None:
+            battle_path, identity = source
+            return run(rt, number, battle_path, identity, completed[number] + 1)
+        return None
+
+    play.resume = resume
     return play

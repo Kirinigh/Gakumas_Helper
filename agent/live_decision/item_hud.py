@@ -50,8 +50,8 @@ def rank_icons(image, references, left, top, size):
     return sorted(scores, reverse=True)[:2]
 
 
-def badge_edge_support(gray, x, y):
-    """Look for a disc edge with one contrast direction around its rim.
+def _badge_rim_contrasts(gray, x, y):
+    """Sample outer minus inner brightness on the unobstructed badge rim.
 
     The translucent badge can be lighter than a saturated dark backdrop.
     """
@@ -63,17 +63,22 @@ def badge_edge_support(gray, x, y):
         dx, dy = math.cos(angle), math.sin(angle)
         inner = [gray[round(y + r*dy), round(x + r*dx)] for r in (8, 9, 10)]
         outer = [gray[round(y + r*dy), round(x + r*dx)] for r in (13, 14, 15)]
-        contrasts.append(np.median(outer) - np.median(inner))
-    return max(sum(float(value) >= 9 for value in contrasts),
-               sum(float(value) <= -9 for value in contrasts))
+        contrasts.append(float(np.median(outer) - np.median(inner)))
+    return contrasts
 
 
 def read_badge(context, frame, gray, y):
-    edge_support = badge_edge_support(gray, 697, y)
-    if edge_support < 6:
+    rim = _badge_rim_contrasts(gray, 697, y)
+    edge_support = max(sum(value >= 9 for value in rim), sum(value <= -9 for value in rim))
+    # A translucent badge can lose contrast on part of its rim. Do not
+    # accept five isolated edges: the rest of the sampled rim must still
+    # trace the boundary in the same direction, and all glyph views must agree.
+    faint_rim = edge_support == 5 and (min(rim) >= 5 or max(rim) <= -5)
+    if edge_support < 6 and not faint_rim:
         return dict(value=None, edge_support=edge_support, reads=[])
     reads = []
-    for left, right, radius, light in ((686, 709, 12, 220), (691, 704, 10, 210), (690, 705, 10, 185)):
+    glyph_views = ((686, 709, 12, 220), (691, 704, 10, 210), (690, 705, 10, 185))
+    for left, right, radius, light in glyph_views:
         crop = frame[y-radius:y+radius+1, left:right]
         glyph = np.where(crop.min(axis=2) >= light, 0, 255).astype(np.uint8)
         if cv2.countNonZero(255 - glyph) < 8:
@@ -85,7 +90,8 @@ def read_badge(context, frame, gray, y):
             reads.append((rows[0].text, rows[0].score))
     # Same-frame rereads only. Multi-character/ambiguous/weak data stay unknown.
     strong = [int(text) for text, score in reads if len(text) == 1 and text in "0123456789" and .95 <= score <= 1]
-    value = strong[0] if strong and len(set(strong)) == 1 else None
+    agreed = len(set(strong)) == 1
+    value = strong[0] if agreed and (not faint_rim or len(strong) == len(glyph_views)) else None
     return dict(value=value, edge_support=edge_support, reads=reads)
 
 

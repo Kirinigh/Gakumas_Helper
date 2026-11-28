@@ -10,6 +10,7 @@ import cv2
 
 from .simd_ocr import read_optional_simd_ocr
 from .hiro_runtime import hiro_module, hiro_binding, hiro_route_file
+from .hif_capture_adapter import MAA_CAPTURE_ERROR_PREFIX
 
 
 class HiroMaaDevice:
@@ -21,6 +22,7 @@ class HiroMaaDevice:
         self.log = log
         self.screen = hiro_module('devices.base').LogicalScreen()
         self.sequence = 0
+        self._uncertain_input = False
 
     def connect(self):
         self._guard()
@@ -49,16 +51,22 @@ class HiroMaaDevice:
         self._guard()
         job = self.context.tasker.controller.post_screencap().wait()
         if job.succeeded is not True:
-            raise hiro_module('devices.base').DeviceUnavailable('Maa screen capture failed')
+            raise hiro_module('devices.base').DeviceUnavailable('控制器未成功截图')
         return job.get()
 
     def screenshot(self):
-        image = hiro_module('devices.base').settled_frame(self._capture, self.screen)
+        geometry = hiro_module('devices.base')
+        try:
+            image = geometry.settled_frame(self._capture, self.screen)
+        except geometry.DeviceUnavailable as error:
+            raise geometry.DeviceUnavailable(f'{MAA_CAPTURE_ERROR_PREFIX}{error}') from error
         self.sequence += 1
         return image
 
     def _dispatch(self, name, point, *args):
         self._guard()
+        if self._uncertain_input:
+            raise hiro_module('devices.base').DeviceError('Maa input outcome is unknown')
         controller = self.context.tasker.controller
         job, result = None, None
         try:
@@ -68,6 +76,10 @@ class HiroMaaDevice:
             raise hiro_module('devices.base').DeviceError('Maa input outcome is unknown') from error
         finally:
             success = getattr(result, 'succeeded', None) is True
+            # Some upstream helpers catch device errors and try a fallback.
+            # Once dispatch is uncertain, this task's read access can remain
+            # available without sending a second action through the controller.
+            self._uncertain_input = not success
             self.log(dict(event='hiro_maa_input', frame=self.sequence, operation=name, point=point,
                           job_id=getattr(job, 'job_id', None), sdk_success=True if success else None))
         if not success:
@@ -130,18 +142,20 @@ def hiro_maa_route(device, read_ocr, *, session=None, clock=time.monotonic, slee
     pack = hiro_route_file(Path('assets/pack/ui/templates.json')).parent
     ui = hiro_module('vision.ui_templates')
     pages = hiro_module('vision.classify')
+    rescue = hiro_module('loop.rescue')
     rt = hiro_module('runtime.loop').Runtime(raw_device=device, classify=pages.classify,
-                                            session=session, clock=clock, sleep=sleep)
+                                            session=session, clock=clock, sleep=sleep, rescue=False)
 
     with hiro_binding(rt), hiro_maa_ocr(read_ocr):
-        old = ui.PACK, pages.PACK
+        old = ui.PACK, pages.PACK, rescue.LLM_UNKNOWN
         caches = (ui._catalog, ui._pixels, ui.tpl)
         try:
             ui.PACK = pages.PACK = pack
+            rescue.LLM_UNKNOWN = False
             for cache in caches:
                 cache.cache_clear()
             yield rt
         finally:
-            ui.PACK, pages.PACK = old
+            ui.PACK, pages.PACK, rescue.LLM_UNKNOWN = old
             for cache in caches:
                 cache.cache_clear()

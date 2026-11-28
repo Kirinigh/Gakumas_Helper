@@ -3,8 +3,8 @@
   "revision": "hif-card-art-exclusions-v1",
   "source_dataset": "task075-authoritative-705100:0036 + task095-skill-card-extension-pc-705100-0045-d476 + task095-skill-card-extension-pc-705100-0051-6c3d-published-ui + task095-skill-card-extension-pc-705100-0054-2b1621-published-ui + task095-skill-card-extension-pc-705100-0054-0d0a85-published-ui + task095-skill-card-extension-pc-705100-0062-41153f-published-ui-provisional-shared + task095-skill-card-extension-pc-705100-0067-9a3053-joint-ui + task095-sweettrap-public-ui-replacement-20261013 + task095-skill-reference-ui-pc7051000076-primary20261029 + task095-skill-card-extension-pc-705100-0080-released922-ui-20261107 + task095-skill-card-extension-pc-705100-0089-released928-ui-20261117",
   "source_model_sha256": "FE4B2F14978482B58319C2D150391555873A6ACE4D0B9E72B0BB74827BAFD35B",
-  "source_gallery_sha256": "F120AC859BA5F96FDB3CC77DA6A2E1F85556341219E4560A37B770412D709DA0",
-  "source_classes_sha256": "C755F80C2D54CDC69094DDCBAF5BCD8CA2161F4AA91DBD382A897A177464EDBC",
+  "source_gallery_sha256": "1D0CE39414D19310C7EC24A8000950FB75D70D419B02DF1765988995241482AD",
+  "source_classes_sha256": "23C4ECF024A49DFC6E767F828FBDBBDD0FDFBEA75E2CF31F26A7E10343107AB0",
   "gallery_sha256": "15C452821A30C67E7E07828AEA1F568E9353B41DA13EE98693EF5EF96E3F40AA",
   "mask_keys": [
     [

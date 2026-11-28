@@ -76,14 +76,27 @@ def catalog_rows(path, *, allow_sparse=False):
     return rows
 
 
-def new_families(rows):
-    require(len(rows) % 2 == 0 and rows, "placeholder extension must contain normal/+ pairs")
+def new_families(rows, decoded=None):
+    require(rows, "placeholder extension must contain normal/+ pairs")
     result = {}
-    for normal, upgraded in zip(rows[::2], rows[1::2], strict=True):
+    paired_count = len(rows) - len(rows) % 2
+    for normal, upgraded in zip(rows[:paired_count:2], rows[1:paired_count:2], strict=True):
         require(not normal["upgraded"] and upgraded["upgraded"], "normal/+ pair order mismatch")
         require(normal["name"].rstrip("+＋") == upgraded["name"].rstrip("+＋"), "normal/+ name mismatch")
         require(all(normal[k] == upgraded[k] for k in ("plan", "rarity", "sourceType")), "normal/+ facets mismatch")
         result[normal["id"]] = result[upgraded["id"]] = f"provisional:{normal['id']}"
+    if paired_count != len(rows):
+        card = rows[-1]
+        matches = [row for row in decoded or () if row.get("name", "").rstrip("+＋") == card["name"]]
+        require(
+            card["rarity"] == "L" and card["sourceType"] == "pIdol" and not card["upgraded"]
+            and len(matches) == 1 and matches[0].get("upgradeCount") == 0
+            and "identity_source" not in matches[0] and matches[0].get("id")
+            and matches[0].get("rarity") == "ProduceCardRarity_Legend"
+            and all(row.get("id") != matches[0]["id"] or row is matches[0] for row in decoded),
+            "placeholder extension must contain normal/+ pairs or a native single-state Legend",
+        )
+        result[card["id"]] = f"provisional:{card['id']}"
     return result
 
 
@@ -284,7 +297,7 @@ def append_retained_disabled(arrays, proof):
     return result
 
 
-def candidate_component(source, output, rows, groups, image, image_sha, catalog_source, *, embedder_factory=OnnxCardEmbedder, peer_arena_root=None, retained_proof=None, preserved_files=(), preserve_active_parent=False):
+def candidate_component(source, output, rows, groups, image, image_sha, catalog_source, *, embedder_factory=OnnxCardEmbedder, peer_arena_root=None, retained_proof=None, preserved_files=()):
     root, original, arrays = source
     manifest = deepcopy(original)
     newline = "\r\n" if b"\r\n" in (root / "manifest.json").read_bytes() else "\n"
@@ -304,9 +317,7 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
     # Preserve the exact validated parent, including full-UI dataset lineage and
     # historical evaluations. Those conclusions apply only to the enabled rows.
     inherited_manifest = output / "inherited-manifest.json"
-    preserve_parent = retained_proof is not None or preserve_active_parent
-    if preserve_parent:
-        shutil.copyfile(root / "manifest.json", inherited_manifest)
+    shutil.copyfile(root / "manifest.json", inherited_manifest)
     for relative in preserved_files:
         target = output / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -361,7 +372,7 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
     else:
         source_metadata["reference_file_count"] = len(extended["business_ids"])
         manifest["gallery"].update(business_card_id_count=len(all_ids), visual_group_count=len(set(map(str, extended["visual_group_ids"]))))
-        if peer_arena_root is not None and preserve_parent:
+        if peer_arena_root is not None:
             peer_manifest_path = Path(peer_arena_root) / "manifest.json"
             peer_manifest = read(peer_manifest_path)
             source_metadata.update(
@@ -378,16 +389,15 @@ def candidate_component(source, output, rows, groups, image, image_sha, catalog_
         "preserved_rows": len(next(iter(arrays.values()))),
         "appended_rows": len(rows),
         "enabled_rows": int(extended["reference_enabled"].sum()),
-    }
-    if preserve_parent:
-        manifest["build"]["inherited_validation"] = {
+        "inherited_validation": {
             "manifest_path": inherited_manifest.name,
             "manifest_sha256": sha(inherited_manifest),
             "gallery_sha256": original["gallery"]["sha256"],
             "row_count": len(next(iter(arrays.values()))),
             "scope": "enabled_original_rows_only",
             "array_relation": "EXACT_PREFIX",
-        }
+        },
+    }
     if retained_proof is not None:
         manifest["build"]["retained_disabled_reference_proof"] = retained_proof["evidence"]
     if original["schema_version"] == 2:
@@ -514,7 +524,9 @@ def build(*, catalog, accepted_catalog, classification_path, base_root, arena_ro
             for row in new:
                 reference = proof["references"][row["id"]]
                 require((row["name"], row["upgraded"]) == (reference["name"], reference["upgraded"]), "retained placeholder catalog identity changed")
-    groups = new_families(new)
+    decoded = read(decoded_master) if decoded_master else None
+    require(decoded is None or isinstance(decoded, list), "decoded master must be a frozen row list")
+    groups = new_families(new, decoded)
     if proofs is not None:
         require(all(groups[bid] == proof["references"][bid]["visual_group_id"] for proof in proofs for bid in groups), "retained placeholder family changed")
     old = read(classification_path)
@@ -558,8 +570,6 @@ def build(*, catalog, accepted_catalog, classification_path, base_root, arena_ro
                 "gallery_sha256": manifest["gallery"]["sha256"], "row_count": len(ids),
                 "business_id_count": len(accepted_ids), "join_key": "business_id",
             }, "accepted classification is not bound to the supplied schema-2 badge and gallery set")
-    decoded = read(decoded_master) if decoded_master else None
-    require(decoded is None or isinstance(decoded, list), "decoded master must be a frozen row list")
     require(re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", catalog_repository), "catalog repository must be explicit GitHub provenance")
     catalog_source = {"repository": catalog_repository, "revision": catalog_revision, "sha256": sha(catalog)}
     image = placeholder_image()
@@ -582,7 +592,6 @@ def build(*, catalog, accepted_catalog, classification_path, base_root, arena_ro
             peer_arena_root=output / "skill-arena" if name == "badge-reference" else None,
             retained_proof=proofs[len(components)] if proofs is not None else None,
             preserved_files=preserved.get(name, ()),
-            preserve_active_parent=bool(preserved),
         )
         if proofs is not None:
             manifest["build"]["retained_classification_sha256"] = sha(retained_classification_path)

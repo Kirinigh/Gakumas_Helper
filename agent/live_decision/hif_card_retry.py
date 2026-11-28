@@ -1,11 +1,11 @@
 """Compare the visible hand markers and HUD after an unconfirmed selection tap."""
 import json
 import time
-from pathlib import Path
-from functools import lru_cache
 
 import cv2
 import numpy as np
+
+from .exam_hand import exam_hand_marks as hand_marks
 
 CARD_SELECT_TIMEOUT = 1.6
 CARD_SELECT_POLL_INTERVAL = .2
@@ -13,7 +13,13 @@ _SELECT_MARKER = r'^\s*[Ss]\s*[Ee]\s*[Ll]\s*[Ee]\s*[Cc].{0,5}\s*$'
 _SELECT_SUFFIX = r'[Ss][Ee][Ll][Ee][Cc][Tt]$'
 
 
-def read_exam_select_markers(context, image):
+def read_exam_hand_strip(context, image):
+    node = 'ProduceHIF__ProduceIdentitySelected'
+    return context.run_recognition(node, image, pipeline_override={node: dict(
+        recognition='OCR', roi=[0, 1040, 720, 160], expected=[_SELECT_MARKER, _SELECT_SUFFIX], only_rec=False)})
+
+
+def read_exam_select_markers(context, image, *, read_strip=None):
     """Hiro's tolerant SELECT strip read, with a crop retry for joined OCR rows."""
     node = 'ProduceHIF__ProduceIdentitySelected'
 
@@ -21,7 +27,7 @@ def read_exam_select_markers(context, image):
         return context.run_recognition(node, image, pipeline_override={node: dict(
             recognition='OCR', roi=list(roi), expected=expected, only_rec=only_rec)})
 
-    result = ocr((0, 1040, 720, 160), [_SELECT_MARKER, _SELECT_SUFFIX])
+    result = read_exam_hand_strip(context, image) if read_strip is None else read_strip(image)
     if not getattr(result, 'hit', False):
         return (), False
     rows = getattr(result, 'filtered_results', ()) or ()
@@ -80,27 +86,6 @@ def same_readable_resources(before, after):
     """A missed HUD read alone does not show that the game progressed."""
     return all(old is None or new is None or old == new
                for old, new in zip(before, after, strict=True))
-
-
-@lru_cache
-def _letter_templates():
-    # A, M and T from our adjacent-gray acceptance frame, not upstream assets.
-    strip = cv2.imread(str(Path(__file__).with_name('assets') / 'hif_hand_letters_0067.png'),
-                       cv2.IMREAD_GRAYSCALE)
-    return () if strip is None or strip.shape != (42, 18) else np.vsplit(strip, 3)
-
-
-def hand_marks(image):
-    if getattr(image, 'shape', ()) != (1280, 720, 3):
-        return ()
-    band = cv2.cvtColor(image[1040:1100], cv2.COLOR_BGR2GRAY)
-    markers = set()
-    for template in _letter_templates():
-        scores = np.abs(cv2.matchTemplate(band, template, cv2.TM_CCOEFF_NORMED))
-        maxima = scores == cv2.dilate(scores, np.ones((9, 15), np.uint8))
-        ys, xs = np.where(maxima & (scores >= .85))
-        markers.update((int(x) // 8, (1040 + int(y)) // 8) for x, y in zip(xs, ys, strict=True))
-    return tuple(sorted(markers))
 
 
 def read_retry_scene(module, context, image):

@@ -261,22 +261,23 @@ class VulkanOcr(SimdOcr):
             return super().read(image, **params)
 
     def read(self, image, **params):
+        """Return None when this frame has no GPU reply, or the completed rows."""
         with self._dispatch_lock:
             if not self.available or self._pending is not None:
-                return ()
+                return None
             cold = not self._warm
             operation = self._read_cold if cold else super().read
             timeout = self._start_timeout + self._reply_timeout if cold else 3.0
             wait_until = monotonic() + VULKAN_COLD_WAIT_SECONDS if cold else None
             pending, deadline = self._submit(timeout, partial(operation, image, **params))
         if cold and not _wait_for_vulkan_cold.get():
-            return ()
+            return None
         wait_until = min(wait_until, deadline) if wait_until is not None else deadline
         try:
             return pending.result(timeout=max(0.0, wait_until - monotonic()))
         except TimeoutError:
             if wait_until < deadline and monotonic() < deadline and not pending.done():
-                return ()
+                return None
             self._expire(pending)
             return pending.result()
 
@@ -323,6 +324,12 @@ def read_optional_simd_ocr(image, params, *, prefer_gpu=False, index=0, accept=b
             worker.available = False
             logging.getLogger(__name__).warning('SIMD OCR %s unavailable: %s', backend, error)
             continue
+        if rows is None:
+            continue
         if -len(rows) <= index < len(rows) and accept(rows):
             return rows
+        if backend == 'vulkan':
+            # The GPU completed this frame. Use the caller's native fallback
+            # when its rows are empty or fail the caller's evidence checks.
+            break
     return ()

@@ -32,6 +32,13 @@ try:  # Repository/package imports and the installed agent/main.py entrypoint.
 except ImportError:
     from github_credentials import get_launch_token
 
+try:  # Repository imports and the installed agent entrypoint.
+    from ..card_selection.model import ModelIntegrityError
+    from ..card_selection.embedding import SHARED_UPGRADE_MARKER_SCHEMA, EmbeddingCardRecognizer
+except ImportError:
+    from card_selection.model import ModelIntegrityError
+    from card_selection.embedding import SHARED_UPGRADE_MARKER_SCHEMA, EmbeddingCardRecognizer
+
 from .config import PROJECT_ROOT, DEFAULT_BUNDLE_DIR
 from .stages import StageCatalogError, ContestStageCatalog, ContestSeasonDefinition
 from .adapter import (
@@ -43,6 +50,7 @@ from .adapter import (
 from .catalog import ArenaCatalogError, ArenaEntityCatalog
 from .season_ui import ArenaSeasonUiSynchronizer
 from .badge_reference import BadgeReferenceError, BadgeReferenceGallery
+from ._reader_resources import manifest_identity
 from .component_builder import (
     ArenaComponentBuildError,
     parse_ris_csv_rows,
@@ -104,6 +112,10 @@ REQUIRED_SOURCE_PATHS = {
 
 class ArenaComponentError(RuntimeError):
     """Raised when no installed component can satisfy the selected arena season."""
+
+
+class ArenaRecognitionPairError(ArenaComponentError):
+    """The host galleries cannot be used together."""
 
 
 class ArenaPItemCoverageError(ArenaComponentError):
@@ -201,7 +213,7 @@ def _component_failure_summary(error: BaseException, status: str) -> str:
     phase = {
         "check_failed_using_active": "版本查询",
         "catalog_check_failed_using_active": "场地目录读取",
-        "startup_check": "本地资源检查",
+        "local_check_failed_using_active": "本地资源检查",
     }.get(status, "资源更新")
     stage = next((getattr(item, "_arena_component_stage", None) for item in errors
                   if getattr(item, "_arena_component_stage", None)), None)
@@ -680,6 +692,40 @@ class ArenaComponentManager:
         self._text_inputs: tuple[dict | None, dict | None, tuple[str, ...]] | None = None
         self._lock = threading.Lock()
         self._checks: dict[Path, _CheckOutcome] = {}
+        self._validated_embedding_pair: tuple[Any, ...] | None = None
+
+    def _validate_shared_card_embeddings(self) -> None:
+        """Keep split host assets coherent before activation or local reuse."""
+        roots = []
+        manifests = []
+        try:
+            for folder in ("classify/card_embedding", "embedding/arena_card"):
+                relative = Path("resource/base/model") / folder
+                source, installed = PROJECT_ROOT / "assets" / relative, PROJECT_ROOT / relative
+                root = source if source.exists() else installed
+                roots.append(root)
+                manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8-sig"))
+                schema = manifest.get("schema_version") if isinstance(manifest, Mapping) else None
+                if type(schema) is not int or schema not in {1, 2, SHARED_UPGRADE_MARKER_SCHEMA}:
+                    raise ModelIntegrityError(f"embedding manifest schema is invalid in {folder}")
+                manifests.append(manifest)
+            split = [manifest for manifest in manifests if manifest["schema_version"] == SHARED_UPGRADE_MARKER_SCHEMA]
+            hashes = {manifest["gallery"]["upgrade_marker_table_sha256"].upper() for manifest in split}
+            if len(hashes) > 1:
+                raise ModelIntegrityError("embedding manifests disagree on the shared upgrade-marker table")
+            identity = tuple(manifest_identity(root, verify_pins=True) for root in roots)
+            if any(value is None for value in identity):
+                raise ModelIntegrityError("embedding gallery or shared upgrade-marker table disagrees with its manifest")
+            if identity == self._validated_embedding_pair:
+                return
+            for root in roots:
+                EmbeddingCardRecognizer.load(root)
+            if identity != tuple(manifest_identity(root, verify_pins=True) for root in roots):
+                raise ModelIntegrityError("embedding gallery pair changed during validation")
+        except (OSError, AttributeError, KeyError, TypeError, ValueError, ModelIntegrityError) as error:
+            self._validated_embedding_pair = None
+            raise ArenaRecognitionPairError("host recognition gallery pairing is unavailable or invalid") from error
+        self._validated_embedding_pair = identity
 
     def _prepare_text_inputs(self) -> tuple[dict | None, dict | None, tuple[str, ...]]:
         if self._text_inputs is None:
@@ -773,14 +819,13 @@ class ArenaComponentManager:
             self._checks = {path: outcome for path, outcome in self._checks.items() if outcome.failure is None}
 
     def resolve_local(self, baseline_bundle: Path, selection: str | int) -> ArenaComponentResolution:
-        """Reuse this startup's outcome, including failures, without network I/O."""
+        """Reuse this process's outcome, including failures, without network I/O."""
 
         baseline = baseline_bundle.resolve()
         with self._lock:
+            self._validate_shared_card_embeddings()
             outcome = self._checks.get(baseline)
             if outcome is None:
-                # Alternate hosts may omit the startup hook. They still may use
-                # an installed component, but must not silently check upstream.
                 info = self._load_active() or _inspect_bundle(baseline)
                 outcome = _CheckOutcome(
                     bundle=info,
@@ -788,7 +833,7 @@ class ArenaComponentManager:
                     remote_latest_season=None,
                     status="local_unchecked",
                     update_activated=False,
-                    warnings=("RIS 本次启动未完成更新检查，使用本地资源；请核对期数，重启客户端可重新检查。",),
+                    warnings=("RIS 尚未检查更新，使用本地资源；请核对期数。",),
                 )
         return _resolve_selection(outcome, selection)
 
@@ -798,9 +843,12 @@ class ArenaComponentManager:
         selection: str | int,
         *,
         check_updates: bool = True,
+        announce_check: bool = False,
     ) -> ArenaComponentResolution:
         baseline = baseline_bundle.resolve()
         if not check_updates:
+            with self._lock:
+                self._validate_shared_card_embeddings()
             info = _inspect_bundle(baseline)
             return _resolve_selection(
                 _CheckOutcome(
@@ -815,8 +863,12 @@ class ArenaComponentManager:
             )
         with self._lock:
             outcome = self._checks.get(baseline)
-            if outcome is None:
+            if outcome is not None:
+                self._validate_shared_card_embeddings()
+            else:
                 started = time.monotonic()
+                if announce_check:
+                    _log_component_update_notice("正在检查 RIS 竞技场资源；版本未变化时复用本地组件。", recovered=True)
                 outcome = self._check_once(baseline)
                 retried = False
                 for attempt in range(FAILED_CHECK_RETRIES):
@@ -828,6 +880,12 @@ class ArenaComponentManager:
                     )
                     retried = True
                     outcome = self._check_once(baseline, previous=outcome)
+                if outcome.failure is not None and not isinstance(outcome.failure, ArenaRecognitionPairError):
+                    try:
+                        self._validate_shared_card_embeddings()
+                    except ArenaRecognitionPairError as error:
+                        outcome = replace(outcome, status="update_failed_using_active",
+                                          warnings=outcome.warnings + (str(error),), failure=error)
                 self._checks[baseline] = outcome
                 if outcome.failure is not None:
                     limited = outcome.failure
@@ -865,11 +923,29 @@ class ArenaComponentManager:
                         f"RIS 资源重试成功，当前使用组件 {outcome.bundle.commit[:12]}。",
                         recovered=True,
                     )
+                if announce_check and outcome.failure is None:
+                    latest = outcome.bundle.catalog.resolve("latest")
+                    action = "已更新" if outcome.update_activated else "已是当前生产版本"
+                    _log_component_update_notice(
+                        f"RIS 竞技场资源{action}，最新第 {latest.season} 期"
+                        f"（{'预览' if latest.preview else '正式'}）；检查用时 {time.monotonic() - started:.1f} 秒。",
+                        recovered=True,
+                    )
         return _resolve_selection(outcome, selection)
 
     def _check_once(self, baseline_bundle: Path, *, previous: _CheckOutcome | None = None) -> _CheckOutcome:
-        baseline = _inspect_bundle(baseline_bundle)
         active = self._load_active()
+        try:
+            baseline = _inspect_bundle(baseline_bundle)
+        except ArenaComponentError as error:
+            if active is None:
+                raise
+            _log_component_failure("inspect_baseline", error, component=baseline_bundle)
+            return _CheckOutcome(
+                bundle=active, remote_commit=None, remote_latest_season=None,
+                status="local_check_failed_using_active", update_activated=False,
+                warnings=("RIS 随包资源不可用，继续使用已启用的本地组件。",), failure=error,
+            )
         if active is None:
             active = baseline
         active_reference_warnings = (
@@ -900,6 +976,18 @@ class ArenaComponentManager:
             )
 
         if remote_commit == active.commit:
+            try:
+                self._validate_shared_card_embeddings()
+            except ArenaComponentError as error:
+                return _CheckOutcome(
+                    bundle=active,
+                    remote_commit=remote_commit,
+                    remote_latest_season=active.latest_season,
+                    status="update_failed_using_active",
+                    update_activated=False,
+                    warnings=tuple(warnings) + (str(error),),
+                    failure=error,
+                )
             text_updated = False
             if self._manages_text:
                 try:
@@ -1115,6 +1203,7 @@ class ArenaComponentManager:
             raise
 
     def _activate(self, bundle: _BundleInfo) -> None:
+        self._validate_shared_card_embeddings()
         self.cache_root.mkdir(parents=True, exist_ok=True)
         state = {
             "schema_version": STATE_SCHEMA_VERSION,
@@ -1567,53 +1656,6 @@ def _sync_default_season_ui(info: _BundleInfo) -> None:
         _log_component_failure("season_ui_sync", error, component=info.path)
 
 
-def sync_arena_season_ui_on_startup() -> None:
-    """Use local activated metadata only; never check upstream or execute Node."""
-
-    try:
-        if not _DEFAULT_SEASON_UI.interface_path.is_file():
-            return
-        info = _DEFAULT_MANAGER._load_active() or _inspect_bundle(DEFAULT_BUNDLE_DIR)
-        _sync_default_season_ui(info)
-    except Exception as error:
-        _log_component_failure("season_ui_startup", error)
-
-
-def check_arena_component_on_startup() -> None:
-    """Check once before AgentServer becomes ready, independently of daily tasks.
-
-    Keep the existing retry and activation rules. Failure never prevents the
-    Agent from serving other tasks; arena selection later uses the saved
-    outcome and keeps the existing unavailable-season checks.
-    """
-
-    if not _DEFAULT_SEASON_UI.interface_path.is_file():
-        return
-    baseline = DEFAULT_BUNDLE_DIR.resolve()
-    if baseline in _DEFAULT_MANAGER._checks:
-        return
-    started = time.monotonic()
-    try:
-        _log_component_update_notice("正在检查 RIS 竞技场资源；版本未变化时复用本地组件。", recovered=True)
-        result = _DEFAULT_MANAGER.resolve(baseline, "latest")
-        outcome = _DEFAULT_MANAGER._checks[baseline]
-        _sync_default_season_ui(outcome.bundle)
-        if outcome.failure is None:
-            action = "已更新" if result.update_activated else "已是当前生产版本"
-            _log_component_update_notice(
-                f"RIS 竞技场资源{action}，最新第 {result.season.season} 期"
-                f"（{'预览' if result.season.preview else '正式'}）；检查用时 {time.monotonic() - started:.1f} 秒。",
-                recovered=True,
-            )
-    except Exception as error:
-        _log_component_failure("startup_check", error)
-        if baseline not in _DEFAULT_MANAGER._checks:
-            _log_component_update_notice(
-                "RIS 启动检查未完成，继续启动客户端；竞技场将尝试已有本地资源。\n"
-                f"{_component_failure_summary(error, 'startup_check')}；用时 {time.monotonic() - started:.1f} 秒。"
-            )
-
-
 def reset_failed_arena_component_checks() -> None:
     """Retry only UI synchronization at task entry, never renew network checks."""
 
@@ -1624,12 +1666,12 @@ def resolve_arena_component(
     bundle_dir: Path,
     selection: str | int,
 ) -> ArenaComponentResolution:
-    """Select the startup-checked bundle or an explicit custom bundle offline."""
+    """Check default resources on first use; explicit bundles stay offline."""
 
     baseline = bundle_dir.resolve()
     is_default = baseline == DEFAULT_BUNDLE_DIR.resolve()
     if is_default:
-        result = _DEFAULT_MANAGER.resolve_local(baseline, selection)
+        result = _DEFAULT_MANAGER.resolve(baseline, selection, announce_check=True)
     else:
         result = _DEFAULT_MANAGER.resolve(baseline, selection, check_updates=False)
     if is_default:

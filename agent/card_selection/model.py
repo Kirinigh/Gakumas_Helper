@@ -48,13 +48,15 @@ def isolate_card_candidates(
     results: Sequence[Any],
     *,
     target_count: int | None = None,
+    include_unplayable: bool = False,
 ) -> tuple[CandidateBox, ...]:
-    """Enumerate selectable cards; raw labels are audit-only and ``useless`` is excluded."""
+    """Enumerate cards and allow geometry readers to retain non-clickable hand slots."""
 
+    accepted_labels = {"cards", "suggestions", "useless"} if include_unplayable else {"cards", "suggestions"}
     candidates: list[tuple[tuple[int, int, int, int], float, str]] = []
     for result in results:
         label = result.get("label") if isinstance(result, dict) else getattr(result, "label", None)
-        if label not in {"cards", "suggestions"}:
+        if label not in accepted_labels:
             continue
         raw_box = result.get("box") if isinstance(result, dict) else getattr(result, "box", None)
         raw_score = result.get("score", 0.0) if isinstance(result, dict) else getattr(result, "score", 0.0)
@@ -84,5 +86,6 @@ def isolate_card_candidates(
         if len(deduplicated) == target_count:
             candidates = sorted(deduplicated, key=lambda item: (item[0][0], item[0][1]))
     return tuple(
-        CandidateBox(slot=index, box=box, detector_label=label, detector_score=score) for index, (box, score, label) in enumerate(candidates)
+        CandidateBox(slot=index, box=box, detector_label=label, detector_score=score, clickable=label != "useless")
+        for index, (box, score, label) in enumerate(candidates)
     )

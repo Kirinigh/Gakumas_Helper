@@ -190,36 +190,27 @@ def _playable_slots(module, ui, image, results, boxes, hand_size):
 
 def _stable_hand_geometry(module, ui, state=None, *, target_slot=None, hand_size=None):
     """Bind each upstream playable box to its business identity on the same frame."""
+    from .exam_hand import anchor_exam_hand, playable_exam_boxes
+
     if state is not None:
         ui._last_turn_count = state.turn
         hand_size = len(state.deck.hand)
-    ui._reset_card_hand_stability()
     deadline = time.monotonic() + ui.TIME_OUT
     poll = getattr(getattr(ui, 'base', None), 'gkh_hif_poll_battle_progress', None)
+    slots = None
     while poll is not None or time.monotonic() < deadline:
         image = ui.context.tasker.controller.post_screencap().wait().get()
         recognition = ui.context.run_recognition('ProduceHIF__ProduceRecognitionCards', image)
         results = recognition.all_results if recognition else []
-        boxes = ui._hif_card_boxes(results)
+        anchored = anchor_exam_hand(image, results, ui)
+        boxes = ui._hif_card_boxes(results) if anchored is None else playable_exam_boxes(anchored)
+        if anchored is not None:
+            results = anchored
         slots = _playable_slots(module, ui, image, results, boxes, hand_size)
-        if slots is not None:
-            if state is not None and (target_slot is None or target_slot in slots):
-                # The SELECT path takes its own current frame before input.
-                # The whole hand need not repeat on a fixed number of frames.
-                return image, boxes, slots
-            # Opening inspection has only physical slots before inventory.
-            identified = [dict(key=state.deck.hand[slot].instance_id if state is not None else None,
-                               box=list(box), upgraded=None)
-                for slot, (box, _) in zip(slots, boxes, strict=True)]
-            if ui._confirm_card_hand(identified) == 'stable':
-                if target_slot is None or target_slot in slots:
-                    return image, boxes, slots
-                if poll is None:
-                    raise ValueError(f'strong target in physical slot {target_slot} has no upstream playable box')
-                # The current UI cannot select the intended card. The automatic
-                # battle observes again under miyu's shared no-progress clock.
-        else:
-            ui._reset_card_hand_stability()
+        if slots is not None and (target_slot is None or target_slot in slots):
+            # Both the card action and a title inspection independently check
+            # the current target and its SELECT before accepting the click.
+            return image, boxes, slots
         if poll is not None:
             if slots is None:
                 from .hif_result import try_displayed_terminal_frame
@@ -236,6 +227,8 @@ def _stable_hand_geometry(module, ui, state=None, *, target_slot=None, hand_size
             else:
                 poll(image)
         time.sleep(ui.CARD_HAND_POLL_INTERVAL)
+    if slots is not None and target_slot not in slots:
+        raise ValueError(f'strong target in physical slot {target_slot} has no upstream playable box')
     raise ValueError('upstream target hand did not stabilize')
 
 

@@ -8130,6 +8130,14 @@ def _observe_expected_selected_live_slots(
 
 def _normalise_observed_live_candidates(context, image, results):
     upstream_geometry = getattr(context, 'gkh_hif_upstream_card_ui', False) is True
+    is_hif = isinstance(getattr(context, "gkh_hif_live_context", None), HifLiveRunContext)
+    if is_hif:
+        from live_decision.exam_hand import anchor_exam_hand
+        from live_decision.upstream_hif_card_ui import BattleRecognitionMixin
+
+        anchored = anchor_exam_hand(image, results, BattleRecognitionMixin())
+        if anchored is not None:
+            return isolate_card_candidates(anchored, include_unplayable=True)
     if upstream_geometry:
         from live_decision.upstream_hif_card_ui import BattleRecognitionMixin
 
@@ -8140,9 +8148,7 @@ def _normalise_observed_live_candidates(context, image, results):
         results = [row for row in results if row.label == 'useless' or tuple(row.box) in allowed]
     # HIF's selected preview can dim neighbouring cards. They still occupy
     # physical hand slots; preserve their original non-playable label.
-    raw = isolate_card_candidates(results, include_unplayable=isinstance(
-        getattr(context, "gkh_hif_live_context", None), HifLiveRunContext,
-    ))
+    raw = isolate_card_candidates(results, include_unplayable=is_hif)
     if upstream_geometry:
         # The pinned upstream owns physical geometry on this explicit path.
         # Legacy title-plate repair rejects valid adjacent gray cards even
@@ -8173,7 +8179,6 @@ def _normalise_observed_live_candidates(context, image, results):
                     for slot, card in enumerate(normalized)):
                 return ()
         return normalized
-    is_hif = isinstance(getattr(context, "gkh_hif_live_context", None), HifLiveRunContext)
     if is_hif:
         title_cache = HifFrameTitleCache(image)
         for hand_count in (5, 4, 3, 2, 1):
@@ -12925,9 +12930,9 @@ def _publish_hif_component(context, payload):
 
 
 def _bind_hif_opening_policy(context, event, profile='joint-search'):
-    from live_decision.high_score.hif_policy_factory import bind_hif_policy
+    from live_decision.high_score.policy_factory import build_battle_policy
 
-    return bind_hif_policy(context, event, profile, catalog_path=CATALOG_PATH)
+    return build_battle_policy(profile, backend='hif', context=context, event=event, catalog_path=CATALOG_PATH)
 
 
 def _persist_hif_mcts_computation(context, policy):

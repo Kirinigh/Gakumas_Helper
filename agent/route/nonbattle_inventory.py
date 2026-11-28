@@ -176,8 +176,8 @@ def align_flat_inventory_rows(frames, boxes):
     return aligned
 
 
-def read_course_thumbnail(reader, image, box):
-    card = reader.identify(image, box, plan='sense')
+def read_course_thumbnail(reader, image, box, *, plan='sense'):
+    card = reader.identify(image, box, plan=plan)
     return dict(card_id=card.card_id, observations=(card,))
 
 
@@ -229,9 +229,8 @@ def resolve_nonbattle_detail(context, catalog, card_id, observations, frames, fr
     title = _course_detail_title(catalog, card_id, observations[0])
     if '++' in unicodedata.normalize('NFKC', title):
         raise ValueError('temporary support tier does not identify permanent customizations')
-    # Only the confirmed lesson panel calls score パラメータ.
     ordered = sorted(observations[0], key=lambda value: (value.box[1], value.box[0]))
-    text = ordered[0].text + ''.join(value.text for value in ordered[1:]).replace('パラメータ', 'スコア')
+    text = ordered[0].text + ''.join(value.text for value in ordered[1:])
     badge = _course_detail_badge(context, frames[0], frame_ids[0])
     catalog.confirm_clicked_skill_card(text, predicted_card_id=int(card_id))
     groups = catalog.resolve_effective_customizations(int(card_id), text, expected_count=badge['count'],

@@ -19,6 +19,11 @@ from dataclasses import asdict, dataclass
 import cv2
 import numpy as np
 
+if __package__.startswith('agent.'):
+    from agent.utils.effect_text import normalize_score_effect_text
+else:
+    from utils.effect_text import normalize_score_effect_text
+
 from .hif_capture_adapter import captured_at as frame_captured_at
 
 
@@ -92,7 +97,7 @@ class StatusPanelRow:
 
     @property
     def content_key(self):
-        description = self.description
+        description = normalize_score_effect_text(self.description)
         if (self.title == 'パラメータ上昇量増加' and self.unit == '%'
                 and type(self.count) is int and self.count > 0
                 and type(self.remaining_turns) is int and self.remaining_turns > 0):
@@ -710,7 +715,7 @@ def _confirm_countless_body(context, image, rows, boxes, consistent_strong_boxes
             continue
         expected = _COUNTLESS_STATUS_DESCRIPTIONS.get(_normalize_status_text(header[0]['text']))
         row = body[0]
-        observed = _normalize_status_text(row['text'])
+        observed = normalize_score_effect_text(_normalize_status_text(row['text']))
         counter = image[y+57:y+98,x+90:x+w-20]
         if (expected is None or observed == expected or tuple(row['box']) not in consistent_strong_boxes
                 or re.findall(r'\d+',observed) != re.findall(r'\d+',expected)

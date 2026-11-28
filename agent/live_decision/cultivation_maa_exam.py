@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from dataclasses import dataclass
 
 from .upgrade import compact_ocr_text
-from .exam_hud import read_lesson_goal, read_exam_ranking
+from .exam_hud import read_lesson_goal, read_exam_ranking, exam_failed_header, lesson_turns_shown
 from .item_hud import COMPACT, REGULAR, observe_frame, load_hud_references
 from .drink_icons import EVENT_GREEN_JUICE_ID, load_default_drink_icons
 from .hiro_runtime import hiro_module
@@ -296,14 +296,21 @@ class CultivationMaaExam(IdolRoadMaaBattle):
         return self._audition_attribute(image), score
 
     def result_page_ready(self, image):
-        return not self.recognition('ProduceRecognitionHealthFlag', image)
+        return not (self.recognition('ProduceRecognitionHealthFlag', image)
+                    or (self.lesson is not None and lesson_turns_shown(image, self.remaining_turns)))
 
     def read_result_page(self, image):
         if self.lesson is None:
-            return read_exam_ranking(image, self.ocr)
+            return read_exam_ranking(image, self.ocr) or self.read_unscored_failure(image)
         return read_lesson_result(self.ocr(image), self.timeline[1].attribute)
 
-    def run_cultivation(self):
+    def read_unscored_failure(self, image):
+        if (self.lesson is None and self.entry.produce in _MODES
+                and exam_failed_header(image, self.ocr)):
+            return dict(rank=None, score=None, failed=True)
+        return None
+
+    def run_cultivation(self, *, hiro_session=None):
         def can_open(image):
             if not self.target('ProduceRecognitionSkipRound', image, HIF_SKIP_RECOGNITION):
                 return None
@@ -311,7 +318,7 @@ class CultivationMaaExam(IdolRoadMaaBattle):
 
         exam = self.poll(can_open, 'cultivation-opening-master')
         self.live_screen = self.poll(self.observe_live, 'cultivation-opening-hud')
-        return self.run_live_exam(exam=exam, hiro_label=self.exam_label(exam))
+        return self.run_live_exam(exam=exam, hiro_label=self.exam_label(exam), hiro_session=hiro_session)
 
     def exam_label(self, exam):
         if exam.get('lesson'):

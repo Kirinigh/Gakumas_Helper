@@ -4,6 +4,7 @@ import os
 import re
 from types import SimpleNamespace
 from importlib import import_module
+from collections import Counter
 
 from .contracts import DecisionKind
 from ..hiro_runtime import hiro_module, hiro_runtime_root
@@ -49,11 +50,27 @@ def lookup_hiro_floor(tables, idol_card_id, layer):
     return tower_id, tables.layer_exam(tower_id, layer)
 
 
-def resolve_rust_tower_stage(tables, loadout):
+_STAGE_NOT_OBSERVED = object()
+
+
+def resolve_rust_tower_stage(tables, loadout, *, observed_stage=_STAGE_NOT_OBSERVED):
     layer = loadout.overview.layer
     tower_id, stage = lookup_hiro_floor(tables, loadout.idol.idol_card_id, layer)
     if tower_id is None:
         raise ValueError('idol_road_gnrpa_stage_identity_unread')
+    if observed_stage is not _STAGE_NOT_OBSERVED:
+        if observed_stage is None:
+            stage = None
+        else:
+            identity = observed_stage.identity
+            if (stage or {}).get('exam', {}).get('produce_exam_gimmick_effect_group_id') != identity:
+                mechanic = re.fullmatch(r'p_exam_gimmick-tower_001-(\w+)-\d+-stage_\d+', identity)
+                stage = tables.layer_exam(tower_id, layer, mechanic[1]) if mechanic else None
+            exam = (stage or {}).get('exam', {})
+            if (exam.get('produce_exam_gimmick_effect_group_id') != identity
+                    or exam.get('produce_item_ids') is None
+                    or Counter(exam['produce_item_ids']) != Counter(item['id'] for item in observed_stage.fixed_items)):
+                stage = None
     exam = (stage or {}).get('exam', {})
     if (stage is None or not exam.get('produce_exam_battle_config_id')
             or not exam.get('produce_exam_gimmick_effect_group_id')

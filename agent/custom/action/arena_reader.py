@@ -447,14 +447,18 @@ class _ArenaPageFlowPort:
         self._backend = backend
 
     @property
+    def context(self) -> Any:
+        return getattr(self._backend, "context", None)
+
+    @property
     def state(self) -> PageRecoveryState:
         return self._backend._page_recovery_state
 
     def capture(self) -> Any:
         return self._backend._capture()
 
-    def ocr(self, image: Any, expected: str) -> Any:
-        return self._backend._ocr(image, expected)
+    def ocr(self, image: Any, expected: str, **kwargs: Any) -> Any:
+        return self._backend._ocr(image, expected, **kwargs)
 
     def recognize(self, entry: str, image: Any) -> Any:
         return self._backend._recognize(entry, image)
@@ -2041,8 +2045,8 @@ class MaaArenaReaderBackend:
 
     _p_item_detail_title_text = staticmethod(_reader_visual._p_item_detail_title_text)
 
-    def _p_item_ocr_observation(self, image: Any) -> _PItemOcrObservation:
-        return self._component_p_item_page_observation().ocr_observation(image)
+    def _p_item_ocr_observation(self, image: Any, **detail_scope: Any) -> _PItemOcrObservation:
+        return self._component_p_item_page_observation().ocr_observation(image, **detail_scope)
 
     def _click(self, box: tuple[int, int, int, int], *, settle_seconds: float = 0.25) -> None:
         return self._component_io_reader()._click(box, settle_seconds=settle_seconds)
@@ -2215,8 +2219,11 @@ class MaaArenaReaderBackend:
             clock=time,
         )
 
+    def _skill_card_detail_view_complete(self, image, rows, ids) -> bool:
+        return self._component_detail_effect_ocr()._simd_detail_view_complete(image, rows, ids)
+
     def _component_detail_capture_evidence(self) -> DetailCaptureEvidence:
-        return DetailCaptureEvidence(self, clock=time)
+        return DetailCaptureEvidence(self, clock=time, validate_skill_detail=self._skill_card_detail_view_complete)
 
     def _component_detail_effect_ocr(self) -> DetailEffectOcr:
         return DetailEffectOcr(

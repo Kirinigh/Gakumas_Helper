@@ -11,8 +11,7 @@ from dataclasses import dataclass
 from collections.abc import Callable
 
 from .hif_card_retry import wait_for_target_select
-from .high_score.contracts import ActionKind
-from .high_score.hif_environment import HifStep
+from .high_score.contracts import ActionKind, BattleStep
 
 EXAM_CHANGE_TIMEOUT = 8.0
 EXAM_STALL_TIMEOUT = 180.0
@@ -98,18 +97,19 @@ class ExamCardConfirmation:
 class ExamResult:
     rank: int | None
     score: int
-    terminal_step: HifStep | None = None
+    terminal_step: BattleStep | None = None
 
 
 @dataclass(frozen=True)
 class ExamSettlement:
     rank: int | None
-    score: int
-    last_live_score: int
+    score: int | None
+    last_live_score: int | None
+    failed: bool = False
 
     @property
     def difference(self):
-        return self.score - self.last_live_score
+        return None if self.score is None or self.last_live_score is None else self.score - self.last_live_score
 
 
 @dataclass(frozen=True)

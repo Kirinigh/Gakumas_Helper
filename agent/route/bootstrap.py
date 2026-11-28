@@ -54,7 +54,7 @@ class _RecordSnapshot:
         self._active, self._record, self._raw = False, None, None
 
 
-def _endpoint(context, *, expected_maa=None, controller_info=None):
+def _endpoint(context, *, expected_maa=None, controller_info=None, require_calibrated_size=True):
     """Read geometry/tokens only; every actual input still uses the Maa SDK."""
     import ctypes
     from ctypes import wintypes
@@ -71,7 +71,8 @@ def _endpoint(context, *, expected_maa=None, controller_info=None):
     rect = wintypes.RECT()
     if not user32.GetClientRect(info['hwnd'], ctypes.byref(rect)):
         raise ValueError('hif_product_game_window_unavailable')
-    result = verify_maa_input_endpoints(info, expected_client_size=(rect.right - rect.left, rect.bottom - rect.top))
+    result = verify_maa_input_endpoints(info, expected_client_size=(rect.right - rect.left, rect.bottom - rect.top),
+                                        require_calibrated_size=require_calibrated_size)
     if (Path(result['maa']['executable']).resolve(strict=True) != (expected_maa or _product_paths()[2]).resolve(strict=True)
             or any(row.get('integrity_rid') != 0x3000 for row in result.values())):
         raise ValueError('hif_product_input_endpoint_changed')

@@ -1,11 +1,26 @@
 import sys
 from pathlib import Path
 from datetime import timedelta
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 DEFAULT_LOG_DIR = Path(".local/runtime-data/logs")
 LOG_ROTATION = "00:00"
 LOG_RETENTION_DAYS = 14
 LOG_COMPRESSION = "zip"
+
+_diagnostic_only = ContextVar("diagnostic_only", default=False)
+
+
+@contextmanager
+def diagnostic_only():
+    """Keep nested Agent logs in the local diagnostic file."""
+    token = _diagnostic_only.set(True)
+    try:
+        yield
+    finally:
+        _diagnostic_only.reset(token)
+
 
 try:
     from loguru import logger as _logger
@@ -24,6 +39,8 @@ try:
 
         # 定义日志级别的简短格式
         def format_level(record):
+            if _diagnostic_only.get() or record["extra"].get("file_only"):
+                return False
             level_map = {
                 "INFO": "info",
                 "ERROR": "err",
@@ -67,6 +84,11 @@ try:
 
 
     logger = setup_logger()
+
+    def log_diagnostic(message):
+        """Write local diagnostics without echoing them into Maa's task log."""
+        logger.bind(file_only=True).debug(message)
+
 except ImportError:
     import logging
     import zipfile
@@ -130,7 +152,8 @@ except ImportError:
 
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(console_level)
-        console_handler.addFilter(lambda record: getattr(record, "ui_visible", True))
+        console_handler.addFilter(lambda record: getattr(record, "ui_visible", True)
+                                  and not (_diagnostic_only.get() or getattr(record, "file_only", False)))
         console_handler.setFormatter(ShortLevelFormatter("%(level_short)s:%(message)s"))
 
         file_handler = TimedRotatingFileHandler(
@@ -161,3 +184,7 @@ except ImportError:
 
 
     logger = setup_logger()
+
+    def log_diagnostic(message):
+        """Write local diagnostics without echoing them into Maa's task log."""
+        logger.debug(message, extra={"file_only": True})

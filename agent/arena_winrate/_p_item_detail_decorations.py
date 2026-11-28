@@ -188,6 +188,43 @@ def recover_contextual_effect_icon(atoms, title_index, layout, paragraphs, effec
     return accepted[0] if len(accepted) == 1 else None
 
 
+def wrapped_effect_separator(atoms, layout, paragraphs):
+    """Prove a missing separator from two exact rows and a witnessed wrap."""
+    if layout["status"] != "resolved" or len(layout["atoms"]) < 4:
+        return None
+    rows = layout["atoms"]
+    height = layout["title_height"]
+    row_texts = [atom_text_view(atoms, {"atoms": [row]})[0] for row in rows]
+    references = {item_id: tuple(map(normalize, texts)) for item_id, texts in paragraphs.items()}
+    shared = set.intersection(*(set(texts) for texts in references.values()))
+    witnessed = {}
+    candidates = []
+    for index, (left, right) in enumerate(zip(row_texts, row_texts[1:])):
+        start = atoms[rows[index][0]]
+        tail_index = rows[index][-1]
+        end = atoms[tail_index]
+        continuation = atoms[rows[index + 1][0]]
+        gap = continuation["box"][1] - bounds(end)[3]
+        if not (left and right and -.25 * height <= gap <= .75 * height):
+            continue
+        if left.endswith("・") and left + right in shared:
+            witnessed[right] = (start, end, continuation)
+            continue
+        if not left[-1].isdigit() or right not in witnessed:
+            continue
+        previous_start, previous_end, previous_continuation = witnessed[right]
+        if (abs(start["box"][0] - previous_start["box"][0]) > .5 * height
+                or abs(bounds(end)[2] - bounds(previous_end)[2]) > height
+                or abs(continuation["box"][0] - previous_continuation["box"][0]) > .5 * height):
+            continue
+        compound = left + "・" + right
+        owners = [item_id for item_id, texts in references.items() if compound in texts]
+        if len(owners) != 1 or any((left, right) in zip(texts, texts[1:]) for texts in references.values()):
+            continue
+        candidates.append((owners[0], tail_index, compound))
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def recover_decorated_body(atoms, title_index, layout, paragraphs, effect_heads):
     """Return one complete body, never a fuzzy text or numeric-field match.
 

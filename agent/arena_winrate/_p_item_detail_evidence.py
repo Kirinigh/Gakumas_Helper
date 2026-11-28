@@ -9,8 +9,31 @@ from typing import Any
 from collections.abc import Sequence
 
 from .reader import ArenaReaderError
-from ._reader_visual import _box, _text
+from ._reader_visual import p_item_detail_ocr_atoms
 from ._reader_evidence import _NormalizedPItemRow, _PItemOcrObservation
+from ._p_item_detail_text import retain_native_detail_vetoes
+
+
+def resolve_p_item_ocr_body(resolve_text, atoms, *, image, source_images, title_index, **options):
+    """Retry unresolved text with proved panel ownership on the same frame."""
+    result = resolve_text(atoms, title_index=title_index, **options)
+    if result.status == "unique" or not atoms or not source_images:
+        return result, False
+
+    from ._detail_title_region import isolated_p_item_body_region
+
+    height, width = image.shape[:2]
+    scales = (width / 720.0, height / 1280.0) * 2
+    native_title = tuple(round(value * scale) for value, scale in zip(atoms[title_index]["box"], scales, strict=True))
+    native_panel = isolated_p_item_body_region(image, source_images, native_title)
+    if native_panel is None:
+        return result, False
+    panel_box = tuple(value / scale for value, scale in zip(native_panel, scales, strict=True))
+    bounded = resolve_text(
+        atoms, title_index=title_index, panel_box=panel_box,
+        detail_image=image, detail_coordinate_size=(720, 1280), **options,
+    )
+    return retain_native_detail_vetoes(bounded, result.diagnostics.get("native_detail_vetoes", {})), True
 
 
 class PItemDetailEvidence:
@@ -215,8 +238,11 @@ class PItemDetailEvidence:
                 rows.append((raw_row.strip(), normalized))
         return tuple(rows)
 
+    def source_text_atoms(self):
+        return tuple(value[5] for value in self.source_observations) if self.source_images else ()
+
     def observe_p_item(
-        self, image: Any
+        self, image: Any, *, opened_detail: bool = False,
     ) -> tuple[
         str,
         str,
@@ -225,7 +251,15 @@ class PItemDetailEvidence:
         tuple[_NormalizedPItemRow, ...],
         tuple[dict[str, Any], ...],
     ]:
-        observation = self.backend._p_item_ocr_observation(image)
+        detail_scope = {}
+        if opened_detail and self.source_images:
+            detail_scope = {
+                "source_images": self.source_images,
+                "source_frames": self.source_text_atoms(),
+                "plan": self.plan,
+                **self.slot_scope,
+            }
+        observation = self.backend._p_item_ocr_observation(image, **detail_scope)
 
         def normalize_rows(geometric_rows: Sequence[Any]) -> tuple[_NormalizedPItemRow, ...]:
             normalized_rows_list = []
@@ -271,21 +305,7 @@ class PItemDetailEvidence:
             normalized_rows = normalize_rows(observation.panel_rows)
             background_rows = normalize_rows(observation.background_rows)
             if observation.all_items:
-                height, width = image.shape[:2]
-                atoms = tuple(
-                    {
-                        "text": _text(item),
-                        "box": tuple(
-                            value / scale
-                            for value, scale in zip(
-                                _box(item),
-                                (width / 720.0, height / 1280.0) * 2,
-                                strict=True,
-                            )
-                        ),
-                    }
-                    for item in observation.all_items
-                )
+                atoms = p_item_detail_ocr_atoms(image, observation.all_items)
         elif len(observation) == 4:
             full_text, panel_text, anchors_visible, geometric_rows = observation
             normalized_rows = normalize_rows(geometric_rows)

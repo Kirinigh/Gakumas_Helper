@@ -17,9 +17,12 @@ from arena_winrate import (
     canonical_scrolled_secondary_skill_card_row,
 )
 from card_selection.model import isolate_card_candidates
+from arena_winrate._reader_io import read_screen_ocr
 from arena_winrate._reader_visual import _text
 from arena_winrate.badge_reference import CardIdentityCache
 from arena_winrate._card_detector_input import prepare_card_detector_input
+
+from agent.live_decision.simd_ocr import without_vulkan_cold_wait
 
 
 class CardLayoutReaderPort(Protocol):
@@ -596,7 +599,11 @@ class CardLayoutReader:
                         self.port._increment("skill_card_duplicate_marker_ocr_backend_calls")
                     started = self.clock.perf_counter()
                     try:
-                        texts = [_text(item) for item in self.port._ocr(enlarged, r".+")]
+                        items = read_screen_ocr(
+                            getattr(self.port, "context", None), self.port._ocr, enlarged,
+                            lambda rows: any(marker in _text(row) for row in rows for marker in ("重複", "制限")),
+                        )
+                        texts = [_text(item) for item in items]
                     finally:
                         if hasattr(self.port, "_runtime_timing_seconds"):
                             self.port._add_timing(
@@ -624,6 +631,7 @@ class CardLayoutReader:
             )
         return tuple(observations), diagnostics
 
+    @without_vulkan_cold_wait()
     def read_skill_card_excluded_duplicate_flags(
         self,
         target: TeamTarget,

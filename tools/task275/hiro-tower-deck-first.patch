@@ -1,0 +1,24 @@
+diff --git a/src/effects.rs b/src/effects.rs
+--- a/src/effects.rs
++++ b/src/effects.rs
+@@ -364,7 +364,19 @@ impl Exam {
+                 self.add_card(&ids, e.move_pos, ctx);
+             }
+             et::ExamCardMove => {
+-                let cards = self.pick(e, ctx);
++                let mut cards = self.pick(e, ctx);
++                // A move-all to the top of the deck also retrieves matching
++                // removed cards. In particular, an encore runs after the
++                // triggering card has already been moved to Lost.
++                if e.move_pos == crate::enums::mv::DeckFirst && e.pick_range == crate::enums::range::All {
++                    if let Some(search) = self.search(e.search) {
++                        if search.position == crate::enums::pos::DeckAll {
++                            cards.extend(self.lost.iter().copied().filter(|&card| {
++                                self.search_target(card, Some(&search))
++                            }));
++                        }
++                    }
++                }
+                 self.move_card(&cards, e.move_pos, ctx);
+             }
+             et::ExamLesson => self.lesson_n(e.v1, e.count, None),

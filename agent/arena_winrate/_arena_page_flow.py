@@ -12,10 +12,13 @@ from typing import Any, Protocol
 from dataclasses import dataclass
 from collections.abc import Sequence
 
+from agent.live_decision.simd_ocr import without_vulkan_cold_wait
+
 from .grade import team_stage_total_anchors
 from .reader import ArenaPageState, ArenaReaderError, arena_page_allows_team_entry
 from .recovery import error_retry_box
-from ._reader_visual import _box, _matching_ocr_items, _support_bonus_dialog_headings, _support_bonus_overlay_visible
+from ._reader_io import read_screen_ocr
+from ._reader_visual import _box, _text, _matching_ocr_items, _support_bonus_dialog_headings, _support_bonus_overlay_visible
 
 
 @dataclass
@@ -59,7 +62,8 @@ class ArenaPagePort(Protocol):
     def state(self) -> PageRecoveryState: ...
 
     def capture(self) -> Any: ...
-    def ocr(self, image: Any, expected: str) -> Any: ...
+    context: Any
+    def ocr(self, image: Any, expected: str, **kwargs: Any) -> Any: ...
     def recognize(self, entry: str, image: Any) -> Any: ...
     def run_recognition(self, *args: Any, **kwargs: Any) -> Any: ...
     def click(self, box: Any, **kwargs: Any) -> Any: ...
@@ -150,18 +154,46 @@ def _has_first_opponent_stage_total(
     return True
 
 
+_LOADING_TEXT = r"(?i)^\s*NOW\s*LOADING[.\s…]*$"
+_DIALOG_HEADING = r"^(?:コンテスト\s*詳細|サポートボーナス)$"
+
+
+def member_detail_ocr_visible(items: Sequence[Any]) -> bool:
+    return all(len(_matching_ocr_items(items, label)) == 1 for label in (r"^体力$", r"^総合力$"))
+
+
+def recovery_ocr_visible(items: Sequence[Any]) -> bool:
+    return bool(
+        _matching_ocr_items(items, _LOADING_TEXT)
+        or error_retry_box(items) is not None
+        or (len(_matching_ocr_items(items, _DIALOG_HEADING)) == 1
+            and len(_matching_ocr_items(items, r"^閉じる$")) == 1)
+        or member_detail_ocr_visible(items)
+        or all(len(_matching_ocr_items(items, label)) == 1 for label in (r"^プロフィール$", r"^設定$"))
+        or (
+            len(_matching_ocr_items(items, r"^ステージ\s*[123]$")) == 3
+            and (len(_matching_ocr_items(items, r"^総合力$")) in (3, 6)
+                 or len(_matching_ocr_items(items, r"^リハーサル$")) == 1)
+        )
+    )
+
+
 class ArenaPageFlow:
     def __init__(self, port: ArenaPagePort, clock: PageFlowClock, logger: PageFlowLogger):
         self.port = port
         self.clock = clock
         self.logger = logger
 
+    def _read_recovery_screen(self, image: Any) -> Sequence[Any]:
+        return read_screen_ocr(getattr(self.port, "context", None), self.port.ocr, image, recovery_ocr_visible)
+
+    @without_vulkan_cold_wait()
     def read_member_recovery_page(self, image: Any = None) -> tuple[Any, Sequence[Any]]:
         deadline = self.clock.monotonic() + 2.0
         for observation in range(3):
             if image is None:
                 image = self.port.capture()
-            items = self.port.ocr(image, r".+")
+            items = self._read_recovery_screen(image)
             communication = self.port.retry_transient_communication_items(items)
             contest_details = not communication and self.port.dismiss_contest_details_items(image, items)
             if not communication and not contest_details:
@@ -180,6 +212,7 @@ class ArenaPageFlow:
             "member recovery still sees a communication dialog after its existing Retry opportunity",
         )
 
+    @without_vulkan_cold_wait()
     def recover_arena_main(
         self,
         *,
@@ -218,7 +251,7 @@ class ArenaPageFlow:
                 if toggle is None:
                     state, _ = self.port.arena_page_state(image)
                 else:
-                    items = self.port.ocr(image, r".+")
+                    items = self._read_recovery_screen(image)
                     state, _ = self.port.arena_page_state(image, observations=items)
             else:
                 state, _ = self.port.arena_page_state(image, observations=observation.items)
@@ -234,10 +267,10 @@ class ArenaPageFlow:
             ):
                 return
             if items is None:
-                items = self.port.ocr(image, r".+") if observation is None else observation.items
+                items = self._read_recovery_screen(image) if observation is None else observation.items
             if toggle is None and self._finish_support_bonus_toggle(image, items, state):
                 continue
-            if self.port.matching_ocr_items(items, r"(?i)^\s*NOW\s*LOADING[.\s…]*$"):
+            if self.port.matching_ocr_items(items, _LOADING_TEXT):
                 loading_reads += 1
                 self.port.increment("arena_recovery_loading_frames")
                 if loading_deadline is None:
@@ -405,7 +438,7 @@ class ArenaPageFlow:
 
         # Recovery gets one full-frame problem check; reuse the same OCR boxes.
         if items is None:
-            items = self.port.ocr(image, r".+")
+            items = self._read_recovery_screen(image)
         if self.port.retry_transient_communication_items(items):
             return True
         if self.port.dismiss_contest_details_items(image, items):
@@ -489,6 +522,7 @@ class ArenaPageFlow:
             raise ArenaReaderError("maa_back_anchor_ambiguous", f"found {len(results)} back-button anchors")
         self.port.click(self.port.box_center_point(_box(results[0])))
 
+    @without_vulkan_cold_wait()
     def wait_for_stage_member_list(
         self,
         expected_total_counts: tuple[int, ...],
@@ -499,21 +533,46 @@ class ArenaPageFlow:
         deadline = self.clock.monotonic() + timeout_seconds
         last_stage_count = 0
         last_total_count = 0
+
+        def is_ready(image, items, stages, totals):
+            return not self.port.matching_ocr_items(items, _LOADING_TEXT) and len(stages) >= 3 and (
+                len(totals) in expected_total_counts
+                or (
+                    pre_start and expected_total_counts == (6,) and len(stages) == 3 and len(totals) == 5
+                    and _has_first_opponent_stage_total(image, items, totals)
+                )
+            )
+
+        def anchors(items):
+            return (
+                self.port.matching_ocr_items(items, r"^ステージ\s*[123]$"),
+                self.port.matching_ocr_items(items, r"^総合力$"),
+            )
+
+        def accept_simd(image, rows):
+            if error_retry_box(rows) is not None or self.port.matching_ocr_items(rows, _LOADING_TEXT):
+                return True
+            stages, totals = anchors(rows)
+            if len(stages) != 3 or {_text(stage).strip()[-1:] for stage in stages} != {"1", "2", "3"}:
+                return False
+            if len(totals) == 6 and expected_total_counts == (6,):
+                try:
+                    team_stage_total_anchors(tuple(map(_box, totals)), own_team=False)
+                except ValueError:
+                    return False
+            return is_ready(image, rows, stages, totals)
+
         while self.clock.monotonic() < deadline:
             image = self.port.capture()
-            items = self.port.ocr(image, r".+")
-            last_stage_count = len(self.port.matching_ocr_items(items, r"^ステージ\s*[123]$"))
-            exact_totals = self.port.matching_ocr_items(items, r"^総合力$")
-            last_total_count = len(exact_totals)
+            items = read_screen_ocr(
+                getattr(self.port, "context", None), self.port.ocr, image,
+                lambda rows: accept_simd(image, rows),
+            )
+            stages, totals = anchors(items)
+            last_stage_count, last_total_count = len(stages), len(totals)
             communication_dialog = self.port.retry_transient_communication_items(items)
-            if not communication_dialog and last_stage_count >= 3:
-                if last_total_count in expected_total_counts:
-                    return
-                if (
-                    pre_start and expected_total_counts == (6,) and last_stage_count == 3 and last_total_count == 5
-                    and _has_first_opponent_stage_total(image, items, exact_totals)
-                ):
-                    return
+            if not communication_dialog and is_ready(image, items, stages, totals):
+                return
             self.port.sleep(0.25)
         raise ArenaReaderError(
             "stage_member_list_timeout",

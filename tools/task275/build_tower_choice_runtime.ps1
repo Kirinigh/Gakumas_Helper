@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $base = Join-Path $repo '.local/task275-rust'
-$revision = 'a7df5a9be782765d3c6282566157fbd3f80b99ee'
+$revision = '6e7bbd59a7ca2a66c1f1615cb9bd8e2e3b3ede93'
 if (-not $HiroSource) { $HiroSource = Join-Path $base "hiro-gakumas-hero-$revision" }
 if (-not $ToolchainRoot) { $ToolchainRoot = $base }
 if (-not $Python) { $Python = Join-Path $repo '.venv/Scripts/python.exe' }
@@ -20,7 +20,7 @@ $source = Join-Path $HiroSource 'vendor/gakumas-player/gakumas_exam_rs'
 $relative = ".local/task275-rust/choice-build-$($revision.Substring(0, 8))"
 $build = Join-Path $repo $relative
 $patches = 'hiro-tower-choice.patch', 'hiro-tower-live-state.patch', 'hiro-tower-stamina-search.patch',
-    'hiro-tower-previous-card.patch'
+    'hiro-tower-previous-card.patch', 'hiro-tower-deck-first.patch'
 
 if (-not (Test-Path -LiteralPath (Join-Path $build 'Cargo.toml'))) {
     Copy-Item -LiteralPath $source -Destination $build -Recurse
@@ -64,12 +64,4 @@ if (-not (Test-Path -LiteralPath $runtimeSource -PathType Container)) {
 }
 $artifact = Join-Path $runtimeSource 'gakumas_exam_rs.pyd'
 Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR 'release/gakumas_exam_rs.dll') -Destination $artifact
-$hiroPackage = Join-Path $HiroSource 'src/hiro'
-Copy-Item -LiteralPath $hiroPackage -Destination $runtimeSource -Recurse -Force
-$font = Join-Path $HiroSource 'assets/pack/font/Campus-Alphanumeric-SemiBold.ttf'
-if (Test-Path -LiteralPath $font -PathType Leaf) {
-    $fonts = Join-Path (Split-Path -Parent $runtimeSource) 'assets/pack/font'
-    New-Item -ItemType Directory -Path $fonts -Force | Out-Null
-    Copy-Item -LiteralPath $font -Destination $fonts -Force
-}
 Get-FileHash -LiteralPath $artifact -Algorithm SHA256

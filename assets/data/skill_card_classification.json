@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "task095-temporary-placeholder-932-v1",
+  "revision": "task095-temporary-placeholder-935-v1",
   "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
   "classification_rule": "game_facets_v1_all_legend_other",
   "runtime_filtering_enabled": false,
@@ -56,8 +56,8 @@
     ],
     "temporary_placeholder_catalog": {
       "repository": "https://github.com/gakumas-tools/gakumas-tools",
-      "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
-      "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+      "revision": "10b0fb577ab38e05a1d986be8c674a6d4b9f2e59",
+      "sha256": "85B9EACD70F40C8982A3B837C9C0234BF4A917D9164F7C2923E5C53A4671E715"
     }
   },
   "facets": {
@@ -21502,8 +21502,8 @@
       "business_id": 929,
       "name": "噛み合わない理屈",
       "upgraded": false,
-      "internal_id": null,
-      "asset_id": null,
+      "internal_id": "p_card-01-ido-3_293",
+      "asset_id": "img_general_skillcard_ido-3_293",
       "plan": "sense",
       "rarity": "SSR",
       "kind": "p_idol",
@@ -21512,12 +21512,12 @@
         "catalog_p_idol_id": 167,
         "catalog_rarity": "SSR",
         "card_type": "mental",
-        "official_plan": null,
-        "official_rarity": null,
-        "originIdolCardId": null,
-        "originSupportCardId": null,
-        "originPrimaStellaIdolCardId": null,
-        "originCharacterId": null,
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-atbm-3-020",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
         "kind_basis": "catalog_source_for_temporary_placeholder",
         "temporary_placeholder": {
           "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
@@ -21527,11 +21527,11 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
-            "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+            "revision": "10b0fb577ab38e05a1d986be8c674a6d4b9f2e59",
+            "sha256": "85B9EACD70F40C8982A3B837C9C0234BF4A917D9164F7C2923E5C53A4671E715"
           },
-          "official_identity_status": "UNKNOWN_PENDING",
-          "decoded_master_sha256": null,
+          "official_identity_status": "FROZEN_DECODED_MASTER",
+          "decoded_master_sha256": "0FF8B394FEE094B6F6CBEB5BCF2E9E535370FDBF9944A08790843A5A9784269A",
           "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
         }
       }
@@ -21540,8 +21540,8 @@
       "business_id": 930,
       "name": "噛み合わない理屈+",
       "upgraded": true,
-      "internal_id": null,
-      "asset_id": null,
+      "internal_id": "p_card-01-ido-3_293",
+      "asset_id": "img_general_skillcard_ido-3_293",
       "plan": "sense",
       "rarity": "SSR",
       "kind": "p_idol",
@@ -21550,12 +21550,12 @@
         "catalog_p_idol_id": 167,
         "catalog_rarity": "SSR",
         "card_type": "mental",
-        "official_plan": null,
-        "official_rarity": null,
-        "originIdolCardId": null,
-        "originSupportCardId": null,
-        "originPrimaStellaIdolCardId": null,
-        "originCharacterId": null,
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-atbm-3-020",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
         "kind_basis": "catalog_source_for_temporary_placeholder",
         "temporary_placeholder": {
           "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
@@ -21565,11 +21565,11 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
-            "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+            "revision": "10b0fb577ab38e05a1d986be8c674a6d4b9f2e59",
+            "sha256": "85B9EACD70F40C8982A3B837C9C0234BF4A917D9164F7C2923E5C53A4671E715"
           },
-          "official_identity_status": "UNKNOWN_PENDING",
-          "decoded_master_sha256": null,
+          "official_identity_status": "FROZEN_DECODED_MASTER",
+          "decoded_master_sha256": "0FF8B394FEE094B6F6CBEB5BCF2E9E535370FDBF9944A08790843A5A9784269A",
           "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
         }
       }
@@ -21578,8 +21578,8 @@
       "business_id": 931,
       "name": "噛み合わないプライド",
       "upgraded": false,
-      "internal_id": null,
-      "asset_id": null,
+      "internal_id": "p_card-03-ido-3_294",
+      "asset_id": "img_general_skillcard_ido-3_294",
       "plan": "anomaly",
       "rarity": "SSR",
       "kind": "p_idol",
@@ -21588,12 +21588,12 @@
         "catalog_p_idol_id": 168,
         "catalog_rarity": "SSR",
         "card_type": "active",
-        "official_plan": null,
-        "official_rarity": null,
-        "originIdolCardId": null,
-        "originSupportCardId": null,
-        "originPrimaStellaIdolCardId": null,
-        "originCharacterId": null,
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-amao-3-023",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
         "kind_basis": "catalog_source_for_temporary_placeholder",
         "temporary_placeholder": {
           "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
@@ -21603,11 +21603,11 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
-            "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+            "revision": "10b0fb577ab38e05a1d986be8c674a6d4b9f2e59",
+            "sha256": "85B9EACD70F40C8982A3B837C9C0234BF4A917D9164F7C2923E5C53A4671E715"
           },
-          "official_identity_status": "UNKNOWN_PENDING",
-          "decoded_master_sha256": null,
+          "official_identity_status": "FROZEN_DECODED_MASTER",
+          "decoded_master_sha256": "0FF8B394FEE094B6F6CBEB5BCF2E9E535370FDBF9944A08790843A5A9784269A",
           "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
         }
       }
@@ -21616,8 +21616,8 @@
       "business_id": 932,
       "name": "噛み合わないプライド+",
       "upgraded": true,
-      "internal_id": null,
-      "asset_id": null,
+      "internal_id": "p_card-03-ido-3_294",
+      "asset_id": "img_general_skillcard_ido-3_294",
       "plan": "anomaly",
       "rarity": "SSR",
       "kind": "p_idol",
@@ -21626,12 +21626,12 @@
         "catalog_p_idol_id": 168,
         "catalog_rarity": "SSR",
         "card_type": "active",
-        "official_plan": null,
-        "official_rarity": null,
-        "originIdolCardId": null,
-        "originSupportCardId": null,
-        "originPrimaStellaIdolCardId": null,
-        "originCharacterId": null,
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "i_card-amao-3-023",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
         "kind_basis": "catalog_source_for_temporary_placeholder",
         "temporary_placeholder": {
           "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
@@ -21641,11 +21641,125 @@
           "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
           "catalog": {
             "repository": "https://github.com/gakumas-tools/gakumas-tools",
-            "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
-            "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+            "revision": "10b0fb577ab38e05a1d986be8c674a6d4b9f2e59",
+            "sha256": "85B9EACD70F40C8982A3B837C9C0234BF4A917D9164F7C2923E5C53A4671E715"
           },
-          "official_identity_status": "UNKNOWN_PENDING",
-          "decoded_master_sha256": null,
+          "official_identity_status": "FROZEN_DECODED_MASTER",
+          "decoded_master_sha256": "0FF8B394FEE094B6F6CBEB5BCF2E9E535370FDBF9944A08790843A5A9784269A",
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 933,
+      "name": "勝たしてもらうで！",
+      "upgraded": false,
+      "internal_id": "p_card-01-sup-3_254",
+      "asset_id": "img_general_skillcard_sup-3_254",
+      "plan": "sense",
+      "rarity": "SSR",
+      "kind": "support",
+      "source": {
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "",
+        "originSupportCardId": "s_card-3-0117",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:933",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "10b0fb577ab38e05a1d986be8c674a6d4b9f2e59",
+            "sha256": "85B9EACD70F40C8982A3B837C9C0234BF4A917D9164F7C2923E5C53A4671E715"
+          },
+          "official_identity_status": "FROZEN_DECODED_MASTER",
+          "decoded_master_sha256": "0FF8B394FEE094B6F6CBEB5BCF2E9E535370FDBF9944A08790843A5A9784269A",
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 934,
+      "name": "勝たしてもらうで！+",
+      "upgraded": true,
+      "internal_id": "p_card-01-sup-3_254",
+      "asset_id": "img_general_skillcard_sup-3_254",
+      "plan": "sense",
+      "rarity": "SSR",
+      "kind": "support",
+      "source": {
+        "catalog_source_type": "support",
+        "catalog_p_idol_id": null,
+        "catalog_rarity": "SSR",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan1",
+        "official_rarity": "ProduceCardRarity_Ssr",
+        "originIdolCardId": "",
+        "originSupportCardId": "s_card-3-0117",
+        "originPrimaStellaIdolCardId": "",
+        "originCharacterId": "",
+        "kind_basis": "catalog_source_for_temporary_placeholder",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:933",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "10b0fb577ab38e05a1d986be8c674a6d4b9f2e59",
+            "sha256": "85B9EACD70F40C8982A3B837C9C0234BF4A917D9164F7C2923E5C53A4671E715"
+          },
+          "official_identity_status": "FROZEN_DECODED_MASTER",
+          "decoded_master_sha256": "0FF8B394FEE094B6F6CBEB5BCF2E9E535370FDBF9944A08790843A5A9784269A",
+          "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
+        }
+      }
+    },
+    {
+      "business_id": 935,
+      "name": "恩に報いる一番星",
+      "upgraded": false,
+      "internal_id": "p_card-03-ido-100_049",
+      "asset_id": "img_general_skillcard_ido-100_049",
+      "plan": "anomaly",
+      "rarity": "L",
+      "kind": "other",
+      "source": {
+        "catalog_source_type": "pIdol",
+        "catalog_p_idol_id": 147,
+        "catalog_rarity": "L",
+        "card_type": "mental",
+        "official_plan": "ProducePlanType_Plan3",
+        "official_rarity": "ProduceCardRarity_Legend",
+        "originIdolCardId": "",
+        "originSupportCardId": "",
+        "originPrimaStellaIdolCardId": "i_card-atbm-3-018",
+        "originCharacterId": "",
+        "kind_basis": "user_rule_all_legend_other",
+        "temporary_placeholder": {
+          "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
+          "reference_enabled": false,
+          "rule_version": "temporary-placeholder-reference-v1",
+          "provisional_family_id": "provisional:935",
+          "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
+          "catalog": {
+            "repository": "https://github.com/gakumas-tools/gakumas-tools",
+            "revision": "10b0fb577ab38e05a1d986be8c674a6d4b9f2e59",
+            "sha256": "85B9EACD70F40C8982A3B837C9C0234BF4A917D9164F7C2923E5C53A4671E715"
+          },
+          "official_identity_status": "FROZEN_DECODED_MASTER",
+          "decoded_master_sha256": "0FF8B394FEE094B6F6CBEB5BCF2E9E535370FDBF9944A08790843A5A9784269A",
           "gameplay_effects_status": "NOT_VALIDATED_BY_PLACEHOLDER_UPDATE"
         }
       }
@@ -22019,7 +22133,9 @@
         927,
         928,
         929,
-        930
+        930,
+        933,
+        934
       ],
       "logic": [
         9,
@@ -22591,7 +22707,8 @@
         917,
         918,
         931,
-        932
+        932,
+        935
       ]
     },
     "kind": {
@@ -23073,7 +23190,9 @@
         879,
         880,
         885,
-        886
+        886,
+        933,
+        934
       ],
       "basic": [
         1,
@@ -23533,7 +23652,8 @@
         905,
         906,
         907,
-        908
+        908,
+        935
       ]
     },
     "rarity": {
@@ -23564,7 +23684,8 @@
         853,
         854,
         875,
-        876
+        876,
+        935
       ],
       "SSR": [
         140,
@@ -24018,7 +24139,9 @@
         929,
         930,
         931,
-        932
+        932,
+        933,
+        934
       ],
       "SR": [
         70,
@@ -24484,19 +24607,19 @@
   "counts": {
     "plan": {
       "free": 65,
-      "sense": 299,
+      "sense": 301,
       "logic": 315,
-      "anomaly": 253
+      "anomaly": 254
     },
     "kind": {
       "p_idol": 358,
-      "support": 118,
+      "support": 120,
       "basic": 68,
-      "other": 388
+      "other": 389
     },
     "rarity": {
-      "L": 27,
-      "SSR": 452,
+      "L": 28,
+      "SSR": 454,
       "SR": 218,
       "R": 154,
       "N": 81
@@ -24505,32 +24628,32 @@
   "gallery_coverage": [
     {
       "component": "skill-base",
-      "manifest_sha256": "15C956041F258406AE9416FA8D86C05107E511747030237C15968475E5CEEFF9",
-      "gallery_sha256": "F120AC859BA5F96FDB3CC77DA6A2E1F85556341219E4560A37B770412D709DA0",
-      "row_count": 4378,
-      "business_id_count": 932,
+      "manifest_sha256": "2D2A7FB3563D7F24370136C5772D44104D1AA434B818778ED25F4AABC5592C3B",
+      "gallery_sha256": "1D0CE39414D19310C7EC24A8000950FB75D70D419B02DF1765988995241482AD",
+      "row_count": 4381,
+      "business_id_count": 935,
       "enabled_business_id_count": 928,
-      "temporary_placeholder_business_id_count": 4,
+      "temporary_placeholder_business_id_count": 7,
       "join_key": "business_id"
     },
     {
       "component": "skill-arena",
-      "manifest_sha256": "6A7C22180452ABEC4C51133865A845B26393EF50A80C1A34E641B75C9604BD27",
-      "gallery_sha256": "18CDA8B0DADF7531E7B1D5EE72624038C35708271D751F37C4140F74E40BA23C",
-      "row_count": 8554,
-      "business_id_count": 932,
+      "manifest_sha256": "5DF80836A6132A634C925F3BD806B716BEDDD6696D2B70968219AFCEEBA9592B",
+      "gallery_sha256": "D3C5486DA495CA12FE21BE3E2C73D5CC2CE7246315481FFD2CB217714A79FB6B",
+      "row_count": 8557,
+      "business_id_count": 935,
       "enabled_business_id_count": 928,
-      "temporary_placeholder_business_id_count": 4,
+      "temporary_placeholder_business_id_count": 7,
       "join_key": "business_id"
     },
     {
       "component": "badge-reference",
-      "manifest_sha256": "A08A2653004C3877AB77E3FA9C0C836A8BB585CF94859F1E1667EF00B5F22787",
-      "gallery_sha256": "8B6901A38BECB474D49880EE0C73F6C68BAE2E6148BC4A53D550C33DE33472A6",
-      "row_count": 3611,
-      "business_id_count": 932,
+      "manifest_sha256": "93F9B244B377345D8E9AE89F3955AE28EE9EFC3259C402BDB2E2E32F24F067C3",
+      "gallery_sha256": "0B27E1AB008A33F1E32111A51B12B370AD7946E89380035242775E355E67F416",
+      "row_count": 3614,
+      "business_id_count": 935,
       "enabled_business_id_count": 928,
-      "temporary_placeholder_business_id_count": 4,
+      "temporary_placeholder_business_id_count": 7,
       "join_key": "business_id"
     }
   ]

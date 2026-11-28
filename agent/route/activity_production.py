@@ -213,7 +213,7 @@ def enabled_receive(image, rows):
     return tuple(label['box'])
 
 
-def _retry_reward_upgrade(reader, image, box, observed):
+def _retry_reward_upgrade(reader, image, box, observed, *, plan='sense'):
     """Retry a known reward-card family with the adjacent effect-icon area masked."""
     if observed.reason != 'marker_identity_unresolved' or observed.marker_errors is None:
         return None
@@ -252,12 +252,12 @@ def _retry_reward_upgrade(reader, image, box, observed):
     card_ids, upgrades = zip(*sorted(members), strict=True)
     hit = EmbeddingHit(card_ids[0], 'inventory', 1.0, 0, observed.visual_group, card_ids, upgrades)
     try:
-        return resolve_card_identity((hit,), plan='sense', upgraded=True).card_id
+        return resolve_card_identity((hit,), plan=plan, upgraded=True).card_id
     except ValueError:
         return None
 
 
-def read_card_offers(reader, frames, catalog, *, registered=None, focus=None):
+def read_card_offers(reader, frames, catalog, *, registered=None, focus=None, plan='sense'):
     from .outing import outing_offer_boxes
     from .nonbattle_inventory import read_course_thumbnail
     if len(frames) != 1: raise ValueError('activity offers require one current frame')
@@ -274,11 +274,11 @@ def read_card_offers(reader, frames, catalog, *, registered=None, focus=None):
         if focus is not None and index != focus:
             offers.append(deepcopy(registered[index]))
             continue
-        row = read_course_thumbnail(reader, frames[0], box)
+        row = read_course_thumbnail(reader, frames[0], box, plan=plan)
         card_id, extra = row.get('card_id'), {}
         observed = row['observations'][0]
         if card_id is None and registered is None:
-            card_id = _retry_reward_upgrade(reader, frames[0], box, observed)
+            card_id = _retry_reward_upgrade(reader, frames[0], box, observed, plan=plan)
         if card_id not in catalog.entries:
             card_id = None
         previous = registered[index] if registered is not None else {}
@@ -287,7 +287,7 @@ def read_card_offers(reader, frames, catalog, *, registered=None, focus=None):
             if group is not None and observed.reason != 'reference_group_missing':
                 gallery = reader.recognizer.gallery
                 candidates = sorted({gallery.card_ids[i] for i in reader.groups.get(group, ())
-                    if gallery.card_ids[i] in catalog.entries and catalog.entries[gallery.card_ids[i]].plan in ('sense', 'free')})
+                    if gallery.card_ids[i] in catalog.entries and catalog.entries[gallery.card_ids[i]].plan in (plan, 'free')})
                 if candidates:
                     extra = dict(visual_group=group, candidate_ids=candidates)
             if previous.get('candidate_ids'):

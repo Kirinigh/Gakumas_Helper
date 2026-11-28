@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Protocol
 from collections import Counter
 from dataclasses import field, asdict, dataclass
 
@@ -871,6 +871,23 @@ class DecisionRequest:
 
     def to_dict(self) -> dict[str, Any]:
         return _jsonable(asdict(self))
+
+
+@dataclass(frozen=True)
+class BattleStep:
+    """The result of one completed action supplied by its host."""
+
+    request: DecisionRequest
+    reward: float
+    terminated: bool
+    events: tuple
+    boundary: StrategyState | None = None
+
+
+class BattleStrategy(Protocol):
+    """A strategy receives observations and legal actions, and proposes one action."""
+
+    def choose(self, request: DecisionRequest, legal: tuple[GameAction, ...], /) -> GameAction: ...
 
 
 @dataclass(frozen=True)

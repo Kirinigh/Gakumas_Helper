@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from functools import lru_cache
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -10,9 +11,68 @@ from agent.utils.runtime_paths import resolve_runtime_path
 
 _FIELDS = ('good_impression_turns', 'review_score_percent', 'motivation')
 _HIRO_FIELDS = {'concentration': 'examlessonbuff', 'good_condition_turns': 'examparameterbuff'}
+PRIMARY_STATUS_FIELDS = {
+    'ExamReview': 'good_impression_turns',
+    'ExamCardPlayAggressive': 'motivation',
+    'ExamLessonBuff': 'concentration',
+    'ExamParameterBuff': 'good_condition_turns',
+    'ExamFullPowerPoint': 'full_power',
+}
 _SIZE = 42
 _GLYPH_RADIUS = 23
 _COLUMN = (15, 226, 59, 640)
+
+
+@dataclass(frozen=True)
+class VisibleStatus:
+    slot: int
+    kind: str
+    effect_type: str | None
+    card_id: str | None
+    value: int | None
+    unit: str | None
+    turns: int | None
+    alternatives: tuple[str, ...]
+    debuff: bool
+    faint: bool
+
+
+def read_hiro_statuses(image, ocr, *, cache):
+    """Use the full upstream column on the same captured frame as the hand."""
+    from .hiro_runtime import hiro_module, hiro_ui_templates
+    from .hiro_maa_device import hiro_maa_ocr
+
+    with hiro_ui_templates(), hiro_maa_ocr(ocr):
+        rows = hiro_module('vision.status').read_status_column(image, cache=cache)
+    return tuple(VisibleStatus(row['slot'], row['kind'], row.get('type'), row.get('card_id'),
+        row.get('value'), row.get('unit'), row.get('turns'), tuple(row.get('alternatives', ())),
+        bool(row.get('debuff')), bool(row.get('faint'))) for row in rows)
+
+
+def hiro_primary_statuses(slots):
+    names = {**PRIMARY_STATUS_FIELDS, 'ExamReviewMultiple': 'review_score_percent'}
+    values = {}
+    for row in slots:
+        field = names.get((row.effect_type or '').removeprefix('ProduceExamEffectType_'))
+        if field is not None:
+            values.setdefault(field, []).append(row)
+    observed = {}
+    for field, rows in values.items():
+        if len(rows) != 1:
+            continue
+        row, = rows
+        if row.value is None or row.debuff or row.faint:
+            continue
+        # Hiro's blue 全力値 gauge shares its exact glyph with the reduction
+        # effect. The red effect and any other ambiguous icons stay excluded.
+        if row.alternatives and (field != 'full_power' or row.alternatives != ('examfullpowerpointreduce',)):
+            continue
+        if field == 'review_score_percent' and row.unit != '%':
+            continue
+        if field == 'full_power' and row.unit is not None:
+            continue
+        observed[field] = row.value
+    return observed
 
 
 @lru_cache(maxsize=1)

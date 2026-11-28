@@ -1,9 +1,9 @@
 """Bounded static reader resources owned by an observed Maa Challenge task.
 
 The existing bundle/asset manifests identify fixed revisions. Their unchanged
-contents are compared directly; this module neither hashes model files nor
-introduces another artifact-integrity contract. Factories retain their existing
-validation. Images, recognition results and controller/context objects must
+contents are compared directly. A split gallery also depends on the observed
+state of its files and the existing gallery/table pins. Factories retain their
+existing validation. Images, recognition results and controller/context objects must
 never be stored here.
 """
 
@@ -14,6 +14,13 @@ from typing import Any, Callable
 from pathlib import Path
 from threading import RLock
 
+try:  # Repository imports and the installed agent entrypoint.
+    from ..card_selection.model import sha256_file
+    from ..card_selection.embedding import SHARED_UPGRADE_MARKER_FILE, SHARED_UPGRADE_MARKER_SCHEMA
+except ImportError:
+    from card_selection.model import sha256_file
+    from card_selection.embedding import SHARED_UPGRADE_MARKER_FILE, SHARED_UPGRADE_MARKER_SCHEMA
+
 RESOURCE_NAMES = frozenset({
     "catalog", "card_reference", "card_cost_reference", "p_item_reference",
     "card_model_base", "card_model_custom",
@@ -21,7 +28,7 @@ RESOURCE_NAMES = frozenset({
 MAX_ACTIVE_RESOURCE_TASKS = 4
 
 
-def manifest_identity(root: str | Path) -> tuple[str, str] | None:
+def manifest_identity(root: str | Path, *, verify_pins: bool = False) -> tuple[Any, ...] | None:
     """Unknown/unversioned development inputs remain reader-local."""
     path = Path(root).resolve()
     try:
@@ -30,7 +37,26 @@ def manifest_identity(root: str | Path) -> tuple[str, str] | None:
         return None
     if not isinstance(value, dict):
         return None
-    return str(path), json.dumps(value, sort_keys=True, separators=(",", ":"))
+    identity = str(path), json.dumps(value, sort_keys=True, separators=(",", ":"))
+    split = value.get("schema_version") == SHARED_UPGRADE_MARKER_SCHEMA
+    if not split and not verify_pins:
+        return identity
+    try:
+        gallery = value["gallery"]
+        files = [(path / gallery["path"], gallery["sha256"])]
+        if split:
+            files.append((path.parent.parent / SHARED_UPGRADE_MARKER_FILE, gallery["upgrade_marker_table_sha256"]))
+        if verify_pins and any(sha256_file(file) != pin.upper() for file, pin in files):
+            return None
+        paths = [file for file, _ in files]
+        paths.extend((path / gallery["class_table_path"], path / value["model"]["path"]))
+        states = [file.stat() for file in paths]
+        return (*identity, tuple(
+            (state.st_dev, state.st_ino, state.st_size, state.st_mtime_ns, state.st_ctime_ns)
+            for state in states
+        ))
+    except (OSError, AttributeError, KeyError, TypeError):
+        return None
 
 
 class ReaderResources:

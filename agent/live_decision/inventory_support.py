@@ -3,6 +3,11 @@ import math
 import unicodedata
 from copy import deepcopy
 
+if __package__.startswith('agent.'):
+    from agent.utils.effect_text import normalize_score_effect_text
+else:
+    from utils.effect_text import normalize_score_effect_text
+
 from .opening_observer import valid_opening_frame_ids
 
 PERMANENT = (('14', 1), ('54', 1))
@@ -76,7 +81,7 @@ def _separate_spotlight_support(bundle, detail, titles):
                 or row['box'][0]+row['box'][2] > 700 or row['box'][1]+row['box'][3] > 382 for row in group):
             raise ValueError('295 support detail confidence or region is unresolved')
         body = _text(''.join(row['text'] for row in sorted(group, key=lambda row: (row['box'][1], row['box'][0]))))
-        if body != SPOTLIGHT_BODY:
+        if normalize_score_effect_text(body) != SPOTLIGHT_BODY:
             raise ValueError('295 support complete effects differ from the observed tier')
     result = deepcopy(detail)
     result['customizations'] = dict(SPOTLIGHT_PERMANENT)
@@ -119,7 +124,7 @@ def separate_inventory_support(bundle, detail):
                 or row['box'][0]+row['box'][2] > 700 or row['box'][1]+row['box'][3] > 382 for row in group):
             raise ValueError('597 support detail confidence is unresolved')
         text = _text(''.join(row['text'] for row in sorted(group,key=lambda r:(r['box'][1],r['box'][0]))))
-        if text != BODY:
+        if normalize_score_effect_text(text) != BODY:
             raise ValueError('597 support complete effects differ from the observed tier')
     result = deepcopy(detail)
     result['customizations'] = dict(PERMANENT)
@@ -255,7 +260,7 @@ def observe_inventory_ordinary_plus(bundle, detail, *, catalog):
         if len(titles) != 1 or _text(titles[0]['text']) != _text(visible.name):
             raise ValueError('ordinary plus detail complete title changed')
         text = _text(''.join(row['text'] for row in sorted(group, key=lambda row: (row['box'][1], row['box'][0]))))
-        if text != expected:
+        if normalize_score_effect_text(text) != expected:
             raise ValueError('ordinary plus detail complete registered effects changed')
         catalog.confirm_clicked_skill_card(text, predicted_card_id=int(visible.card_id))
         if catalog.resolve_effective_customizations(int(visible.card_id), text,

@@ -184,7 +184,7 @@ for index, request in enumerate(sys.stdin):
     gpu = simd_ocr.VulkanOcr((sys.executable, "-u", "-c", command))
     monkeypatch.setattr(simd_ocr, "VULKAN_COLD_WAIT_SECONDS", 0.05)
     try:
-        assert gpu.read(np.zeros((32, 32, 3), dtype=np.uint8)) == ()
+        assert gpu.read(np.zeros((32, 32, 3), dtype=np.uint8)) is None
         assert gpu._pending.result(timeout=5.5) == ()
         assert gpu._warm and gpu.available
     finally:
@@ -210,7 +210,7 @@ for request in sys.stdin:
     try:
         frame = np.zeros((32, 32, 3), dtype=np.uint8)
         with simd_ocr.without_vulkan_cold_wait():
-            assert gpu.read(frame) == ()
+            assert gpu.read(frame) is None
         pending = gpu._pending
         rows = gpu.read(frame) if pending is None else pending.result(timeout=2)
         assert [row.text for row in rows] == ["verified"]

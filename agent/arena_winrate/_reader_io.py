@@ -2,15 +2,63 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+import re
+from typing import Any, Protocol, NamedTuple
 from collections.abc import Callable, Sequence
 
-from arena_winrate import ArenaReaderError
-from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded, cancellation_for
-from arena_winrate._reader_visual import _text
-from arena_winrate._detail_capture_evidence import _FullFrameOcrEvidence
-
 from agent.live_decision.ocr_nodes import OcrRows, read_ocr_node
+
+from .cancellation import ArenaTaskCancelled, ArenaReadSuperseded, cancellation_for
+from ._reader_errors import ArenaReaderError
+from ._reader_visual import _text, _value
+from ._detail_capture_evidence import _FullFrameOcrEvidence
+
+
+def read_screen_ocr(context, read, image, accept):
+    """Validate the same filtered rows that the screen reader will consume."""
+    if not callable(getattr(context, "get_node_data", None)):
+        return read(image, r".+")
+
+    def accept_filtered(rows):
+        return accept(tuple(row for row in rows if _value(row, "score", 0) >= 0.3))
+
+    return read(image, r".+", accept=accept_filtered)
+
+
+class OcrDetailRows(NamedTuple):
+    hit: bool
+    filtered_results: tuple[Any, ...]
+    all_results: tuple[Any, ...]
+
+
+def read_validated_ocr_detail(context, image, expected, *, accept, native_read, **override):
+    """Keep raw boxes and the targeted subset. Maa retains its native fallback."""
+    native = None
+    selected = None
+
+    def read_native():
+        nonlocal native
+        native = native_read()
+        return OcrRows(tuple(getattr(native, "all_results", None) or ()))
+
+    def validate(rows):
+        nonlocal selected
+        filtered = tuple(
+            row for row in rows
+            if _value(row, "score", 0) >= 0.3 and re.search(expected, _text(row))
+        )
+        evidence = OcrDetailRows(bool(filtered), filtered, tuple(rows))
+        if evidence.hit and accept(evidence):
+            selected = evidence
+            return True
+        return False
+
+    read_ocr_node(
+        context, image, "ArenaReaderOCR",
+        override={"recognition": "OCR", "expected": r".+", "order_by": "Vertical", **override},
+        all_results=True, accept=validate, prefer_gpu=True, native_read=read_native,
+    )
+    return selected if selected is not None else native
 
 
 class IoReaderPort(Protocol):

@@ -1,4 +1,4 @@
-"""Keep HIF's 720x1280 public coordinates over a narrowly rounded Maa frame.
+"""Use Hiro's logical screen coordinates over the existing Maa controller.
 
 This wraps the existing Maa controller; it never supplies a new input endpoint.
 Endpoint/elevation and frame-age checks remain the caller's responsibility.
@@ -8,11 +8,7 @@ import time
 import weakref
 from copy import deepcopy
 
-import cv2
-import numpy as np
-
-_HEIGHT = 1280
-_WIDTH = 720
+MAA_CAPTURE_ERROR_PREFIX = 'Maa 截图失败：'
 _MARKER = '_gkh_hif_capture_adapter'
 
 
@@ -49,7 +45,6 @@ class _CaptureJob(_Forwarder):
         self._hif_image = None
 
     def wait(self):
-        self._hif_adapter._check_context()
         self._hif_wrapped.wait()
         if self._hif_captured_at is None:
             # Preserve the Maa completion time, before copying/resizing pixels.
@@ -57,7 +52,6 @@ class _CaptureJob(_Forwarder):
         return self
 
     def get(self, wait=False):
-        self._hif_adapter._check_context()
         if wait:
             self.wait()
         if self._hif_image is not None:
@@ -76,11 +70,11 @@ class _CaptureJob(_Forwarder):
 
 
 class HifCaptureAdapter(_Forwarder):
-    """One context's fixed raw shape, frame provenance and inverse coordinates."""
+    """Track frame provenance and map input through the latest Maa capture."""
 
     def __init__(self, controller, input_guard=None):
         super().__init__(controller)
-        self._hif_raw_shape = None
+        self._hif_screen = None
         self._hif_error = None
         self._hif_latest = None
         self._hif_frames = {}
@@ -104,29 +98,24 @@ class HifCaptureAdapter(_Forwarder):
     def _gkh_hif_capture_adapter(self):
         return self
 
-    def _check_context(self):
-        if self._hif_error is not None:
-            raise HifCaptureAdapterError(self._hif_error)
-
-    def _reject_shape(self, reason):
-        self._hif_error = reason
-        raise HifCaptureAdapterError(reason)
-
     def _normalize(self, image, captured_at):
-        self._check_context()
-        shape = tuple(getattr(image, 'shape', ()))
-        if (not isinstance(image, np.ndarray) or image.dtype != np.uint8
-                or len(shape) != 3 or shape[0] != _HEIGHT or shape[2] != 3
-                or not _WIDTH - 2 <= shape[1] <= _WIDTH + 2):
-            self._reject_shape(f'Unsupported HIF Maa capture shape/type: {shape}')
-        if self._hif_raw_shape is None:
-            self._hif_raw_shape = shape
-        elif shape != self._hif_raw_shape:
-            self._reject_shape(f'HIF Maa capture shape changed: {self._hif_raw_shape} -> {shape}')
-        normalized = image if shape[1] == _WIDTH else cv2.resize(
-            image, (_WIDTH, _HEIGHT), interpolation=cv2.INTER_AREA)
-        metadata = dict(captured_at=captured_at, raw_shape=list(shape),
-                        effective_shape=list(normalized.shape), normalized=shape[1] != _WIDTH)
+        import numpy as np
+
+        from .hiro_runtime import hiro_module
+
+        geometry = hiro_module('devices.base')
+        if self._hif_screen is None:
+            self._hif_screen = geometry.LogicalScreen()
+        try:
+            if image is not None and (not isinstance(image, np.ndarray) or image.dtype != np.uint8):
+                raise geometry.DeviceUnavailable('控制器未返回 8 位图像')
+            normalized = self._hif_screen.frame(image)
+        except geometry.DeviceUnavailable as error:
+            self._hif_error = f'{MAA_CAPTURE_ERROR_PREFIX}{error}'
+            raise HifCaptureAdapterError(self._hif_error) from error
+        self._hif_error = None
+        metadata = dict(captured_at=captured_at, raw_shape=list(image.shape),
+                        effective_shape=list(normalized.shape), normalized=normalized is not image)
         key = id(normalized)
         self._hif_frames[key] = (
             weakref.ref(normalized, lambda _ref: self._hif_frames.pop(key, None)), metadata)
@@ -141,16 +130,16 @@ class HifCaptureAdapter(_Forwarder):
         return deepcopy(record[1])
 
     def audit(self):
+        last_frame = deepcopy(self._hif_last_metadata)
         return dict(
-            raw_shape=list(self._hif_raw_shape) if self._hif_raw_shape else None,
-            effective_shape=[_HEIGHT, _WIDTH, 3] if self._hif_raw_shape else None,
+            raw_shape=last_frame['raw_shape'] if last_frame else None,
+            effective_shape=last_frame['effective_shape'] if last_frame else None,
             capture_count=self._hif_capture_count,
-            last_frame=deepcopy(self._hif_last_metadata),
+            last_frame=last_frame,
             invalid_reason=self._hif_error,
         )
 
     def post_screencap(self, *args, **kwargs):
-        self._check_context()
         requested_at = time.perf_counter()
         job = _CaptureJob(self._hif_wrapped.post_screencap(*args, **kwargs), self, requested_at)
         self._hif_latest = job
@@ -158,7 +147,6 @@ class HifCaptureAdapter(_Forwarder):
 
     def capture_with_guard(self, guard, *args, **kwargs):
         """Keep normalization/provenance around either trusted capture path."""
-        self._check_context()
         if not callable(guard):
             raise HifCaptureAdapterError('HIF capture guard must be callable')
         requested_at = time.perf_counter()
@@ -175,7 +163,6 @@ class HifCaptureAdapter(_Forwarder):
 
     def capture_with_record_guard(self, guard, *args, **kwargs):
         """Preserve original pixels/time around the explicit native record guard."""
-        self._check_context()
         capture = getattr(self._hif_wrapped, 'capture_with_record_guard', None)
         if not callable(guard) or not callable(capture):
             raise HifCaptureAdapterError('HIF record capture guard is unavailable')
@@ -186,24 +173,20 @@ class HifCaptureAdapter(_Forwarder):
 
     @property
     def cached_image(self):
-        self._check_context()
         if self._hif_latest is None:
             raise HifCaptureAdapterError('No HIF capture was requested in this context')
         return self._hif_latest.get()
 
     def _check_input(self):
-        self._check_context()
         if self._hif_latest is None or self._hif_latest._hif_image is None:
-            raise HifCaptureAdapterError('HIF input requires the latest validated capture')
+            raise HifCaptureAdapterError(self._hif_error or 'HIF input requires the latest validated capture')
+        return self._hif_latest._hif_image
 
     def _point(self, x, y):
-        self._check_input()
-        if type(x) is not int or type(y) is not int or not (0 <= x < _WIDTH and 0 <= y < _HEIGHT):
+        height, width = self._check_input().shape[:2]
+        if type(x) is not int or type(y) is not int or not (0 <= x < width and 0 <= y < height):
             raise HifCaptureAdapterError(f'HIF point outside canonical frame: {(x, y)}')
-        # Invert the resize pixel-center transform. Maa performs the remaining
-        # screenshot-to-window/DPI conversion at its original input endpoint.
-        raw_width = self._hif_raw_shape[1]
-        return round((x + .5) * raw_width / _WIDTH - .5), y
+        return self._hif_screen.to_native(x, y)
 
     def _rect(self, rect):
         if (not isinstance(rect, (tuple, list)) or len(rect) != 4
@@ -338,7 +321,6 @@ def adapt_hif_context(context, *, input_guard=None):
     """Return a forwarding context; repeated or externally wrapped calls are safe.
 
     Wrappers must delegate unknown attributes (as the existing HIF host does).
-    Use a new original context when the Maa capture geometry changes mid-batch.
     """
     tasker = context.tasker
     controller = tasker.controller

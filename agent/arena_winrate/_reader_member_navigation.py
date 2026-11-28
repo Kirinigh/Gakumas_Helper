@@ -19,9 +19,11 @@ from arena_winrate import (
     infer_parameter_label_boxes,
 )
 from arena_winrate import grade as grade_rules
+from arena_winrate.recovery import error_retry_box
+from arena_winrate._reader_io import read_screen_ocr
 from arena_winrate.cancellation import ArenaTaskCancelled, ArenaReadSuperseded
 from arena_winrate._reader_visual import _box, _text
-from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle
+from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle, member_detail_ocr_visible
 from arena_winrate._reader_evidence import _DetailIdentityProof
 from arena_winrate._member_read_session import (
     MemberDetailRecovery,
@@ -29,6 +31,8 @@ from arena_winrate._member_read_session import (
     member_detail_recovery_state,
     consume_member_detail_recovery,
 )
+
+from agent.live_decision.simd_ocr import without_vulkan_cold_wait
 
 
 class MemberNavigationReaderPort(Protocol):
@@ -275,6 +279,7 @@ class MemberNavigationReader:
             self.port._long_press(box)
             self.port._assert_member_detail()
 
+    @without_vulkan_cold_wait()
     def read_support_bonus(self, target: TeamTarget) -> float:
         image = self.port._capture()
         height, width = image.shape[:2]
@@ -295,7 +300,15 @@ class MemberNavigationReader:
         def read_overlay(*, reuse_close_label: bool = False) -> float | None:
             nonlocal last_text, last_close_count
             overlay = self.port._capture()
-            items = self.port._ocr(overlay, r".+")
+            def accept(rows):
+                text = "\n".join(_text(row) for row in rows)
+                closes = len(self.port._matching_ocr_items(rows, r"^閉じる$"))
+                return (
+                    error_retry_box(rows) is not None
+                    or self.port._support_bonus_from_overlay(text, close_count=closes) is not None
+                )
+
+            items = read_screen_ocr(getattr(self.port, "context", None), self.port._ocr, overlay, accept)
             try:
                 last_text = self.port._full_ocr_text(overlay)
             except ArenaReaderError:
@@ -420,6 +433,7 @@ class MemberNavigationReader:
                 state.support_bonus_toggle = previous
             raise
 
+    @without_vulkan_cold_wait()
     def _assert_support_bonus_closed(self) -> None:
         state = self.port._page_recovery_state
         toggle = state.support_bonus_toggle
@@ -433,7 +447,10 @@ class MemberNavigationReader:
                 break
             toggle.recovery_reads += 1
             image = self.port._capture()
-            items = self.port._ocr(image, r".+")
+            items = read_screen_ocr(
+                getattr(self.port, "context", None), self.port._ocr, image,
+                lambda rows: error_retry_box(rows) is not None or member_detail_ocr_visible(rows),
+            )
             if self.clock.monotonic() >= toggle.recovery_deadline:
                 break
             text = "\n".join(_text(item) for item in items)
@@ -748,11 +765,15 @@ class MemberNavigationReader:
                 )
             )
 
+    @without_vulkan_cold_wait()
     def _assert_member_detail(self, timeout_seconds: float = 2.0) -> None:
         deadline = self.clock.monotonic() + timeout_seconds
         while self.clock.monotonic() < deadline:
             image = self.port._capture()
-            items = self.port._ocr(image, r".+")
+            items = read_screen_ocr(
+                getattr(self.port, "context", None), self.port._ocr, image,
+                lambda rows: error_retry_box(rows) is not None or member_detail_ocr_visible(rows),
+            )
             communication_dialog = self.port._retry_transient_communication_items(items)
             # Keep the original two-query member cadence so P-item sampling
             # does not start earlier during the page transition.

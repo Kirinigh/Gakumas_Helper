@@ -11,6 +11,13 @@ EXAM_STAMINA_ROI = (573, 212, 49, 32)
 EXAM_GENKI_ROI = (660, 175, 55, 34)
 
 
+def exam_failed_header(image, ocr):
+    """Hiro recognizes a failed result even when the player's row is hidden."""
+    if getattr(image, 'shape', ()) != (1280, 720, 3):
+        return False
+    return any('不合格' in ''.join(row.text.split()) for row in ocr(image, roi=(20, 120, 240, 80)))
+
+
 def read_lesson_goal(image, ocr):
     """Read Hiro's practice target and displayed attribute value from one frame."""
     if getattr(image, 'shape', ()) != (1280, 720, 3):
@@ -33,6 +40,25 @@ def read_lesson_goal(image, ocr):
     return dict(goal=goal, left=value((300, 125, 120, 47)), parameter=value((560, 45, 140, 37)))
 
 
+def lesson_turns_shown(image, read_turns):
+    """Hiro's dark countdown survives when SELECT replaces the lesson target."""
+    if getattr(image, 'shape', ()) != (1280, 720, 3):
+        return False
+    if cv2.cvtColor(image[61:119, 30:94], cv2.COLOR_BGR2GRAY).mean() >= 175:
+        return False  # An early PERFECT can replace it with a light reward label.
+    turns = read_turns(image)
+    return turns is not None and turns >= 1
+
+
+def read_exam_rank_label(text):
+    """Read Hiro's result-row ordinal even if OCR misreads its first glyph."""
+    match = re.fullmatch(r'([1-6IlS])(st|nd|rd|th)[lI1|]?', ''.join(text.split()))
+    if match is None:
+        return None
+    ordinal = {'st': 1, 'nd': 2, 'rd': 3}.get(match[2])
+    return ordinal or int(match[1].translate(str.maketrans('IlS', '115')))
+
+
 def read_exam_ranking(image, ocr):
     """Use Hiro's white player border to bind the visible result row."""
     if getattr(image, 'shape', ()) != (1280, 720, 3):
@@ -40,22 +66,32 @@ def read_exam_ranking(image, ocr):
     buttons = ''.join(row.text.replace(' ', '') for row in ocr(image, roi=(0, 1060, 720, 180)))
     if not re.search(r'次へ|再挑戦', buttons):
         return None
-    result_rows = []
-    for row in ocr(image, roi=(195, 250, 525, 804)):
+    scores = []
+    for row in ocr(image, roi=(195, 250, 525, 840)):
         label = re.sub(r'\s+', '', row.text)
-        score = re.fullmatch(r'(\d[\d,.]*?)(?:[Pp][Tt])?', label)
-        if score is not None:
-            digits = re.sub(r'[^0-9]', '', score[1])
-            if len(digits) >= 2:
-                result_rows.append((row.box[1] + row.box[3] // 2 - 22, int(digits)))
-    result_rows.sort()
-    if not 2 <= len(result_rows) <= 6 or abs(result_rows[0][0] - 332) > 20:
-        return None
+        if score := re.fullmatch(r'(\d[\d,.]*)([Pp][TtlI1]?)?', label):
+            if score[2] or len(score[1]) >= 2:
+                digits = re.sub(r'[^0-9]', '', score[1])
+                scores.append((row.box[1] + row.box[3] // 2 - 22, int(digits)))
+    scores.sort()
     hsv = cv2.cvtColor(image[:, 20:32], cv2.COLOR_BGR2HSV)
     white = cv2.inRange(hsv, (0, 0, 225), (179, 40, 255)) != 0
-    player = [(rank, score) for rank, (y, score) in enumerate(result_rows, 1)
-              if white[y - 50:y + 50].mean() >= .08]
-    return dict(rank=player[0][0], score=player[0][1]) if len(player) == 1 else None
+    player = [(y, score) for y, score in scores if white[y - 50:y + 50].mean() >= .08]
+    if len(player) != 1:
+        return None
+    y, score = player[0]
+    # Hiro associates the rank label with its own row before falling back to
+    # row order. A missing opponent score must not move the player's rank.
+    labels = set()
+    for row in ocr(image, roi=(0, 250, 190, 840)):
+        if abs(row.box[1] + row.box[3] // 2 - y) <= 40:
+            if (rank := read_exam_rank_label(row.text)) is not None:
+                labels.add(rank)
+    if len(labels) == 1:
+        return dict(rank=labels.pop(), score=score)
+    if len(labels) > 1 or not 2 <= len(scores) <= 6 or abs(scores[0][0] - 332) > 20:
+        return None
+    return dict(rank=next(i for i, (row_y, _) in enumerate(scores, 1) if row_y == y), score=score)
 
 
 def battle_dialog_header(image):

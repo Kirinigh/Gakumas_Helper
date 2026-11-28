@@ -6,8 +6,7 @@ from enum import Enum, auto
 from dataclasses import replace
 
 from .reader import ArenaReaderError
-from ._p_item_detail_text import retain_native_detail_vetoes
-from ._p_item_detail_evidence import PItemDetailEvidence
+from ._p_item_detail_evidence import PItemDetailEvidence, resolve_p_item_ocr_body
 
 
 class _FrameStep(Enum):
@@ -431,7 +430,7 @@ class PItemDetailSession:
                 current_rows,
                 _,
                 current_atoms,
-            ) = self.evidence.observe_p_item(self.image)
+            ) = self.evidence.observe_p_item(self.image, opened_detail=True)
             self.backend._add_timing(
                 "p_item_detail_ocr",
                 self.clock.perf_counter() - ocr_started,
@@ -592,10 +591,13 @@ class PItemDetailSession:
                 title_index = len(text_atoms)
                 if current_atoms:
                     text_atoms.append({"text": self.last_title_text, "box": row_box})
-                sources = tuple(value[5] for value in self.evidence.source_observations) if self.source_images else ()
+                sources = self.evidence.source_text_atoms()
                 text_started = self.clock.perf_counter()
-                text_result = text_resolver(
+                text_result, panel_used = resolve_p_item_ocr_body(
+                    text_resolver,
                     text_atoms,
+                    image=self.image,
+                    source_images=self.source_images,
                     title_index=title_index,
                     source_frames=sources,
                     plan=self.plan,
@@ -606,36 +608,8 @@ class PItemDetailSession:
                     detail_text=self.last_text,
                     allow_one_substitution=not bool(self.evidence.match_title_rows_exact(self.last_title_text)),
                 )
-                if text_result.status != "unique" and current_atoms and self.source_images:
-                    from arena_winrate._detail_title_region import isolated_p_item_body_region
-
-                    height, width = self.image.shape[:2]
-                    native_title_box = tuple(round(value * scale) for value, scale in zip(
-                        row_box, (width / 720.0, height / 1280.0) * 2, strict=True,
-                    ))
-                    native_panel_box = isolated_p_item_body_region(self.image, self.source_images, native_title_box)
-                    if native_panel_box is not None:
-                        native_vetoes = text_result.diagnostics.get("native_detail_vetoes", {})
-                        panel_box = tuple(value / scale for value, scale in zip(
-                            native_panel_box, (width / 720.0, height / 1280.0) * 2, strict=True,
-                        ))
-                        text_result = text_resolver(
-                            text_atoms,
-                            title_index=title_index,
-                            source_frames=sources,
-                            plan=self.plan,
-                            candidate_p_item_ids=self.candidate_ids,
-                            **self.slot_scope,
-                            visual_tiebreak_p_item_ids=self.visual_tiebreak_ids,
-                            title_text=self.last_title_text,
-                            detail_text=self.last_text,
-                            allow_one_substitution=not bool(self.evidence.match_title_rows_exact(self.last_title_text)),
-                            panel_box=panel_box,
-                            detail_image=self.image,
-                            detail_coordinate_size=(720, 1280),
-                        )
-                        text_result = retain_native_detail_vetoes(text_result, native_vetoes)
-                        self.backend._increment("p_item_detail_panel_reuses")
+                if panel_used:
+                    self.backend._increment("p_item_detail_panel_reuses")
                 retain_conflicts = getattr(self.backend.catalog, "retain_clicked_p_item_native_body_conflicts", None)
                 if (text_result.status == "ambiguous" and sources and not self.last_source_row_uncertain
                         and not text_result.diagnostics.get("native_detail_vetoes")
@@ -673,20 +647,6 @@ class PItemDetailSession:
                 self.effect_disambiguated = text_result.status == "unique" and (
                     len(self.raw_matches) != 1 or text_result.ids != self.raw_matches
                 )
-            elif len(self.raw_matches) > 1:
-                effect_matcher = getattr(
-                    self.backend.catalog,
-                    "clicked_p_item_effect_detail_matches",
-                    None,
-                )
-                if callable(effect_matcher):
-                    effect_matches = effect_matcher(
-                        self.last_text,
-                        candidate_p_item_ids=self.raw_matches,
-                    )
-                    if len(effect_matches) == 1 and effect_matches[0] in self.raw_matches:
-                        self.matches = effect_matches
-                        self.effect_disambiguated = True
         except Exception as error:
             self.terminal_error = error
             self.last_error = str(error)

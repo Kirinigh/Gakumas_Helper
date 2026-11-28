@@ -136,6 +136,7 @@ class DetailCaptureEvidencePort(Protocol):
     def _add_timing(self, name: str, elapsed: float) -> None: ...
 
     def _cached_full_frame_ocr_evidence(self, image: Any) -> _FullFrameOcrEvidence | None: ...
+    def _check_cancelled(self) -> None: ...
 
     _card_count_frames: dict[int, tuple[Any, Any, Any]]
 
@@ -171,9 +172,10 @@ class DetailCaptureEvidencePort(Protocol):
 
 
 class DetailCaptureEvidence:
-    def __init__(self, port: DetailCaptureEvidencePort, *, clock: _EvidenceClock) -> None:
+    def __init__(self, port: DetailCaptureEvidencePort, *, clock: _EvidenceClock, validate_skill_detail=None) -> None:
         self.port = port
         self.clock = clock
+        self.validate_skill_detail = validate_skill_detail
 
     def _stable_skill_card_source_ocr_counts(
         self,
@@ -290,10 +292,12 @@ class DetailCaptureEvidence:
         if accept is None:
             native_read()
         else:
+            self.port._check_cancelled()
             rows = read_ocr_node(
                 getattr(self.port, "context", None), image, "ArenaReaderOCR", override=override,
                 accept=accept, all_results=True, prefer_gpu=True, native_read=native_read,
             ).rows
+            self.port._check_cancelled()
             if evidence is None:
                 filtered = tuple(row for row in rows if row.score >= 0.3)
                 evidence = _FullFrameOcrEvidence(image, kind, True, filtered or rows, rows)
@@ -353,7 +357,21 @@ class DetailCaptureEvidence:
 
         if hasattr(self.port, "_runtime_counts"):
             self.port._increment("skill_card_detail_title_anchor_backend_fallbacks")
-        detail = self.port._ocr_detail(image, title_pattern)
+        from ._reader_io import read_validated_ocr_detail
+
+        def title_view_ready(view):
+            if self.validate_skill_detail is None or len(view.filtered_results) != 1:
+                return False
+            try:
+                card_id = self.port.catalog.confirm_clicked_skill_card_by_exact_title(_text(view.filtered_results[0]))
+            except ArenaCatalogError:
+                return False
+            return self.validate_skill_detail(image, view.all_results, (card_id,))
+
+        detail = read_validated_ocr_detail(
+            getattr(self.port, "context", None), image, title_pattern,
+            accept=title_view_ready, native_read=lambda: self.port._ocr_detail(image, title_pattern),
+        )
         matches = [] if not detail or not detail.hit else list(detail.filtered_results or detail.all_results or [])
         native_items = [] if not detail or not detail.hit else list(detail.all_results or detail.filtered_results or [])
         if cache is None:

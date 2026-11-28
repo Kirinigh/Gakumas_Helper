@@ -39,6 +39,7 @@ from arena_winrate.catalog import ArenaEntityCatalog
 from arena_winrate.decision import HIGHEST_WIN_RATE_FALLBACK_RULE
 from arena_winrate.task_log import arena_task_log, diagnostic_logger, opponent_rates_message
 from maa.agent.agent_server import AgentServer
+from arena_winrate._reader_io import read_screen_ocr
 from arena_winrate.progressive import ProgressiveArenaService
 from arena_winrate.action_probe import ActionProbe
 from arena_winrate.cancellation import (
@@ -53,6 +54,7 @@ from arena_winrate.user_messages import (
     win_rate_stop_user_status,
 )
 from arena_winrate.challenge_flow import DEFAULT_CHALLENGE_RECORD_ROOT
+from arena_winrate._arena_page_flow import recovery_ocr_visible
 from arena_winrate._reader_resources import manifest_identity, reader_resource_pools
 from arena_winrate.upstream_component import reset_failed_arena_component_checks
 from arena_winrate.cost_fallback_logging import (
@@ -67,6 +69,9 @@ from arena_winrate.maa_challenge_actions import (
     finish_current_challenge_return,
     recover_skipped_challenge_result,
 )
+
+from agent.live_decision.simd_ocr import without_vulkan_cold_wait
+from agent.live_decision.ocr_nodes import OcrRows, read_ocr_node
 
 from .arena_reader import MaaArenaReaderBackend
 
@@ -451,6 +456,27 @@ def _prepare_daily_own_score_cache(
     return cached
 
 
+def _challenge_rating_rows(context, image, roi, *, expected_count):
+    override = {"recognition": "OCR", "expected": r"^\d{3,6}$", "roi": roi, "order_by": "Vertical"}
+
+    def native_read():
+        detail = context.run_recognition("ChallengeRating", image, pipeline_override={"ChallengeRating": override})
+        if not detail or not detail.hit:
+            return OcrRows(())
+        return OcrRows(tuple(detail.filtered_results or detail.all_results or ()), best=getattr(detail, "best_result", None))
+
+    def accept(rows):
+        boxes = [row.box for row in rows]
+        return len(boxes) == expected_count and all(
+            y + h <= next_y for (_, y, _, h), (_, next_y, _, _) in zip(boxes, boxes[1:])
+        )
+
+    return read_ocr_node(
+        context, image, "ArenaReaderOCR", override=override,
+        accept=accept, prefer_gpu=True, native_read=native_read,
+    )
+
+
 def _select_challenge_index(
     context: Context,
     *,
@@ -583,6 +609,18 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
             return True
         return False
 
+    def _entry_ocr_ready(self, image, rows) -> bool:
+        matches = lambda pattern: len(self._matching_ocr_items(rows, pattern)) == 1
+        return (
+            recovery_ocr_visible(rows)
+            or self._title_start_observation(image, rows)[0]
+            or matches(r"^(?:WIN|LOSE|LOSS|VICTORY|DEFEAT|勝利|敗北)$")
+            or all(matches(pattern) for pattern in (r"^ホーム$", r"^コンテスト$", r"^活動費$", r"^ミッション$"))
+            or all(matches(pattern) for pattern in (r"^(?:[RＲ]\s*)?[PＰ]\s*ランキング$", r"^レ[ー-]ト\s*Pt(?:\s*[0-9]+)?$"))
+            or all(matches(pattern) for pattern in (r"^サークル$", r"^リクエスト$", r"^募集リスト$"))
+        )
+
+    @without_vulkan_cold_wait()
     def recover_entry(self) -> None:
         started = time.monotonic()
         deadline = started + 8.0
@@ -608,7 +646,9 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                 if time.monotonic() >= deadline:
                     break
                 image = self._capture()
-                items = self._ocr(image, r".+")
+                items = read_screen_ocr(
+                    self.context, self._ocr, image, lambda rows: self._entry_ocr_ready(image, rows),
+                )
                 matches = lambda pattern: self._matching_ocr_items(items, pattern)
                 now = time.monotonic()
                 if now >= deadline:
@@ -704,13 +744,17 @@ class _ArenaEntryRecoveryBackend(MaaArenaReaderBackend):
                 if hub:
                     last_page = "activity_hub"
                     if not hub_entry_sent:
-                        entry = self._recognize("ChallengeEnter", image)
+                        node = self.context.get_node_data("ChallengeEnter")
+                        roi = node.get("recognition", {}).get("param", {}).get("roi") if isinstance(node, dict) else None
+                        if callable(getattr(self.context, "run_recognition", None)) and isinstance(roi, (list, tuple)) and len(roi) == 4:
+                            # Recovery needs all matching boxes to prove uniqueness.
+                            entry = self._ocr(image, r"コンテスト", roi=tuple(roi), accept=lambda rows: len(rows) == 1)
+                        else:
+                            entry = self._recognize("ChallengeEnter", image)
                         self._check_cancelled()
                         if len(entry) == 1:
                             # Use the existing node's actual middle ROI, not
                             # the identical label on the bottom navigation.
-                            node = self.context.get_node_data("ChallengeEnter")
-                            roi = node.get("recognition", {}).get("param", {}).get("roi") if isinstance(node, dict) else None
                             if isinstance(roi, (list, tuple)) and len(roi) == 4:
                                 left, top, width, height = roi
                                 rx, ry, rw, rh = rating[0].box
@@ -976,23 +1020,11 @@ class ChallengeAuto(CustomAction):
             cancellation_for(context).check()
             image = context.tasker.controller.post_screencap().wait().get()
             cancellation_for(context).check()
-            detail = context.run_recognition(
-                "ChallengeRating",
-                image,
-                pipeline_override={
-                    "ChallengeRating": {
-                        "recognition": "OCR",
-                        "expected": "^\\d{3,6}$",
-                        "roi": [54, 634, 233, 447],
-                        "order_by": "Vertical",
-                    }
-                },
-            )
+            detail = _challenge_rating_rows(context, image, [54, 634, 233, 447], expected_count=3)
             cancellation_for(context).check()
-            if not detail or not detail.hit:
+            if not detail.rows:
                 return _stop_with_error(context, "三个对手的综合力识别失败，已安全停止")
-            results = detail.filtered_results or detail.all_results or ()
-            ratings = [result.text for result in results]
+            ratings = [result.text for result in detail.rows]
             logger.info(f"挑战评分识别结果: {ratings}")
             ratings_int: list[int] = []
             for rating in ratings:
@@ -1014,23 +1046,12 @@ class ChallengeAuto(CustomAction):
                 logger.info(f"选择挑战评分最低的第 {index + 1} 位")
             else:
                 cancellation_for(context).check()
-                own_detail = context.run_recognition(
-                    "ChallengeRating",
-                    image,
-                    pipeline_override={
-                        "ChallengeRating": {
-                            "recognition": "OCR",
-                            "expected": "^\\d{3,6}$",
-                            "roi": [172, 505, 195, 69],
-                            "order_by": "Vertical",
-                        }
-                    },
-                )
+                own_detail = _challenge_rating_rows(context, image, [172, 505, 195, 69], expected_count=1)
                 cancellation_for(context).check()
-                if not own_detail or not own_detail.hit:
+                if not own_detail.rows and own_detail.best is None:
                     return _stop_with_error(context, "己方综合力识别失败，已安全停止")
                 try:
-                    own_rating = int(own_detail.best_result.text)
+                    own_rating = int(own_detail.best.text)
                 except (AttributeError, TypeError, ValueError) as error:
                     return _stop_with_error(context, "己方综合力不是有效整数，已安全停止", error)
                 differences = [

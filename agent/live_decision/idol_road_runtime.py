@@ -2,11 +2,13 @@
 from collections import Counter
 from dataclasses import replace, dataclass
 
+from .idol_road_status import PRIMARY_STATUS_FIELDS, VisibleStatus
 from .high_score.kernel import RuleEvent
 from .high_score.planner import PlannerConfig, RobustHighScorePlanner
 from .high_score.contracts import (
     CardRef,
     ActionKind,
+    BattleStep,
     DeckBelief,
     GameAction,
     DecisionKind,
@@ -16,7 +18,6 @@ from .high_score.contracts import (
     CapabilityReport,
 )
 from .idol_road_card_rules import TowerCardState, TowerCardKernel
-from .high_score.hif_environment import HifStep
 
 ATTRIBUTES = ('vocal', 'dance', 'visual')
 _READY = CapabilityReport(True, True, True, True, True)
@@ -37,11 +38,11 @@ class TowerFrame:
     end_available: bool = True
     skip_recovery: int | None = None
     statuses: tuple[tuple[str, int], ...] = ()
+    status_slots: tuple[VisibleStatus, ...] = ()
 
 
 def _observed_fields(frame):
-    return {field: value for field, value in frame.statuses
-            if field in ('good_impression_turns', 'motivation', 'concentration', 'good_condition_turns')}
+    return {field: value for field, value in frame.statuses if field in PRIMARY_STATUS_FIELDS.values()}
 
 
 class TowerChoicePolicy:
@@ -208,7 +209,7 @@ def tower_live_step(before, branches, frame):
         after = replace(before, snapshot_id=frame.frame_id, state=state, decision_kind=DecisionKind.LIVE,
             card_slots=slots, drink_slots=frame.drinks)
         events = branch.events + corrections
-        matches[(after, branch.events)] = HifStep(after, frame.score - before.state.score, False, events)
+        matches[(after, branch.events)] = BattleStep(after, frame.score - before.state.score, False, events)
     return _merge_hidden_draw_positions(tuple(matches.values()))
 
 
@@ -280,7 +281,7 @@ def tower_choice_step(before, branches, frame_id, cards, *, drink_slots):
         slots = bind_tower_slots(choices, cards)
         after = replace(before, snapshot_id=frame_id, state=state, decision_kind=DecisionKind.SECONDARY,
             card_slots=slots, drink_slots=drink_slots)
-        matches[(after, branch.events)] = HifStep(after, state.score - before.state.score, False, branch.events)
+        matches[(after, branch.events)] = BattleStep(after, state.score - before.state.score, False, branch.events)
     return next(iter(matches.values())) if len(matches) == 1 else None
 
 
@@ -291,6 +292,6 @@ def tower_terminal_step(before, branches, frame_id, score, drink_slots):
         if branch.state.terminal:
             after = replace(before, snapshot_id=frame_id, state=replace(branch.state, score=score),
                 decision_kind=DecisionKind.LIVE, card_slots=(), drink_slots=drink_slots)
-            matches[(after, branch.events)] = (HifStep(after, score - before.state.score, True, branch.events),
+            matches[(after, branch.events)] = (BattleStep(after, score - before.state.score, True, branch.events),
                                                branch.state.score)
     return next(iter(matches.values())) if len(matches) == 1 else None

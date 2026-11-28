@@ -29,6 +29,9 @@ CARD_ART_EXCLUSION_BOXES = (
     (0.64, 0.58, 1.00, 1.00),
 )
 UPGRADE_MARKER_BOX = (0.75, 0.36, 0.98, 0.64)
+UPGRADE_MARKER_SHAPE = (24, 24, 3)
+SHARED_UPGRADE_MARKER_SCHEMA = 3
+SHARED_UPGRADE_MARKER_FILE = "shared_upgrade_markers_v1.npz"
 TEMPORARY_REFERENCE_RULE_VERSION = "temporary-placeholder-reference-v1"
 
 
@@ -44,9 +47,9 @@ def _temporary_reference_enabled(manifest: Any, payload: Any) -> Any | None:
     keys = ("temporary_reference_rule_version", "temporary_placeholder_business_ids")
     if schema == 1:
         if "reference_enabled" in payload or any(key in runtime for key in keys):
-            raise ModelIntegrityError("temporary references require manifest schema 2")
+            raise ModelIntegrityError("temporary references require manifest schema 2 or 3")
         return None
-    if schema != 2 or runtime.get(keys[0]) != TEMPORARY_REFERENCE_RULE_VERSION:
+    if schema not in {2, SHARED_UPGRADE_MARKER_SCHEMA} or runtime.get(keys[0]) != TEMPORARY_REFERENCE_RULE_VERSION:
         raise ModelIntegrityError("unsupported temporary reference manifest contract")
     if "reference_enabled" not in payload:
         raise ModelIntegrityError("temporary reference enabled mask is missing")
@@ -64,6 +67,44 @@ def _temporary_reference_enabled(manifest: Any, payload: Any) -> Any | None:
     ):
         raise ModelIntegrityError("temporary placeholder IDs disagree with disabled references")
     return enabled
+
+
+def _load_upgrade_markers(manifest_file: Path, manifest: Any, payload: Any) -> Any | None:
+    """Reconstruct the original per-gallery marker order from the paired index and table."""
+    import numpy as np
+
+    gallery_info = manifest.get("gallery", {})
+    table_hash = gallery_info.get("upgrade_marker_table_sha256")
+    has_inline = "upgrade_markers" in payload
+    has_indices = "upgrade_marker_indices" in payload
+    if manifest["schema_version"] != SHARED_UPGRADE_MARKER_SCHEMA:
+        if "upgrade_marker_table_sha256" in gallery_info or has_indices:
+            raise ModelIntegrityError("shared upgrade markers require embedding manifest schema 3")
+        return payload["upgrade_markers"] if has_inline else None
+    if has_inline or not has_indices or not isinstance(table_hash, str) or not table_hash:
+        raise ModelIntegrityError("shared upgrade-marker manifest or gallery layout is invalid")
+
+    # Both production gallery roots are two levels below resource/base/model.
+    table_file = manifest_file.parent.parent.parent / SHARED_UPGRADE_MARKER_FILE
+    if not table_file.is_file() or sha256_file(table_file) != table_hash.upper():
+        raise ModelIntegrityError("shared upgrade-marker table SHA-256 mismatch or table missing")
+    indices = payload["upgrade_marker_indices"]
+    if indices.dtype != np.uint16 or indices.shape != (len(payload["card_ids"]),):
+        raise ModelIntegrityError("shared upgrade-marker row indices are invalid")
+    with np.load(table_file, allow_pickle=False) as archive:
+        if archive.files != ["upgrade_marker_table"]:
+            raise ModelIntegrityError("shared upgrade-marker table format is invalid")
+        table = archive["upgrade_marker_table"]
+    if (
+        table.dtype != np.float32
+        or table.ndim != 4
+        or table.shape[1:] != UPGRADE_MARKER_SHAPE
+        or not 0 < len(table) <= np.iinfo(np.uint16).max + 1
+        or not np.isfinite(table).all()
+        or int(indices.max(initial=0)) >= len(table)
+    ):
+        raise ModelIntegrityError("shared upgrade-marker table or row indices are invalid")
+    return table[indices]
 
 
 def _declared_business_card_ids(source: Any) -> frozenset[str]:
@@ -345,7 +386,7 @@ class EmbeddingGallery:
             first_class_names.setdefault(card_id, class_name)
         if any(not group for group in groups) or any(value not in {0, 1} for value in upgrades):
             raise ModelIntegrityError("gallery visual-group metadata is invalid")
-        if markers is not None and (markers.shape != (len(ids), 24, 24, 3) or not np.isfinite(markers).all()):
+        if markers is not None and (markers.shape != (len(ids), *UPGRADE_MARKER_SHAPE) or not np.isfinite(markers).all()):
             raise ModelIntegrityError("gallery upgrade-marker templates are invalid")
         self.embeddings = np.ascontiguousarray(normalised, dtype=np.float32)
         self.class_names = names
@@ -421,7 +462,7 @@ class EmbeddingGallery:
         gallery_file = Path(gallery_path)
         manifest_file = Path(manifest_path)
         manifest = json.loads(manifest_file.read_text(encoding="utf-8-sig"))
-        if type(manifest.get("schema_version")) is not int or manifest["schema_version"] not in {1, 2}:
+        if type(manifest.get("schema_version")) is not int or manifest["schema_version"] not in {1, 2, SHARED_UPGRADE_MARKER_SCHEMA}:
             raise ModelIntegrityError("unsupported embedding manifest schema")
         gallery_info = manifest.get("gallery", {})
         model_info = manifest.get("model", {})
@@ -439,16 +480,24 @@ class EmbeddingGallery:
             class_table_file = manifest_file.parent / str(class_table_path)
             if sha256_file(class_table_file) != expected_class_table_hash:
                 raise ModelIntegrityError("embedding class-table SHA-256 mismatch")
+        reconstructed_hash = expected_gallery_hash
+        if manifest["schema_version"] == SHARED_UPGRADE_MARKER_SCHEMA:
+            legacy_hash = gallery_info.get("reconstructed_sha256")
+            if not isinstance(legacy_hash, str) or len(legacy_hash) != 64 or any(
+                digit not in "0123456789ABCDEFabcdef" for digit in legacy_hash
+            ):
+                raise ModelIntegrityError("reconstructed embedding gallery SHA-256 is missing or invalid")
+            reconstructed_hash = legacy_hash.upper()
         with np.load(gallery_file, allow_pickle=False) as payload:
             visual_group_ids = payload["visual_group_ids"] if "visual_group_ids" in payload else None
             upgrade_counts = payload["upgrade_counts"] if "upgrade_counts" in payload else None
-            upgrade_markers = payload["upgrade_markers"] if "upgrade_markers" in payload else None
+            upgrade_markers = _load_upgrade_markers(manifest_file, manifest, payload)
             return cls(
                 payload["embeddings"],
                 payload["class_names"],
                 payload["card_ids"],
                 model_sha256=expected_model_hash,
-                gallery_sha256=expected_gallery_hash,
+                gallery_sha256=reconstructed_hash,
                 visual_group_ids=visual_group_ids,
                 upgrade_counts=upgrade_counts,
                 upgrade_markers=upgrade_markers,
@@ -696,7 +745,7 @@ class EmbeddingCardRecognizer:
         root = Path(model_root)
         manifest_path = root / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-        if type(manifest.get("schema_version")) is not int or manifest["schema_version"] not in {1, 2}:
+        if type(manifest.get("schema_version")) is not int or manifest["schema_version"] not in {1, 2, SHARED_UPGRADE_MARKER_SCHEMA}:
             raise ModelIntegrityError("unsupported production embedding manifest schema")
         model = manifest.get("model", {})
         gallery_info = manifest.get("gallery", {})

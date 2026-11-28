@@ -12,6 +12,11 @@ from collections import Counter, defaultdict
 from dataclasses import replace, dataclass
 from collections.abc import Mapping, Sequence
 
+if __package__.startswith('agent.'):
+    from agent.utils.effect_text import normalize_score_effect_text
+else:
+    from utils.effect_text import normalize_score_effect_text
+
 from .card_cost import GenericCostReferenceError, majority_generic_cost_value
 from ._reader_evidence import _DetailIdentityProof
 from ._p_item_detail_text import PItemDetailTextIndex, PItemDetailTextResult
@@ -160,14 +165,57 @@ _NUMERIC_EFFECT_LABEL_GUARDS = {
            for longer in _NUMERIC_EFFECT_LABELS)
 }
 _ADDED_NUMERIC_INTEGER = re.compile(r"-?[0-9]+(?!\d|[.,．，。]\d)")
-_ADDED_TARGET_GROWTH_MARKER = re.compile(
-    r"コア値増加|(?:手札|保留|すべて|全て)[^\u241e]{0,20}スキルカードのスコア"
+_OCR_LINE_BREAK = r"[^\S\r\n]*(?:(?:\r\n|\r|\n)[^\S\r\n]*)+"
+_TARGET_GROWTH_OPERATOR_BOUNDARY = re.compile(
+    r"(?P<value>コ\s*ア\s*値\s*増\s*加\s*[+−-]*\s*[0-9]+)"
+    rf"{_OCR_LINE_BREAK}(?=[+−/／×-]|[xX]\s*\d)"
 )
-_ADDED_TARGET_DIRECTIONS = {
-    "hand": re.compile(r"手札(?:にある|の)(?:スキルカードの)?スコア"),
-    "held": re.compile(r"保留(?:にある|の)(?:スキルカードの)?スコア"),
-    "all": re.compile(r"(?:すべて|全て)のスキルカードのスコア"),
-}
+_TARGET_GROWTH_FIELD = re.compile(
+    r"(?:(?P<hand>手札(?:にある|の)(?:スキルカードの)?)"
+    r"|(?P<held>保留(?:にある|中の|の)(?:スキルカードの)?)"
+    r"|(?P<all>(?:すべて|全て)の(?:スキルカードの)?)"
+    r"|(?P<self>自身の|自分の)|(?P<other>の))?"
+    r"(?:スコア|パラメータ|複コア|(?<![ァ-ヺ])コア)"
+    # A complete value label speaks for itself. A shorter prefix is evidence
+    # only at a boundary, never inside 上昇回数, 値減少 or another field.
+    r"(?:(?P<value_label>値増加)|(?:値増?)?(?=$|[+・、。()\u2063\u241e]))"
+    r"(?P<amount>[+−-]*(?:[0-9]+(?:[.,．，。][0-9]+)?"
+    r"(?:[%％倍]|ターン|回|枚|個|以上|以下|未満|[+−/／×xX-][0-9]+)?)?)"
+)
+_TRAILING_TARGET_GROWTH_SCOPE = re.compile(
+    r"(?:(?P<hand>手札の)|(?P<held>保留(?:にある|中の|の))|(?P<all>(?:すべて|全て)の))"
+    r"(?=$|[・、。\u2063\u241e])"
+)
+
+
+def _target_growth_fields(compact: str) -> tuple[tuple[str | None, str, bool], ...]:
+    fields = []
+    for field in _TARGET_GROWTH_FIELD.finditer(compact):
+        scope = next((name for name in ("hand", "held", "all", "self", "other") if field[name]), None)
+        complete_label = field["value_label"] is not None
+        if scope == "self" or (scope in (None, "other") and not complete_label):
+            continue
+        if scope is None and field["amount"]:
+            # The detector can order a short target label after its amount.
+            # Require immediate adjacency and the end of that field/view.
+            suffix = _TRAILING_TARGET_GROWTH_SCOPE.match(compact, field.end())
+            if suffix is not None:
+                scope = suffix.lastgroup
+        fields.append((scope, field["amount"], complete_label))
+    return tuple(fields)
+
+
+def _target_growth_level_matches(
+    compact: str, scope: str, count: int, levels: Mapping[int, int], *, allow_unscoped: bool = False,
+) -> bool:
+    fields = _target_growth_fields(compact)
+    if count == 0:
+        return not any(owner == scope or (owner is None and allow_unscoped) for owner, _, _ in fields)
+    value = levels.get(count)
+    return value is not None and any(
+        complete_label and (owner == scope or (owner is None and allow_unscoped)) and amount == f"+{value}"
+        for owner, amount, complete_label in fields
+    )
 
 
 def _normalise_text(value: object) -> str:
@@ -190,24 +238,25 @@ def _normalise_skill_card_title_text(value: object) -> str:
 
 
 def _normalise_effect_text(value: object) -> str:
-    """Compact effect OCR without joining independent numeric lines."""
+    """Compact skill-card effect OCR without joining independent numeric lines."""
 
     if not isinstance(value, str):
         return ""
     translated = value.translate(str.maketrans(_TEXT_NORMALIZATION_REPLACEMENTS))
     # OCR lines are independent lexical tokens.  Joining every whitespace
     # boundary can turn a valid value followed by an unrelated numeric line
-    # (for example ``集中消費1\n2848``) into the false token ``12848``.  Keep
-    # digit-to-digit newline boundaries explicit. Ordinary spaces and text
-    # fragments still use the historical whitespace-tolerant normalization.
+    # (for example ``集中消費1\n2848``) into the false token ``12848``.
     protected = re.sub(
-        r"(?<=\d)[^\S\r\n]*(?:\r\n|\r|\n)"
-        r"(?:[^\S\r\n]*(?:\r\n|\r|\n))*[^\S\r\n]*(?=\d)",
+        rf"(?<=\d){_OCR_LINE_BREAK}(?=\d)",
         _OCR_NUMERIC_TOKEN_BOUNDARY,
         translated,
     )
+    # A complete score-growth value can be followed by a separate operator
+    # or signed overlay (such as ``+6\n+1``). Keep the value's boundary
+    # without changing ordinary wrapped text or leading title fragments.
+    protected = _TARGET_GROWTH_OPERATOR_BOUNDARY.sub(r"\g<value>" + _OCR_NUMERIC_TOKEN_BOUNDARY, protected)
     compact = "".join(protected.split())
-    return compact
+    return normalize_score_effect_text(compact)
 
 
 def _numeric_effect_label_pattern(prefix: str) -> str:
@@ -779,8 +828,11 @@ class ArenaEntityCatalog:
                 absent.add(customization_id)
         if target_growth:
             self._validate_partial_target_growth(card_id, compact, target_growth)
-            if not _ADDED_TARGET_GROWTH_MARKER.search(compact):
-                absent.update(target_growth)
+            fields = _target_growth_fields(compact)
+            absent.update(
+                identifier for identifier, (scope, _, _) in target_growth.items()
+                if not any(owner in (None, "other", scope) for owner, _, _ in fields)
+            )
         return frozenset(absent)
 
     @staticmethod
@@ -788,28 +840,32 @@ class ArenaEntityCatalog:
         card_id: int, compact: str, targets: Mapping[int, tuple[str, tuple[int, ...], Any]],
     ) -> None:
         views = tuple(dict.fromkeys(view for view in compact.split(_OCR_EFFECT_VIEW_BOUNDARY) if view))
-        readings = []
-        for view in views:
-            directions = {direction for direction, marker in _ADDED_TARGET_DIRECTIONS.items() if marker.search(view)}
-            valid = {
+        fields_by_view = tuple(_target_growth_fields(view) for view in views)
+        if not any(fields_by_view):
+            return
+        readings = [
+            {
                 (identifier, direction, value)
                 for identifier, (direction, values, matcher) in targets.items()
-                if not directions or direction in directions
                 for level, value in enumerate(values, 1)
                 if matcher(view, level)
             }
-            numbers = set(re.findall(r"コア値増加\+?([−-]?[0-9]+(?:[.,][0-9]+)?)", view))
-            readings.append((view, directions, valid, numbers))
-        for index, (view, directions, valid, numbers) in enumerate(readings):
-            if not _ADDED_TARGET_GROWTH_MARKER.search(view):
-                continue
-            if len({identifier for identifier, _, _ in valid}) != len(valid):
-                raise ArenaCatalogError(f"card {card_id} detail has conflicting added target growth values")
-            if valid and directions <= {direction for _, direction, _ in valid} and numbers <= {str(value) for _, _, value in valid}:
-                continue
-            others = set().union(*(entry[2] for i, entry in enumerate(readings) if i != index))
-            if (len(others) != 1 or directions - {direction for _, direction, _ in others}
-                    or numbers - {str(value) for _, _, value in others}):
+            for view in views
+        ]
+        observed = set().union(*readings)
+        if len({identifier for identifier, _, _ in observed}) != len(observed):
+            raise ArenaCatalogError(f"card {card_id} detail has conflicting added target growth values")
+        for index, (fields, valid) in enumerate(zip(fields_by_view, readings, strict=True)):
+            for scope, amount, _ in fields:
+                if any(scope in (None, direction) and amount == f"+{value}" for _, direction, value in valid):
+                    continue
+                others = set().union(*(entry for i, entry in enumerate(readings) if i != index))
+                compatible = {
+                    (identifier, direction, value) for identifier, direction, value in others
+                    if scope in (None, direction) and amount in ("", "+", str(value), f"+{value}")
+                }
+                if len(compatible) == 1:
+                    continue
                 raise ArenaCatalogError(f"card {card_id} detail has an unreadable added target growth field")
 
     def _fixed_enthusiasm_effect_values(self, card_id: int) -> tuple[int, ...]:
@@ -1274,116 +1330,6 @@ class ArenaEntityCatalog:
                 }.values()
             )
         return tuple(int(item["id"]) for item in candidates)
-
-    @staticmethod
-    def _half_stamina_upgrade_hand_p_item_descriptor(
-        item: Mapping[str, Any],
-    ) -> tuple[int, int] | None:
-        """Parse the fixed half-stamina hand-upgrade P-item DSL family.
-
-        A base/``+`` title is deliberately ambiguous when OCR omits the final
-        plus sign.  This descriptor is intentionally narrower than a generic
-        effect parser: every trigger, condition, action and limit operand must
-        match the version-pinned catalog family before rendered effect text can
-        distinguish its two numeric states.
-        """
-
-        effects = _normalise_text(item.get("effects"))
-        match = re.fullmatch(
-            r"at:afterStartOfTurn\{"
-            r"if:stamina<=maxStamina\*0\.5\{"
-            r"concentration\+=([1-9][0-9]*);"
-            r"costReduction\+=([1-9][0-9]*);"
-            r"upgradeHand"
-            r"\};limit:1\}",
-            effects,
-        )
-        if match is None:
-            return None
-        return int(match.group(1)), int(match.group(2))
-
-    def clicked_p_item_effect_detail_matches(
-        self,
-        detail_text: str,
-        *,
-        candidate_p_item_ids: Sequence[int],
-    ) -> tuple[int, ...]:
-        """Disambiguate one supported base/``+`` pair from complete effects.
-
-        Title-only matching must continue to keep both states when the final
-        ``+`` is absent.  A unique result is returned only for the fixed DSL
-        family above and only when the same complete detail view proves its
-        trigger, condition, both numeric operands, hand upgrade and once-per-
-        stage footer.  Partial or unsupported details remain unknown.
-        """
-
-        candidate_ids = tuple(dict.fromkeys(candidate_p_item_ids))
-        if len(candidate_ids) != 2 or any(
-            isinstance(p_item_id, bool)
-            or not isinstance(p_item_id, int)
-            or p_item_id < 1
-            for p_item_id in candidate_ids
-        ):
-            return ()
-        candidates = tuple(
-            self._p_items_by_id.get(p_item_id)
-            for p_item_id in candidate_ids
-        )
-        if any(item is None for item in candidates):
-            return ()
-        typed_candidates = tuple(item for item in candidates if item is not None)
-        base_items = tuple(
-            item for item in typed_candidates if not bool(item.get("upgraded"))
-        )
-        upgraded_items = tuple(
-            item for item in typed_candidates if bool(item.get("upgraded"))
-        )
-        if len(base_items) != 1 or len(upgraded_items) != 1:
-            return ()
-        base_title = _normalise_text(base_items[0].get("name"))
-        upgraded_title = _normalise_text(upgraded_items[0].get("name"))
-        if (
-            not base_title
-            or base_title.endswith("+")
-            or upgraded_title != f"{base_title}+"
-        ):
-            return ()
-        descriptors = {
-            int(item["id"]): self._half_stamina_upgrade_hand_p_item_descriptor(item)
-            for item in typed_candidates
-        }
-        if any(descriptor is None for descriptor in descriptors.values()):
-            return ()
-        if len(set(descriptors.values())) != len(descriptors):
-            return ()
-
-        compact = _normalise_effect_text(detail_text)
-        if not all(
-            anchor in compact
-            for anchor in (
-                "ターン開始後",
-                "体力が50%以下の場合",
-                "手札をすべて試験・ステージ中強化",
-                "試験・ステージ内1回",
-            )
-        ):
-            return ()
-        matches = []
-        for p_item_id, descriptor in descriptors.items():
-            if descriptor is None:
-                continue
-            concentration, cost_reduction = descriptor
-            if _contains_exact_integer_token(
-                compact,
-                "集中+",
-                concentration,
-            ) and _contains_exact_integer_token(
-                compact,
-                "消費体力削減",
-                cost_reduction,
-            ):
-                matches.append(p_item_id)
-        return tuple(matches)
 
     def clicked_p_item_global_detail_matches(
         self,
@@ -3074,6 +3020,10 @@ class ArenaEntityCatalog:
                 re.search(rf"{re.escape(anchor)}(?!\d|[.,．，。]\d)", text) is not None
                 for text in scoped_texts
             )
+        if score := re.fullmatch(r"スコア\+([0-9]+)", anchor):
+            return _contains_exact_integer_token(compact, "スコア+", int(score[1])) or (
+                self._detail_counted_score_anchor_present(card, resolved, anchor, compact)
+            )
         if anchor in compact:
             return True
         if anchor == "スキルカード使用数":
@@ -3692,8 +3642,10 @@ class ArenaEntityCatalog:
         """
 
         definition = self._customizations[customization_id]
-        if not _added_target_growth_contract(definition):
+        contract = _added_target_growth_contract(definition)
+        if contract is None:
             return False
+        scope, _ = contract
         maximum = int(definition["max"])
 
         views = self._native_optional_row_detail_view(card, combined_detail_text) if native_only else self._covered_optional_row_detail_views(
@@ -3718,7 +3670,7 @@ class ArenaEntityCatalog:
             # shared suffix.  Losing only that word must not turn a real
             # positive row into a hand/held zero, so any growth marker blocks
             # the covered-absence certificate before target-specific matching.
-            if _ADDED_TARGET_GROWTH_MARKER.search(compact):
+            if any(owner in (None, "other", scope) for owner, _, _ in _target_growth_fields(compact)):
                 return False
             if not matcher(compact, 0):
                 return False
@@ -6321,19 +6273,7 @@ class ArenaEntityCatalog:
         if hand_growth_levels:
 
             def match_hand_growth(compact: str, count: int) -> bool:
-                target_visible = "手札の" in compact
-                if count == 0:
-                    return not (target_visible and "スコア値増加+" in compact)
-                expected = hand_growth_levels.get(count)
-                return (
-                    expected is not None
-                    and target_visible
-                    and _contains_exact_integer_token(
-                        compact,
-                        "スコア値増加+",
-                        expected,
-                    )
-                )
+                return _target_growth_level_matches(compact, "hand", count, hand_growth_levels)
 
             return match_hand_growth
 
@@ -6346,19 +6286,7 @@ class ArenaEntityCatalog:
         if held_growth_levels:
 
             def match_held_growth(compact: str, count: int) -> bool:
-                target_visible = "保留" in compact
-                if count == 0:
-                    return not (target_visible and "スコア値増加+" in compact)
-                expected = held_growth_levels.get(count)
-                return (
-                    expected is not None
-                    and target_visible
-                    and _contains_exact_integer_token(
-                        compact,
-                        "スコア値増加+",
-                        expected,
-                    )
-                )
+                return _target_growth_level_matches(compact, "held", count, held_growth_levels)
 
             return match_held_growth
 
@@ -6369,18 +6297,17 @@ class ArenaEntityCatalog:
             if match:
                 all_growth_levels[level] = int(match.group(1))
         if all_growth_levels:
+            allow_unscoped = not any(
+                "g.score+=" in _normalise_text(card.get(key))
+                for key in ("actions", "effects", "conditions", "cost")
+            ) and not any(
+                other_id != customization_id and _added_target_growth_contract(self._customizations[other_id])
+                for other_id in self.available_customization_ids(int(card["id"]))
+            )
 
             def match_all_growth(compact: str, count: int) -> bool:
-                # Keep the distinctive suffix because the narrow OCR may
-                # confuse the leading ス with 複 while preserving the value.
-                marker = "コア値増加+"
-                if count == 0:
-                    return marker not in compact
-                expected = all_growth_levels.get(count)
-                return expected is not None and _contains_exact_integer_token(
-                    compact,
-                    marker,
-                    expected,
+                return _target_growth_level_matches(
+                    compact, "all", count, all_growth_levels, allow_unscoped=allow_unscoped,
                 )
 
             return match_all_growth

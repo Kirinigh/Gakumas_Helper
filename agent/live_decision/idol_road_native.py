@@ -6,11 +6,11 @@ from dataclasses import replace, dataclass
 
 from .exam_loop import ExamResult
 from .drink_icons import EVENT_GREEN_JUICE_ID
+from .hiro_runtime import HIRO_REVISION, hiro_module
 from .idol_road_battle import _wire_card
-from .idol_road_runtime import ATTRIBUTES, _turn_fields, _observed_fields, bind_tower_slots
-from .high_score.contracts import CardRef, ActionKind, DeckBelief, GameAction, DecisionKind, DeckKnowledge
+from .idol_road_runtime import _READY, ATTRIBUTES, _turn_fields, _observed_fields, bind_tower_slots
+from .high_score.contracts import CardRef, PlanType, ActionKind, BattleStep, DeckBelief, GameAction, DecisionKind, DeckKnowledge
 from .high_score.tower_gnrpa import _deck_entry, load_native_tower
-from .high_score.hif_environment import HifStep
 from .high_score.gkms_master_forms import PLAN_CODES, drink_id
 from .high_score.gkms_continuous_policy import verify_model_output
 
@@ -88,7 +88,7 @@ class NativeTowerRules:
         if any(row['id'] == EVENT_GREEN_JUICE_ID for row in tables.master().rows('ProduceDrink')):
             self.drink_forms[EVENT_GREEN_JUICE_ID] = EVENT_GREEN_JUICE_ID
 
-    def open(self, opening, loadout, model, observed_types, *, item_uses, statuses=()):
+    def open(self, opening, loadout, model, observed_types, *, item_uses, statuses=(), status_slots=()):
         from gakumas_exam.cards import ExamCard
 
         opening.validate()
@@ -121,18 +121,94 @@ class NativeTowerRules:
             pool.remove(guid)
         native.set_zone('hand', hand)
         native.set_zone('deck', pool)
-        _read_resources(native, initial.score, initial.stamina, initial.genki, dict(statuses))
+        _read_resources(native, initial.score, initial.stamina, initial.genki, dict(statuses), status_slots=status_slots)
         return NativeTowerSession(self, native, model, loadout, observed_types)
+
+    def restore(self, raw, frame, loadout, model, observed_types):
+        from gakumas_exam.native import master_path
+
+        from .high_score.hif_mcts_cache import request_from_public
+
+        if raw['hiro'] != HIRO_REVISION:
+            raise ValueError('idol_road_saved_rules_changed')
+        request = request_from_public(raw['public'], self.kernel)
+        state = request.state
+        if (request.decision_kind is not DecisionKind.LIVE or state.terminal
+                or (state.turns_remaining, state.stamina, state.genki, state.score) !=
+                (frame.turns, frame.stamina, frame.genki, frame.score)
+                or request.drink_slots != frame.drinks):
+            raise ValueError('idol_road_saved_position_does_not_match_hud')
+        slots = bind_tower_slots(state.deck.hand, frame.hand)
+        if tuple(tuple(row) for row in raw['card_slots']) != slots:
+            raise ValueError('idol_road_saved_hand_does_not_match_hud')
+        rust, _ = load_native_tower()
+        native = rust.Exam(master_path(self.master), raw['native'])
+        if (native.ended or native.remain_turn != frame.turns or native.current_turn != state.turn
+                or (native.stamina, native.block, native.score) != (frame.stamina, frame.genki, frame.score)
+                or native.zone('hand') != [guid for guid, _ in slots]
+                or native.drinks != [self.drink_forms[cid] for _, cid in frame.drinks]):
+            raise ValueError('idol_road_saved_native_position_invalid')
+        request = replace(request, snapshot_id=frame.frame_id, card_slots=slots, capabilities=_READY)
+        request.validate()
+        observed_types.extend(raw['observed_types'])
+        return request, NativeTowerSession(self, native, model, loadout, observed_types)
 
 
 _OBSERVED_STATUS = {
     'concentration': ('LessonBuffStatusEffect', False),
     'good_condition_turns': ('ParameterBuffStatusEffect', True),
+    'full_power': ('FullPowerPointStatusEffect', False),
 }
 _REVIEW_MULTIPLIER = 'ReviewMultipleStatusEffect'
+_PRIMARY_NATIVE_KINDS = frozenset(('lesson_buff', 'aggressive', 'review', 'parameter_buff', 'full_power_point'))
 
 
-def _read_resources(rx, score, stamina, genki, statuses, effects=None):
+def _hiro_effect_kinds():
+    mapping = hiro_module('bench_bridge.screen').EFFECT_KIND
+    # The packed status icon is the stage effect. The engine maps it to the
+    # same 熱意 class that Hiro exports as enthusiastic.
+    return mapping | {'ProduceExamEffectType_ExamGimmickEnthusiastic':
+                      mapping['ProduceExamEffectType_ExamEnthusiastic']}
+
+
+def _read_status_slots(rx, slots, effects):
+    mapping = _hiro_effect_kinds()
+    uiobs = hiro_module('bench_bridge.uiobs')
+    kinds = uiobs.VALUE_KIND | uiobs.TURN_AMOUNT_KIND | uiobs.FLAG_KIND | uiobs.LAYER_KIND
+    visible = [(row, mapping[row.effect_type]) for row in slots if row.effect_type in mapping]
+    counts = Counter(kind for _, (kind, _) in visible)
+    active_kinds = {kinds.get(entry['cls']) for entry in effects}
+    for row, (kind, how) in visible:
+        if row.faint or counts[kind] != 1 or kind in _PRIMARY_NATIVE_KINDS:
+            continue
+        matched = [entry for entry in effects if kinds.get(entry['cls']) == kind and not entry.get('trig')]
+        if len(matched) != 1:
+            continue  # The panel can aggregate several native effects into one slot.
+        if row.alternatives:
+            icons = hiro_module('vision.status')._icon_index()[0]
+            alternatives = {mapping.get(icons.get(key, {}).get('type'), (None, None))[0]
+                            for key in row.alternatives}
+            if active_kinds.intersection(alternatives - {kind, None}):
+                continue
+        active, = matched
+        value = row.value
+        if value is not None and ((how == 'pct' and row.unit == '%') or
+                                  (how == 'value' and row.unit in (None, '回'))):
+            native_value = value * 10 if how == 'pct' else value
+            if active['value'] != native_value:
+                rx.override_status(active['cls'], False, native_value)
+                if native_value == 0:
+                    continue
+        duration = row.turns
+        if duration is None and how in ('flag', 'turns') and row.unit in ('ターン', 'turns'):
+            duration = value
+        if duration is not None and active.get('limited') and uiobs._turns(active) != duration:
+            native_turn = duration - (0 if active.get('passing') else 1)
+            if native_turn > 0 or duration == 0:
+                rx.override_status(active['cls'], True, native_turn if duration else 0)
+
+
+def _read_resources(rx, score, stamina, genki, statuses, effects=None, *, status_slots=()):
     rx.score, rx.stamina, rx.block = score, stamina, genki
     if 'good_impression_turns' in statuses and rx.review != statuses['good_impression_turns']:
         rx.review = statuses['good_impression_turns']
@@ -151,6 +227,45 @@ def _read_resources(rx, score, stamina, genki, statuses, effects=None):
             observed = statuses['review_score_percent'] * 10
             if layers[0]['value'] != observed:
                 rx.override_status(_REVIEW_MULTIPLIER, False, observed)
+    if status_slots:
+        if effects is None:
+            effects = json.loads(rx.export_json())['status']['effects']
+        _read_status_slots(rx, status_slots, effects)
+
+
+def _native_observed_statuses(rx, effects):
+    return {'good_impression_turns': rx.review, 'motivation': rx.aggressive,
+            'concentration': rx.lesson_buff,
+            'good_condition_turns': next((entry['turn'] for entry in effects
+                if entry['cls'] == 'ParameterBuffStatusEffect'), 0),
+            'full_power': next((entry['value'] for entry in effects
+                if entry['cls'] == 'FullPowerPointStatusEffect'), 0)}
+
+
+def _visible_status_readouts(slots, kinds):
+    rows = [(row, kinds[row.effect_type]) for row in slots if row.effect_type in kinds]
+    counts = Counter(kind for _, (kind, _) in rows)
+    readouts = {}
+    for row, (kind, how) in rows:
+        if kind in _PRIMARY_NATIVE_KINDS or counts[kind] != 1 or row.faint or row.alternatives:
+            continue
+        if row.value is not None and how == 'pct' and row.unit == '%':
+            readouts[kind, 'value'] = row.value / 100
+        elif row.value is not None and how == 'value' and row.unit in (None, '回'):
+            readouts[kind, 'value'] = row.value
+        duration = row.turns
+        if duration is None and how == 'flag' and row.unit in ('ターン', 'turns'):
+            duration = row.value
+        if duration is not None:
+            readouts[kind, 'turns'] = duration
+    return readouts
+
+
+def _native_status_readouts(uiobs, snapshot):
+    rows = uiobs.statuses(snapshot)
+    counts = Counter(kind for kind, _, _ in rows)
+    return {(kind, field): amount for kind, value, turns in rows if counts[kind] == 1
+            for field, amount in (('value', value), ('turns', turns)) if amount >= 0}
 
 
 @dataclass(frozen=True)
@@ -188,6 +303,15 @@ class NativeTowerSession:
         self.actions = {}
         self.choice_receipts = []
 
+    def committed_position(self, request):
+        from .high_score.hif_mcts_cache import public_request
+
+        if self.candidate is not None or request.decision_kind is not DecisionKind.LIVE or self.choice_receipts:
+            return None
+        return dict(hiro=HIRO_REVISION, native=self.native.export_json(), public=public_request(request),
+                    card_slots=request.card_slots, observed_types=list(self.observed_types),
+                    unknown_deck=self.unread_formation_cards)
+
     def record_choice(self, choice, receipt):
         instance_ids = {card.instance_id for card in choice.cards}
         slots, selected = zip(*receipt.slots) if receipt.slots else ((), ())
@@ -204,12 +328,23 @@ class NativeTowerSession:
         return trial if isinstance(trial, NativeChoice) else None
 
     def overlapping_hand_forms(self, before, action, frame):
-        trial = self._fork(before, action, frame)
+        trial = self._fork(before, action, frame, observed_draws=frame.turns == before.state.turns_remaining)
         if (isinstance(trial, NativeChoice) or trial.ended or trial.remain_turn != frame.turns
                 or len(trial.zone('hand')) != len(frame.hand)):
             return ()
         refs = self._cards(trial, before.state, frame.hand)
-        return {refs[guid].card_id for zone in ('hand', 'deck', 'grave', 'hold') for guid in trial.zone(zone)}
+        older_discards = set(self.native.zone('grave'))
+        return Counter(refs[guid].card_id for guid in (
+            trial.zone('hand') + trial.zone('deck') +
+            [guid for guid in trial.zone('grave') if guid in older_discards]))
+
+    def idle_hand_forms(self, before, frame):
+        if frame.turns == before.state.turns_remaining:
+            deck = before.state.deck
+            return Counter(card.card_id for card in (*deck.hand, *deck.draw_pile))
+        if frame.turns == before.state.turns_remaining - 1:
+            return self.overlapping_hand_forms(before, None, frame)
+        return ()
 
     def drawable_card_forms(self):
         """Forms in visible or drawable zones, including a reshuffled discard pile."""
@@ -266,9 +401,10 @@ class NativeTowerSession:
         token = verify_model_output(self.model.decide(observation), observation)
         return self.actions[tuple(token)]
 
-    def sync_item_uses(self, uses):
-        """Use bound HUD charges for limited items, including field-granted uses."""
-        if not uses:
+    def sync_item_uses(self, uses, *, status_slots=()):
+        """Reconcile bound charges for items and uniquely identified card effects."""
+        slots = [row for row in status_slots if row.kind == 'enchant' and row.card_id]
+        if not uses and not slots:
             return {}
         from gakumas_exam.native import master_path
 
@@ -283,6 +419,26 @@ class NativeTowerSession:
                 continue
             changes[key] = observed - effects[0]['limit_count']
             effects[0]['limit_count'] = observed
+        observed_cards = Counter(row.card_id for row in slots)
+        for row in slots:
+            if observed_cards[row.card_id] != 1:
+                continue
+            matched = [entry for entry in state['status']['effects']
+                       if ((entry.get('trig') or {}).get('source') or {}).get('card') == row.card_id]
+            if len(matched) != 1:
+                continue
+            active, = matched
+            trigger = active['trig']
+            if row.unit == '回' and row.value is not None and trigger['limit_count'] >= 0:
+                if trigger['limit_count'] != row.value:
+                    changes[row.card_id] = row.value - trigger['limit_count']
+                    trigger['limit_count'] = row.value
+            duration = row.turns if row.turns is not None else row.value if row.unit == 'ターン' else None
+            if duration is not None and active.get('limited'):
+                remaining = self.rules.uiobs._turns(active)
+                if duration != remaining:
+                    changes[f'{row.card_id}:turns'] = duration - remaining
+                    active['turn'] = duration - (0 if active.get('passing') else 1)
         if changes:
             self.native = type(self.native)(master_path(self.rules.master), json.dumps(state))
         return changes
@@ -300,22 +456,51 @@ class NativeTowerSession:
         candidates = [cid for cid in options if cid in visible] or options
         if len(candidates) != 1:
             raise ValueError(f'idol_road_native_card_identity_unmapped:{identifier}:{up}')
-        return CardRef(guid, candidates[0], bool(up))
+        cid, = candidates
+        if old is not None and self._base_card_id(old.card_id) == self._base_card_id(cid):
+            return replace(old, card_id=cid, upgraded=bool(up))
+        return CardRef(guid, cid, bool(up))
+
+    def _base_card_id(self, cid):
+        card = self.rules.kernel.cards.get(cid)
+        return getattr(card, 'base_card_id', None) or cid
 
     def _observed_draw_prefix(self, rx, before, frame, *, played=None):
         refs = self._cards(rx, before.state, frame.hand)
-        hand = Counter(refs[guid].card_id for guid in rx.zone('hand') if guid != played)
-        needs = Counter(frame.hand) - hand
+        survivors = Counter(refs[guid].card_id for guid in rx.zone('hand') if guid != played)
+        exact = survivors & Counter(frame.hand)
+        # As in Hiro, keep the existing instance when its visible form changes.
+        # Reserve exact survivors first, leaving only unmatched slots for draws.
+        card_key = self._base_card_id if frame.turns == before.state.turns_remaining else lambda cid: cid
+        families = Counter(card_key(cid) for cid in (survivors - exact).elements())
+        needed = []
+        for slot, cid in enumerate(frame.hand):
+            family = card_key(cid)
+            if exact[cid]:
+                exact[cid] -= 1
+            elif families[family]:
+                families[family] -= 1
+            else:
+                needed.append((slot, cid))
         deck = rx.zone('deck')
-        front = []
-        for cid in frame.hand:
-            selected = next((guid for guid in deck if refs[guid].card_id == cid), None)
-            if needs[cid] and selected is not None:
-                needs[cid] -= 1
+        bound = {}
+        for slot, cid in needed:
+            if (selected := next((guid for guid in deck if refs[guid].card_id == cid), None)) is not None:
                 deck.remove(selected)
-                front.append(selected)
-        if front:
-            rx.set_zone('deck', front + deck)
+                bound[slot] = selected
+        for slot, cid in needed:
+            if slot in bound:
+                continue
+            family = card_key(cid)
+            candidates = [guid for guid in deck if card_key(refs[guid].card_id) == family]
+            if len(candidates) == 1:
+                selected, = candidates
+                deck.remove(selected)
+                bound[slot] = selected
+        if bound:
+            # This only constrains the trial draw. The actual effect must still
+            # yield the observed forms before the same physical cards are committed.
+            rx.set_zone('deck', [bound[slot] for slot in sorted(bound)] + deck)
 
     def _fork(self, before, action, frame, *, observed_draws=False, extra_action=False, observed_turn_end=False):
         rx = self.native.clone()
@@ -365,7 +550,7 @@ class NativeTowerSession:
             raise ValueError('idol_road_native_effect_not_implemented')
         return rx
 
-    def observe_frame(self, before, action, frame, *, confirmed_card=False):
+    def observe_frame(self, before, action, frame, *, confirmed_card=False, previous_frame=None):
         """Prepare a successor on a clone, retaining original until DecisionBox commits."""
         predicted = self._fork(before, action, frame)
         if isinstance(predicted, NativeChoice):
@@ -398,13 +583,18 @@ class NativeTowerSession:
                         step = self._match(before, action, frame, advanced, learned=learned)
                 if step is not None:
                     self.observed_delta['observed_turn_end'] = 1
-        if step is None and confirmed_card and self._paid_same_turn_play(before, action, frame, predicted):
-            if self._align_observed_draw(before, frame, predicted, rebind_survivors=True):
-                step = self._match(before, action, frame, predicted)
-                if step is not None:
-                    self.observed_delta['hand_rebound'] = 1
-        confirmed_draw = (confirmed_card and action.kind is ActionKind.PLAY_CARD
+        if step is None and confirmed_card:
+            step = self._match_confirmed_same_turn(before, action, frame, predicted, previous_frame)
+        confirmed_play = (confirmed_card and action.kind is ActionKind.PLAY_CARD
                           and action.card_instance_id not in predicted.zone('hand'))
+        # SKIP has no SELECT confirmation. Its dispatched action and a fresh
+        # playable board one turn later provide the draw receipt instead.
+        observed_turn_start = (action is not None and action.kind is ActionKind.END_TURN
+                               and previous_frame is not None and previous_frame.frame_id == before.snapshot_id
+                               and frame.frame_id != previous_frame.frame_id and frame.end_available
+                               and frame.turns == previous_frame.turns - 1 == before.state.turns_remaining - 1
+                               and predicted.current_turn == self.native.current_turn + 1)
+        confirmed_draw = confirmed_play or observed_turn_start
         if (step is None and (self.unread_formation_cards != 0 or confirmed_draw)
                 and not predicted.ended and predicted.remain_turn == frame.turns):
             learned = self._align_partial_formation(before, frame, predicted, confirmed_draw=confirmed_draw)
@@ -418,20 +608,69 @@ class NativeTowerSession:
             held = self._fork(before, action, frame, observed_draws=True, extra_action=True)
             if not isinstance(held, NativeChoice) and held.current_turn == self.native.current_turn:
                 step = self._match(before, action, frame, held)
+                if step is None and confirmed_card:
+                    step = self._match_confirmed_same_turn(before, action, frame, held, previous_frame)
                 if step is not None:
                     self.observed_delta['actions_remaining'] = 1
         return step
 
-    def _paid_same_turn_play(self, before, action, frame, predicted):
+    def _match_confirmed_same_turn(self, before, action, frame, predicted, previous_frame):
+        if (not self._confirmed_same_turn_play(before, action, frame, predicted, previous_frame)
+                or not self._align_observed_draw(before, frame, predicted, rebind_survivors=True)):
+            return None
+        step = self._match(before, action, frame, predicted)
+        if step is not None:
+            self.observed_delta['hand_rebound'] = 1
+        return step
+
+    def _confirmed_same_turn_play(self, before, action, frame, predicted, previous_frame):
         if action.kind is not ActionKind.PLAY_CARD or predicted.current_turn != self.native.current_turn:
             return False
         old = before.state
         played = next(card for card in old.deck.hand if card.instance_id == action.card_instance_id)
+        genki_matches = frame.genki == predicted.block
         resources = frame.stamina, frame.genki
+        if (frame.stamina != predicted.stamina
+                or frame.hand.count(played.card_id) >= sum(card.card_id == played.card_id for card in old.deck.hand)):
+            return False
         paid = resources != (old.stamina, old.genki)
         scored = frame.score != old.score and frame.score == predicted.score
-        return (resources == (predicted.stamina, predicted.block) and (paid or scored)
-                and frame.hand.count(played.card_id) < sum(card.card_id == played.card_id for card in old.deck.hand))
+        if genki_matches and (paid or scored):
+            return True
+        if (frame.turns != old.turns_remaining or action.card_instance_id in predicted.zone('hand')
+                or previous_frame is None or previous_frame.frame_id != before.snapshot_id
+                or previous_frame.frame_id == frame.frame_id or previous_frame.attribute != frame.attribute
+                or frame.score != predicted.score):
+            return False
+        # Some cards pay in status turns or add stacks without changing HP,
+        # block or score. Verify these against HUD reads on both sides of the play.
+        before_status = _observed_fields(previous_frame)
+        after_status = _observed_fields(frame)
+        common = before_status.keys() & after_status.keys()
+        snapshot = json.loads(predicted.export_json())
+        effects = snapshot['status']['effects']
+        # A reduced Genki gain can round up in the game where Hiro rounds it down.
+        # In that case the gain alone cannot confirm the play. Use the status evidence below.
+        if not genki_matches and not (
+                frame.genki == predicted.block + 1 and predicted.block > old.genki
+                and any(effect['cls'] == 'BlockAddDownStatusEffect' for effect in effects)
+                and any(row.effect_type == 'ProduceExamEffectType_ExamBlockAddDown' and not row.faint
+                        for row in frame.status_slots)):
+            return False
+        expected = _native_observed_statuses(predicted, effects)
+        comparisons = [(before_status[key], after_status[key], getattr(old, key), expected[key]) for key in common]
+        if previous_frame.status_slots and frame.status_slots:
+            kinds = _hiro_effect_kinds()
+            before_slots = _visible_status_readouts(previous_frame.status_slots, kinds)
+            after_slots = _visible_status_readouts(frame.status_slots, kinds)
+            if (paired := before_slots.keys() & after_slots.keys()):
+                old_model = _native_status_readouts(self.rules.uiobs, json.loads(self.native.export_json()))
+                new_model = _native_status_readouts(self.rules.uiobs, snapshot)
+                comparisons.extend((before_slots[key], after_slots[key], old_model[key], new_model[key])
+                                   for key in paired & old_model.keys() & new_model.keys())
+        return (all((observed_before, observed_after) == (model_before, model_after)
+                    for observed_before, observed_after, model_before, model_after in comparisons)
+                and any(observed_before != observed_after for observed_before, observed_after, _, _ in comparisons))
 
     def _align_partial_formation(self, before, frame, predicted, *, confirmed_draw=False):
         """As in Hiro, register an unmapped card only when it has appeared."""
@@ -582,29 +821,32 @@ class NativeTowerSession:
         native_status = json.loads(predicted.export_json())['status']
         effects = native_status['effects']
         model_values = {'score': predicted.score, 'stamina': predicted.stamina, 'genki': predicted.block,
-                        'good_impression_turns': predicted.review, 'motivation': predicted.aggressive,
-                        'concentration': predicted.lesson_buff,
-                        'good_condition_turns': next((entry['turn'] for entry in effects
-                            if entry['cls'] == 'ParameterBuffStatusEffect'), 0)}
+                        **_native_observed_statuses(predicted, effects)}
         self.observed_delta = {key: value - model_values[key] for key, value in (
             ('score', frame.score), ('stamina', frame.stamina), ('genki', frame.genki), *statuses.items())
             if value != model_values[key]}
-        _read_resources(predicted, frame.score, frame.stamina, frame.genki, dict(frame.statuses), effects)
+        _read_resources(predicted, frame.score, frame.stamina, frame.genki, dict(frame.statuses), effects,
+                        status_slots=frame.status_slots)
         unread = self.unread_formation_cards
         unread = unread - learned if unread is not None and unread >= learned else None
         deck = DeckBelief(tuple(refs.values()), tuple(refs[guid] for guid in order),
             *(tuple(refs[guid] for guid in predicted.zone(zone)) for zone in ('deck', 'grave', 'lost', 'hold')),
             knowledge=DeckKnowledge.UNKNOWN if unread != 0 else DeckKnowledge.KNOWN_COMPOSITION)
+        passion = state.passion
+        if before.plan_type is PlanType.ANOMALY:
+            model_statuses = self.rules.uiobs.statuses(json.loads(predicted.export_json()))
+            passion = sum(value for kind, value, _ in model_statuses if kind == 'enthusiastic')
         after_state = replace(state, deck=deck, turn=predicted.current_turn, turns_remaining=frame.turns,
             stamina=frame.stamina, genki=frame.genki, score=frame.score, drinks=tuple(c for _, c in frame.drinks),
             actions_remaining=max(0, self.rules.uiobs._extra_actions(native_status) + predicted.remaining_actions),
             good_impression_turns=predicted.review, motivation=predicted.aggressive,
             concentration=statuses.get('concentration', model_values['concentration']),
             good_condition_turns=statuses.get('good_condition_turns', model_values['good_condition_turns']),
+            full_power=statuses.get('full_power', model_values['full_power']), passion=passion,
             **_turn_fields(attrs[:frame.turns], self.multipliers))
         after = replace(before, snapshot_id=frame.frame_id, state=after_state, card_slots=slots, drink_slots=frame.drinks,
                         decision_kind=DecisionKind.LIVE)
-        step = HifStep(after, frame.score - state.score, False, ())
+        step = BattleStep(after, frame.score - state.score, False, ())
         self.candidate = (before.state, action, step, predicted, unread)
         return step
 

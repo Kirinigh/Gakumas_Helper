@@ -148,6 +148,96 @@ class ProduceShowEnd(CustomRecognition):
         return CustomRecognition.AnalyzeResult(box=None, detail={"detail": "屏幕未旋转"})
 
 
+@AgentServer.custom_recognition("IdolRoadSavedChallenge")
+class IdolRoadSavedChallenge(CustomRecognition):
+    def analyze(self, context, argv):
+        from agent.live_decision.inventory import _inventory_ocr
+        from agent.live_decision.idol_road_navigation import tower_resume_button
+
+        def ocr(image, **kwargs):
+            return _inventory_ocr(context, image, 'IdolRoadResultOCR', **kwargs)
+
+        box = tower_resume_button(argv.image, ocr)
+        return CustomRecognition.AnalyzeResult(box=list(box) if box else None, detail={})
+
+
+@AgentServer.custom_recognition("IdolRoadDateNotice")
+class IdolRoadDateNotice(CustomRecognition):
+    def analyze(self, context, argv):
+        from agent.live_decision.inventory import _inventory_ocr
+        from agent.live_decision.idol_road_navigation import tower_date_button
+
+        def ocr(image):
+            return _inventory_ocr(context, image, 'IdolRoadResultOCR')
+
+        point = tower_date_button(argv.image, ocr)
+        return CustomRecognition.AnalyzeResult(box=[*point, 1, 1] if point else None, detail={})
+
+
+@AgentServer.custom_recognition("IdolRoadExamVisible")
+class IdolRoadExamVisible(CustomRecognition):
+    def analyze(self, context, argv):
+        from agent.live_decision.hiro_runtime import hiro_ui_templates
+        from agent.live_decision.hiro_maa_exam import maa_tower_ranking
+
+        image = argv.image
+        matched = False
+        if getattr(image, 'shape', ()) == (1280, 720, 3):
+            try:
+                with hiro_ui_templates(), maa_tower_ranking() as vision:
+                    matched = vision.is_tower_exam(image)
+            except (ImportError, FileNotFoundError):
+                pass
+        return CustomRecognition.AnalyzeResult(box=[0, 0, 1, 1] if matched else None, detail={})
+
+
+@AgentServer.custom_recognition("IdolRoadFormationVisible")
+class IdolRoadFormationVisible(CustomRecognition):
+    def analyze(self, context, argv):
+        from agent.live_decision.inventory import _inventory_ocr
+        from agent.live_decision.idol_road_formation import read_formation_overview
+
+        rows = _inventory_ocr(context, argv.image, 'IdolRoadOCR')
+        found = read_formation_overview(dict(text=row.text, box=row.box) for row in rows)
+        return CustomRecognition.AnalyzeResult(box=[0, 0, 1, 1] if found is not None else None, detail={})
+
+
+@AgentServer.custom_recognition("IdolRoadFloorVisible")
+class IdolRoadFloorVisible(CustomRecognition):
+    def analyze(self, context, argv):
+        from agent.live_decision.inventory import _inventory_ocr
+        from agent.live_decision.idol_road_navigation import read_floor_overview
+
+        rows = _inventory_ocr(context, argv.image, 'IdolRoadOCR')
+        found = read_floor_overview(argv.image, rows, None)
+        return CustomRecognition.AnalyzeResult(box=[0, 0, 1, 1] if found is not None else None, detail={})
+
+
+@AgentServer.custom_recognition("IdolRoadRankingVisible")
+class IdolRoadRankingVisible(CustomRecognition):
+    def analyze(self, context, argv):
+        from agent.live_decision.inventory import _inventory_ocr
+        from agent.live_decision.idol_road_battle import read_idol_road_result
+
+        params = json.loads(argv.custom_recognition_param or '{}') or {}
+        failed = params.get('failed', False)
+        result = read_idol_road_result(_inventory_ocr(context, argv.image, 'IdolRoadResultOCR'))
+        matched = result is not None and (result['rank'] > 3) == failed
+        return CustomRecognition.AnalyzeResult(box=[0, 0, 1, 1] if matched else None, detail={})
+
+
+@AgentServer.custom_recognition("IdolRoadClearVisible")
+class IdolRoadClearVisible(CustomRecognition):
+    def analyze(self, context, argv):
+        from agent.live_decision.inventory import _inventory_ocr
+        from agent.live_decision.idol_road_navigation import read_tower_clear_title
+
+        titles = json.loads(argv.custom_recognition_param)['titles']
+        rows = _inventory_ocr(context, argv.image, 'IdolRoadOCR')
+        matched = read_tower_clear_title(rows) in titles
+        return CustomRecognition.AnalyzeResult(box=[0, 0, 1, 1] if matched else None, detail={})
+
+
 @AgentServer.custom_recognition("ProduceCardsFlagAuto")
 class ProduceCardsFlagAuto(CustomRecognition):
     """

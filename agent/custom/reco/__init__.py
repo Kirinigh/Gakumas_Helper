@@ -3,8 +3,8 @@ from .work import *
 from .utils import *
 from .produce import *
 from .society import *
-from .challenge import *
 from .simd_ocr import LiveSimdOCR
+from .challenge import *
 
 __all__ = [
     "ProduceHifSceneObserve",
@@ -18,5 +18,7 @@ __all__ = [
     "ProduceCardsFlagAuto",
     "ScreenRotateCheck",
     "ArenaChallengeOutcomePage",
+    "ArenaPipelineText",
+    "ArenaResultCommunication",
     "LiveSimdOCR",
 ]

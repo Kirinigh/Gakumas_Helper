@@ -8,12 +8,24 @@ FORMAL_PROFILES = (*NETWORK_PROFILES, STRONG_PROFILE)
 BATTLE_PROFILES = {'fast': FAST_PROFILE, 'uinet-2.1': UINET21_PROFILE, 'strong-reference-trial': STRONG_PROFILE}
 
 
+def _shared_policy(profile):
+    if __package__.startswith('agent.'):
+        from ..live_decision.high_score.policy_factory import shared_policy_builder
+    else:
+        from live_decision.high_score.policy_factory import shared_policy_builder
+
+    return shared_policy_builder(profile) is not None
+
+
 def selected_profile(selection):
     if selection is None:
         return None
-    if not isinstance(selection, str) or selection not in BATTLE_PROFILES:
-        raise ValueError('unknown explicit HIF battle policy')
-    return BATTLE_PROFILES[selection]
+    if isinstance(selection, str):
+        if selection in BATTLE_PROFILES:
+            return BATTLE_PROFILES[selection]
+        if _shared_policy(selection):
+            return selection
+    raise ValueError('unknown explicit HIF battle policy')
 
 
 def retained_profile(handoff, *, selection=None):
@@ -31,7 +43,8 @@ def retained_profile(handoff, *, selection=None):
         handoff = handoff.get('nonbattle_context')
     else:
         raise ValueError('HIF battle policy history nesting is invalid')
-    if any(not isinstance(value, str) or value not in BATTLE_PROFILES.values() for value in profiles):
+    if any(not isinstance(value, str) or (value not in BATTLE_PROFILES.values() and not _shared_policy(value))
+           for value in profiles):
         raise ValueError('HIF cultivation has contradictory or unknown battle policies')
     profiles = set(profiles)
     if len(profiles) > 1:

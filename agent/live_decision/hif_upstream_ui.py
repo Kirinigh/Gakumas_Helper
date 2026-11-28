@@ -323,7 +323,12 @@ class UpstreamHifCardUI(BattleRecognitionMixin):
         return selected
 
     def _hif_frame_boxes(self, context, image):
-        boxes = super()._hif_frame_boxes(context, image)
+        from .exam_hand import anchor_exam_hand, playable_exam_boxes
+
+        recognition = context.run_recognition('ProduceHIF__ProduceRecognitionCards', image)
+        rows = recognition.all_results if recognition else ()
+        anchored = anchor_exam_hand(image, rows, self)
+        boxes = self._hif_card_boxes(rows) if anchored is None else playable_exam_boxes(anchored)
         if image is self.image and self.receipt.get('action', {}).get('kind') == 'PLAY_CARD':
             self._click_frame = image, boxes
         return boxes

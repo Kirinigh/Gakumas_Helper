@@ -9,7 +9,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 
 from agent.live_decision.hiro_runtime import hiro_module, hiro_runtime_root
 
-from .hiro_cultivation import _replace
+from .hiro_cultivation import _replace, _hiro_memory_indexes
 
 
 def auto_formation_selected(context):
@@ -17,9 +17,13 @@ def auto_formation_selected(context):
     return (node.get('attach') or {}).get('auto') is True
 
 
+def _formation_file(relative):
+    return hiro_runtime_root() / relative
+
+
 @cache
 def _support_inventory_tool():
-    path = hiro_runtime_root() / 'tools/support_inventory.py'
+    path = _formation_file(Path('tools/support_inventory.py'))
     if not path.is_file():
         raise ValueError('自动编成缺少固定 Hiro 支援卡库存扫描脚本。')
     spec = spec_from_file_location('_gkh_pinned_hiro_support_inventory', path)
@@ -34,25 +38,21 @@ def formation_assets():
     _support_inventory_tool()
     assets = hiro_module('vision.assets')
     support = hiro_module('vision.support')
-    memory = hiro_module('vision.memory_icons')
-    index = hiro_runtime_root() / 'assets/pack/support/index.json'
+    index = _formation_file(Path('assets/pack/support/index.json'))
     pack = index.parents[1]
-    if (not index.is_file() or not any((pack / 'support').glob('*.png'))
-            or not any((pack / 'cards').glob('*.png'))):
-        raise ValueError('自动编成缺少 Hiro 支援卡或回忆卡图，可改用游戏内保存的套组。')
+    if not index.is_file() or not any((pack / 'support').glob('*.png')):
+        raise ValueError('自动编成缺少 Hiro 支援卡图，可改用游戏内保存的套组。')
     with ExitStack() as scope:
         scope.enter_context(_replace(assets, 'support_dir', lambda: pack / 'support'))
-        scope.enter_context(_replace(assets, 'card_art_dir', lambda: pack / 'cards'))
-        # Keep the renderer's optional cache outside the installed program.
         scratch = scope.enter_context(TemporaryDirectory(prefix='gkh-hiro-formation-'))
-        scope.enter_context(_replace(memory, 'ART_CACHE', str(Path(scratch) / 'memory-icons.npz')))
+        # The packaged Hiro reader can resolve memory icons from prebuilt
+        # indexes even when the original card-art directory is absent.
+        scope.enter_context(_hiro_memory_indexes())
         support._library.cache_clear()
-        memory._art_index.cache_clear()
         try:
             yield Path(scratch)
         finally:
             support._library.cache_clear()
-            memory._art_index.cache_clear()
 
 
 def _wait_support_page(dev, read):
@@ -92,8 +92,35 @@ def scan_support_inventory(dev):
     return dict(inventory, cards=known)
 
 
-def build_qualifier_formation(rt, skin, formation, report, directory):
+def _qualifier_slots(dev, rt, read_formation, consent, *, mode='hif', previous_slots=None):
+    kinds = tuple(kind for kind in ('support', 'memory') if kind not in consent)
+    slots = dict(consent)
+    blank_only = []
+    if kinds:
+        survey = hiro_module('produce.formation_survey').survey(dev, mode, kinds=kinds,
+            read_formation=read_formation, stop_at_blank=True)
+        for kind in kinds:
+            empty = [row['set'] for row in survey['sets'] if row['kind'] == kind and row['filled'] == 0]
+            if empty:
+                slots[kind] = min(empty)
+                blank_only.append(kind)
+                continue
+            if previous_slots is not None:
+                rows = [row for row in survey['sets'] if row['filled'] not in (None, 0)]
+                written = hiro_module('cli.cmd_run').own_full_slots(previous_slots, mode, kind, rows)
+                if written:
+                    slots[kind] = written[0]
+                    continue
+            hiro_module('runtime.nav').goto_home(rt)
+            raise ValueError(f'{kind} 编成没有可用空位。请腾出空位或在任务中指定允许覆盖的编号。')
+    return slots, tuple(blank_only)
+
+
+def build_qualifier_formation(rt, skin, formation, report, directory, *, consent=None,
+                             mode='hif', produce=None, reuse_written=False):
     """Scan from the formation menu, write the chosen presets and return home."""
+    from utils.local_data import DEFAULT_RUNTIME_ROOT
+
     menu_module = hiro_module('produce.formation_menu')
     writer = hiro_module('produce.formation_writer')
     picker = hiro_module('produce.memory_picker')
@@ -115,15 +142,18 @@ def build_qualifier_formation(rt, skin, formation, report, directory):
 
     menu = menu_module.Menu(dev)
     nav.goto_home(rt)
+    slot_root = DEFAULT_RUNTIME_ROOT / 'hiro-formation'
+    slots, kinds = _qualifier_slots(dev, rt, screens.read_support_formation, consent or {}, mode=mode,
+                                    previous_slots=slot_root if reuse_written else None)
     menu.open()
-    menu.ensure_mode('hif')
+    menu.ensure_mode(mode)
     menu.ensure_tab('support')
-    menu.ensure_set(formation['support_set'])
+    menu.ensure_set(slots['support'])
     x, y = screens.FORMATION_TILES[0]
     click(x + screens.TILE_W // 2, y + 59)
     supports = scan_support_inventory(dev)
     menu.ensure_tab('memory')
-    menu.ensure_set(formation['memory_set'])
+    menu.ensure_set(slots['memory'])
     click(*menu_module.MEMORY_TILES[0])
     chosen = make_picker()
     for _ in range(menu_module.WAIT_TRIES):
@@ -136,15 +166,19 @@ def build_qualifier_formation(rt, skin, formation, report, directory):
     menu.wait_menu(why='回忆扫描后返回编成')
     if not memories['complete']:
         raise ValueError('回忆库存扫描未完成，未提交自动编成。')
-    plan = hiro_module('brain.formation_plan').build(skin, support_inventory=supports,
+    planner = hiro_module('brain.formation_plan')
+    plan = planner.build(skin, support_inventory=supports,
         memory_inventory=memories,
-        support_set=formation['support_set'], memory_set=formation['memory_set'],
-        main_attr=formation['main_attr'], fixed_main=True)
+        support_set=slots['support'], memory_set=slots['memory'],
+        main_attr=formation['main_attr'], fixed_main=True, mode=produce)
     for kind in ('support', 'memory'):
         if plan[kind].get('error'):
             raise ValueError(f"无法生成自动编成：{plan[kind]['error']}")
     report['formation_plan'] = plan
-    report['formation_changes'] = menu_module.run(dev, plan, 'hif', make_picker=make_picker,
-        read_formation=screens.read_support_formation, read_list=screens.read_support_list)
+    changes = menu_module.run(dev, plan, mode, make_picker=make_picker,
+        read_formation=screens.read_support_formation, read_list=screens.read_support_list, blank_only=kinds)
+    if written := {kind: slots[kind] for kind in slots if changes.get(kind)}:
+        planner.record_slots(slot_root, mode, written)
+    report['formation_changes'] = changes
     nav.goto_home(rt)
     return plan

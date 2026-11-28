@@ -136,13 +136,17 @@ def _parent_process_ids():
     return {pid: row[0] for pid, row in _process_entries().items()}
 
 
-def verify_maa_input_endpoints(controller_info, *, expected_client_size=(720, 1280)):
+def verify_maa_input_endpoints(controller_info, *, expected_client_size=(720, 1280), require_calibrated_size=True):
     """Bind the real Win32 controller window, Maa host and Agent to high tokens."""
     from ctypes import wintypes
 
-    profile = calibrated_live_client_size(expected_client_size)
-    if profile is None:
+    # Callers with normalized capture validate its geometry independently.
+    profile = calibrated_live_client_size(expected_client_size) if require_calibrated_size else None
+    if require_calibrated_size and profile is None:
         raise MaaInputEndpointError("unsupported observed Maa client size")
+    if (not isinstance(expected_client_size, tuple) or len(expected_client_size) != 2
+            or any(type(value) is not int or value <= 0 for value in expected_client_size)):
+        raise MaaInputEndpointError("Maa input target size unavailable")
     if (os.name != "nt" or not isinstance(controller_info, dict)
             or controller_info.get("type") != "win32"
             or type(controller_info.get("hwnd")) is not int
@@ -166,8 +170,8 @@ def verify_maa_input_endpoints(controller_info, *, expected_client_size=(720, 12
     if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
         raise MaaInputEndpointError("Maa input target size unavailable")
     actual_size = (rect.right-rect.left, rect.bottom-rect.top)
-    if (calibrated_live_client_size(actual_size) != profile
-            or any(abs(v-old) > 1 for v,old in zip(actual_size, expected_client_size, strict=True))):
+    if (min(actual_size) <= 0 or any(abs(v-old) > 1 for v,old in zip(actual_size, expected_client_size, strict=True))
+            or (require_calibrated_size and calibrated_live_client_size(actual_size) != profile)):
         raise MaaInputEndpointError("Maa input target size changed")
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]

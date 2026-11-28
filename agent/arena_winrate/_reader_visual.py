@@ -1042,6 +1042,18 @@ def _spatial_ocr_text(items: Sequence[Any]) -> str:
     )
 
 
+def p_item_detail_ocr_atoms(image: Any, items: Sequence[Any]) -> tuple[dict[str, Any], ...]:
+    height, width = image.shape[:2]
+    scales = (width / 720.0, height / 1280.0) * 2
+    return tuple(
+        {
+            "text": _text(item),
+            "box": tuple(value / scale for value, scale in zip(_box(item), scales, strict=True)),
+        }
+        for item in items
+    )
+
+
 def _p_item_detail_panel_rows(
     image: Any,
     items: Sequence[Any],

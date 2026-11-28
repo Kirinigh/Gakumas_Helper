@@ -15,8 +15,11 @@ from arena_winrate import (
     arena_page_allows_team_entry,
 )
 from arena_winrate.recovery import error_retry_box
+from arena_winrate._reader_io import read_screen_ocr, read_validated_ocr_detail
 from arena_winrate._reader_visual import _box, _text, _support_bonus_dialog_headings, _support_bonus_overlay_visible
-from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle, RecoveryPageObservation
+from arena_winrate._arena_page_flow import PageRecoveryState, SupportBonusToggle, RecoveryPageObservation, recovery_ocr_visible
+
+from agent.live_decision.simd_ocr import without_vulkan_cold_wait
 
 
 class ArenaNavigationReaderPort(Protocol):
@@ -99,7 +102,10 @@ class ArenaNavigationReader:
             # capture.  When Grade is unknown, keep the broad OCR first so the
             # shared OCR entry cannot be polluted by narrower page filters.
             if grade is None or expired_close:
-                grade_observations = tuple(self.port._ocr(image, r".+"))
+                grade_observations = tuple(read_screen_ocr(
+                    getattr(self.port, "context", None), self.port._ocr, image,
+                    recovery_ocr_visible if expired_close else self._grade_label_visible,
+                ))
             if expired_close:
                 state, counts = self.port._arena_page_state(image, observations=grade_observations)
             else:
@@ -376,6 +382,7 @@ class ArenaNavigationReader:
             require_opponents=not target.is_own_team,
         )
 
+    @without_vulkan_cold_wait()
     def finish_progressive_read(self) -> None:
         """Dismiss an interrupted member's tooltip before the existing return loop."""
         position = getattr(self.port, "_progressive_abandoned_member", None)
@@ -386,7 +393,7 @@ class ArenaNavigationReader:
             if pending_support is not None and pending_support.recovery_deadline is None:
                 pending_support.recovery_deadline = self.clock.monotonic() + 8.0
             image = self.port._capture()
-            items = self.port._ocr(image, r".+")
+            items = read_screen_ocr(getattr(self.port, "context", None), self.port._ocr, image, recovery_ocr_visible)
             support = self.port._matching_ocr_items(items, r"^\s*サポートボーナス\s*$")
             closes = self.port._matching_ocr_items(items, r"^閉じる$")
             support_overlay = _support_bonus_overlay_visible(image, items)
@@ -491,12 +498,15 @@ class ArenaNavigationReader:
             if callable(getattr(getattr(self.port, "context", None), "get_node_data", None)):
                 def accept(rows):
                     filtered = tuple(row for row in rows if row.score >= 0.3)
-                    return classify(filtered)[0] is not ArenaPageState.AMBIGUOUS
+                    return classify(filtered)[0] is not ArenaPageState.AMBIGUOUS or recovery_ocr_visible(filtered)
 
                 observations = self.port._ocr(image, r".+", accept=accept)
             else:
                 observations = self.port._ocr(image, r".+")
         return classify(observations)
+
+    def _grade_label_visible(self, rows: Sequence[Any]) -> bool:
+        return sum(self.normalize_latin_anchor(_text(item)) == "GRADE" for item in rows) == 1
 
     def _read_grade(
         self,
@@ -505,7 +515,11 @@ class ArenaNavigationReader:
         observations: Sequence[Any] | None = None,
     ) -> int:
         height, width = image.shape[:2]
-        observations = tuple(self.port._ocr(image, r".+") if observations is None else observations)
+        if observations is None:
+            observations = read_screen_ocr(
+                getattr(self.port, "context", None), self.port._ocr, image, self._grade_label_visible,
+            )
+        observations = tuple(observations)
         labels = tuple(item for item in observations if self.normalize_latin_anchor(_text(item)) == "GRADE")
         if len(labels) != 1:
             raise ArenaReaderError(
@@ -556,12 +570,24 @@ class ArenaNavigationReader:
             )
             accepted_values: list[int] = []
             observed_values: set[int] = set()
+
+            def grade_view_ready(view):
+                raw_values = {
+                    value for row in view.all_results
+                    if (value := self.grade_ocr_value(_text(row))) is not None and _box(row)[3] >= minimum_digit_height
+                }
+                return len(raw_values) == 1 and any(
+                    self.grade_ocr_value(_text(row)) in raw_values and _box(row)[3] >= minimum_digit_height
+                    for row in view.filtered_results
+                )
+
             for only_rec in (False, True):
-                detail = self.port._ocr_detail(
-                    image,
-                    r"^[1-7]$",
-                    roi=digit_roi,
-                    only_rec=only_rec,
+                detail = read_validated_ocr_detail(
+                    getattr(self.port, "context", None), image, r"^[1-7]$",
+                    roi=digit_roi, only_rec=only_rec, accept=grade_view_ready,
+                    native_read=lambda: self.port._ocr_detail(
+                        image, r"^[1-7]$", roi=digit_roi, only_rec=only_rec,
+                    ),
                 )
                 raw_items = tuple(detail.all_results or () if detail is not None else ())
                 filtered_items = tuple(detail.filtered_results or () if detail is not None and detail.hit else ())

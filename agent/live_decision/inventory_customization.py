@@ -12,12 +12,14 @@ from collections import Counter
 import cv2
 
 try:
+    from agent.utils.effect_text import normalize_score_effect_text
     from agent.arena_winrate.catalog import ArenaEntityCatalog
     from agent.arena_winrate.customization_badge import (
         measure_customization_badge,
         stable_customization_badge_presence,
     )
 except ModuleNotFoundError:
+    from utils.effect_text import normalize_score_effect_text
     from arena_winrate.catalog import ArenaEntityCatalog
     from arena_winrate.customization_badge import (
         measure_customization_badge,
@@ -179,7 +181,7 @@ def _complete_plain_detail(card_id, observations):
                 for row in rows):
             return False
         text = ''.join(row.text for row in sorted(rows, key=lambda row: (row.box[1], row.box[0])))
-        if ''.join(unicodedata.normalize('NFKC', text).split()) != expected:
+        if normalize_score_effect_text(''.join(unicodedata.normalize('NFKC', text).split())) != expected:
             return False
     return True
 

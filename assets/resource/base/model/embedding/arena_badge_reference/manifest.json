@@ -5,7 +5,7 @@
     "base_manifest_sha256": "FDC289AF2B85BA09D749F4790CC402E789B6C923E1A8C88417AB5FEBA36E5E30",
     "base_gallery_sha256": "D74C8FD2A41FBCD0F0E84F8026F1CE714A784DADC10DE8F2F7949BA9367E390F",
     "preserved_rows": 3607,
-    "appended_rows": 4,
+    "appended_rows": 7,
     "enabled_rows": 3607,
     "inherited_validation": {
       "manifest_path": "inherited/manifest.json",
@@ -26,15 +26,15 @@
   },
   "component": "task410_arena_card_reference",
   "gallery": {
-    "business_card_id_count": 932,
+    "business_card_id_count": 935,
     "normalization_size": [
       96,
       96
     ],
     "path": "badge_reference_gallery.npz",
-    "sha256": "8B6901A38BECB474D49880EE0C73F6C68BAE2E6148BC4A53D550C33DE33472A6",
-    "visual_group_count": 478,
-    "bytes": 1493909
+    "sha256": "0B27E1AB008A33F1E32111A51B12B370AD7946E89380035242775E355E67F416",
+    "visual_group_count": 480,
+    "bytes": 1494025
   },
   "production_handoff": {
     "status": "USER_AUTHORIZED_TEMPORARY_PLACEHOLDERS_REAL_SAMPLES_PENDING",
@@ -51,15 +51,18 @@
       929,
       930,
       931,
-      932
+      932,
+      933,
+      934,
+      935
     ]
   },
   "schema_version": 2,
   "source": {
     "added_reference_file_count": 1,
     "arena_component": "arena_custom_card_embedding",
-    "arena_component_manifest_sha256": "6A7C22180452ABEC4C51133865A845B26393EF50A80C1A34E641B75C9604BD27",
-    "arena_gallery_sha256": "18CDA8B0DADF7531E7B1D5EE72624038C35708271D751F37C4140F74E40BA23C",
+    "arena_component_manifest_sha256": "5DF80836A6132A634C925F3BD806B716BEDDD6696D2B70968219AFCEEBA9592B",
+    "arena_gallery_sha256": "D3C5486DA495CA12FE21BE3E2C73D5CC2CE7246315481FFD2CB217714A79FB6B",
     "base_manifest_sha256": "A3ECEB5162C18B9FAF5648C933F08628EF6E741936F006A0897F46E890C11C99",
     "base_reference_file_count": 3606,
     "catalog_license": "BSD-3-Clause",
@@ -289,7 +292,7 @@
         ]
       }
     ],
-    "reference_file_count": 3611,
+    "reference_file_count": 3614,
     "reference_set_digest_contract": "sha256(base_reference_set_sha256 || public_dataset_id || NUL || public_dataset_revision || NUL || ordered(public_reference_name || NUL || business_id || NUL || visual_group_id || NUL || top_coarse_bytes || reused_green_mask_bytes))",
     "reference_set_sha256": "43EBBF4503531FE0354B636744987713781AC40C352727B9DEC40D4E96D893A6",
     "replaced_reference_file_count": 0,
@@ -1226,12 +1229,15 @@
       929,
       930,
       931,
-      932
+      932,
+      933,
+      934,
+      935
     ],
-    "business_card_id_count": 932,
+    "business_card_id_count": 935,
     "business_card_id_min": 1,
-    "business_card_id_max": 932,
-    "business_card_id_set_sha256": "7B593FB5B7E0BA4D91FA2C28A8440705A748B82DD3CD032248454A373CB82D6D",
+    "business_card_id_max": 935,
+    "business_card_id_set_sha256": "1812378B5C87E2AE31475EF3E6B3BF4ECE8DD10EFA276B7FC651EFDF40A62F38",
     "inherited_source_domain": null,
     "source_domain": "INHERITED_REFERENCES_WITH_EXCLUDED_TEMPORARY_PLACEHOLDERS",
     "temporary_placeholders": {
@@ -1240,8 +1246,8 @@
       "historical_provenance_scope": "inherited enabled rows only",
       "catalog": {
         "repository": "https://github.com/gakumas-tools/gakumas-tools",
-        "revision": "a2b2b00c76cd404994c6091e6f4b646986ab5d0a",
-        "sha256": "74AADC19A7D31243C301098A2CDE96846855AA7BD1F726627B9DCFC246957590"
+        "revision": "10b0fb577ab38e05a1d986be8c674a6d4b9f2e59",
+        "sha256": "85B9EACD70F40C8982A3B837C9C0234BF4A917D9164F7C2923E5C53A4671E715"
       },
       "image_path": "temporary-card.png",
       "image_sha256": "5F3F4AA46A01B9E23728B657467C3D03524AFE0E899654F713E7FB1B496A644C",
@@ -1249,7 +1255,10 @@
         929,
         930,
         931,
-        932
+        932,
+        933,
+        934,
+        935
       ],
       "references": [
         {
@@ -1278,6 +1287,27 @@
           "name": "噛み合わないプライド+",
           "upgraded": true,
           "visual_group_id": "provisional:931",
+          "reference_enabled": false
+        },
+        {
+          "business_id": 933,
+          "name": "勝たしてもらうで！",
+          "upgraded": false,
+          "visual_group_id": "provisional:933",
+          "reference_enabled": false
+        },
+        {
+          "business_id": 934,
+          "name": "勝たしてもらうで！+",
+          "upgraded": true,
+          "visual_group_id": "provisional:933",
+          "reference_enabled": false
+        },
+        {
+          "business_id": 935,
+          "name": "恩に報いる一番星",
+          "upgraded": false,
+          "visual_group_id": "provisional:935",
           "reference_enabled": false
         }
       ],
